@@ -11,8 +11,7 @@ export default async function handler(
   request: Request,
   serverResponse: Response,
 ): Promise<Response> {
-  const bootstrapScriptContent =
-    await import.meta.viteRsc.loadBootstrapScriptContent("index");
+  const bootstrapScriptContent = await import.meta.viteRsc.loadBootstrapScriptContent("index");
 
   return await routeRSCServerRequest({
     request,
@@ -21,15 +20,12 @@ export default async function handler(
     async renderHTML(getPayload, options) {
       const payload = getPayload();
 
-      return await renderHTMLToReadableStream(
-        <RSCStaticRouter getPayload={getPayload} />,
-        {
-          ...options,
-          bootstrapScriptContent,
-          signal: request.signal,
-          formState: await payload.formState,
-        },
-      );
+      return await renderHTMLToReadableStream(<RSCStaticRouter getPayload={getPayload} />, {
+        ...options,
+        bootstrapScriptContent,
+        signal: request.signal,
+        formState: await payload.formState,
+      });
     },
   });
 }

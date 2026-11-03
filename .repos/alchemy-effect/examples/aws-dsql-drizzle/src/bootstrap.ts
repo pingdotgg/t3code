@@ -6,11 +6,7 @@ import * as Redacted from "effect/Redacted";
 
 export const BootstrapDatabase = Alchemy.Action(
   "BootstrapDatabase",
-  Effect.fn(function* (input: {
-    endpoint: string;
-    roleArn: string;
-    version: string;
-  }) {
+  Effect.fn(function* (input: { endpoint: string; roleArn: string; version: string }) {
     const token = yield* Presign.presignUrl({
       method: "GET",
       url: `https://${input.endpoint}/?Action=DbConnectAdmin`,
@@ -21,8 +17,7 @@ export const BootstrapDatabase = Alchemy.Action(
       const sql = yield* PgClient.PgClient;
       // DSQL requires separate autocommit statements for catalog changes.
       yield* sql`CREATE SCHEMA IF NOT EXISTS app`;
-      const roles =
-        yield* sql`SELECT rolname FROM pg_roles WHERE rolname = 'app_user'`;
+      const roles = yield* sql`SELECT rolname FROM pg_roles WHERE rolname = 'app_user'`;
       if (roles.length === 0) {
         yield* sql`CREATE ROLE app_user WITH LOGIN`;
       }
@@ -37,9 +32,7 @@ export const BootstrapDatabase = Alchemy.Action(
       const mappings = yield* sql`SELECT arn FROM sys.iam_pg_role_mappings
         WHERE pg_role_name = 'app_user' AND arn = ${input.roleArn}`;
       if (mappings.length === 0) {
-        yield* sql.unsafe(
-          `AWS IAM GRANT app_user TO '${input.roleArn.replaceAll("'", "''")}'`,
-        );
+        yield* sql.unsafe(`AWS IAM GRANT app_user TO '${input.roleArn.replaceAll("'", "''")}'`);
       }
     }).pipe(
       Effect.provide(

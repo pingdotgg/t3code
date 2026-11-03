@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import { referenceRepos } from "./lib/reference-repos.ts";
 import { planReferenceRepoSync, resolveReferenceRepoRef } from "./sync-reference-repos.ts";
 
-const effectSmol = referenceRepos[0]!;
+const effectRepo = referenceRepos[0]!;
 const alchemyEffect = referenceRepos[1]!;
 
 it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
@@ -24,7 +24,7 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
       );
 
       assert.equal(
-        yield* resolveReferenceRepoRef(effectSmol, rootDir, false),
+        yield* resolveReferenceRepoRef(effectRepo, rootDir, false),
         "effect@4.0.0-beta.73",
       );
       assert.equal(yield* resolveReferenceRepoRef(alchemyEffect, rootDir, false), "v2.0.0-beta.84");
@@ -43,7 +43,7 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
         "catalog:\n  effect: 4.0.0-beta.73\n",
       );
 
-      const plan = yield* planReferenceRepoSync(effectSmol, rootDir, false);
+      const plan = yield* planReferenceRepoSync(effectRepo, rootDir, false);
       assert.equal(plan.ref, "effect@4.0.0-beta.73");
       assert.deepStrictEqual(plan.cloneArgs, [
         "clone",
