@@ -50,7 +50,6 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import * as ContextCompactionService from "../ContextCompactionService.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
@@ -1508,14 +1507,13 @@ describe("orchestration v2 provider switching", () => {
             getModelContextWindow: () => 258_400,
             tokenUsageByRunOrdinal: {
               1: { usedTokens: 250_164, maxTokens: 258_400 },
-              4: { usedTokens: 20_000, maxTokens: 258_400 },
+              5: { usedTokens: 20_000, maxTokens: 258_400 },
             },
           }),
         ]);
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          yield* (yield* ContextCompactionService.make).start();
           const send = Effect.fn("send")(function* (ordinal: number, text: string) {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
@@ -1571,31 +1569,67 @@ describe("orchestration v2 provider switching", () => {
           yield* send(2, `Request 2 ${"r".repeat(6_000)}`);
           yield* settled(2);
           yield* send(3, "Request 3");
-          yield* settled(3);
-          const failure = (yield* orchestrator.getThreadProjection(threadId)).turnItems.findLast(
-            (item) => item.type === "error",
+          // A background-command notification queued behind the failing run fails the same way;
+          // one compaction still covers both, and its message arrives as history.
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("full-native:notification"),
+            threadId,
+            messageId: MessageId.make("full-native:notification"),
+            createdBy: "agent",
+            creationSource: "server",
+            text: "Background command finished",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.userMessageId.startsWith("context-compact-continue:") &&
+                event.payload.status === "completed",
+            ),
+            Stream.runHead,
           );
-          assert.equal(
-            failure?.type === "error" ? failure.failure.code : null,
-            CONTEXT_COMPACTION_REQUIRED_CODE,
-          );
-          yield* settled(5);
+          yield* worker.drain();
 
+          // Whether the notification starts before the compaction is a race; either way one
+          // compaction covers the backlog and nothing is left queued or failed for another reason.
           const projection = yield* waitForIdle(threadId);
+          const statusOf = (prefix: string) =>
+            projection.runs.flatMap((run) =>
+              run.userMessageId.startsWith(prefix) ? [run.status] : [],
+            );
+          assert.deepEqual(statusOf("context-compact:"), ["completed"]);
+          assert.deepEqual(statusOf("context-compact-continue:"), ["completed"]);
+          assert.isTrue(projection.runs.every((run) => run.status !== "queued"));
           assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            ["completed", "failed", "failed", "completed", "completed"],
+            [
+              ...new Set(
+                projection.turnItems.flatMap((item) =>
+                  item.type === "error" ? [item.failure.code] : [],
+                ),
+              ),
+            ],
+            [null, CONTEXT_COMPACTION_REQUIRED_CODE],
           );
           const turns = yield* Ref.get(capturedTurns);
           assert.deepEqual(
-            turns.map((turn) => turn.text.slice(0, 9)),
-            ["Original ", "/compact", turns[2]!.text.slice(0, 9)],
+            turns.slice(0, 2).map((turn) => turn.text.slice(0, 9)),
+            ["Original ", "/compact"],
           );
+          assert.equal(turns.filter((turn) => turn.text === "/compact").length, 1);
+          assert.isTrue(turns.some((turn) => turn.text.includes("Continue where you left off.")));
           // One native thread throughout: compaction made room, nothing was replaced.
           assert.equal(yield* Ref.get(nativeThreadGeneration), 1);
           assert.equal(new Set(turns.map((turn) => turn.nativeThreadId)).size, 1);
-          const delivered = `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns[2]!.text}`;
+          const delivered = `${yield* encodeJson(yield* Ref.get(injectedHistory))}${turns
+            .slice(2)
+            .map((turn) => turn.text)
+            .join("\n")}`;
           assert.include(delivered, "Request 2");
+          assert.include(delivered, "Request 3");
+          assert.include(delivered, "Background command finished");
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(

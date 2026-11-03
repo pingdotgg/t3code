@@ -24,6 +24,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  IDLE_COMPACTION_TEXT,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -169,7 +170,10 @@ import {
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  CONTEXT_COMPACTION_REQUIRED_CODE,
+  makeProviderFailure,
+} from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
@@ -799,6 +803,8 @@ function worktreeSetupPending(
     )
   );
 }
+
+const CONTEXT_COMPACTION_MESSAGE_PREFIX = "context-compact:";
 
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -2352,6 +2358,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ],
     );
+  });
+
+  // A full native session is compacted in place, then continued. Both steps start by id so a
+  // held queue cannot strand them; queued work waits behind them instead of failing in turn.
+  const compactionRecoveryRun = Effect.fn("Orchestrator.compactionRecoveryRun")(function* (
+    threadId: ThreadId,
+    run: OrchestrationV2Run,
+  ) {
+    const compacted =
+      run.status === "completed" && run.userMessageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX);
+    if (run.status !== "failed" && !compacted) return undefined;
+    const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
+      turnItemTypes: ["error"],
+      turnItemRunIds: [run.id],
+    });
+    if (latestExecutedRun(projection.runs)?.id !== run.id) return undefined;
+    if (
+      !compacted &&
+      latestRootProviderFailure(run, projection.turnItems)?.code !==
+        CONTEXT_COMPACTION_REQUIRED_CODE
+    )
+      return undefined;
+    const step = compacted
+      ? ({ prefix: "context-compact-continue:", text: "Continue where you left off." } as const)
+      : ({ prefix: CONTEXT_COMPACTION_MESSAGE_PREFIX, text: IDLE_COMPACTION_TEXT } as const);
+    // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
+    const pending = projection.runs.find(
+      (candidate) =>
+        candidate.status === "queued" &&
+        candidate.userMessageId.startsWith(CONTEXT_COMPACTION_MESSAGE_PREFIX),
+    );
+    if (!compacted && pending !== undefined) return pending.id;
+    const messageId = MessageId.make(`${step.prefix}${run.id}`);
+    yield* dispatchWithReceiptEffect({
+      type: "message.dispatch",
+      commandId: CommandId.make(`server:${step.prefix}${run.id}`),
+      messageId,
+      threadId,
+      text: step.text,
+      attachments: [],
+      ...(step.text === IDLE_COMPACTION_TEXT
+        ? { createdBy: "agent", idleCompaction: "onReturn" }
+        : { createdBy: "user" }),
+      creationSource: "server",
+      dispatchMode: { type: "queue_after_active" },
+    });
+    return (yield* projectionStore.getThreadRecords(threadId, ["runs"])).runs.find(
+      (candidate) => candidate.userMessageId === messageId,
+    )?.id;
   });
 
   // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
@@ -13772,17 +13827,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch
           .withLock(
             threadId,
-            (run.status === "completed"
-              ? releaseUnattendedHolds(threadId, run.id)
-              : Effect.void
-            ).pipe(
-              Effect.andThen(
-                startNextQueuedRun(threadId, {
-                  endedRunId: run.id,
-                  ...(run.status === "failed" ? { failedRunId: run.id } : {}),
-                }),
-              ),
-            ),
+            Effect.gen(function* () {
+              const recoveryRunId = yield* compactionRecoveryRun(threadId, run);
+              if (recoveryRunId !== undefined)
+                return yield* startNextQueuedRun(threadId, { queuedRunId: recoveryRunId });
+              if (run.status === "completed") yield* releaseUnattendedHolds(threadId, run.id);
+              yield* startNextQueuedRun(threadId, {
+                endedRunId: run.id,
+                ...(run.status === "failed" ? { failedRunId: run.id } : {}),
+              });
+            }),
           )
           .pipe(
             Effect.catchCause((cause) =>
