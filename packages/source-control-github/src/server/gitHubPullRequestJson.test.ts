@@ -323,10 +323,10 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
+  const inWorkflow = ({ workflowName, runId, ...fields }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { workflow: { name: workflowName } } },
+      checkSuite: { workflowRun: { databaseId: runId, workflow: { name: workflowName } } },
     });
 
   const coreJson = (
@@ -574,6 +574,60 @@ describe("pull request detail decoding", () => {
     ]) {
       expect(checksOf(rollup)).toEqual([[["check", "pending"]], "pending"]);
     }
+  });
+
+  it("drops a cancelled check whose workflow run was superseded by a newer run on the head", () => {
+    const superseded = {
+      workflowName: "CI",
+      runId: 100,
+      status: "COMPLETED",
+      startedAt: "2026-10-30T10:00:00Z",
+      completedAt: "2026-10-30T10:00:05Z",
+    };
+    const replacement = {
+      workflowName: "CI",
+      runId: 200,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-30T10:00:10Z",
+      completedAt: "2026-10-30T10:05:00Z",
+    };
+    const rollup = [
+      inWorkflow({ ...superseded, name: "check", conclusion: "CANCELLED" }),
+      inWorkflow({
+        ...superseded,
+        name: "web browser tests (runner ${{ matrix.slice }} of 6)",
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({ ...replacement, name: "check" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 1 of 6)" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 2 of 6)" }),
+    ];
+    const checksOf = (contexts: ReadonlyArray<Record<string, unknown>>) => {
+      const detail = detailOf(contexts);
+      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
+    };
+
+    expect(checksOf(rollup)).toEqual([
+      [
+        ["check", "success"],
+        ["web browser tests (runner 1 of 6)", "success"],
+        ["web browser tests (runner 2 of 6)", "success"],
+      ],
+      "passing",
+    ]);
+    expect(
+      checksOf([
+        ...rollup,
+        inWorkflow({
+          ...superseded,
+          workflowName: "Release",
+          runId: 300,
+          name: "publish",
+          conclusion: "CANCELLED",
+        }),
+      ])[0],
+    ).toContainEqual(["publish", "cancelled"]);
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
