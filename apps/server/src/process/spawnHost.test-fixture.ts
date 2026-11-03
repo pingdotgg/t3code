@@ -16,6 +16,21 @@ const gatedSpawn = (
     NodeFS.readSync(4, Buffer.alloc(1), 0, 1, null);
     return spawn("/bin/true", [], options);
   }
+  if (command === "/t3-exhausted-spawn") {
+    const fds: number[] = [];
+    try {
+      for (let i = 0; i < 128; i++) {
+        try {
+          fds.push(NodeFS.openSync("/dev/null", "r"));
+        } catch {
+          break;
+        }
+      }
+      return spawn("/bin/true", [], options);
+    } finally {
+      for (const fd of fds) NodeFS.closeSync(fd);
+    }
+  }
   return spawn(command, args, options);
 };
 NodeChildProcess.spawn = gatedSpawn as typeof NodeChildProcess.spawn;

@@ -94,20 +94,23 @@ export function runSpawnHost(): void {
         send({ type: "error", id, error: toSpawnHostError(cause) });
         return;
       }
-      // Stop reads before the loop polls, preserving every byte for the server.
-      const stdio = child.stdio.map((socket) => {
-        if (socket) stopReading(socket as NodeNet.Socket);
-        return socket as NodeNet.Socket | null;
+      const stdio = (child.stdio ?? []).map((socket) => socket as NodeNet.Socket | null);
+      child.on("error", (cause) => {
+        if (child.pid === undefined) {
+          active.delete(id);
+          for (const socket of stdio) socket?.destroy();
+        }
+        send({ type: "error", id, error: toSpawnHostError(cause) });
       });
+      // Stop reads before the loop polls, preserving every byte for the server.
+      for (const socket of stdio) {
+        if (socket) stopReading(socket);
+      }
       // Prevent Node's exit-time flush/destroy from consuming sockets still queued for IPC transfer.
       child.stdin = null;
       child.stdout = null;
       child.stderr = null;
-      child.stdio.fill(null);
-      child.on("error", (cause) => {
-        if (child.pid === undefined) active.delete(id);
-        send({ type: "error", id, error: toSpawnHostError(cause) });
-      });
+      child.stdio?.fill(null);
       child.once("spawn", () => {
         stdio.forEach((socket, fd) => {
           if (socket) send({ type: "stdio", id, fd }, socket);
