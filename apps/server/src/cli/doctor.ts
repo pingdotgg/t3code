@@ -1,4 +1,5 @@
 import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,6 +16,19 @@ const formatBytes = (bytes: number) =>
     : bytes >= 1024 ** 2
       ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
       : `${Math.ceil(bytes / 1024)} KiB`;
+
+const formatElapsed = (millis: number) => {
+  const seconds = Math.floor(millis / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+};
+
+const COMPACT_STEP_LABELS: Record<DatabaseMaintenance.DatabaseCompactStep, string> = {
+  verify: "Checking the database",
+  "compact-events": "Removing superseded events",
+  vacuum: "Rewriting the database file",
+  "rebuild-search": "Rebuilding the search index",
+  checkpoint: "Flushing the write-ahead log",
+};
 
 export const runDoctor = Effect.fn("runDoctor")(function* (
   databasePath: string,
@@ -41,7 +55,7 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
               status.incrementalVacuumEnabled
                 ? "Returns unused space to disk."
                 : "Returns unused space to disk and turns on automatic shrinking."
-            }\n  Pauses the background service, if installed, while it runs and may need temporary disk space.`,
+            }\n  Rewrites the whole ${formatBytes(status.databaseBytes)} database, which can take more than an hour on a large database or slow disk.\n  Pauses the background service, if installed, while it runs and may need temporary disk space.`,
             recommended:
               !status.incrementalVacuumEnabled ||
               status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES,
@@ -100,11 +114,18 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   }
   if (selected.includes("database")) {
     const service = yield* BootService.BootService;
-    yield* Console.log("\nReclaiming database space. This can take several minutes...");
+    yield* Console.log("\nReclaiming database space. Each step is shown as it starts.");
+    const startedAt = yield* Clock.currentTimeMillis;
+    const reportStep = (step: DatabaseMaintenance.DatabaseCompactStep) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          Console.log(`  [${formatElapsed(now - startedAt)}] ${COMPACT_STEP_LABELS[step]}`),
+        ),
+      );
     // Report the repair before restarting, which can fail independently.
     yield* service.withStopped(
       maintenance
-        .compact(databasePath)
+        .compact(databasePath, reportStep)
         .pipe(
           Effect.tap((result) =>
             Console.log(
