@@ -3761,6 +3761,28 @@ it.effect.each([
         yield* Queue.offer(adapterEvents, update("newer-session"));
       yield* routed;
       if (scenario === "idle release retry" || scenario === "stopped pump release failure") {
+        if (scenario === "stopped pump release failure") {
+          const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+          yield* runtime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "Start a turn before the pump fails.",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+        }
         const failedWrites = yield* Queue.unbounded<void>();
         let attempts = 0;
         const failWrite: Effect.Effect<void> = Effect.suspend(() => {
@@ -3790,8 +3812,7 @@ it.effect.each([
           assert.equal(lookupError._tag, "ProviderSessionLookupError");
         }
         yield* Ref.set(beforeUnchangedWrite, Effect.void);
-        if (scenario === "idle release retry") yield* TestClock.adjust("60 seconds");
-        else yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        yield* TestClock.adjust("60 seconds");
         assert.isFalse(yield* manager.isLive(providerSessionId));
         assert.equal(
           (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef

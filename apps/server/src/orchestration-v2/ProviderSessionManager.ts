@@ -2338,6 +2338,14 @@ export const layerWithOptions = (
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
               yield* Ref.set(entry.eventPumpAlive, false);
+              // No more terminal events can clear turns owned by this pump.
+              yield* Ref.update(sessions, (current) => {
+                const key = sessionKey(entry.runtime.providerSessionId);
+                const live = current.get(key);
+                return live?.runtime === entry.runtime && live.busyTurns.size > 0
+                  ? new Map(current).set(key, { ...live, busyTurns: new Set() })
+                  : current;
+              });
               if (shutdownSignal.received) return;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
@@ -2379,7 +2387,10 @@ export const layerWithOptions = (
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
                 detail: makeProviderFailure({ cause }).message,
-              }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
+              }).pipe(
+                Effect.tapError(() => scheduleIdleRelease(entry.runtime.providerSessionId)),
+                logReleaseFailure(entry.runtime.providerSessionId),
+              );
             }),
           ),
           Effect.forkIn(layerScope),

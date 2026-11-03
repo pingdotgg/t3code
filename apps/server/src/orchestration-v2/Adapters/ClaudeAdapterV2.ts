@@ -11936,7 +11936,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 yield* closeLiveQueryForNativeThread(adoptedNativeThreadId);
               }
-              yield* closeLiveQueryForNativeThread(nativeThreadId);
+              const liveNativeThreadId = (yield* Ref.get(queryContext))?.nativeThreadId;
+              if (liveNativeThreadId !== undefined) {
+                yield* closeLiveQueryForNativeThread(liveNativeThreadId);
+              }
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
 
