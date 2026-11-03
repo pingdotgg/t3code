@@ -30,6 +30,7 @@ import {
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   buildServerProvider,
+  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -57,7 +58,7 @@ const PI_PRESENTATION = {
   reportsContextWindow: true,
 } as const;
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
 /**
@@ -154,6 +155,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     ephemeral: true,
     disableExtensions: textGenerationLaunch,
     disableTools: textGenerationLaunch,
+    shortLived: true,
   });
   const connection = yield* makePiRpcConnection({
     command: piSettings.binaryPath || "pi",
@@ -328,7 +330,7 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
           }),
         ),
       ),
-      Effect.timeout(VERSION_PROBE_TIMEOUT_MS),
+      Effect.timeout(DEFAULT_TIMEOUT_MS),
       Effect.option,
     );
     const missingCredentials = Option.exists(
