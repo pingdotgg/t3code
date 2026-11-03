@@ -17,3 +17,11 @@ Failed calls do not count as successful messages or creations. Waiting on a thre
 it finished, and an interrupt or cancellation request does not mean the thread stopped. When tool
 details are unavailable, summaries use a broader description instead of guessing how many threads
 were affected.
+
+## Hide tool calls
+
+On web and desktop, **Settings → Labs → Tool calls in chat** hides commands, file edits, searches,
+and MCP tool calls from the conversation. **Hide successful** shows a call while it runs and keeps
+it only if it fails. **Hide all** hides every call and shows **Thinking** while the agent works.
+Approvals, questions, errors, and the agent's messages always show. The setting applies to this
+browser or app only.

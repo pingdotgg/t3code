@@ -135,6 +135,7 @@ import {
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
+import { useClientSettings } from "../../hooks/useSettings";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -572,6 +573,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
 
+  const toolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -580,6 +582,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         isWorking,
         runlessWorkActive,
+        toolCallVisibility,
       })
     : null;
   const activeFindRunId =
@@ -621,6 +624,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         isWorking,
         runlessWorkActive,
+        toolCallVisibility,
       })
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
@@ -679,6 +683,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     threadStartCheckpointReady,
     availableRevertTurnCounts,
     worktreeSetup,
+    toolCallVisibility,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
@@ -1177,6 +1182,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     isWorking,
     runlessWorkActive,
+    toolCallVisibility,
     rows,
     contentInsetEndAdjustment,
   });

@@ -62,6 +62,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
@@ -1361,17 +1362,49 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
-function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
-  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+const HIDEABLE_TOOL_CALL_ITEM_TYPES: ReadonlySet<WorkLogEntry["itemType"]> = new Set([
+  "command_execution",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+]);
+
+function toolCallIsHidden(entry: TimelineEntry, visibility: ToolCallVisibility): boolean {
+  if (entry.kind !== "work" || !HIDEABLE_TOOL_CALL_ITEM_TYPES.has(entry.entry.itemType)) {
+    return false;
+  }
+  if (visibility === "hideAll") return true;
+  return (
+    visibility === "hideSuccessful" &&
+    entry.entry.toolLifecycleStatus === "completed" &&
+    !workEntryDisplayIndicatesToolFailure(entry.entry)
+  );
+}
+
+function timelineRowEntries(
+  entries: ReadonlyArray<TimelineEntry>,
+  toolCallVisibility: ToolCallVisibility = "showAll",
+) {
+  const shown =
+    toolCallVisibility === "showAll"
+      ? entries
+      : entries.filter((entry) => !toolCallIsHidden(entry, toolCallVisibility));
+  return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
 }
 
 function deriveTimelineTurnFolds(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "toolCallVisibility"
   >,
 ) {
-  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const timelineEntries = timelineRowEntries(input.timelineEntries, input.toolCallVisibility);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
@@ -1407,8 +1440,9 @@ export function deriveMessagesTimelineRows(input: {
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  toolCallVisibility?: ToolCallVisibility;
 }): MessagesTimelineRow[] {
-  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const timelineEntries = timelineRowEntries(input.timelineEntries, input.toolCallVisibility);
   const isPendingApproval = (entry: WorkLogEntry) => {
     const item = entry.projectedItem?.item;
     return (
@@ -2246,7 +2280,12 @@ interface MessagesTimelineRowsProjection {
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "toolCallVisibility"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();

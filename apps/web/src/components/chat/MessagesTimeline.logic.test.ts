@@ -2691,6 +2691,77 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
   });
+  it("hides successful or all tool calls, and drops a fold left with nothing to hide", () => {
+    const runId = RunId.make("turn-1");
+    const message = (
+      id: string,
+      role: "user" | "assistant",
+      at: string,
+      inputIntent?: "steer",
+    ): TimelineEntry => ({
+      id: `${id}-entry`,
+      kind: "message",
+      createdAt: at,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId: role === "user" && !inputIntent ? null : runId,
+        ...(inputIntent ? { inputIntent } : {}),
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    });
+    const command = (id: string, status: "completed" | "failed", at: string): TimelineEntry => ({
+      id: `${id}-entry`,
+      kind: "work",
+      createdAt: at,
+      entry: {
+        id,
+        createdAt: at,
+        runId,
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        toolLifecycleStatus: status,
+      },
+    });
+    const user = message("user", "user", "2026-01-01T00:00:00Z");
+    const commentary = message("commentary", "assistant", "2026-01-01T00:00:05Z");
+    const passed = command("passed", "completed", "2026-01-01T00:00:08Z");
+    const failed = command("failed", "failed", "2026-01-01T00:00:09Z");
+    const final = message("final", "assistant", "2026-01-01T00:00:20Z");
+    const rowIds = (
+      timelineEntries: ReadonlyArray<TimelineEntry>,
+      toolCallVisibility: "hideSuccessful" | "hideAll",
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        expandedRunIds: new Set([runId]),
+        isWorking: false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        toolCallVisibility,
+      }).map((row) => row.id);
+    expect(rowIds([user, commentary, passed, failed, final], "hideSuccessful")).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "commentary-entry",
+      "failed-entry",
+      "final-entry",
+    ]);
+    expect(rowIds([user, failed, final], "hideAll")).toEqual(["user-entry", "final-entry"]);
+
+    const steer = message("steer", "user", "2026-01-01T00:00:10Z", "steer");
+    const steeredCommentary = message("commentary", "assistant", "2026-01-01T00:00:12Z");
+    const foldRunIds = timelineTurnFoldRunIdsByEntryId({
+      timelineEntries: [user, passed, steer, steeredCommentary, failed, final],
+      isWorking: false,
+      toolCallVisibility: "hideAll",
+    });
+    expect(foldRunIds.get("commentary-entry")).toBe(runId);
+  });
   it("collapses only output from a superseded V2 attempt within the active logical run", () => {
     const runId = "run-steered" as never;
     const supersededAttemptId = "attempt-1" as never;
