@@ -45,7 +45,6 @@ import { SORT_OPTIONS } from "./pullRequestListOptions";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedUrl?: string;
-  readonly pane?: 1 | undefined;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -357,7 +356,6 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
 export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRequestsSearch {
   return {
     ...(typeof raw.selectedUrl === "string" ? { selectedUrl: raw.selectedUrl.slice(0, 4096) } : {}),
-    ...(raw.pane === 1 || raw.pane === "1" ? { pane: 1 as const } : {}),
     involvement:
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:
