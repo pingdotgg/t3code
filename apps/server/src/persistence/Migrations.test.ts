@@ -29,10 +29,10 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("adds explicit grouping after the event index cleanup", () =>
+  it.effect("adds explicit grouping after delegated recovery indexes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 78 });
+      yield* runMigrations({ toMigrationInclusive: 79 });
       const before = yield* history;
       yield* sql`
         INSERT INTO projection_projects
@@ -40,8 +40,8 @@ describe("runMigrations", () => {
         VALUES ('sdk-project', 'SDK', '/work/sdk', '[]', '2026-10-27', '2026-10-28', '2026-10-27', '2026-10-28')
       `;
 
-      assert.deepStrictEqual(yield* runMigrations(), [[79, "ProjectGroupingIdentity"]]);
-      assert.deepStrictEqual(yield* history, [...before, [79, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* runMigrations(), [[80, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* history, [...before, [80, "ProjectGroupingIdentity"]]);
       assert.deepStrictEqual(
         yield* sql`SELECT project_id, title, workspace_root, pinned_at, archived_at, grouping_identity FROM projection_projects`,
         [
