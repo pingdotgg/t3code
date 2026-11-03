@@ -356,6 +356,10 @@ describe("evaluatePullRequestWatch", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "conflicting" }]);
+    const { headSha: _unreadHead, ...headUnread } = conflicting;
+    const unread = evaluatePullRequestWatch(first.next, headUnread, noRemarks);
+    assert.deepEqual(unread.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(unread.next, conflicting, noRemarks).changes, []);
     const recomputing = evaluatePullRequestWatch(
       first.next,
       detail({ mergeability: "unknown" }),
@@ -369,6 +373,20 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(clean.next, conflicting, noRemarks).changes, [
       { kind: "conflicting" },
     ]);
+    const pushed = { headSha: "bbbbbbbbbb" };
+    const recomputed = evaluatePullRequestWatch(
+      first.next,
+      detail({ ...pushed, mergeability: "unknown" }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        recomputed.next,
+        detail({ ...pushed, mergeability: "conflicting" }),
+        noRemarks,
+      ).changes,
+      [{ kind: "conflicting" }],
+    );
   });
 
   it("does not spend the comment wake limit on check results", () => {

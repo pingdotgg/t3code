@@ -156,7 +156,11 @@ export const satisfiesSemverRange: (rawVersion: string, range: string) => boolea
     };
 
     return range.split("||").some((group) => {
-      const comparators = group.trim().split(/\s+/).filter(Boolean);
+      const comparators = group
+        .trim()
+        .replace(/(\^|>=|>|<=|<|=)\s+(?=v?\d)/g, "$1")
+        .split(/\s+/)
+        .filter(Boolean);
       if (comparators.length === 0) {
         return false;
       }
