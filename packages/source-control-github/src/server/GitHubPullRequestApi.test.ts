@@ -338,13 +338,14 @@ function threadComments(
   ids: ReadonlyArray<string>,
   endCursor: string | null,
   totalCount = ids.length,
+  author: Readonly<Record<string, unknown>> | null = null,
 ) {
   return {
     totalCount,
     pageInfo: { hasNextPage: endCursor !== null, endCursor },
     nodes: ids.map((id) => ({
       id,
-      author: null,
+      author,
       body: id,
       createdAt: "2026-07-01T00:00:00Z",
       lastEditedAt: null,
@@ -3564,7 +3565,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ),
       );
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(reviewThreadsPage([thread("PRRT_2", "c2")], null))),
+        Effect.succeed(
+          output(
+            reviewThreadsPage(
+              [
+                {
+                  ...thread("PRRT_2", "c2"),
+                  comments: threadComments(["c2"], null, 1, {
+                    __typename: "Bot",
+                    login: "later-bot",
+                    avatarUrl: "https://avatars/later-bot",
+                  }),
+                },
+              ],
+              null,
+            ),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3587,6 +3604,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect(later.query).not.toContain(field);
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
       expect(conversation.reviewers.map((reviewer) => reviewer.login)).toEqual(["prior"]);
+      expect(conversation.avatarsByLogin.get("later-bot")).toBe("https://avatars/later-bot");
+      expect(conversation.botLogins.has("later-bot")).toBe(true);
       assert.isFalse(conversation.truncated);
     }),
   );
