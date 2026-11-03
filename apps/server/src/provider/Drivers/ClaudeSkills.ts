@@ -119,7 +119,8 @@ function claudeManagedSettingsPath(
   return "/etc/claude-code/managed-settings.json";
 }
 
-function skillOverrideSettingsPaths(
+/** Claude Code settings files, lowest precedence first. */
+function claudeSettingsPaths(
   path: Path.Path,
   configDirPath: string,
   cwd: string | undefined,
@@ -247,7 +248,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
-  for (const settingsPath of skillOverrideSettingsPaths(
+  for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
     cwd,
@@ -425,6 +426,42 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
     return cwd ? path.resolve(cwd, environmentConfigDir) : path.resolve(environmentConfigDir);
   }
   return path.join(home, ".claude");
+});
+
+const SettingsEnv = Schema.Struct({
+  ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
+  CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+});
+const decodeSettingsEnv = Schema.decodeUnknownEffect(
+  fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
+);
+
+/** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
+export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<typeof SettingsEnv.Type, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const settingsEnv: typeof SettingsEnv.Type = {};
+  for (const settingsPath of claudeSettingsPaths(
+    path,
+    configDirPath,
+    undefined,
+    platform,
+    environment,
+  )) {
+    const contents = yield* fileSystem
+      .readFileString(settingsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (contents === undefined) continue;
+    const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
+    Object.assign(settingsEnv, parsed?.env);
+  }
+  return settingsEnv;
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
