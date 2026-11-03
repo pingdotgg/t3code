@@ -38,7 +38,9 @@ export function useScopedModelDisabledReason(
         !entry?.enabled ||
         !entry.isAvailable ||
         entry.driverKind !== sourceEntry?.driverKind ||
-        !options?.some((option) => option.slug === model && !option.isUnavailable)
+        !options?.some(
+          (option) => option.slug === model && !option.isUnavailable && !option.isHidden,
+        )
       ) {
         return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
       }

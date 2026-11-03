@@ -250,6 +250,7 @@ export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
   projectId: ProjectId | null,
+  options?: { readonly requireVisible?: boolean },
 ): ModelSelection | null {
   const usable = resolveSelectableModelSelection(config, selection, projectId);
   if (!usable || !config) {
@@ -257,6 +258,13 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
+  if (
+    options?.requireVisible &&
+    config.settings?.providerModelPreferences?.[usable.instanceId]?.hiddenModels.includes(
+      usable.model,
+    )
+  )
+    return null;
   return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
 }
 
@@ -357,7 +365,7 @@ export function buildModelOptions(
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
     const models = provider.models.filter(
-      (model) => includeHidden || model.isCustom || !hiddenModels.has(model.slug),
+      (model) => includeHidden || !hiddenModels.has(model.slug),
     );
     if (order.size > 0)
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
@@ -377,8 +385,8 @@ export function buildModelOptions(
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
-        isHidden: !model.isCustom && hiddenModels.has(model.slug),
-        canHide: !model.isCustom,
+        isHidden: hiddenModels.has(model.slug),
+        canHide: true,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
@@ -401,9 +409,10 @@ export function buildModelOptions(
     (!config?.settings?.providerModelPreferences?.[
       fallbackModelSelection.instanceId
     ]?.hiddenModels.includes(fallbackModelSelection.model) ||
-      config?.providers
-        .find((provider) => provider.instanceId === fallbackModelSelection.instanceId)
-        ?.models.find((model) => model.slug === fallbackModelSelection.model)?.isCustom)
+      (includeHidden &&
+        config?.providers
+          .find((provider) => provider.instanceId === fallbackModelSelection.instanceId)
+          ?.models.find((model) => model.slug === fallbackModelSelection.model)?.isCustom))
   ) {
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
@@ -442,6 +451,10 @@ export function buildModelOptions(
         providerLabel,
         providerDriver,
         providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
+        isHidden:
+          config?.settings?.providerModelPreferences?.[
+            fallbackModelSelection.instanceId
+          ]?.hiddenModels.includes(fallbackModelSelection.model) ?? false,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
@@ -456,6 +469,19 @@ export function buildModelOptions(
   }
 
   return [...options.values()];
+}
+
+export function getSelectedModelOption(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+  projectId: ProjectId | null,
+): ModelOption | null {
+  if (!selection) return null;
+  return (
+    buildModelOptions(config, selection, selection.instanceId, projectId, true).find(
+      (option) => option.selection.model === selection.model,
+    ) ?? null
+  );
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {

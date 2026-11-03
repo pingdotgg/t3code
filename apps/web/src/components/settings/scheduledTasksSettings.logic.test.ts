@@ -361,6 +361,38 @@ describe("scheduled task model defaults", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),
     ).toEqual({ instanceId, model: "catalog-default" });
+    expect(
+      resolve(
+        {
+          ...config,
+          settings: {
+            ...config.settings,
+            defaultModelSelection: null,
+            providerModelPreferences: {
+              [instanceId]: {
+                hiddenModels: config.providers[0]!.models.map((model) => model.slug),
+                modelOrder: [],
+              },
+            },
+          },
+        },
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      resolve(
+        {
+          ...config,
+          settings: {
+            ...config.settings,
+            providerModelPreferences: {
+              [instanceId]: { hiddenModels: [environmentSelection.model], modelOrder: [] },
+            },
+          },
+        },
+        null,
+      ),
+    ).toEqual(environmentSelection);
   });
   it("falls back to the environment default when the project provider is unavailable", () => {
     expect(

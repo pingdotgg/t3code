@@ -210,11 +210,11 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
       const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
       )?.serverConfig;
       const environmentSettings = environmentConfig?.settings;
+      applyStickyState(draftId, environmentSettings?.providerModelPreferences);
       const defaultSelection = environmentSettings
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
@@ -222,7 +222,8 @@ export function DraftHeroHeadline({
       const fallbackResolution = resolveNewThreadModelSelection({
         defaultSelection:
           defaultSelection ??
-          (useComposerDraftStore.getState().stickyActiveProvider !== null || !environmentSettings
+          (useComposerDraftStore.getState().getComposerDraft(draftId)?.activeProvider ||
+          !environmentSettings
             ? null
             : resolveProjectDefaultProviderModelSelection(
                 providersByEnvironment.get(project.environmentId) ?? [],
@@ -235,9 +236,7 @@ export function DraftHeroHeadline({
         projectId: project.id,
         now: Date.now(),
       });
-      const defaultModelSelection = fallbackResolution.fallback
-        ? fallbackResolution.selection
-        : defaultSelection;
+      const defaultModelSelection = fallbackResolution.selection;
       if (defaultModelSelection) {
         setModelSelection(draftId, defaultModelSelection, {
           replaceOptions: true,

@@ -299,7 +299,7 @@ function listCapabilityModels(input: {
 }) {
   const rank = new Map(input.preferences?.modelOrder.map((slug, index) => [slug, index]));
   const visible = input.provider.models
-    .filter((model) => model.isCustom || !input.preferences?.hiddenModels.includes(model.slug))
+    .filter((model) => !input.preferences?.hiddenModels.includes(model.slug))
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
   const { instanceId, driver, displayName } = input.provider;
   const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
@@ -1403,11 +1403,20 @@ const make = Effect.gen(function* () {
 
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
-    const model =
+    let model =
       requestedModel ??
-      (instanceId === inheritedSelection.instanceId
-        ? inheritedSelection.model
-        : provider.models[0]?.slug);
+      (instanceId === inheritedSelection.instanceId ? inheritedSelection.model : undefined);
+    if (model === undefined) {
+      const settings = input.skipProjectEnablementFilter
+        ? undefined
+        : yield* serverSettings.getSettings.pipe(
+            Effect.mapError(() =>
+              failure("orchestration_error", "Unable to read server settings."),
+            ),
+          );
+      const hiddenModels = settings?.providerModelPreferences?.[instanceId]?.hiddenModels;
+      model = provider.models.find((candidate) => !hiddenModels?.includes(candidate.slug))?.slug;
+    }
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",

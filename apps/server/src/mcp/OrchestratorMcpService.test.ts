@@ -1558,6 +1558,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         models: [
           ...opencodeSlugs.map((slug) => model(slug, { isLegacy: slug === "oc/m03" })),
           model("oc-custom", { isCustom: true }),
+          model("oc-custom-hidden", { isCustom: true }),
         ],
       },
     ];
@@ -1584,7 +1585,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                     { provider: opencodeInstanceId, model: "oc/m10" },
                   ],
                   providerModelPreferences: {
-                    [opencodeInstanceId]: { hiddenModels: ["oc/m02"], modelOrder: ["oc/m12"] },
+                    [opencodeInstanceId]: {
+                      hiddenModels: ["oc/m02", "oc-custom-hidden"],
+                      modelOrder: ["oc/m12"],
+                    },
                   },
                 }),
                 providerRegistryLayer(catalog),
@@ -1754,6 +1758,11 @@ describe("OrchestratorMcpService provider resolution", () => {
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
+      const alternateProvider = providerSnapshot({
+        instanceId: altInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const task = {
         id: taskId,
@@ -1822,18 +1831,29 @@ describe("OrchestratorMcpService provider resolution", () => {
             driver: ProviderDriverKind.make("codex"),
             model: "gpt-5.4",
           }),
-          providerSnapshot({
-            instanceId: altInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
+          {
+            ...alternateProvider,
+            models: [
+              {
+                ...alternateProvider.models[0]!,
+                slug: "hidden-custom",
+                name: "Hidden custom",
+                isCustom: true,
+              },
+              ...alternateProvider.models,
+            ],
+          },
         ]),
         adapterRegistryLayer([codexInstanceId, altInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({
+          providerModelPreferences: {
+            [altInstanceId]: { hiddenModels: ["hidden-custom"], modelOrder: [] },
+          },
+        }),
       );
 
       yield* Effect.gen(function* () {
@@ -1851,6 +1871,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           modelSelection: { instanceId: string; model: string };
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+        assert.equal(request.modelSelection.model, "gpt-5.4");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

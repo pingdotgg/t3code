@@ -27,6 +27,16 @@ again.
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
 
+In **Settings → Providers**, turn off a model's picker switch to hide it without deleting it.
+This works for built-in and custom models, including models routed through a proxy. Hidden custom
+models keep their saved configuration; turn the switch back on to offer them again. Visibility
+applies to that provider instance, so the same model can stay visible under another provider.
+Hiding a custom model does not change existing threads, drafts, defaults, scheduled tasks, or
+other saved model selections. They keep using that model and show it as hidden. New choices
+omit it, and new threads skip it when remembering your last-used model. Show it again before
+selecting it elsewhere. If every model is hidden and no model is already selected, show one in
+**Settings → Providers** to continue.
+
 With a project selected, a provider's switch in **Settings → Providers** turns it on or off for
 that project only, in either direction: a provider off on the machine can be used in one project,
 and one on everywhere can be kept out of another. That project's model pickers follow the switch,

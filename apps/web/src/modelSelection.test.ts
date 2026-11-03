@@ -25,6 +25,8 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -192,6 +194,7 @@ describe("scoped default model selections", () => {
     expect(
       defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [selected, { ...selected }]),
     ).toBe(false);
+
     expect(
       defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
         selected,
@@ -333,40 +336,112 @@ describe("instance-scoped model selection", () => {
     ).toEqual(["claude-sonnet-4-6", "openai/gpt-5.5"]);
   });
 
-  it("falls back when the selected model is hidden", () => {
+  it.each([
+    ["claude-opus-4-6", "claude-sonnet-4-6"],
+    ["openai/gpt-5.5", "openai/gpt-5.5"],
+  ])("hides %s while preserving configured custom selections", (hiddenModel, expectedModel) => {
     const providers = [
       provider({
-        instanceId: "claudeAgent",
+        instanceId: "claude_openrouter",
         models: ["claude-opus-4-6", "claude-sonnet-4-6"],
       }),
     ];
     const settings: UnifiedSettings = {
       ...settingsWithProviderInstances(),
       providerModelPreferences: {
-        [ProviderInstanceId.make("claudeAgent")]: {
-          hiddenModels: ["claude-opus-4-6"],
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          hiddenModels: [hiddenModel],
           modelOrder: [],
         },
       },
     };
 
     expect(
-      resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("claudeAgent"),
-        settings,
-        providers,
-        "claude-opus-4-6",
+      getAppModelOptionsForInstance(settings, deriveProviderInstanceEntries(providers)[0]!).map(
+        (option) => option.slug,
       ),
-    ).toBe("claude-sonnet-4-6");
+    ).not.toContain(hiddenModel);
+    expect(
+      getAppModelOptionsForInstance(
+        settings,
+        deriveProviderInstanceEntries(providers)[0]!,
+        ` ${hiddenModel} `,
+      ).some((option) => option.slug === hiddenModel),
+    ).toBe(false);
+
+    expect(
+      getCustomModelOptionsByInstance(settings, providers)
+        .get(ProviderInstanceId.make("claude_openrouter"))
+        ?.find((option) => option.slug === hiddenModel),
+    ).toMatchObject({
+      name: hiddenModel,
+      isHidden: true,
+    });
+
     expect(
       resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("claudeAgent"),
+        ProviderInstanceId.make("claude_openrouter"),
         settings,
         providers,
-        "claude-opus-4-6",
+        hiddenModel,
+      ),
+    ).toBe(expectedModel);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        settings,
+        providers,
+        hiddenModel,
         { preserveUnavailableSelection: true },
       ),
-    ).toBe("claude-sonnet-4-6");
+    ).toBe(expectedModel);
+    expect(
+      getAppModelOptionsForInstance(
+        { ...settings, providerModelPreferences: {} },
+        deriveProviderInstanceEntries(providers)[0]!,
+      ).map((option) => option.slug),
+    ).toContain(hiddenModel);
+
+    const allHidden = {
+      ...settings,
+      providerModelPreferences: {
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          hiddenModels: ["claude-opus-4-6", "claude-sonnet-4-6", "openai/gpt-5.5"],
+          modelOrder: [],
+        },
+      },
+    };
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        allHidden,
+        providers,
+        null,
+      ),
+    ).toBeNull();
+    const stockProviders = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-opus-4-6"],
+      }),
+    ];
+    expect(
+      resolveAppModelSelection(
+        ProviderDriverKind.make("claudeAgent"),
+        {
+          ...settings,
+          providerModelPreferences: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              hiddenModels: ["claude-opus-4-6"],
+              modelOrder: [],
+            },
+          },
+        },
+        stockProviders,
+        null,
+      ),
+    ).toBe("");
   });
 
   it("falls back instead of resolving a custom slug against the wrong instance", () => {

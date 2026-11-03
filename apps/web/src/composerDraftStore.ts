@@ -518,7 +518,10 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
-  applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  applyStickyState: (
+    threadRef: ComposerThreadTarget,
+    preferences?: UnifiedSettings["providerModelPreferences"] | null,
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -1111,13 +1114,16 @@ export function deriveEffectiveComposerModelState(input: {
     input.threadModelSelection?.instanceId === input.selectedInstanceId;
   const baseModel =
     (input.selectedInstanceId
-      ? resolveAppModelSelectionForInstance(
+      ? (resolveAppModelSelectionForInstance(
           input.selectedInstanceId,
           input.settings,
           input.providers,
           baseModelCandidate,
           { preserveUnavailableSelection: preserveThreadModel },
-        )
+        ) ??
+        (input.settings.providerModelPreferences[input.selectedInstanceId]?.hiddenModels.length
+          ? ""
+          : null))
       : null) ??
     // Antigravity has no static model or cross-account catalog fallback.
     (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
@@ -2903,14 +2909,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        applyStickyState: (threadRef) => {
+        applyStickyState: (threadRef, preferences) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
           }
           set((state) => {
-            const stickyMap = state.stickyModelSelectionByProvider;
-            const stickyActiveProvider = state.stickyActiveProvider;
+            const stickyMap = Object.fromEntries(
+              Object.entries(state.stickyModelSelectionByProvider).filter(
+                ([instanceId, selection]) =>
+                  selection &&
+                  !preferences?.[ProviderInstanceId.make(instanceId)]?.hiddenModels.includes(
+                    selection.model,
+                  ),
+              ),
+            );
+            const stickyActiveProvider =
+              state.stickyActiveProvider && stickyMap[state.stickyActiveProvider]
+                ? state.stickyActiveProvider
+                : null;
             const existing = state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = compactModelSelectionByProvider(stickyMap);

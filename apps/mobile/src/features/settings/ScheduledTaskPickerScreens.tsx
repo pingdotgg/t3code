@@ -3,7 +3,7 @@ import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { buildModelOptions, getSelectedModelOption, groupByProvider } from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
@@ -31,11 +31,7 @@ export function ScheduledTaskModelPickerRouteScreen() {
     [config, selectedModel, projectId],
   );
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
-  const selectedOption = models.find(
-    (option) =>
-      option.selection.instanceId === selectedModel?.instanceId &&
-      option.selection.model === selectedModel.model,
-  );
+  const selectedOption = getSelectedModelOption(config, selectedModel, projectId);
   const optionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({

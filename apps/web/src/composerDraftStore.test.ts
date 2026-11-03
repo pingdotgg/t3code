@@ -1860,21 +1860,39 @@ describe("composerDraftStore sticky composer settings", () => {
     );
   });
 
-  it("applies sticky activeProvider to new drafts", () => {
-    const store = useComposerDraftStore.getState();
-    const threadId = ThreadId.make("thread-sticky-active-provider");
-    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  it.each([false, true])(
+    "applies only visible sticky selections to new drafts (hidden: %s)",
+    (hidden) => {
+      const store = useComposerDraftStore.getState();
+      const threadId = ThreadId.make("thread-sticky-active-provider");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
 
-    store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
-    store.applyStickyState(threadRef);
+      store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+      store.applyStickyState(
+        threadRef,
+        hidden
+          ? {
+              [CLAUDE_AGENT_INSTANCE]: { hiddenModels: ["claude-opus-4-6"], modelOrder: [] },
+            }
+          : {},
+      );
 
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
-      modelSelectionByProvider: {
-        claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"),
-      },
-      activeProvider: "claudeAgent",
-    });
-  });
+      if (hidden) {
+        expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+        expect(
+          useComposerDraftStore.getState().stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+        ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+        return;
+      }
+
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+        modelSelectionByProvider: {
+          claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"),
+        },
+        activeProvider: "claudeAgent",
+      });
+    },
+  );
 
   it("replaces a non-explicit stale model and its options with sticky state", () => {
     const store = useComposerDraftStore.getState();

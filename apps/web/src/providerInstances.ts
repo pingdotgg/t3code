@@ -251,13 +251,28 @@ export function resolveProjectDefaultProviderModelSelection(
   settings: ServerSettings,
   projectId: ProjectId | null,
 ): ModelSelection | null {
-  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  const visibleProviders = providers.map((provider) => ({
+    ...provider,
+    models: provider.models.filter(
+      (model) =>
+        !settings.providerModelPreferences?.[provider.instanceId]?.hiddenModels.includes(
+          model.slug,
+        ),
+    ),
+  }));
+  const entries = providerInstanceEntriesFor(visibleProviders, settings, projectId).filter(
+    (entry) =>
+      entry.models.length > 0 ||
+      !settings.providerModelPreferences?.[entry.instanceId]?.hiddenModels.length,
+  );
   // Matches resolveComposerProviderSelection: the first driver group wins before any other.
   const entry =
     resolveSelectableProviderInstanceEntry(
       entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
       undefined,
     ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
-  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  const model = entry
+    ? getDefaultProviderInstanceModel(visibleProviders, entry.instanceId)
+    : undefined;
   return entry && model ? { instanceId: entry.instanceId, model } : null;
 }

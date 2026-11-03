@@ -237,7 +237,7 @@ import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { hasProviderSetup } from "./ProviderStatusBanner";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import { type AppModelOption, getAppModelCatalogForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { isVideoAttachment, type SessionPhase, type Thread, type ThreadShell } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
@@ -933,10 +933,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? undefined
       : clampManagedRuntimeMode(managedPolicy, compatibleRuntimeMode, compatibleRuntimeModes);
 
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
-  );
+  const providerSendBlockReason = !selectedModel
+    ? "Show a model in Settings → Providers, or choose another model."
+    : getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel);
   const sendDisabledReason =
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
@@ -978,7 +977,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   for (const entry of providerInstanceEntries) {
     modelOptionsByInstance.set(
       entry.instanceId,
-      getAppModelOptionsForInstance(
+      getAppModelCatalogForInstance(
         settings,
         entry,
         entry.instanceId === selectedInstanceId ? selectedModelForPicker : null,
