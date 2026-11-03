@@ -5363,6 +5363,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly nativeThreadId: string;
           readonly providerThread: OrchestrationV2ProviderThread;
           readonly status?: OrchestrationV2ProviderThread["status"];
+          readonly lostBackgroundTasks?: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
         }) {
           const roster = rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
@@ -5388,6 +5389,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
+            ...(input.lostBackgroundTasks === undefined || input.lostBackgroundTasks.length === 0
+              ? {}
+              : { lostBackgroundTasks: input.lostBackgroundTasks }),
           });
         });
 
@@ -5572,13 +5576,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
           options?: {
             readonly status?: OrchestrationV2ProviderThread["status"];
+            /** The process exited on its own, so roster tasks without a buffered outcome are lost. */
+            readonly exitedUnexpectedly?: boolean;
           },
         ) {
-          const hadRoster =
-            rosterForNativeThread(
-              yield* Ref.get(pendingBackgroundTasksByNativeThread),
-              nativeThreadId,
-            ).size > 0;
+          const roster = rosterForNativeThread(
+            yield* Ref.get(pendingBackgroundTasksByNativeThread),
+            nativeThreadId,
+          );
+          const hadRoster = roster.size > 0;
           const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
           const hadPersistedRoster = (remembered?.pendingBackgroundTasks?.length ?? 0) > 0;
           const priorOpaqueTombstones = taskIdSetForNativeThread(
@@ -5597,6 +5603,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
+          // A buffered task_notification already reports its outcome through the wake buffer.
+          const lostBackgroundTasks =
+            options?.exitedUnexpectedly === true
+              ? claudePendingBackgroundTasksFromRoster(
+                  roster,
+                  taskIdSetForNativeThread(
+                    yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                    nativeThreadId,
+                  ),
+                ).filter((task) => !bufferedTaskNotificationIds.has(task.taskId))
+              : [];
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
@@ -5631,6 +5648,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             providerThread: remembered,
             status,
+            lostBackgroundTasks,
           });
         });
 
@@ -7963,7 +7981,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
             });
           } else {
-            yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId);
+            yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId, {
+              exitedUnexpectedly: !interrupted,
+            });
           }
           // Preserve buffered outcomes before Stop clears the wake buffer.
           yield* endSubagentsOfClosedQuery({

@@ -18,6 +18,7 @@ import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
   awaitingProviderThreadId,
+  cancelledByProviderExit,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
   continuationFailedBeforePrompt,
@@ -315,9 +316,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+          summary: cancelledByProviderExit(note.work)
+            ? "The provider process exited and stopped background work"
+            : note.settled
+              ? "T3 Code restarted and stopped background work"
+              : "T3 Code restarted and resumed this turn",
           detail: text,
         },
         attachments: [],

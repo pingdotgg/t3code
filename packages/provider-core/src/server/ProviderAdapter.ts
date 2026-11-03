@@ -8,6 +8,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -99,6 +100,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     /** Work remaining at this point in the event stream, including native continuations. */
     pendingBackgroundWork: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
+    /** Roster tasks an unexpected provider process exit took with it. */
+    lostBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)),
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),

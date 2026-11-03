@@ -494,7 +494,7 @@ it.effect.each(deliveries)(
     ),
 );
 
-it.effect("wakes the agent when Claude's process exits while it awaits background work", () =>
+const exitWhileIdle = (awaited: boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("claude-idle-exit-awaited-task");
@@ -601,23 +601,25 @@ it.effect("wakes the agent when Claude's process exits while it awaits backgroun
           }),
         );
         yield* Fiber.join(rostered);
-        const records = yield* orchestrator.getThreadRecords(threadId, ["providerThreads"]);
-        const providerThread = records.providerThreads[0]!;
-        const runtime = yield* sessions.get(providerThread.providerSessionId!);
-        if (Option.isNone(runtime) || runtime.value.awaitBackgroundTasks === undefined) {
-          return yield* Effect.die("Claude runtime must accept background waits");
+        if (awaited) {
+          const records = yield* orchestrator.getThreadRecords(threadId, ["providerThreads"]);
+          const providerThread = records.providerThreads[0]!;
+          const runtime = yield* sessions.get(providerThread.providerSessionId!);
+          if (Option.isNone(runtime) || runtime.value.awaitBackgroundTasks === undefined) {
+            return yield* Effect.die("Claude runtime must accept background waits");
+          }
+          const awaitedRoster = yield* watch(
+            (event) =>
+              event.type === "provider-thread.updated" &&
+              event.payload.pendingBackgroundTasks?.some((task) => task.awaited === true) === true,
+          );
+          yield* runtime.value.awaitBackgroundTasks({
+            providerThread,
+            taskIds: [taskId],
+            awaited: true,
+          });
+          yield* Fiber.join(awaitedRoster);
         }
-        const awaited = yield* watch(
-          (event) =>
-            event.type === "provider-thread.updated" &&
-            event.payload.pendingBackgroundTasks?.some((task) => task.awaited === true) === true,
-        );
-        yield* runtime.value.awaitBackgroundTasks({
-          providerThread,
-          taskIds: [taskId],
-          awaited: true,
-        });
-        yield* Fiber.join(awaited);
         const settled = yield* watch(
           (event) =>
             event.type === "run.updated" &&
@@ -633,7 +635,7 @@ it.effect("wakes the agent when Claude's process exits while it awaits backgroun
             task.taskId,
             task.awaited,
           ]),
-          [[taskId, true]],
+          [[taskId, awaited ? true : undefined]],
         );
 
         const cleared = yield* watch(
@@ -657,6 +659,13 @@ it.effect("wakes the agent when Claude's process exits while it awaits backgroun
           [taskId],
           "the run must record the awaited task the exited process took with it",
         );
+        // Drained effects already dispatched any wake, so a missing one fails here instead of hanging.
+        assert.equal(
+          afterExit.runs.some((run) => run.id !== firstRun.id),
+          awaited,
+          "only awaited work wakes the agent without a user message",
+        );
+        if (!awaited) return;
         yield* Fiber.join(woken);
         yield* worker.drain();
         assert.isTrue(
@@ -688,5 +697,12 @@ it.effect("wakes the agent when Claude's process exits while it awaits backgroun
         ),
       ),
     ),
-  ),
+  );
+
+it.effect("wakes the agent when Claude's process exits while it awaits background work", () =>
+  exitWhileIdle(true),
+);
+
+it.effect("records but does not wake for an unawaited shell lost when Claude's process exits", () =>
+  exitWhileIdle(false),
 );

@@ -41,6 +41,11 @@ import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failu
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
+import {
+  cancelledRosterTaskWork,
+  latestStartedRun,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -456,6 +461,39 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    // The run records what an unexpected process exit took, as a server restart would.
+    const lostBackgroundWorkEvents = Effect.fnUntraced(function* (
+      input: ProviderEventIngestInput,
+      threadId: ThreadId,
+    ) {
+      if (input.event.type !== "provider_thread.updated") return [];
+      const lostTasks = input.event.lostBackgroundTasks ?? [];
+      if (lostTasks.length === 0 || input.event.providerThread.ownerNodeId !== null) return [];
+      const run = latestStartedRun(
+        (yield* projections.getThreadRecords(threadId, ["runs"])).runs,
+        input.event.providerThread.id,
+      );
+      if (run === undefined) return [];
+      const work = lostTasks.map((task) => ({
+        ...cancelledRosterTaskWork(task),
+        cause: "provider_exit" as const,
+      }));
+      return [
+        yield* makeDomainEvent(input, {
+          type: "run.background-work-cancelled",
+          threadId,
+          runId: run.id,
+          payload: {
+            runId: run.id,
+            restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+              run.restartCancelledBackgroundWork ?? [],
+              work,
+            ),
+          },
+        }),
+      ];
+    });
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -507,10 +545,12 @@ export const layer: Layer.Layer<
                 threadId,
                 payload: input.event.providerThread,
               });
+              const lost = yield* lostBackgroundWorkEvents(input, threadId);
               return input.event.retainedNativeTurnIds === undefined
-                ? [updated]
+                ? [updated, ...lost]
                 : [
                     updated,
+                    ...lost,
                     ...(yield* rollBackRewoundRuns(input, {
                       threadId,
                       providerThreadId: input.event.providerThread.id,
@@ -677,6 +717,24 @@ export const layer: Layer.Layer<
             if (events.length === 0) {
               return [];
             }
+            // The continuation wakes the agent only for awaited work; the rest rides along on the next user message.
+            const effects = events.flatMap((event) =>
+              event.type === "run.background-work-cancelled"
+                ? [
+                    {
+                      id: `effect:restart-continuation:${event.payload.runId}`,
+                      commandId:
+                        input.commandId ??
+                        CommandId.make(`command:provider-exit:${event.payload.runId}`),
+                      threadId: event.threadId,
+                      request: {
+                        type: "provider-runtime.continue" as const,
+                        sourceRunId: event.payload.runId,
+                      },
+                    },
+                  ]
+                : [],
+            );
             const mapWriteError = (cause: unknown) =>
               new ProviderEventPublishError({
                 providerSessionId: input.providerSessionId,
@@ -690,18 +748,22 @@ export const layer: Layer.Layer<
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                   ...input.writeIfProviderThreadOwner,
                   events,
+                  ...(effects.length === 0 ? {} : { effects }),
                 })
                 .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
               return ownerResult.storedEvents;
             }
             if (input.writeIfRunCurrent === undefined) {
-              return yield* eventSink
-                .write({
-                  guardPendingUserInputCancellations: true,
-                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                  events,
-                })
-                .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
+              const write = {
+                guardPendingUserInputCancellations: true,
+                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                events,
+              };
+              return yield* (
+                effects.length === 0
+                  ? eventSink.write(write)
+                  : eventSink.writeWithEffects({ ...write, effects })
+              ).pipe(retryLockTimeout, Effect.mapError(mapWriteError));
             }
             const result = yield* eventSink
               .writeIfRunCurrent({
@@ -710,6 +772,7 @@ export const layer: Layer.Layer<
                 threadId: input.threadId,
                 ...input.writeIfRunCurrent,
                 events,
+                ...(effects.length === 0 ? {} : { effects }),
               })
               .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
             return result.storedEvents;

@@ -118,11 +118,16 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
 
 const MAX_NOTE_ENTRIES = 10;
 
+/** Work lost to an unexpected provider process exit; the T3 server kept running. */
+export function cancelledByProviderExit(work: ReadonlyArray<Pick<Work, "cause">>): boolean {
+  return work.length > 0 && work.every((entry) => entry.cause === "provider_exit");
+}
+
 /** Bounds entries and labels to protect the context budget. */
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+    `Note: ${cancelledByProviderExit(work) ? "the provider process exited" : "the T3 server restarted"}, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:`,
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
@@ -165,6 +170,23 @@ export function runOutcome(
     (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     ? "interrupted"
     : run.status;
+}
+
+export function latestStartedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerThreadId: NonNullable<OrchestrationV2Run["providerThreadId"]>,
+): OrchestrationV2Run | undefined {
+  return runs.reduce<OrchestrationV2Run | undefined>(
+    (latest, run) =>
+      run.providerThreadId === providerThreadId &&
+      run.status !== "queued" &&
+      run.status !== "rolled_back" &&
+      !neverStarted(run) &&
+      (latest === undefined || runRanAfter(run, latest))
+        ? run
+        : latest,
+    undefined,
+  );
 }
 
 /** Unstarted runs have no lost work to continue, except prepared continuations carrying a source run. */
