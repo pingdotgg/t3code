@@ -77,10 +77,12 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1073,6 +1075,7 @@ function activeParentRun(
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1557,9 +1560,9 @@ const make = Effect.gen(function* () {
       if (sameSelection(input.current, input.proposed)) return;
       const { scope, parentRun, proposed } = input;
       const threadId = scope.thread.threadId;
-      const digest = yield* crypto
+      const cardKey = yield* digest
         .digest(
-          "SHA-256",
+          Digest.sha256,
           new TextEncoder().encode(
             [
               scope.requestNamespace,
@@ -1572,8 +1575,10 @@ const make = Effect.gen(function* () {
             ].join("\u0000"),
           ),
         )
-        .pipe(Effect.orDie);
-      const cardKey = Buffer.from(digest).toString("hex").slice(0, 32);
+        .pipe(
+          Effect.map((bytes) => Hex.encode(bytes).slice(0, 32)),
+          Effect.orDie,
+        );
       const turnItemId = TurnItemId.make(
         `turn-item:delegation-approval:${stablePart(threadId)}:${cardKey}`,
       );
@@ -2654,7 +2659,7 @@ const make = Effect.gen(function* () {
         const recorded = RemoteDelegation.recordCommandId(
           scope,
           yield* RemoteDelegation.remoteRequestKey(key, environmentId, proposed).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(Digest.Digest, digest),
           ),
         );
         if (!(yield* threadManagement.hasReceipt(recorded))) {
@@ -3626,6 +3631,7 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver

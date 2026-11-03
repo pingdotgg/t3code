@@ -18,9 +18,11 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -134,7 +136,7 @@ export const remoteRequestKey = Effect.fn("RemoteDelegation.remoteRequestKey")(f
   environmentId: EnvironmentId,
   selection: ModelSelection,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   // Options compare as a set; a cleared list differs from none.
   const options =
     selection.options === undefined
@@ -143,16 +145,15 @@ export const remoteRequestKey = Effect.fn("RemoteDelegation.remoteRequestKey")(f
           .map((option) => `${option.id}=${typeof option.value}:${String(option.value)}`)
           .toSorted()
           .join("\u0001");
-  const digest = yield* crypto
+  // The launch there carries this key, and keys there are capped at 256 characters.
+  return yield* digest
     .digest(
-      "SHA-256",
+      Digest.sha256,
       new TextEncoder().encode(
         [key, environmentId, selection.instanceId, selection.model, options].join("\u0000"),
       ),
     )
-    .pipe(Effect.orDie);
-  // The launch there carries this key, and keys there are capped at 256 characters.
-  return Buffer.from(digest).toString("hex");
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
 });
 
 /** The command recording a remote task here; its receipt marks a delegation already made. */
@@ -185,6 +186,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -299,10 +301,10 @@ const make = Effect.gen(function* () {
       // Both are scoped to the provider session, as every key a caller passes is:
       // the forwarder scopes the launch's, and the record's names it.
       const key = yield* remoteRequestKey(
-        input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+        input.clientRequestId ?? (yield* random.uuidV4()),
         target.environmentId,
         modelSelection,
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      ).pipe(Effect.provideService(Digest.Digest, digest));
       const commandId = recordCommandId(scope, key);
       // A recorded request returns its task without reaching the other side again.
       if (yield* threads.hasReceipt(commandId)) {

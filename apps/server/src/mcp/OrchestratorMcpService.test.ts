@@ -3543,7 +3543,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             "remote-reused",
             EnvironmentId.make("environment:mcp-providers-other"),
             proposed,
-          ).pipe(Effect.provide(NodeServices.layer)),
+          ).pipe(Effect.provide(NodeCrypto.layer)),
         );
         const reused = yield* harness({
           decide: () => "declined",
