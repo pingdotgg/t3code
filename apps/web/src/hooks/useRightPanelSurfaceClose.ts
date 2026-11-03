@@ -75,11 +75,8 @@ export function useRightPanelSurfaceClose(input: {
     const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
     const shellIsLive = () =>
       appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live";
-    // A live shell without the side chat means it is already deleted.
-    if (shellIsLive() && readThreadShell(sideChatRef) === null) {
-      useComposerDraftStore.getState().clearDraftThread(sideChatRef);
-      return;
-    }
+    // Deleting and archiving both drop it from the live shell; an archived draft must survive.
+    if (shellIsLive() && readThreadShell(sideChatRef) === null) return;
     if (!readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) return;
     // The server keeps a side chat with a run or message. Reopen skips one it deleted.
     void deleteThread({

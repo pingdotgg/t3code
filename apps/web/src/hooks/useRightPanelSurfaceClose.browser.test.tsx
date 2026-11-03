@@ -162,10 +162,10 @@ it.each([
   { name: "the delete fails", threadRemoved: true, failDelete: true, cleared: false },
   { name: "the shell is not live", threadRemoved: true, shellStatus: "loading", cleared: false },
   {
-    name: "it was deleted before closing",
+    name: "it already left the live shell, as an archived one does",
     sideChatShell: null,
     threadRemoved: false,
-    cleared: true,
+    cleared: false,
   },
 ])(
   "clears a closed side chat's draft only after deletion: $name",
