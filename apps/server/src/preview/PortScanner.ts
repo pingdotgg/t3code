@@ -311,7 +311,7 @@ const PROC_TCP_LISTEN = "0A";
 /** Each 32-bit word of the hex address is little-endian. */
 const procLocalAddress = (hex: string): boolean => {
   if (hex.length === 8) {
-    return hex === "00000000" || hex.endsWith("7F");
+    return hex === "00000000" || hex === "0100007F";
   }
   if (hex.length !== 32) return false;
   if (hex === "0".repeat(32) || hex === `${"0".repeat(24)}01000000`) return true;
@@ -543,11 +543,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     inodes: ReadonlySet<string>,
   ) {
     const owners = new Map<string, { pid: number; processName: string | null }>();
-    const pids = (yield* fileSystem
-      .readDirectory("/proc")
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
-      /^\d+$/.test(entry),
-    );
+    const entries = yield* fileSystem.readDirectory("/proc").pipe(Effect.option);
+    if (Option.isNone(entries)) return null;
+    const pids = entries.value.filter((entry) => /^\d+$/.test(entry));
     let budget = PROC_FD_WALK_LIMIT;
     for (const pidText of pids) {
       if (owners.size === inodes.size || budget <= 0) break;
@@ -571,7 +569,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       for (const inode of matched) owners.set(inode, { pid: Number(pidText), processName });
     }
-    return owners;
+    const lsofMissing = yield* Ref.get(lsofMissingRef);
+    return budget <= 0 && owners.size < inodes.size && !lsofMissing ? null : owners;
   });
 
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
@@ -579,12 +578,27 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     if (hostPlatform !== "linux") return null;
     const tables = yield* Effect.forEach(["/proc/net/tcp", "/proc/net/tcp6"], (path) =>
-      fileSystem.readFileString(path).pipe(Effect.option),
+      fileSystem.readFileString(path).pipe(
+        // Kernels without IPv6 omit tcp6; a denied table can hide listeners on a shared port.
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(null),
+        ),
+        Effect.option,
+      ),
     );
-    if (tables.every(Option.isNone)) return null;
-    const listeners = tables.flatMap((table) =>
-      Option.isSome(table) ? parseProcNetTcp(table.value) : [],
+    if (tables.some(Option.isNone)) return null;
+    const readable = tables.flatMap((table) =>
+      Option.isSome(table) && table.value !== null ? [table.value] : [],
     );
+    if (
+      readable.length === 0 ||
+      readable.some(
+        (table) => !/^\s*sl\s+local_address\s+(?:rem|remote)_address\s+st\s/.test(table),
+      )
+    )
+      return null;
+    const listeners = readable.flatMap(parseProcNetTcp);
     const known = yield* Ref.get(socketOwnersRef);
     const knownMisses = yield* Ref.get(socketOwnerMissesRef);
     const inodes = new Set(listeners.map((listener) => listener.inode));
@@ -595,6 +609,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ),
     );
     const found = unseen.size === 0 ? new Map() : yield* findSocketOwners(unseen);
+    if (found === null) return null;
     const owners = new Map([...known, ...found].filter(([inode]) => inodes.has(inode)));
     const misses = new Map([...knownMisses].filter(([inode]) => inodes.has(inode)));
     for (const inode of unseen) {
@@ -825,11 +840,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* probeWebServers(listeners ?? [], configuredUrls),
       );
     }
+    const fromProc = yield* scanProcListeners(resolveOwners);
+    if (fromProc !== null) return yield* probeWebServers(fromProc, configuredUrls);
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
-    if (yield* Ref.get(lsofMissingRef)) {
-      const fromProc = yield* scanProcListeners(resolveOwners);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
-    }
+    if (yield* Ref.get(lsofMissingRef)) return yield* probeWebServers([], configuredUrls);
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
@@ -856,8 +870,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }),
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    const fromProc = yield* scanProcListeners(resolveOwners);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    // A missing lsof makes a bounded, partial /proc owner walk the only available discovery.
+    const withoutLsof = (yield* Ref.get(lsofMissingRef))
+      ? yield* scanProcListeners(resolveOwners)
+      : null;
+    return yield* probeWebServers(withoutLsof ?? [], configuredUrls);
   });
 
   const scanSnapshot = (configuredUrls: ReadonlyArray<string>) =>
