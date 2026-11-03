@@ -44,7 +44,10 @@ const DELIMITER = /[*_~`]/;
 
 type TextRange = { from: number; to: number };
 
-type StyledRange = TextRange & { markers: { at: number; closing: boolean; text: string }[] };
+type StyledRange = TextRange & {
+  escapedOpener: boolean;
+  markers: { at: number; closing: boolean; text: string }[];
+};
 
 function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
   const ranges: StyledRange[] = [];
@@ -54,7 +57,14 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
   for (const run of map.runs) {
     if (run.nodeName === "codeBlock") continue;
     if (run.openLen > 0) {
-      range ??= { from: run.pmPos, to: run.pmPos, markers: [] };
+      let backslashes = 0;
+      while (map.value[run.mdStart - backslashes - 1] === "\\") backslashes += 1;
+      range ??= {
+        from: run.pmPos,
+        to: run.pmPos,
+        escapedOpener: backslashes % 2 !== 0,
+        markers: [],
+      };
       range.markers.push({
         at: run.pmPos,
         closing: false,
@@ -82,11 +92,9 @@ function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
 
 /** Whether the Markdown that reveal shows for `range` parses back to the same styles. */
 function revealsFaithfully(doc: ProseMirrorNode, range: StyledRange): boolean {
+  if (range.escapedOpener) return false;
   const adjacent = withAdjacentDelimiters(doc, range);
   if (adjacent.from !== range.from || adjacent.to !== range.to) return false;
-  const before = doc.resolve(range.from).nodeBefore;
-  const backslashes = before?.text?.match(/\\+$/)?.[0].length ?? 0;
-  if (backslashes % 2 !== 0) return false;
   // Parsing keeps escapes as text, so styled `path\` or `2*3` stays styled, unshown.
   const markers = range.markers.toSorted(
     (left, right) => left.at - right.at || Number(right.closing) - Number(left.closing),

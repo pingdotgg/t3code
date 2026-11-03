@@ -158,9 +158,16 @@ it.each([
   { word: "word", prefix: "\\", source: [] },
   { word: "word", prefix: "\\\\", source: ["**word**"] },
   { word: "word", prefix: "\\\\\\", source: [] },
+  {
+    word: "word",
+    prefix: "`path\\`",
+    prefixText: "path\\",
+    source: ["**word**"],
+    code: ["path\\"],
+  },
 ])(
   "bolds $word after '$prefix' with Mod+B only when text is selected",
-  async ({ word, prefix, source }) => {
+  async ({ word, prefix, prefixText = prefix, source, code = [] }) => {
     const value = `${prefix}${word} it`;
     await using screen = await mountEditor(value);
     const { editor } = screen;
@@ -175,8 +182,8 @@ it.each([
 
     await act(async () => {
       editor.commands.setTextSelection({
-        from: prefix.length + 1,
-        to: prefix.length + word.length + 1,
+        from: prefixText.length + 1,
+        to: prefixText.length + word.length + 1,
       });
     });
     await userEvent.keyboard(modB);
@@ -188,11 +195,12 @@ it.each([
     await userEvent.keyboard("{End}");
     expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}**${word}** it`);
     expect(textWithMark(editor, "bold")).toEqual([word]);
+    expect(textWithMark(editor, "code")).toEqual(code);
     expect(undoDepth(editor.state)).toBe(depth);
     await act(async () => {
       editor.commands.setTextSelection({
-        from: prefix.length + 1,
-        to: prefix.length + word.length + 1,
+        from: prefixText.length + 1,
+        to: prefixText.length + word.length + 1,
       });
     });
 
