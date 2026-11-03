@@ -1977,8 +1977,15 @@ function makeProviderThread(input: {
 }
 
 const decodeClaudeTranscriptLine = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
+  Schema.fromJsonString(
+    Schema.Struct({ type: Schema.String, uuid: Schema.optional(Schema.String) }),
+  ),
 );
+
+// Claude streams each block of a multi-block assistant message as its own message with uuid
+// `persistedUuid.slice(0, 24) + blockIndex` (12 hex digits); only the persisted uuid resumes.
+const CLAUDE_STREAMED_BLOCK_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-0{9}[0-9a-f]{3}$/;
 
 const isClaudeConversationLine = (line: string): boolean =>
   Option.match(decodeClaudeTranscriptLine(line), {
@@ -10393,7 +10400,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
-          const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
+          const nativeHeadId = yield* getNativeConversationHeadId(turnInput.providerThread);
+          const resumeSessionAt =
+            nativeHeadId === undefined
+              ? undefined
+              : yield* resolvePersistedClaudeMessageId(nativeThreadId, nativeHeadId);
           const existing = yield* Ref.get(queryContext);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
@@ -11300,10 +11311,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         yield* Effect.addFinalizer(() => closeSession());
 
-        // Metadata-only transcripts cannot be resumed or recreated; fail resumeThread to trigger a fresh session and handoff.
-        const claudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(function* (
-          nativeThreadId: string,
-        ) {
+        const claudeTranscriptPaths = Effect.fnUntraced(function* (nativeThreadId: string) {
           const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
           const projectsDir = path.join(
             configuredDir.length > 0
@@ -11311,17 +11319,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : path.join(yield* HostProcess.HomeDirectory, ".claude"),
             "projects",
           );
-          // Any message in any transcript copy means Claude may still resume it.
-          let found = false;
-          let unreadable = false;
+          const transcriptPaths: Array<string> = [];
           for (const project of yield* fileSystem.readDirectory(projectsDir)) {
             const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
             // Stray files beside the project dirs fail with ENOTDIR.
-            if (
-              !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
-            ) {
-              continue;
+            if (yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false))) {
+              transcriptPaths.push(transcriptPath);
             }
+          }
+          return transcriptPaths;
+        });
+
+        // Metadata-only transcripts cannot be resumed or recreated; fail resumeThread to trigger a fresh session and handoff.
+        const claudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(function* (
+          nativeThreadId: string,
+        ) {
+          // Any message in any transcript copy means Claude may still resume it.
+          let found = false;
+          let unreadable = false;
+          for (const transcriptPath of yield* claudeTranscriptPaths(nativeThreadId)) {
             const conversationLine = yield* fileSystem
               .stream(transcriptPath)
               .pipe(
@@ -11342,6 +11358,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           return found && !unreadable ? ("empty" as const) : ("missing" as const);
         });
+
+        // Cursors recorded from a per-block streamed message are absent from the transcript.
+        const resolvePersistedClaudeMessageId = Effect.fn(
+          "ClaudeAdapterV2.resolvePersistedMessageId",
+        )(
+          function* (nativeThreadId: string, messageId: string) {
+            if (!CLAUDE_STREAMED_BLOCK_UUID.test(messageId)) {
+              return messageId;
+            }
+            const prefix = messageId.slice(0, 24);
+            for (const transcriptPath of yield* claudeTranscriptPaths(nativeThreadId)) {
+              const matches = yield* fileSystem.stream(transcriptPath).pipe(
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.map((line) => Option.getOrUndefined(decodeClaudeTranscriptLine(line))),
+                Stream.filter((entry) => entry?.type === "assistant"),
+                Stream.map((entry) => entry?.uuid),
+                Stream.filter((uuid): uuid is string => uuid?.startsWith(prefix) === true),
+                Stream.runCollect,
+              );
+              if (matches.includes(messageId)) {
+                return messageId;
+              }
+              const persisted = matches[0];
+              if (persisted !== undefined) {
+                return persisted;
+              }
+            }
+            return messageId;
+          },
+          (effect, _nativeThreadId, messageId) =>
+            effect.pipe(Effect.orElseSucceed(() => messageId)),
+        );
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
@@ -11752,7 +11801,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
-              const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const forkCursor = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const upToMessageId =
+                forkCursor === undefined
+                  ? undefined
+                  : yield* resolvePersistedClaudeMessageId(sourceNativeThreadId, forkCursor);
               const forkOptions: ForkSessionOptions = {
                 ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
