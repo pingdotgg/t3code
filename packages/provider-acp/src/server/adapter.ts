@@ -182,6 +182,13 @@ export interface AcpAdapterV2ExtensionContext {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
   }) => Effect.Effect<void>;
+  /** A subagent the agent started without a parent tool call. */
+  readonly startSubagent: (notice: {
+    readonly sessionId: string;
+    readonly childSessionId: string;
+    readonly title: string | null;
+    readonly model: string | null;
+  }) => Effect.Effect<void>;
   readonly finishSubagent: (notice: {
     readonly sessionId: string;
     readonly childSessionId: string;
@@ -1340,6 +1347,10 @@ interface ActiveAcpTurn {
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
+  /** Task calls whose result named a child that a spawn notice projected first. */
+  readonly subagentsByToolCallId: Map<string, ActiveAcpSubagent>;
+  /** Spawn notices held until pending Task calls name their children. */
+  readonly deferredSubagentSpawns: Map<string, AcpAdapterV2SubagentUpdate>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
   readonly toolCallIdsByBackgroundTaskId: Map<string, string>;
   /** Command ACKs register null; terminal results wait here for prompt settlement. */
@@ -1536,6 +1547,8 @@ interface ActiveAcpSubagent {
   providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly parentProviderThreadId: ProviderThreadId;
   childSessionId: string | null;
+  /** Projected from a spawn notice, so a Task call may later name it as its child. */
+  fromSpawnNotice?: boolean;
   assistantText: string;
   readonly assistantMessages: Map<string, string>;
   readonly childItemOrdinals: Map<string, number>;
@@ -3012,9 +3025,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // Hydration uses a new toolCallId but references the original child by subagent_id or task id.
           const existing =
             context.subagents.get(update.nativeTaskId) ??
+            context.subagentsByToolCallId.get(update.nativeTaskId) ??
             (update.childSessionId !== null
               ? context.subagentsBySessionId.get(update.childSessionId)
               : undefined);
+          const reconcilesPrompt =
+            existing?.fromSpawnNotice === true &&
+            update.prompt !== "" &&
+            update.nativeTaskId !== existing.task.nativeTaskRef?.nativeId;
           const updateIsTerminal = acpSubagentStatusIsTerminal(update.status);
           if (
             existing !== undefined &&
@@ -3037,6 +3055,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (isHydrationOnly || update.suppressNormalTool === false) {
               return;
             }
+            // This Task call may own a child a spawn notice already projected; wait for its ID.
+            if (
+              update.childSessionId === null &&
+              !updateIsTerminal &&
+              [...context.subagents.values()].some(
+                (subagent) =>
+                  subagent.fromSpawnNotice === true &&
+                  !acpSubagentStatusIsTerminal(subagent.task.status),
+              )
+            ) {
+              return;
+            }
+          } else if (reconcilesPrompt) {
+            context.subagentsByToolCallId.set(update.nativeTaskId, existing);
           }
           const now = yield* DateTime.now;
           const nativeTaskId = existing?.task.nativeTaskRef?.nativeId ?? update.nativeTaskId;
@@ -3072,11 +3104,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               providerThreadId: null,
               childThreadId,
               nativeTaskRef: nativeItemRef,
-              prompt: update.prompt,
               title: update.title,
               result: null,
               startedAt: now,
             }),
+            prompt: reconcilesPrompt ? update.prompt : (existing?.task.prompt ?? update.prompt),
             model: update.model?.trim() || existing?.task.model || null,
             status: taskStatus,
             result: update.result ?? existing?.task.result ?? null,
@@ -3104,6 +3136,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             },
             toolSessionIds: new Map(),
           };
+          const promptChanged = existing !== undefined && existing.task.prompt !== task.prompt;
           subagent.task = task;
           context.subagents.set(nativeTaskId, subagent);
 
@@ -3132,6 +3165,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 creationSource: "provider",
               }),
             });
+          }
+          if (existing === undefined || promptChanged) {
             const promptNativeItemId = `${nativeTaskId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               senderThreadId: context.input.threadId,
@@ -3143,19 +3178,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               providerTurnId: null,
               nativeItemRef: { driver, nativeId: promptNativeItemId, strength: "weak" },
               role: "user",
-              text: update.prompt,
+              text: task.prompt,
               ordinal: 100,
-              now,
+              now: task.startedAt ?? now,
             });
             yield* emitProviderEvent({
               type: "message.updated",
               driver,
-              message: promptArtifacts.message,
+              message: { ...promptArtifacts.message, updatedAt: now },
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver,
-              turnItem: promptArtifacts.turnItem,
+              turnItem: { ...promptArtifacts.turnItem, updatedAt: now },
             });
           }
 
@@ -3284,6 +3319,44 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           if (acpSubagentStatusIsTerminal(taskStatus)) {
             subagent.terminalStatusProjected = true;
+          }
+        });
+
+        const hasUnnamedSubagentChild = (context: ActiveAcpTurn) =>
+          [...context.subagents.values()].some(
+            (subagent) =>
+              subagent.childSessionId === null &&
+              !acpSubagentStatusIsTerminal(subagent.task.status),
+          );
+
+        const projectSpawnNotice = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          childSessionId: string,
+          update: AcpAdapterV2SubagentUpdate,
+        ) {
+          yield* emitSubagent(context, update);
+          const subagent = context.subagents.get(childSessionId);
+          if (subagent !== undefined) subagent.fromSpawnNotice = true;
+        });
+
+        // Spawn notices do not name their Task call, so only Task results may claim a child.
+        const projectDeferredSubagentSpawns = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          if (context.finalized || context.deferredSubagentSpawns.size === 0) return;
+          if (hasUnnamedSubagentChild(context)) return;
+          const deferred = [...context.deferredSubagentSpawns];
+          context.deferredSubagentSpawns.clear();
+          for (const [childSessionId, update] of deferred) {
+            const owner = context.subagentsBySessionId.get(childSessionId);
+            if (owner === undefined) {
+              yield* projectSpawnNotice(context, childSessionId, update);
+            } else if (acpSubagentStatusIsTerminal(update.status)) {
+              yield* emitSubagent(context, {
+                ...update,
+                nativeTaskId: owner.task.nativeTaskRef?.nativeId ?? String(owner.task.id),
+                prompt: owner.task.prompt,
+                title: owner.task.title,
+              });
+            }
           }
         });
 
@@ -3857,6 +3930,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
             yield* emitSubagent(context, subagentUpdate);
+            yield* projectDeferredSubagentSpawns(context);
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -5956,12 +6030,52 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const startSubagentFromNotice = Effect.fnUntraced(function* (notice: {
+          readonly childSessionId: string;
+          readonly title: string | null;
+          readonly model: string | null;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null || context.finalized) return;
+          if (
+            context.subagentsBySessionId.has(notice.childSessionId) ||
+            context.deferredSubagentSpawns.has(notice.childSessionId)
+          ) {
+            return;
+          }
+          const update: AcpAdapterV2SubagentUpdate = {
+            nativeTaskId: notice.childSessionId,
+            prompt: notice.title ?? "",
+            title: notice.title,
+            model: notice.model,
+            status: "running",
+            childSessionId: notice.childSessionId,
+            result: null,
+            suppressNormalTool: true,
+          };
+          if (hasUnnamedSubagentChild(context)) {
+            context.deferredSubagentSpawns.set(notice.childSessionId, update);
+            return;
+          }
+          yield* projectSpawnNotice(context, notice.childSessionId, update);
+          yield* rearmDeferredFinalize(context);
+        });
+
         const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
           readonly childSessionId: string;
           readonly status: "completed" | "failed" | "cancelled";
           readonly result: string | null;
         }) {
           const context = yield* Ref.get(activeTurn);
+          const deferredSpawn = context?.deferredSubagentSpawns.get(notice.childSessionId);
+          if (context !== null && deferredSpawn !== undefined) {
+            context.deferredSubagentSpawns.set(notice.childSessionId, {
+              ...deferredSpawn,
+              status: notice.status,
+              result: notice.result,
+            });
+            return;
+          }
           const subagent =
             context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
           const known =
@@ -6671,6 +6785,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
+              startSubagent: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    yield* startSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
               finishSubagent: (notice) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
@@ -7960,6 +8083,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
+              subagentsByToolCallId: new Map(),
+              deferredSubagentSpawns: new Map(),
               pendingSubagentNotifications: new Map(),
               toolCallIdsByBackgroundTaskId: new Map(),
               backgroundCommands: new Map(),

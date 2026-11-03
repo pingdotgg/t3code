@@ -25,6 +25,7 @@ import {
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
   xAiSubagentFinishedNotice,
+  xAiSubagentSpawnedNotice,
   XAiAskUserQuestionRequest,
 } from "./xaiAcpExtension.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -1280,6 +1281,31 @@ describe("XAiAcpExtension", () => {
     expect(finished({ status: "timed_out" })).toBeNull();
     expect(finished({})).toBeNull();
     expect(finished({ status: "completed", child_session_id: undefined })).toBeNull();
+  });
+
+  it("maps subagent_spawned only for direct children of the notifying session", () => {
+    const spawned = (update: Record<string, unknown>) =>
+      xAiSubagentSpawnedNotice({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_spawned",
+          subagent_id: "child-session",
+          child_session_id: "child-session",
+          parent_session_id: "root-session",
+          subagent_type: "general-purpose",
+          model: "grok-4.7",
+          ...update,
+        } as never,
+      });
+    expect(spawned({ description: "goal plan writer" })).toEqual({
+      sessionId: "root-session",
+      childSessionId: "child-session",
+      title: "goal plan writer",
+      model: "grok-4.7",
+    });
+    expect(spawned({})).toMatchObject({ title: "general-purpose" });
+    expect(spawned({ parent_session_id: "child-session" })).toBeNull();
+    expect(spawned({ child_session_id: undefined })).toBeNull();
   });
 
   it.effect("settles a hung prompt from released _x.ai/session_notification turns", () =>
