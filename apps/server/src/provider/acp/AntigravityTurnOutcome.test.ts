@@ -29,6 +29,10 @@ const QUOTA_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// Context summarization replays a stored failed CHECKPOINT step on every later prompt.
+const FAILED_CHECKPOINT_ERROR = errorPayload(
+  'context summarization: checkpoint step 841 failed: error executing cascade step: CORTEX_STEP_TYPE_CHECKPOINT: doRequest: error sending request: Post "https://aiplatform.googleapis.com/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-4-argon:streamGenerateContent?alt=sse": auth: "invalid_grant" "reauth related error (invalid_rapt)"',
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -190,6 +194,33 @@ describe("watchAntigravityPromptOutcome", () => {
         code: "QUOTA_EXHAUSTED",
         retryable: true,
       });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("marks the native thread broken when a failed checkpoint step is replayed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "e6aba774-5472-4277-b6ee-27b2e05570a7";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+      const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+      try {
+        database.exec(
+          "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
+        );
+        const insert = database.prepare("INSERT INTO steps VALUES (?, ?, ?)");
+        insert.run(843, USER_INPUT, Buffer.from("Continue."));
+        insert.run(844, ERROR_MESSAGE, FAILED_CHECKPOINT_ERROR);
+      } finally {
+        database.close();
+      }
+
+      const outcome = yield* check({ stopReason: "end_turn" });
+      assert.equal(outcome?.threadDisposition, "broken");
+      assert.equal(outcome?.failure.class, "provider_error");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
