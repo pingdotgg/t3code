@@ -1112,6 +1112,8 @@ interface ActiveAcpTurn {
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  readonly promptDispatched: Deferred.Deferred<void, never>;
+  inputRecordedAt?: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
   consumedPromptMessageId?: string;
@@ -4606,6 +4608,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          // Session metadata and child output do not acknowledge this root prompt.
+          if (
+            context !== null &&
+            !context.finalized &&
+            context.inputRecordedAt === undefined &&
+            notification.sessionId === context.nativeThreadId &&
+            (yield* Deferred.isDone(context.promptDispatched)) &&
+            (update.sessionUpdate === "user_message" ||
+              update.sessionUpdate === "user_message_chunk" ||
+              (update.sessionUpdate !== "compaction_update" &&
+                update.sessionUpdate !== "compaction_summary_chunk" &&
+                acpRootSessionUpdateIngestsOutput(notification)))
+          ) {
+            context.inputRecordedAt = yield* DateTime.now;
+            const turn = providerTurnPayload(context, "running", null);
+            yield* Ref.update(providerTurns, (current) =>
+              new Map(current).set(String(turn.id), turn),
+            );
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              driver,
+              threadId: context.input.threadId,
+              providerTurn: turn,
+            });
+          }
           if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
@@ -7043,6 +7070,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(context.inputRecordedAt === undefined
+            ? {}
+            : { inputRecordedAt: context.inputRecordedAt }),
           ...(status === "running" || status === "pending"
             ? {}
             : {
@@ -7572,6 +7602,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeTurnId,
               startedAt,
               completed,
+              promptDispatched: yield* Deferred.make<void>(),
               itemOrdinals: new Map(),
               outgoingPrompt:
                 (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
@@ -7739,7 +7770,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
+            const promptOptions = { dispatched: context.promptDispatched };
+            yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
                   if (promptParts?.instructionState === undefined) return current;

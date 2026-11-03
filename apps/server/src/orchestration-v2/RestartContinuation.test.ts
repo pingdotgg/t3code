@@ -1103,25 +1103,31 @@ const cutRequest = {
   context: { version: 1 as const, records: [] },
 };
 
-it.effect("resends a Codex request the restart cut before Codex recorded it", () =>
-  Effect.gen(function* () {
-    const cut = cutMidTurn();
-    for (const providerTurns of [
-      cut.providerTurns,
-      // Pre-turn compaction reports usage before Codex records the new request.
-      cut.providerTurns.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
-    ]) {
-      const dispatches = yield* continuationDispatches({
-        ...cut,
-        messages: [cutRequest],
-        providerTurns,
-      } as unknown as OrchestrationV2ThreadProjection);
-      assert.deepEqual(
-        dispatches.map((command) => [command.text, command.attachments, command.context]),
-        [[cutRequest.text, cutRequest.attachments, cutRequest.context]],
-      );
-    }
-  }),
+it.effect.each(["codex", "acpRegistry"] as const)(
+  "resends a %s request and its image before the provider accepted it",
+  (driverKind) =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      for (const providerTurns of [
+        cut.providerTurns,
+        // Pre-turn compaction reports usage before Codex records the new request.
+        cut.providerTurns.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
+      ]) {
+        const dispatches = yield* continuationDispatches({
+          ...cut,
+          messages: [cutRequest],
+          providerTurns,
+          providerThreads: cut.providerThreads.map((thread) => ({
+            ...thread,
+            driver: ProviderDriverKind.make(driverKind),
+          })),
+        } as unknown as OrchestrationV2ThreadProjection);
+        assert.deepEqual(
+          dispatches.map((command) => [command.text, command.attachments, command.context]),
+          [[cutRequest.text, cutRequest.attachments, cutRequest.context]],
+        );
+      }
+    }),
 );
 
 it.effect("resumes natively once Codex recorded the request, and for other providers", () =>
@@ -1134,6 +1140,16 @@ it.effect("resumes natively once Codex recorded the request, and for other provi
       providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
     } as unknown as OrchestrationV2ThreadProjection;
     assert.deepEqual(yield* continuationTexts(recorded), ["Continue where you left off."]);
+    assert.deepEqual(
+      yield* continuationTexts({
+        ...recorded,
+        providerThreads: recorded.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make("acpRegistry"),
+        })),
+      }),
+      ["Continue where you left off."],
+    );
     // A goal's first native turn recorded the request; its cut follow-up turn records none.
     const goalFollowUp = {
       ...cut,

@@ -1244,6 +1244,67 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect.each(["user_message", "agent_message_chunk"] as const)(
+    "confirms input only after a root %s, and keeps it when the turn settles",
+    (sessionUpdate) =>
+      Effect.gen(function* () {
+        const marker = (title: string) =>
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "session_info_update",
+            title,
+          });
+        const session = yield* openClaudeReplaySession([
+          ...claudeFrames.open,
+          claudeFrames.prompt(1)[0],
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "usage_update",
+            used: 1,
+            size: 100,
+          }),
+          claudeFrames.update("unrelated-child", {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Earlier background work" },
+          }),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "compaction_update",
+            compactionId: "before-input",
+            status: "running",
+          }),
+          marker("before acceptance"),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate,
+            ...(sessionUpdate === "user_message"
+              ? { messageId: "accepted", content: [{ type: "text", text: "test prompt" }] }
+              : { content: { type: "text", text: "Working on the request" } }),
+          }),
+          marker("after acceptance"),
+          ...claudeFrames.prompt(1).slice(1),
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ]);
+        yield* session.runtime.startTurn(session.turnInput(1));
+        const before = yield* session.throughMarker("before acceptance");
+        const initial = before.flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+        );
+        const acceptedEvents = yield* session.throughMarker("after acceptance");
+        const after = yield* session.until((event) => event.type === "turn.terminal");
+        const turns = [...acceptedEvents, ...after].flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+        );
+        assert.isNotEmpty(initial);
+        assert.isTrue(initial.every((turn) => turn.inputRecordedAt === undefined));
+        const accepted = acceptedEvents.find((event) => event.type === "provider_turn.updated");
+        const acceptedTurn =
+          accepted?.type === "provider_turn.updated" ? accepted.providerTurn : undefined;
+        assert.isDefined(acceptedTurn?.inputRecordedAt);
+        const terminal = turns.at(-1)!;
+        assert.equal(terminal.status, "completed");
+        assert.deepEqual(terminal.inputRecordedAt, acceptedTurn?.inputRecordedAt);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "reconciles a full prompt echo %s acknowledgment",
     (ordering) =>

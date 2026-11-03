@@ -307,12 +307,14 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
-    // Codex resumes natively with no input, so a request it never recorded must be sent again.
+    const driver = projection.providerThreads.find(
+      (thread) => thread.id === source.providerThreadId,
+    )?.driver;
+    // Native history may lack a prompt the provider never acknowledged.
     const resent =
       !note.settled &&
       sourceMessage !== undefined &&
-      projection.providerThreads.find((thread) => thread.id === source.providerThreadId)?.driver ===
-        "codex" &&
+      (driver === "codex" || driver === "acpRegistry") &&
       restartSourceInputUnrecorded(source, projection.providerTurns, projection.runs)
         ? sourceMessage
         : undefined;
