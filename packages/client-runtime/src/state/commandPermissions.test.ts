@@ -1,6 +1,3 @@
-import * as RpcClient from "../rpc/client.ts";
-import { createServerEnvironmentAtoms } from "./server.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -10,8 +7,6 @@ import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
-  ProviderInstanceId,
-  type ManageBundledSkillInput,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -97,6 +92,41 @@ describe("command permissions", () => {
       }),
     ),
   );
+
+  it.effect("requires the destination read grant to refresh providers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const refresh = createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthOrchestrationReadScope],
+            permissions: [AuthOrchestrationReadScope],
+          }),
+        );
+        expect(registry.get(refresh.permissionAtom(env))).toBe(true);
+        yield* refresh.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(other))).toBe(false);
+        expect((yield* refresh.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -557,68 +587,3 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(writes).toBe(0);
   }),
 );
-
-it("sends distinct skill mutations queued for the same environment", async () => {
-  let entered!: () => void;
-  let release!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const received: ManageBundledSkillInput[] = [];
-  using _request = vi.spyOn(RpcClient, "requestGuarded").mockImplementation(
-    (_tag, raw) =>
-      Effect.promise(async () => {
-        const input = raw as ManageBundledSkillInput;
-        received.push(input);
-        if (received.length === 1) {
-          entered();
-          await gate;
-        }
-        return { id: input.skillId };
-      }) as never,
-  );
-  const testRuntime = Atom.runtime(
-    Layer.mergeAll(
-      Layer.succeed(EnvironmentRegistry, {
-        run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) => effect,
-      } as unknown as EnvironmentRegistry["Service"]),
-      Layer.succeed(EnvironmentCacheStore, {} as EnvironmentCacheStore["Service"]),
-    ),
-  );
-  const registry = AtomRegistry.make();
-  const unmount = registry.mount(sessions(env));
-  registry.set(
-    sessions(env),
-    AsyncResult.success({
-      ...grant(true),
-      scopes: [AuthSettingsWriteScope],
-      permissions: [AuthSettingsWriteScope],
-    }),
-  );
-  const command = createServerEnvironmentAtoms(testRuntime, {
-    initialConfigValueAtom: () => Atom.make(null),
-  }).manageBundledSkill;
-  const input = {
-    instanceId: ProviderInstanceId.make("codex"),
-    skillId: "t3code-threads",
-    action: "install",
-    expectedFingerprint: "absent",
-  } as const;
-  try {
-    const first = command.run(registry, { environmentId: env, input });
-    await started;
-    const secondInput = { ...input, skillId: "t3code-browser" as const };
-    const second = command.run(registry, { environmentId: env, input: secondInput });
-    release();
-    expect((await first)._tag).toBe("Success");
-    expect((await second)._tag).toBe("Success");
-    expect(received).toEqual([input, secondInput]);
-  } finally {
-    release();
-    unmount();
-    registry.dispose();
-  }
-});

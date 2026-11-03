@@ -9,18 +9,33 @@ const MIN_WIDTH = 160;
 const MAX_WIDTH = 560;
 const FILE_CONTENT_MIN_WIDTH = 256;
 
+/** A persisted, resizable file-tree column; fills the row when resizing is disabled.
+ * Callers can retain a responsive initial width via defaultWidthFraction (a fraction of the row),
+ * and use a separate saved width, minimum and resize label. A chosen width overrides the default.
+ */
 export function FileExplorerPane({
   resizable,
   children,
+  storageKey = "t3code.fileExplorerWidth",
+  defaultWidth = 256,
+  defaultWidthFraction,
+  minWidth = MIN_WIDTH,
+  resizeLabel = "Resize file explorer",
 }: {
   resizable: boolean;
   children: ReactNode;
+  storageKey?: string;
+  defaultWidth?: number;
+  defaultWidthFraction?: number;
+  minWidth?: number;
+  resizeLabel?: string;
 }) {
   const [maxWidth, setMaxWidth] = useState(MAX_WIDTH);
+  const [responsiveDefaultWidth, setResponsiveDefaultWidth] = useState(defaultWidth);
   const { width, setWidth, handlers } = useResizableWidth({
-    storageKey: "t3code.fileExplorerWidth",
-    defaultWidth: 256,
-    minWidth: MIN_WIDTH,
+    storageKey,
+    defaultWidth: responsiveDefaultWidth,
+    minWidth,
     maxWidth,
     edge: "left",
   });
@@ -30,10 +45,19 @@ export function FileExplorerPane({
       ref={(host) => {
         const row = host?.parentElement;
         if (!row || !resizable) return;
-        const measure = () =>
-          setMaxWidth(
-            Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, row.clientWidth - FILE_CONTENT_MIN_WIDTH)),
+        const measure = () => {
+          const initialWidth = Math.max(
+            minWidth,
+            Math.min(defaultWidth, row.clientWidth * (defaultWidthFraction ?? 1)),
           );
+          // A responsive default must not shrink to make room for the content reserve.
+          const availableWidth = Math.max(
+            row.clientWidth - FILE_CONTENT_MIN_WIDTH,
+            defaultWidthFraction === undefined ? minWidth : initialWidth,
+          );
+          setMaxWidth(Math.max(minWidth, Math.min(MAX_WIDTH, availableWidth)));
+          setResponsiveDefaultWidth(initialWidth);
+        };
         measure();
         return observeResize(row, measure);
       }}
@@ -54,10 +78,10 @@ export function FileExplorerPane({
       {resizable ? (
         <RightPanelResizeHandle
           handlers={handlers}
-          label="Resize file explorer"
+          label={resizeLabel}
           tabIndex={0}
           aria-valuenow={width}
-          aria-valuemin={MIN_WIDTH}
+          aria-valuemin={minWidth}
           aria-valuemax={maxWidth}
           onKeyDown={(event) => {
             if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -70,7 +94,7 @@ export function FileExplorerPane({
                 nextWidth = width - 16;
                 break;
               case "Home":
-                nextWidth = MIN_WIDTH;
+                nextWidth = minWidth;
                 break;
               case "End":
                 nextWidth = maxWidth;
