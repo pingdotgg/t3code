@@ -1,7 +1,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -201,13 +201,13 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     // Unkeyed hashes match across environments; random Go keys resist offline guessing,
     // and a Console sign-in hashes only account IDs, never its token.
     const account = apiKey === consoleCredential?.token ? consoleCredential.account : undefined;
-    const credentialFingerprint = yield* crypto
+    const credentialFingerprint = yield* digest
       .digest(
-        "SHA-256",
+        Digest.sha256,
         new TextEncoder().encode(
           account ? `opencode-go\0console\0${account}` : `opencode-go\0${apiKey}`,
         ),
