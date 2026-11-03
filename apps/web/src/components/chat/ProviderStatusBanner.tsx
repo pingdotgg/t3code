@@ -168,7 +168,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
                 disabled={!canRefresh || isRefreshing}
                 onClick={() => void refresh()}
                 size="xs"
-                variant="outline"
+                variant="secondary"
               >
                 <RefreshIcon />
                 {isRefreshing ? "Refreshing..." : "Refresh"}
