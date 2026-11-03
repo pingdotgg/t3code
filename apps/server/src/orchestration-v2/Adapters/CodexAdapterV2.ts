@@ -4728,10 +4728,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       nativeCode: current.nativeCode,
                       failure: current.failure,
                     };
-                    yield* client.request("turn/interrupt", {
-                      threadId: payload.threadId,
-                      turnId: payload.turnId,
-                    });
+                    const interrupted = yield* client
+                      .request("turn/interrupt", {
+                        threadId: payload.threadId,
+                        turnId: payload.turnId,
+                      })
+                      .pipe(Effect.timeoutOption("10 seconds"));
+                    if (Option.isNone(interrupted)) {
+                      const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
+                        context.providerTurnId,
+                      );
+                      if (
+                        currentAfterTimeout?.startedAt !== state.startedAt ||
+                        (yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
+                      )
+                        return;
+                      context.latestProviderFailure = {
+                        nativeMessage: currentAfterTimeout.nativeMessage,
+                        nativeCode: currentAfterTimeout.nativeCode,
+                        failure: currentAfterTimeout.failure,
+                      };
+                      yield* finalizeCodexTurn({
+                        context,
+                        nativeTurnId: payload.turnId,
+                        status: "failed",
+                        completedAt: yield* DateTime.now,
+                      });
+                    }
                   }),
                 ),
                 Effect.catch((cause) =>
@@ -5786,10 +5809,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const exhaustionStatus = codexExhaustionHttpStatus(input.failureErrorInfo);
               const failure =
                 previousFailure !== undefined &&
-                (input.failureMessage === undefined ||
-                  input.failureMessage === previousFailure.nativeMessage) &&
-                (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
-                (exhaustionStatus === null || previousFailure.failure.class === failureClass)
+                (input.context.retryBudgetExhausted === true ||
+                  ((input.failureMessage === undefined ||
+                    input.failureMessage === previousFailure.nativeMessage) &&
+                    (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
+                    (exhaustionStatus === null || previousFailure.failure.class === failureClass)))
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({

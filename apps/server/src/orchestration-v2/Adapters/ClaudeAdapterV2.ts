@@ -8854,14 +8854,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     )
                       return;
                     context.retryBudgetFailure = current.failure;
+                    const liveQuery = yield* Ref.get(queryContext);
                     yield* interruptTurn({
                       providerThread: context.input.providerThread,
                       providerTurnId: context.providerTurnId,
-                    });
+                    }).pipe(
+                      Effect.timeoutOption("10 seconds"),
+                      Effect.catch((cause) =>
+                        Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", {
+                          cause,
+                        }),
+                      ),
+                    );
+                    const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
+                      context.providerTurnId,
+                    );
+                    if (
+                      currentAfterTimeout?.startedAt !== state.startedAt ||
+                      (yield* Ref.get(activeTurn)) !== context ||
+                      liveQuery === null
+                    )
+                      return;
+                    const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                      current?.query === liveQuery.query ? [true, null] : [false, current],
+                    );
+                    if (!ownedLiveQuery) return;
+                    liveQuery.stopping = true;
+                    yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+                    yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+                    yield* Deferred.succeed(liveQuery.closed, undefined);
                   }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
                 ),
                 Effect.forkIn(sessionScope),
               );
