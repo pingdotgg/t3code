@@ -143,15 +143,7 @@ export function SidebarSectionHeader(props: {
         onPointerDown={(event) => event.preventDefault()}
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
-        tone={
-          props.isDropTarget
-            ? "accent"
-            : props.dragging
-              ? "emphasized"
-              : shelf === "snoozed"
-                ? "info"
-                : "settled"
-        }
+        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "shelf"}
         data-testid={`sidebar-${shelf}-shelf-toggle`}
         accessory={<span className="text-meta tabular-nums">{props.count}</span>}
       >
