@@ -1122,6 +1122,138 @@ describe("environment shell synchronization", () => {
       expect(filled).toEqual([link(2)]);
     }),
   );
+  it.effect("drops a superseded session's snapshot applied after the next session subscribes", () =>
+    Effect.gen(function* () {
+      const NEXT_VERSION = "2.0.0";
+      const oldEvents = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const newEvents = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const supersededPulled = yield* Deferred.make<void>();
+      const markerPulled = yield* Deferred.make<void>();
+      const nextSubscribed = yield* Deferred.make<void>();
+      const applyBlocked = yield* Deferred.make<void>();
+      const releaseApply = yield* Deferred.make<void>();
+      const saved = yield* Queue.unbounded<{
+        readonly snapshot: OrchestrationV2ShellSnapshot;
+        readonly vouch: Persistence.ShellCacheVouch | undefined;
+      }>();
+      const supersededRow = { ...v2ThreadShell, id: ThreadId.make("superseded-row") };
+
+      const oldClient = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+          Stream.fromQueue(oldEvents).pipe(
+            Stream.tap((item) =>
+              item.kind === "snapshot" && item.snapshot.snapshotSequence === 2
+                ? Deferred.succeed(supersededPulled, undefined)
+                : (item.kind as string) === "future.event"
+                  ? Deferred.succeed(markerPulled, undefined)
+                  : Effect.void,
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const newClient = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+          Stream.unwrap(
+            Deferred.succeed(nextSubscribed, undefined).pipe(
+              Effect.as(Stream.fromQueue(newEvents)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const sessionFor = (
+        client: WsRpcProtocolClient,
+        serverVersion: string,
+      ): RpcSession.RpcSession => ({
+        ...session(client),
+        initialConfig: Effect.succeed({
+          shellResumeCompletionMarker: true,
+          environment: { serverVersion },
+        } as never),
+      });
+      const activeSession = yield* SubscriptionRef.make(
+        Option.some(sessionFor(oldClient, SERVER_VERSION)),
+      );
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeedNone,
+        saveShell: (_id, snapshot, vouch) =>
+          Queue.offer(saved, { snapshot, vouch }).pipe(Effect.asVoid),
+        loadThread: () => Effect.succeedNone,
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeedNone,
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeedNone,
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      // Stamping the first vouch parks the consumer mid-apply, so the next item stays buffered
+      // in the switchMap behind it while the session changes.
+      const realClock = yield* Clock.clockWith(Effect.succeed);
+      const gatedClock: Clock.Clock = {
+        currentTimeMillisUnsafe: () => realClock.currentTimeMillisUnsafe(),
+        currentTimeNanosUnsafe: () => realClock.currentTimeNanosUnsafe(),
+        currentTimeNanos: realClock.currentTimeNanos,
+        monotonicTimeNanosUnsafe: () => realClock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: realClock.monotonicTimeNanos,
+        sleep: (duration) => realClock.sleep(duration),
+        currentTimeMillis: Deferred.succeed(applyBlocked, undefined).pipe(
+          Effect.flatMap((first) => (first ? Deferred.await(releaseApply) : Effect.void)),
+          Effect.andThen(realClock.currentTimeMillis),
+        ),
+      };
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(Clock.Clock, gatedClock),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, {
+          load: () => Effect.succeedNone,
+        }),
+      );
+
+      yield* Queue.offer(oldEvents, { kind: "snapshot", snapshot: LIVE_SHELL_SNAPSHOT });
+      yield* Deferred.await(applyBlocked);
+      yield* Queue.offer(oldEvents, {
+        kind: "snapshot",
+        snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 2, threads: [supersededRow] },
+      });
+      yield* Deferred.await(supersededPulled);
+      // The upstream pulls again only after it has buffered the snapshot above.
+      yield* Queue.offer(oldEvents, { kind: "future.event", sequence: 99 } as never);
+      yield* Deferred.await(markerPulled);
+      yield* SubscriptionRef.set(activeSession, Option.some(sessionFor(newClient, NEXT_VERSION)));
+      yield* Deferred.await(nextSubscribed);
+      yield* Deferred.succeed(releaseApply, undefined);
+      yield* Queue.offer(newEvents, {
+        kind: "thread.updated",
+        sequence: 3,
+        location: "active",
+        thread: { ...v2ThreadShell, title: "From the new session" },
+      });
+      const settled = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 3,
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      expect(Option.getOrThrow(settled.snapshot).threads.map((thread) => thread.id)).not.toContain(
+        supersededRow.id,
+      );
+
+      yield* TestClock.adjust("500 millis");
+      const persisted = yield* Queue.take(saved);
+      expect(persisted.vouch?.serverVersion).toBe(SERVER_VERSION);
+    }),
+  );
 });
 
 describe("environment shell cold start from a vouched cache", () => {
