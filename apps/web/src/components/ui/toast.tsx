@@ -587,9 +587,8 @@ function Toasts({ position }: { position: ToastPosition }) {
           "fixed z-[70] mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-inset:--spacing(4)]",
           // From md up the stack's right edge sits under the pane header's last control.
           "md:[--toast-inset:calc(var(--workspace-pane-inset)+var(--workspace-gutter-end))]",
-          // Top stacks sit just under the header: the chrome row when the pane
-          // is full-bleed, the inset pane's header row from md up.
-          "[--toast-header-offset:var(--workspace-topbar-height)] md:[--toast-header-offset:calc(var(--workspace-pane-inset-top)+var(--workspace-pane-header-height))]",
+          // Top stacks sit one gutter under the chrome row, where full-bleed headers and the inset pane's notches end.
+          "[--toast-header-offset:calc(var(--workspace-chrome-row-height)+var(--workspace-gutter))]",
           "data-[position*=top]:top-(--toast-header-offset)",
           "data-[position*=bottom]:bottom-(--toast-inset)",
           "data-[position*=left]:left-(--toast-inset)",
