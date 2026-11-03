@@ -269,8 +269,13 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it.each(["build &&", "R&D", "&&next"])("leaves %j out of the machine menu", (text) =>
-    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  it.each([
+    ["build &&", 8],
+    ["build &&", 7],
+    ["R&D", 3],
+    ["&&next", 6],
+  ])("leaves %j out of the machine menu", (text, cursor) =>
+    expect(detectComposerTrigger(text, cursor)).toBeNull(),
   );
 
   it("does not keep a subcommand trigger active after /model arguments", () => {

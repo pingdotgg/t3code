@@ -149,8 +149,10 @@ export function detectComposerTrigger(
   }
   if (token.startsWith("&")) {
     const query = token.slice(1);
-    // `&&` is a shell operator, not a machine.
-    if (query.includes("&")) return null;
+    let wordEnd = cursor;
+    while (wordEnd < text.length && !wsCheck(text[wordEnd] ?? "")) wordEnd += 1;
+    // `&&` is a shell operator, not a machine, even with the caret between its two `&`.
+    if (text.slice(tokenStart + 1, wordEnd).includes("&")) return null;
     return { kind: "environment", query, rangeStart: tokenStart, rangeEnd: cursor };
   }
   if (!token.startsWith("@")) {
