@@ -58,8 +58,8 @@ const isChildRunLive = (
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
  * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * client has, archived or not (`delegatedUnderParent`, by thread key). A task whose parent
+ * the client does not have stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -673,9 +673,8 @@ export function createEnvironmentThreadShellAtoms(input: {
         if (
           parent !== undefined &&
           environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          // An archived parent keeps its task, as it keeps a local subagent.
+          get(environmentThreadIndexAtom(parent.environmentId)).has(parent.threadId)
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
