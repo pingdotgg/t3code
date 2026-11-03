@@ -1102,6 +1102,18 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         });
         assert.strictEqual(staged.stdout.trim(), "outside.txt");
       }
+      let deepest = cwd;
+      for (let depth = 0; depth < 4; depth++) {
+        yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "d/.gitignore\n");
+        deepest = path.join(deepest, "d");
+        yield* fileSystem.makeDirectory(deepest);
+      }
+      yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "hidden.txt\n");
+      yield* fileSystem.writeFileString(path.join(deepest, "hidden.txt"), "remove\n");
+      const incomplete = yield* driver.checkpoints
+        .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
+        .pipe(Effect.flip);
+      assert.strictEqual(incomplete._tag, "VcsProcessExitError");
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

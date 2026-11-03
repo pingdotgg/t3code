@@ -1308,6 +1308,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* recreateWorkspace;
         cleaned = yield* clean;
       }
+      if (cleaned.exitCode === 0 && cleaned.stdout.length > 0) {
+        yield* recreateWorkspace;
+        const remaining = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "clean", "-dn", "--", "."],
+        });
+        if (remaining.stdout.length > 0)
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git clean",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "Could not clean the checkpoint workspace: untracked files remain.",
+          });
+      }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
         const emptiedWorkspace =
