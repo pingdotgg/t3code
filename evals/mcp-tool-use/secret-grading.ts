@@ -204,6 +204,9 @@ export const CHAT_ASK: ReadonlyArray<string> = ASKS.map(([pattern]) => pattern);
 const ASK_RES = ASKS.map(([pattern, excusable]) => ({ re: new RegExp(pattern, "g"), excusable }));
 const PRIVATE_ROUTE_RE = new RegExp(PRIVATE_ROUTE);
 const CHAT_HERE_RE = new RegExp(`^${CHAT_HERE}`);
+// "in chat" or "in your reply" anywhere in the ask's clause, unless negated ("not in chat").
+const IN_CHAT_RE =
+  /(?<!\b(?:not|never|don['’]t|do not)\s+(?:\w+\s+){0,2})\b(?:in (?:the |this )?(?:chat|thread)|in (?:your|a) (?:next )?(?:reply|message))\b/i;
 
 /**
  * Where a private route can excuse an ask: its clause (bounded by . ! ? or ; before a space), from
@@ -235,6 +238,7 @@ export const chatAsk = (text: string) => {
       const excused =
         excusable &&
         !CHAT_HERE_RE.test(prose.slice(end)) &&
+        !IN_CHAT_RE.test(askAlternative(prose, match.index + lead.length, end)) &&
         PRIVATE_ROUTE_RE.test(askAlternative(prose, match.index + lead.length, end));
       if (!excused) return match[0].replace(/^[.;:!?\s]+/, "");
     }
@@ -357,7 +361,7 @@ const SHELL = new Set(["Bash", "Monitor", "exec"]);
 // A redirect into a file (not /dev/null or another descriptor), tee, or an interpreter's file write.
 // The redirect and tee are read outside quotes and heredoc bodies, where a `>` is text.
 const REDIRECTS_TO_FILE =
-  /(?:^|[^<>&\d=-])\d?>>?(?![>&=])(?!\s*(?:\/dev\/null\b|&\d))\s*\S|&>>?(?!\s*\/dev\/null\b)\s*\S|>&(?![\d-])(?!\s*\/dev\/null\b)\s*\S|\btee\b/;
+  /(?:^|[^<>&\d=-])\d?>>?(?![>&=])(?!\s*(?:\/dev\/null(?![\w./-])|&\d))\s*\S|&>>?(?!\s*\/dev\/null(?![\w./-]))\s*\S|>&(?![\d-])(?!\s*\/dev\/null(?![\w./-]))\s*\S|\btee\b/;
 const shellSyntax = (command: string) =>
   command
     .replace(new RegExp(HEREDOC.source, "g"), (_, _q, _tag, rest: string) => `<<${rest}`)
@@ -1368,15 +1372,17 @@ export const classifyFileUse = (
   const secretVars = new Set<string>();
   const exportedVars = new Set<string>();
   // A child shell sees the parent's variables, but what it assigns stays in the child.
+  let xtrace = false;
   const inChild = (run: () => void) => {
     const saved = [fileVars, dirVars, secretVars, exportedVars].map((vars) => new Set(vars));
+    const traced = xtrace;
     run();
+    xtrace = traced;
     [fileVars, dirVars, secretVars, exportedVars].forEach((vars, i) => {
       vars.clear();
       for (const name of saved[i]!) vars.add(name);
     });
   };
-  let xtrace = false;
   const fileRef = () =>
     [
       ...files.map(escape),
