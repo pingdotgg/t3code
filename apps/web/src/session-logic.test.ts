@@ -248,6 +248,51 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
+  it("offers a rewind after a turn in a plain home whose repos hold the ready checkpoints", () => {
+    const runIds = [RunId.make("plain-run-1"), RunId.make("plain-run-2")];
+    const userIds = [MessageId.make("plain-user-1"), MessageId.make("plain-user-2")];
+    const timelineEntries = runIds.map((runId, index): TimelineEntry => {
+      const message = {
+        id: userIds[index]!,
+        role: "user" as const,
+        text: `Turn ${index + 1}`,
+        runId,
+        inputIntent: "turn_start" as const,
+        streaming: false,
+        createdAt: `2026-06-20T00:00:0${index}.000Z`,
+        updatedAt: `2026-06-20T00:00:0${index}.000Z`,
+      };
+      return { id: message.id, kind: "message", createdAt: message.createdAt, message };
+    });
+    const summary = (index: number, repositoryStatus: "ready" | "missing") => ({
+      runId: runIds[index]!,
+      checkpointTurnCount: index + 1,
+      checkpointRef: `checkpoint-plain-${index + 1}` as never,
+      status: "missing" as const,
+      files: [],
+      repositories: [{ status: repositoryStatus }] as never,
+      outsideEdits: [],
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:03.000Z",
+    });
+
+    const rewindable = deriveRevertTurnCountByUserMessageId({
+      timelineEntries,
+      threadStartCheckpointReady: false,
+      checkpoints: [summary(0, "ready"), summary(1, "ready")],
+    });
+    // The thread start has no root snapshot, so only turn 2 can be edited from.
+    expect([...rewindable]).toEqual([[userIds[1], 1]]);
+
+    expect(
+      deriveRevertTurnCountByUserMessageId({
+        timelineEntries,
+        threadStartCheckpointReady: false,
+        checkpoints: [summary(0, "missing"), summary(1, "missing")],
+      }).size,
+    ).toBe(0);
+  });
+
   describe("revert targets after a rewind", () => {
     const runId = (ordinal: number) => RunId.make(`run-${ordinal}`);
     const turn = (ordinal: number): TimelineEntry[] =>
@@ -1837,5 +1882,27 @@ describe("findRevertCheckpoint", () => {
     ];
 
     expect(findRevertCheckpoint([rootStart, repoStart], 0, scopes)?.id).toBe(rootStart.id);
+  });
+
+  it("rewinds a plain home folder to a turn whose root snapshot is missing", () => {
+    const rootTurn = {
+      ...checkpoint({
+        id: "root-1",
+        scopeId: rootScopeId,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+      }),
+      status: "missing" as const,
+    };
+
+    expect(
+      findRevertCheckpoint([rootTurn], 1, [
+        { id: rootScopeId, kind: "root_run" },
+        { id: repoScopeId, kind: "repository" },
+      ])?.id,
+    ).toBe(rootTurn.id);
+    expect(findRevertCheckpoint([rootTurn], 1, [{ id: rootScopeId, kind: "root_run" }])).toBe(
+      undefined,
+    );
   });
 });

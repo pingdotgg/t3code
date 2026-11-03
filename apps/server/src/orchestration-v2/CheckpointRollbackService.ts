@@ -183,7 +183,9 @@ export const layer: Layer.Layer<
         scope === undefined ||
         scope.kind === "repository" ||
         checkpoint.scopeId !== scope.id ||
-        checkpoint.status !== "ready"
+        // A plain home folder records no root snapshot; its tracked repos hold the history.
+        (checkpoint.status !== "ready" &&
+          !(checkpoint.status === "missing" && context.repositoryScopes.length > 0))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",
@@ -310,7 +312,13 @@ export const layer: Layer.Layer<
           : yield* Effect.gen(function* () {
               const targets = yield* Effect.forEach(
                 [
-                  { scope, checkpoint: Option.some<RestorableCheckpoint>(checkpoint) },
+                  {
+                    scope,
+                    checkpoint:
+                      checkpoint.status === "ready"
+                        ? Option.some<RestorableCheckpoint>(checkpoint)
+                        : Option.none<RestorableCheckpoint>(),
+                  },
                   ...repositoryScopes.map((repositoryScope) => ({
                     scope: repositoryScope,
                     checkpoint: repositoryRestoreTarget(
@@ -434,8 +442,10 @@ export const layer: Layer.Layer<
           }
         }
       }
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      // A "missing" root checkpoint has no ref to delete.
+      const staleRootRefs = staleCheckpoints.filter((candidate) => candidate.status === "ready");
+      if (staleRootRefs.length > 0) {
+        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleRootRefs });
       }
       const staleRepositoryCheckpoints = context.repositoryCheckpoints.filter(
         (candidate) =>

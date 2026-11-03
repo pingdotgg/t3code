@@ -758,7 +758,7 @@ const layerRealCheckpoints = CheckpointService.layer.pipe(
   ),
 );
 
-it.effect.each(["restores", "undo", "missing-ref"] as const)(
+it.effect.each(["restores", "undo", "missing-ref", "plain-home"] as const)(
   "rewinds every repo of a task folder, scenario=%s",
   (scenario) =>
     Effect.gen(function* () {
@@ -781,6 +781,10 @@ it.effect.each(["restores", "undo", "missing-ref"] as const)(
         fileSystem.readFileString(path.join(cwd, "a.txt")).pipe(Effect.map((text) => text.trim()));
       for (const repository of [home, path.join(home, "api"), path.join(task, "web")]) {
         yield* fileSystem.makeDirectory(repository, { recursive: true });
+        if (scenario === "plain-home" && repository === home) {
+          yield* write(repository, "initial");
+          continue;
+        }
         yield* git(repository, ["init", "--quiet"]);
         yield* git(repository, ["config", "user.email", "test@test.com"]);
         yield* git(repository, ["config", "user.name", "Test"]);
@@ -857,8 +861,10 @@ it.effect.each(["restores", "undo", "missing-ref"] as const)(
         yield* git(webScope.cwd, ["update-ref", "-d", refOf(webScope, 1)]);
       }
 
+      // A plain home has no thread-start snapshot, so its earliest rewind target is turn 1.
+      const targetOrdinal = scenario === "plain-home" ? 1 : 0;
       const target = records.find(
-        (record) => record.scopeId === rootScope.id && record.ordinalWithinScope === 0,
+        (record) => record.scopeId === rootScope.id && record.ordinalWithinScope === targetOrdinal,
       )!;
       const thread = {
         id: threadId,
@@ -881,19 +887,24 @@ it.effect.each(["restores", "undo", "missing-ref"] as const)(
         providerSession: undefined,
         checkpoint: target,
         scope: rootScope,
-        targetAttempt: undefined,
-        providerTurns: [],
+        targetAttempt: targetOrdinal === 0 ? undefined : { id: "target-attempt" },
+        providerTurns:
+          targetOrdinal === 0
+            ? []
+            : [{ id: "target-turn", providerThreadId, runAttemptId: "target-attempt", ordinal: 1 }],
         rolledBackAttemptIds: [],
-        runsToRollback: [1, 2].map((ordinal) => ({
-          id: runId(ordinal),
-          ordinal,
-          status: "completed",
-          rootNodeId: NodeId.make(`rollback-task-folder-node-${ordinal}`),
-          providerInstanceId,
-        })),
+        runsToRollback: [1, 2]
+          .filter((ordinal) => ordinal > targetOrdinal)
+          .map((ordinal) => ({
+            id: runId(ordinal),
+            ordinal,
+            status: "completed",
+            rootNodeId: NodeId.make(`rollback-task-folder-node-${ordinal}`),
+            providerInstanceId,
+          })),
         rootNodes: [],
         staleCheckpoints: records.filter(
-          (record) => record.scopeId === rootScope.id && record.ordinalWithinScope > 0,
+          (record) => record.scopeId === rootScope.id && record.ordinalWithinScope > targetOrdinal,
         ),
         repositoryScopes,
         repositoryCheckpoints: records.filter((record) => record.scopeId !== rootScope.id),
@@ -929,6 +940,7 @@ it.effect.each(["restores", "undo", "missing-ref"] as const)(
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getThread: () => Effect.succeed(thread as never),
               getCheckpointRollbackContext: () => Effect.succeed(context),
+              getProviderControlContext: () => Effect.succeed({ attempt: undefined } as never),
               getCheckpointContext: () =>
                 Effect.succeed({
                   runs: [],
@@ -982,6 +994,14 @@ it.effect.each(["restores", "undo", "missing-ref"] as const)(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
         );
+      if (scenario === "plain-home") {
+        assert.deepEqual(Option.getOrUndefined(result), undefined);
+        assert.equal(target.status, "missing");
+        // The plain home keeps its files; each repo goes back to its own turn 1 snapshot.
+        assert.deepEqual(contents, ["turn 2", "turn 1", "before run 2"]);
+        assert.deepEqual(calls, ["provider", "restore:api", "restore:web"]);
+        return;
+      }
       if (scenario === "restores") {
         assert.isTrue(Option.isNone(result));
         // web goes back to its first baseline, taken when it joined at run 2.

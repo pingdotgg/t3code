@@ -12670,7 +12670,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
-      if (targetCheckpoint.status !== "ready") {
+      // A plain home folder has no root snapshot; the rollback restores its tracked repos instead.
+      const restoresRepositoriesOnly =
+        targetCheckpoint.status === "missing" &&
+        projection.checkpointScopes.some((candidate) => candidate.kind === "repository");
+      if (targetCheckpoint.status !== "ready" && !restoresRepositoriesOnly) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

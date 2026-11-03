@@ -999,7 +999,12 @@ export function deriveRevertTurnCountByUserMessageId(input: {
 }): Map<ChatMessage["id"], number> {
   const readyTurnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
-    if (checkpoint.status === "ready") {
+    // A plain home folder has no root checkpoint; its repos' ready checkpoints carry the turn.
+    if (
+      checkpoint.status === "ready" ||
+      (checkpoint.status === "missing" &&
+        checkpoint.repositories.some((repository) => repository.status === "ready"))
+    ) {
       readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
@@ -1055,7 +1060,9 @@ export function findRevertCheckpoint(
   );
   return checkpoints.findLast(
     (checkpoint) =>
-      checkpoint.status === "ready" &&
+      (checkpoint.status === "ready" ||
+        // A plain home has no root snapshot; the server restores its repos alone.
+        (checkpoint.status === "missing" && repositoryScopeIds.size > 0)) &&
       !repositoryScopeIds.has(checkpoint.scopeId) &&
       (turnCount === 0
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
