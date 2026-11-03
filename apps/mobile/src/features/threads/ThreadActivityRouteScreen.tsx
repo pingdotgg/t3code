@@ -202,12 +202,13 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   );
   const threadDeleted = threadState.status === "deleted";
   const threadError = Option.getOrNull(threadState.error);
-  const runActive =
-    structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
+  const runtime = structure === null ? null : deriveThreadStructureRuntime(structure.projection);
+  const runActive = threadRuntimeIsActive(runtime);
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item),
     selectedThreadCwd ?? selectedThreadProject?.workspaceRoot ?? null,
     runActive,
+    runtime?.activeRunId ?? null,
   );
 
   const handleBack = () => {

@@ -348,12 +348,13 @@ export function ActivityPanel(props: {
 }) {
   const visibleItems = useQuietThreadVisibleTurnItems(props.threadRef);
   const structure = useQuietThreadProjection(props.threadRef);
-  const runActive =
-    structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
+  const runtime = structure === null ? null : deriveThreadStructureRuntime(structure.projection);
+  const runActive = threadRuntimeIsActive(runtime);
   const summary = deriveActivitySummary(
     visibleItems.map((visible) => visible.item),
     props.workspaceRoot ?? null,
     runActive,
+    runtime?.activeRunId ?? null,
   );
 
   // Before the thread loads there are no items, which would read as "Nothing to show yet".

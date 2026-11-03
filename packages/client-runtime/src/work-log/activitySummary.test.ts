@@ -43,7 +43,8 @@ const summarize = (
   items: Parameters<typeof deriveActivitySummary>[0],
   workspaceRoot: string | null = null,
   runActive = false,
-) => deriveActivitySummary(items, workspaceRoot, runActive);
+  activeRunId: typeof run1 | null = null,
+) => deriveActivitySummary(items, workspaceRoot, runActive, activeRunId);
 
 describe("deriveActivitySummary", () => {
   it("reports the running item as now and finished work as done, in order", () => {
@@ -302,6 +303,15 @@ describe("deriveActivitySummary", () => {
     ]);
     expect(cancelled.done).toEqual([]);
     expect(cancelled.failedCount).toBe(0);
+  });
+
+  it("shows the active run's own state while it has no items yet, not the previous run's", () => {
+    const summary = summarize([command("old command", "completed", run1)], null, true, run2);
+
+    expect(summary.phase).toBe("running");
+    expect(summary.done).toEqual([]);
+    expect(summary.touched).toEqual([]);
+    expect(summary.plan).toBeNull();
   });
 
   it("shows the plan only when the provider sent a todo list, with a completed count", () => {

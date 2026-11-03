@@ -208,8 +208,10 @@ export function deriveActivitySummary(
   workspaceRoot: string | null,
   /** The run has not ended, even when no item is running: the agent may be thinking or replying. */
   runActive: boolean,
+  /** The run in progress, which can exist before it has any item. */
+  activeRunId: ActivityItem["runId"] = null,
 ): ActivitySummary {
-  const latestRunId = items.findLast((item) => item.runId !== null)?.runId ?? null;
+  const latestRunId = activeRunId ?? items.findLast((item) => item.runId !== null)?.runId ?? null;
   const runItems =
     latestRunId === null
       ? []
