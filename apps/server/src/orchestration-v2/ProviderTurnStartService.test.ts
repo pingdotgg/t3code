@@ -488,6 +488,35 @@ function makeLocalCommandHarness(input: {
       strength: "strong" as const,
     },
   };
+  const parentProviderTurn = (ordinal: number, attemptRunId: RunId) => ({
+    attempt: {
+      ...projection.attempts[0]!,
+      id: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
+      runId: attemptRunId,
+      providerThreadId: parentProviderThread.id,
+      status: "completed" as const,
+    },
+    turn: {
+      id: ProviderTurnId.make(`side-chat-parent-turn-${ordinal}`),
+      providerThreadId: parentProviderThread.id,
+      nodeId: rootNodeId,
+      runAttemptId: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
+      nativeTurnRef: {
+        driver: providerThread.driver,
+        nativeId: `side-chat-parent-native-turn-${ordinal}`,
+        strength: "strong" as const,
+      },
+      ordinal,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: now,
+    },
+  });
+  const parentRolledBackRunId = RunId.make("side-chat-parent-rolled-back-run");
+  const parentTurns = [
+    parentProviderTurn(1, parentRunId),
+    parentProviderTurn(2, parentRolledBackRunId),
+  ];
   const parentRecords = {
     ...projection,
     thread: { ...projection.thread, id: parentThreadId },
@@ -498,8 +527,18 @@ function makeLocalCommandHarness(input: {
         threadId: parentThreadId,
         ordinal: 1,
         providerThreadId: parentProviderThread.id,
-        activeAttemptId: null,
+        activeAttemptId: parentTurns[0]!.attempt.id,
         status: "completed" as const,
+        completedAt: now,
+      },
+      {
+        ...run,
+        id: parentRolledBackRunId,
+        threadId: parentThreadId,
+        ordinal: 2,
+        providerThreadId: parentProviderThread.id,
+        activeAttemptId: parentTurns[1]!.attempt.id,
+        status: "rolled_back" as const,
         completedAt: now,
       },
       ...(input.sideChat?.nativeForkFrom === "busy"
@@ -508,7 +547,7 @@ function makeLocalCommandHarness(input: {
               ...run,
               id: RunId.make("side-chat-parent-busy-run"),
               threadId: parentThreadId,
-              ordinal: 2,
+              ordinal: 3,
               providerThreadId: parentProviderThread.id,
               status: "running" as const,
             },
@@ -516,8 +555,8 @@ function makeLocalCommandHarness(input: {
         : []),
     ],
     providerThreads: [parentProviderThread],
-    attempts: [],
-    providerTurns: [],
+    attempts: parentTurns.map(({ attempt }) => attempt),
+    providerTurns: parentTurns.map(({ turn }) => turn),
     turnItems: [],
   };
   if (input.sideChat !== undefined) {
@@ -749,7 +788,9 @@ function makeLocalCommandHarness(input: {
       strength: "strong" as const,
     },
   };
-  const forkThread = vi.fn(() => Effect.succeed(sideChatThread));
+  const forkThread = vi.fn((_fork: ProviderAdapter.ProviderAdapterV2ForkThreadInput) =>
+    Effect.succeed(sideChatThread),
+  );
   const sideChatSession = {
     driver: providerThread.driver,
     providerSession,
@@ -1273,6 +1314,10 @@ effectIt.effect.each([
       yield* harness.start;
 
       expect(harness.forkThread).toHaveBeenCalledTimes(forks ? 1 : 0);
+      // The parent's rolled-back turn is gone from its native conversation.
+      expect(
+        harness.forkThread.mock.calls[0]?.[0].sourceProviderTurns?.map((turn) => turn.id),
+      ).toEqual(forks ? ["side-chat-parent-turn-1"] : undefined);
       expect(harness.projection().contextTransfers).toMatchObject([
         { id: "side-chat-fork", status: transferStatus },
       ]);

@@ -1150,10 +1150,24 @@ export const layer: Layer.Layer<
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
           if (!sourceBusy) {
+            // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
+            const rolledBackAttemptIds = new Set(
+              sourceProjection.attempts
+                .filter((attempt) =>
+                  sourceProjection.runs.some(
+                    (candidate) =>
+                      candidate.id === attempt.runId && candidate.status === "rolled_back",
+                  ),
+                )
+                .map((attempt) => attempt.id),
+            );
             return yield* loadFromProvider(
               session.forkThread({
                 sourceProviderThread,
-                sourceProviderTurns: sourceProjection.providerTurns,
+                sourceProviderTurns: sourceProjection.providerTurns.filter(
+                  (turn) =>
+                    turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
+                ),
                 targetThreadId: projection.thread.id,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,
