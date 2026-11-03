@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
@@ -115,7 +116,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  const controls = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    metadataServer: options.metadataServer ?? false,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -169,7 +175,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       return Effect.die("Unexpected quota request");
     }
     metadataRequests.push(request.url);
-    return options.metadataServer
+    return controls.metadataServer
       ? Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -433,12 +439,19 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             { name: "GCE_METADATA_HOST", value: "metadata.internal:8080" },
           ],
           metadataHost: "metadata.internal:8080",
-          metadataServer: true,
+          metadataServer: false,
         });
+        const error = yield* h.refresh().pipe(Effect.flip);
+        expect(error.detail).toContain("gcloud auth application-default login");
+        h.controls.metadataServer = true;
+        yield* TestClock.adjust("30 seconds");
         yield* h.refresh();
         yield* h.refresh();
         expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
-        expect(h.metadataRequests).toEqual(["http://metadata.internal:8080"]);
+        expect(h.metadataRequests).toEqual([
+          "http://metadata.internal:8080",
+          "http://metadata.internal:8080",
+        ]);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );

@@ -134,11 +134,12 @@ export const AntigravityDriver: ProviderDriver<
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
-    // Probe the metadata server at most once per instance, as the Go client does per process.
-    const onGoogleCloud = yield* Effect.cached(
+    // Bound probe frequency while allowing recovery from transient metadata failures.
+    const onGoogleCloud = yield* Effect.cachedWithTTL(
       probeGoogleMetadataServer(processEnvironment.GCE_METADATA_HOST || undefined).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
       ),
+      "30 seconds",
     );
     // Recheck on every use so credentials created after startup take effect.
     const authIssue = antigravityAuthIssue(auth, {
