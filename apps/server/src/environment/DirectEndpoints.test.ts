@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import type * as NodeOS from "node:os";
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -11,11 +11,13 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+
+vi.mock("node:os", { spy: true });
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -226,6 +228,7 @@ describe("resolveBoundEndpoints", () => {
 });
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
+  BackendState: "Running",
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
@@ -356,3 +359,33 @@ describe("DirectEndpoints Tailscale Serve", () => {
     }),
   );
 });
+
+effectIt.effect("advertises direct MagicDNS on a bound current Self address without Serve", () =>
+  Effect.gen(function* () {
+    using _interfaces = vi
+      .spyOn(NodeOS, "networkInterfaces")
+      .mockReturnValue({ tailscale0: vpnInterface("100.64.1.2") });
+    const service = yield* DirectEndpoints.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.map(ServerConfig.ServerConfig, (config) => ({
+              ...config,
+              host: "0.0.0.0",
+              tailscaleServeEnabled: false,
+            })),
+          ).pipe(Layer.provide(layerServeConfig("0.0.0.0"))),
+          layerTailscaleUp,
+          layerServeProbe(502),
+        ),
+      ),
+    );
+    expect(yield* service.resolve()).toContainEqual({
+      kind: "tailnet",
+      httpBaseUrl: "http://bb-1.tail1234.ts.net:3773/",
+    });
+    _interfaces.mockReturnValue({});
+    expect(yield* service.resolveAvailable()).toEqual([]);
+  }),
+);

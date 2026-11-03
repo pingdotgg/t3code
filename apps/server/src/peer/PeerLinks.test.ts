@@ -1,3 +1,4 @@
+import { vi } from "vite-plus/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -576,6 +577,40 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
+      expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("links through an advertised HTTP MagicDNS candidate while refusing numeric CGNAT", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const originalFetch = globalThis.fetch;
+      using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (url.hostname === "box.tail.ts.net") {
+          const target = new URL(b.url);
+          url.host = target.host;
+          return originalFetch(new Request(url, request));
+        }
+        return originalFetch(input, init);
+      });
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      const origin = "http://box.tail.ts.net:3773";
+      const linked = yield* a.links.link({
+        url: "http://100.64.1.2:3773",
+        alternateUrls: [origin],
+        expectedEnvironmentId: box.environmentId,
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+      expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [origin] });
+      const refused = yield* a.links
+        .link({ url: "http://100.64.1.2:3773", pairingCode: pairing.credential, access: "auto" })
+        .pipe(Effect.flip);
       expect(refused.message).toContain("plain http");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
