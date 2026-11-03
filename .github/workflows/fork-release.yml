@@ -13,7 +13,8 @@ name: Fork release
 # 0.1.5 is a higher version than 0.1.5-fork.N.
 #
 # Release notes: the pull requests merged to main since the previous release. Each adds the
-# "## Release notes" section of its description, or its title when it has none.
+# "## Release notes" section of its description, or its title when it has none. The app shows
+# the bullets in order above the "Full changelog" block, so keep each one short.
 #
 # Upstream workflow changes are not taken: the sync restores .github/workflows to the
 # fork's version, which also keeps the default token allowed to push. A merge conflict
@@ -169,6 +170,19 @@ jobs:
                 | ((.body // "") | capture("(?s)## Release notes[ \\t]*\\r?\\n(?<s>.*?)(\\r?\\n(## |🤖)|$)").s // "" | gsub("^\\s+|\\s+$"; "")) as $s
                 | if $s != "" then $s else "- " + .title end')"
             if [ -n "$changes" ]; then echo "$changes"; else echo "- Upstream changes only."; fi
+            # The app lists the bullets above the "Full changelog" block, in order, and drops
+            # everything after it, so the install note stays on the release page only.
+            echo
+            echo "<details>"
+            echo "<summary>Full changelog</summary>"
+            echo
+            if [ -n "$previous" ]; then
+              echo "https://github.com/${GITHUB_REPOSITORY}/compare/${previous}...v${VERSION}"
+            else
+              echo "https://github.com/${GITHUB_REPOSITORY}/commits/v${VERSION}"
+            fi
+            echo
+            echo "</details>"
             echo
             echo "## Install"
             echo
