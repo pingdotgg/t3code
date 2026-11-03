@@ -117,13 +117,14 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 /**
- * Whether `providerThread`'s native session holds none of the turns kept before `run`. Legacy
- * attempts lack a native id, so a reset is only visible once some attempt here recorded one.
+ * Whether a non-truncating provider's native session lost the conversation kept before `run`.
+ * Rollback resets it: the newest accepted turn was rolled back (works without legacy-missing
+ * native ids) or ran under another native id (rollback of runs the provider never accepted).
  */
 const nativeSessionMissesKeptTurns = (
   projection: Pick<
     OrchestrationV2ThreadProjection,
-    "runs" | "attempts" | "providerTurns" | "contextHandoffs"
+    "thread" | "runs" | "attempts" | "providerTurns" | "contextHandoffs"
   >,
   providerThread: OrchestrationV2ProviderThread,
   run: OrchestrationV2Run,
@@ -131,20 +132,28 @@ const nativeSessionMissesKeptTurns = (
   const nativeId = providerThread.nativeThreadRef?.nativeId;
   if (nativeId === undefined) return false;
   const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
-  const keptRunIds = new Set(
-    projection.runs
-      .filter((source) => source.ordinal < run.ordinal && source.status !== "rolled_back")
-      .map((source) => source.id),
-  );
-  const accepted = projection.attempts.filter(
-    (attempt) =>
-      attempt.providerThreadId === providerThread.id && acceptedAttemptIds.has(attempt.id),
-  );
-  const kept = accepted.filter((attempt) => keptRunIds.has(attempt.runId));
+  const accepted = projection.attempts.filter((attempt) => acceptedAttemptIds.has(attempt.id));
+  const runsById = new Map(projection.runs.map((source) => [source.id, source]));
+  const ordinalOf = (attempt: OrchestrationV2RunAttempt) =>
+    runsById.get(attempt.runId)?.ordinal ?? 0;
+  const newest = accepted
+    .filter((attempt) => attempt.providerThreadId === providerThread.id)
+    .toSorted((a, b) => ordinalOf(a) - ordinalOf(b) || a.attemptOrdinal - b.attemptOrdinal)
+    .at(-1);
+  if (newest === undefined) return false;
+  // Inherited fork history is kept even when every local run was rolled back.
+  const keepsHistory =
+    (projection.thread.forkedFrom?.type === "run" && projection.thread.lineage.sideChat !== true) ||
+    accepted.some((attempt) => {
+      const source = runsById.get(attempt.runId);
+      return (
+        source !== undefined && source.ordinal < run.ordinal && source.status !== "rolled_back"
+      );
+    });
   return (
-    kept.length > 0 &&
-    accepted.some((attempt) => attempt.nativeThreadId !== undefined) &&
-    !kept.some((attempt) => attempt.nativeThreadId === nativeId) &&
+    keepsHistory &&
+    (runsById.get(newest.runId)?.status === "rolled_back" ||
+      (newest.nativeThreadId !== undefined && newest.nativeThreadId !== nativeId)) &&
     !projection.contextHandoffs.some(
       (handoff) =>
         handoff.toProviderThreadId === providerThread.id &&

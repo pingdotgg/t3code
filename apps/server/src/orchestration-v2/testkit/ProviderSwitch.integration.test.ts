@@ -1505,8 +1505,9 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: GROK_MODEL_SELECTION,
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
-      replaysKeptTurn: true,
       history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
     },
     {
       name: "a native rollback whose next resume fails",
@@ -1516,8 +1517,9 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: CLAUDE_MODEL_SELECTION,
       rollback: "truncates",
       failResumeAfterRollback: true,
-      replaysKeptTurn: true,
       history: "plain",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
     },
     {
       // Pi forks into a new native thread that still holds the kept turns.
@@ -1528,8 +1530,9 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: CLAUDE_MODEL_SELECTION,
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
-      replaysKeptTurn: false,
       history: "plain",
+      delivers: [],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
     },
     {
       name: "an ACP rollback to a turn recorded before attempts kept their native session",
@@ -1539,8 +1542,9 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: GROK_MODEL_SELECTION,
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
-      replaysKeptTurn: true,
       history: "legacy_first_turn",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
     },
     {
       name: "an ACP rollback in a forked thread",
@@ -1550,8 +1554,33 @@ describe("orchestration v2 provider switching", () => {
       modelSelection: GROK_MODEL_SELECTION,
       rollback: "replaces_native_thread",
       failResumeAfterRollback: false,
-      replaysKeptTurn: true,
       history: "forked",
+      delivers: ["favourite colour is teal", "home town is Oslo"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback where no attempt recorded its native session",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "legacy_all_turns",
+      delivers: ["favourite colour is teal"],
+      withholds: ["favourite animal is an otter"],
+    },
+    {
+      name: "an ACP rollback of a forked thread to its baseline",
+      instanceId: GROK_MODEL_SELECTION.instanceId,
+      driver: GROK_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      modelSelection: GROK_MODEL_SELECTION,
+      rollback: "replaces_native_thread",
+      failResumeAfterRollback: false,
+      history: "forked_to_baseline",
+      delivers: ["home town is Oslo"],
+      withholds: ["favourite colour is teal", "favourite animal is an otter"],
     },
   ] as const)(
     "gives the agent the kept conversation and not the rewound turn after $name",
@@ -1563,6 +1592,7 @@ describe("orchestration v2 provider switching", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
           const failResumeOnce = yield* Ref.make(false);
+          const nativeThreadGeneration = yield* Ref.make(0);
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: scenario.instanceId,
@@ -1573,7 +1603,7 @@ describe("orchestration v2 provider switching", () => {
               capturedTurns,
               injectedHistory,
               failResumeOnce,
-              nativeThreadGeneration: yield* Ref.make(0),
+              nativeThreadGeneration,
               rollback: scenario.rollback,
             }),
           ]);
@@ -1624,7 +1654,9 @@ describe("orchestration v2 provider switching", () => {
                 branch: null,
                 worktreePath: null,
               });
-            if (scenario.history === "forked") {
+            const forked =
+              scenario.history === "forked" || scenario.history === "forked_to_baseline";
+            if (forked) {
               const sourceThreadId = ThreadId.make(`${name}:source`);
               yield* createThread(sourceThreadId);
               yield* runToCompletion(
@@ -1656,11 +1688,17 @@ describe("orchestration v2 provider switching", () => {
               "My favourite animal is an otter. Reply with only the word: noted",
             );
             const beforeRollback = yield* orchestrator.getThreadProjection(threadId);
-            if (scenario.history === "legacy_first_turn") {
+            if (
+              scenario.history === "legacy_first_turn" ||
+              scenario.history === "legacy_all_turns"
+            ) {
               const firstRunId = beforeRollback.runs.find((run) => run.ordinal === 1)?.id;
               yield* (yield* EventSink.EventSinkV2).write({
                 events: beforeRollback.attempts
-                  .filter((attempt) => attempt.runId === firstRunId)
+                  .filter(
+                    (attempt) =>
+                      scenario.history === "legacy_all_turns" || attempt.runId === firstRunId,
+                  )
                   .map(({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
                     id: EventId.make(`${name}:legacy-attempt:${index}`),
                     type: "run-attempt.updated" as const,
@@ -1670,8 +1708,10 @@ describe("orchestration v2 provider switching", () => {
                   })),
               });
             }
+            const keptOrdinal = scenario.history === "forked_to_baseline" ? 0 : 1;
             const keptCheckpoint = beforeRollback.checkpoints.find(
-              (checkpoint) => checkpoint.appRunOrdinal === 1 && checkpoint.status === "ready",
+              (checkpoint) =>
+                (checkpoint.appRunOrdinal ?? 0) === keptOrdinal && checkpoint.status === "ready",
             );
             if (keptCheckpoint === undefined) {
               return yield* Effect.die("Expected a checkpoint after the first turn.");
@@ -1698,7 +1738,9 @@ describe("orchestration v2 provider switching", () => {
             yield* worker.drain();
             assert.deepEqual(
               (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status),
-              ["completed", "rolled_back"],
+              scenario.history === "forked_to_baseline"
+                ? ["rolled_back", "rolled_back"]
+                : ["completed", "rolled_back"],
             );
             if (scenario.failResumeAfterRollback) {
               const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
@@ -1722,31 +1764,29 @@ describe("orchestration v2 provider switching", () => {
             const delivered =
               (run3?.text ?? "") +
               (yield* encodeJson((yield* Ref.get(injectedHistory)).slice(historyBeforeRun3)));
-            if (scenario.replaysKeptTurn) {
-              assert.include(
-                delivered,
-                "favourite colour is teal",
-                "the agent's session no longer holds the kept turn, so the next turn must carry it",
-              );
-            } else {
-              assert.notInclude(
-                delivered,
-                "favourite colour is teal",
-                "the agent's session still holds the kept turn, so no handoff replays it",
-              );
+            for (const kept of scenario.delivers) {
+              assert.include(delivered, kept, "the agent's session lacks this kept turn");
             }
-            if (scenario.history === "forked") {
-              assert.include(
-                delivered,
-                "home town is Oslo",
-                "the fork's inherited turn is kept too",
-              );
+            for (const withheld of scenario.withholds) {
+              assert.notInclude(delivered, withheld, "the session holds it or it was rewound");
             }
-            assert.notInclude(
-              delivered,
-              "favourite animal is an otter",
-              "the rewound turn must not reach the agent",
-            );
+            if (scenario.name === "an ACP rollback that starts a fresh agent session") {
+              const recoveries = (projection: OrchestrationV2ThreadProjection) =>
+                projection.contextHandoffs.filter(
+                  (handoff) => handoff.strategy === "full_thread_summary",
+                ).length;
+              const recoveriesBeforeRun4 = recoveries(
+                yield* orchestrator.getThreadProjection(threadId),
+              );
+              const sessionsBeforeRun4 = yield* Ref.get(nativeThreadGeneration);
+              yield* runToCompletion(4, "And what did I say second?");
+              assert.strictEqual(
+                recoveries(yield* orchestrator.getThreadProjection(threadId)),
+                recoveriesBeforeRun4,
+                "the recovered session holds the kept turns, so the next turn replays nothing",
+              );
+              assert.strictEqual(yield* Ref.get(nativeThreadGeneration), sessionsBeforeRun4);
+            }
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
