@@ -854,6 +854,15 @@ diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/Virtualize
 index eb34dd4a774cb06add3280fe6abd5f0dc292505e..821bb0ab114f52ec41eab54505a1eb08e511f47a 100644
 --- a/dist/components/VirtualizedFileDiff.js
 +++ b/dist/components/VirtualizedFileDiff.js
+@@ -227,7 +227,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		const { pendingExpansions, pendingHydratedDiff, options: { collapsed = false } } = this;
+ 		if (pendingHydratedDiff != null) {
+ 			this.pendingHydratedDiff = void 0;
+-			if (pendingHydratedDiff.expectedDiff === fileDiff) {
++			if (areDiffTargetsEqual(pendingHydratedDiff.expectedDiff, fileDiff)) {
+ 				Object.assign(fileDiff, pendingHydratedDiff.nextDiff);
+ 				this.setHydratedState(pendingHydratedDiff.files);
+ 				this.installHydratedSessionDiff(fileDiff);
 @@ -551,7 +551,7 @@ var VirtualizedFileDiff = class extends FileDiff {
  	rerender() {
  		if (!this.enabled || this.getInputDiff() == null && this.additionFile == null && this.deletionFile == null) return;

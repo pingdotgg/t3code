@@ -1,8 +1,11 @@
 import { parseDiffFromFile } from "@pierre/diffs";
+// oxlint-disable-next-line eslint/no-restricted-imports -- exercises hydration in the patched dependency without app theme services
+import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import {
   DiffReviewCursorContext,
   useDiffReviewCursorFilePath,
@@ -184,4 +187,32 @@ it("leaves a file's lines past either end", async () => {
   await userEvent.keyboard("j");
   await expect.element(screen.getByText("Cursor on b.ts")).toBeInTheDocument();
   expect(folds).toEqual(foldsBefore);
+});
+
+it("expands unchanged context after an equivalent partial diff refreshes", async () => {
+  const patch = "--- a/review.txt\n+++ b/review.txt\n@@ -48 +48 @@\n-context 48\n+changed 48\n";
+  const before = Array.from({ length: 80 }, (_, index) => `context ${index + 1}\n`).join("");
+  const viewer = { current: null as CodeViewHandle<unknown, undefined> | null };
+  const options = {
+    diffStyle: "unified" as const,
+    loadDiffFiles: async () => ({
+      oldFile: { name: "review.txt", contents: before },
+      newFile: { name: "review.txt", contents: before.replace("context 48", "changed 48") },
+    }),
+  };
+  const items = (version: number) => [
+    {
+      id: "review",
+      type: "diff" as const,
+      version,
+      fileDiff: parsePatchFiles(patch, "refresh")[0]!.files[0]!,
+    },
+  ];
+  await using screen = await render(<CodeView ref={viewer} items={items(1)} options={options} />);
+  await vi.waitFor(() => expect(viewer.current?.getInstance()?.getRenderedItems()).toHaveLength(1));
+  await screen.rerender(<CodeView ref={viewer} items={items(2)} options={options} />);
+  const rendered = viewer.current!.getInstance()!.getRenderedItems()[0]!;
+  if (rendered.type !== "diff") throw new Error("Expected a diff");
+  await act(() => rendered.instance.expandHunk(0, "down", 20));
+  await expect.element(screen.getByText("context 47", { exact: true })).toBeVisible();
 });

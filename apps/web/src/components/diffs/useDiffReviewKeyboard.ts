@@ -228,12 +228,14 @@ export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput
       .find((candidate) => candidate.id === fileKey);
     return item?.type === "diff" ? item.instance : undefined;
   };
-  const rowsFor = (file: DiffReviewFile) =>
-    visibleDiffRows(
-      file.fileDiff,
+  const rowsFor = (file: DiffReviewFile) => {
+    const item = input.getViewer()?.getItem(file.fileKey);
+    return visibleDiffRows(
+      item?.type === "diff" ? item.fileDiff : file.fileDiff,
       input.diffStyle,
       fileDiffInstance(file.fileKey)?.getExpandedHunks() ?? NO_EXPANSIONS,
     );
+  };
   const canExpand = (file: DiffReviewFile) => !file.fileDiff.isPartial || input.canLoadFullFiles;
 
   const flushScroll = useStableCallback(() => {
