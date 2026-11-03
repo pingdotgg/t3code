@@ -394,6 +394,7 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
   readonly itemId?: TurnItemId;
+  readonly attachmentId?: string;
   readonly view?: "messages" | "activity";
   readonly limit: number;
 }
@@ -3278,6 +3279,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
+                        AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
                       ORDER BY ordinal DESC
                       LIMIT 1
                     )))`
@@ -5834,6 +5836,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const index = yield* readTimelineIndex(threadId, new Set());
+            const attachmentOwners =
+              options.attachmentId === undefined
+                ? undefined
+                : new Set(
+                    (yield* sql<{ thread_id: string; turn_item_id: string }>`
+          SELECT item.thread_id, item.turn_item_id
+          FROM orchestration_v2_projection_turn_items AS item,
+            json_each(item.payload_json, '$.attachments') AS attachment
+          WHERE item.thread_id IN ${sql.in([...new Set(index.visible.map((row) => row.sourceThreadId))])}
+            AND item.type = 'user_message'
+            AND json_extract(attachment.value, '$.id') = ${options.attachmentId}`).map(
+                      (row) => `${row.thread_id}:${row.turn_item_id}`,
+                    ),
+                  );
             const matching = index.visible
               .map((row, position) => ({ ...row, position }))
               .filter((row) =>
@@ -5844,6 +5860,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         row.item.type,
                       ))
                   : row.sourceItemId === options.itemId,
+              )
+              .filter(
+                (row) => attachmentOwners?.has(`${row.sourceThreadId}:${row.sourceItemId}`) ?? true,
               );
             const page = matching.slice(0, options.limit);
             const sources = yield* encodeTimelineSources(
