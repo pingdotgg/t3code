@@ -52,6 +52,7 @@ describe("deriveActivitySummary", () => {
     expect(summary.phase).toBe("running");
     expect(summary.now).toBe("vp lint");
     expect(summary.done.map((step) => step.label)).toEqual(["bun test", "Edited a.ts"]);
+    expect(summarize([edit("src/a.ts", 1, 0, "running")]).now).toBe("Editing a.ts");
   });
 
   it("only reports the latest run", () => {

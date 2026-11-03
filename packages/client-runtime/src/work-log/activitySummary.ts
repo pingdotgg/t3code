@@ -122,27 +122,34 @@ function meaningfulTitle(title: string | null | undefined): string | null {
 }
 
 function labelFor(item: ActivityItem, workspaceRoot: string | null): string | null {
+  // Labels we write ourselves read in the present tense while the step is still going.
+  const live = item.status === "running" || item.status === "pending";
   switch (item.type) {
     case "command_execution":
       return (
         trimLabel(withoutRoot(meaningfulTitle(item.title) ?? item.input, workspaceRoot)) ||
-        "Ran a command"
+        (live ? "Running a command" : "Ran a command")
       );
     case "file_change":
-      return `Edited ${basename(item.fileName)}`;
+      return `${live ? "Editing" : "Edited"} ${basename(item.fileName)}`;
     case "file_search":
       return withoutRoot(
-        item.title ?? (item.pattern ? `Searched ${trimLabel(item.pattern)}` : "Searched files"),
+        item.title ??
+          (item.pattern
+            ? `${live ? "Searching" : "Searched"} ${trimLabel(item.pattern)}`
+            : live
+              ? "Searching files"
+              : "Searched files"),
         workspaceRoot,
       );
     case "web_search":
-      return item.title ?? "Searched the web";
+      return item.title ?? (live ? "Searching the web" : "Searched the web");
     case "dynamic_tool": {
       const title = meaningfulTitle(item.title);
-      return title ? withoutRoot(title, workspaceRoot) : "Used a tool";
+      return title ? withoutRoot(title, workspaceRoot) : live ? "Using a tool" : "Used a tool";
     }
     case "subagent":
-      return item.title ?? "Ran a subagent";
+      return item.title ?? (live ? "Running a subagent" : "Ran a subagent");
     case "approval_request":
       return "Waiting for your approval";
     case "user_input_request":
