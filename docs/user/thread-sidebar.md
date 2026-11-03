@@ -301,7 +301,8 @@ Activity panel when the agent starts** in **Settings → Diffs & pull requests**
 That setting is not used in a narrow window, and a panel you open or close yourself
 is left alone.
 
-On mobile, open **Activity** from the thread's git menu.
+On iOS, open **Activity** from the thread's git menu. On Android, use **Open activity**
+in the thread's top bar.
 
 ## Side chats
 
