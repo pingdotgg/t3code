@@ -1760,6 +1760,11 @@ it("lists only exported variables for env and printenv", () => {
   assert.notInclude(verdicts(`T="$(cat ${F})"; printenv T`), "print (environment listing)");
   assert.include(verdicts(`export T="$(cat ${F})"; env`), "print (environment listing)");
   assert.include(verdicts(`T="$(cat ${F})"; export T; printenv T`), "print (environment listing)");
+  // Reassigning an exported variable keeps it exported.
+  assert.include(
+    verdicts(`export T="$(cat ${F})"; T="$T"; printenv T`),
+    "print (environment listing)",
+  );
   assert.include(verdicts(`T="$(cat ${F})"; declare -p T`), "print (environment listing)");
   assert.include(verdicts(`T="$(cat ${F})"; set`), "print (environment listing)");
 });
@@ -1829,6 +1834,29 @@ it("keeps an inline program's stderr print when stdout is redirected", () => {
   assert.isTrue(
     verdicts.some((verdict) => verdict.startsWith("print")),
     String(verdicts),
+  );
+});
+
+it("keeps a written script's stderr print out of stdout redirects and pipes", () => {
+  const scripts = new Map([
+    [
+      "/tmp/show.mjs",
+      `import { readFileSync } from 'node:fs';\nconsole.error(readFileSync('${F}', 'utf8'));\n`,
+    ],
+    ["/tmp/show.py", `import sys\nprint(open('${F}').read(), file=sys.stderr)\n`],
+  ]);
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F], scripts).map((use) => use.verdict);
+  for (const cmd of [
+    "node /tmp/show.mjs > /dev/null",
+    "node /tmp/show.mjs | adb pair 192.168.1.42:37099",
+    "python3 /tmp/show.py > /dev/null",
+  ])
+    assert.deepEqual(verdicts(cmd), ["print (script prints the value to stderr)"], cmd);
+  assert.include(
+    classifyFileUse(`ruby -e '$stderr.puts File.read("${F}")' > /dev/null`, [F]).map(
+      (use) => use.verdict,
+    ),
+    "print (program prints the value to stderr)",
   );
 });
 

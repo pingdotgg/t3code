@@ -610,6 +610,9 @@ const ENV_LISTING = /^(?:env|printenv|export\s+-p)\s*$|^(?:env|printenv)\s*\|/;
 const VAR_LISTING = /^(?:set|declare\s+-p)\s*$/;
 const PROGRAM_PRINT =
   /\b(?:console\.(?:log|error|info|warn|dir|debug)|process\.std(?:out|err)\.write|print|printf|puts|say|sys\.std(?:out|err)(?:\.buffer)?\.write|os\.write\(\s*[12]\b)/;
+// A print that goes to stderr, not stdout.
+const STDERR_PRINT =
+  /\b(?:console\.(?:error|warn)|process\.stderr\.write|sys\.stderr(?:\.buffer)?\.write|os\.write\(\s*2\b|warn)\b|\bfile\s*=\s*sys\.stderr\b|\$stderr\.|\bSTDERR\b/;
 const CURL_VERBOSE = /\bcurl\b[^|]*\s(?:-[a-zA-Z]*v[a-zA-Z]*|--verbose|--trace\S*)(?=\s|$)/;
 const ASSIGNMENT = /^(\w+)=((?:"(?:\\.|[^"\\])*"|'[^']*'|\$\([^)]*\)|[^\s"'])*)/;
 const withoutAssignments = (stage: string) =>
@@ -678,7 +681,13 @@ const COPY_CALL =
 const programUse = (program: string, names: (statement: string) => boolean) => {
   const values = new Set<string>();
   const paths = new Set<string>();
-  const use: { prints: boolean; redacts: boolean; writes: boolean; passes?: string } = {
+  const use: {
+    prints: boolean;
+    stderr?: boolean;
+    redacts: boolean;
+    writes: boolean;
+    passes?: string;
+  } = {
     prints: false,
     redacts: false,
     writes: false,
@@ -703,7 +712,7 @@ const programUse = (program: string, names: (statement: string) => boolean) => {
           code.replace(new RegExp(`[\\w.]*(?:${redaction(pattern).source})[^)]*\\)`, "g"), ""),
         );
       if (!unredacted) use.redacts = true;
-      else return { ...use, prints: true };
+      else return { ...use, prints: true, stderr: STDERR_PRINT.test(code) };
       continue;
     }
     if (PROGRAM_WRITE.test(statement)) use.writes = true;
@@ -1469,7 +1478,13 @@ export const classifyFileUse = (
       return;
     }
     const use = programUse(program, (statement) => new RegExp(fileRef()).test(statement));
-    if (use.prints) printed("print (program prints the value)", at);
+    if (use.prints)
+      printed(
+        use.stderr
+          ? "print (program prints the value to stderr)"
+          : "print (program prints the value)",
+        at,
+      );
     else
       add(
         use.redacts ? "unknown (inline program redacts the value)" : "unknown (inline program)",
@@ -1485,7 +1500,13 @@ export const classifyFileUse = (
       language === undefined ? source : maskProgram(source, language, true),
       (statement) => fileIds.some((id) => statement.includes(id)),
     );
-    if (use.prints) return { verdict: "print (script prints the value)", at: stage };
+    if (use.prints)
+      return {
+        verdict: use.stderr
+          ? "print (script prints the value to stderr)"
+          : "print (script prints the value)",
+        at: stage,
+      };
     if (use.writes) return { verdict: "copy (script writes the value to a file)", at: stage };
     if (use.passes)
       return { verdict: "consume (script passes the value on)", at: `${stage}\n${use.passes}` };
@@ -1552,12 +1573,14 @@ export const classifyFileUse = (
       const file = !dir && namesFile(value);
       const holds = !dir && !file && holdsValue(value);
       // A reassignment replaces what the name held.
+      // An exported name stays exported.
+      const exported = exporting || exportedVars.has(name);
       for (const vars of [dirVars, fileVars, secretVars, exportedVars]) vars.delete(name);
       if (dir) dirVars.add(name);
       else if (file) fileVars.add(name);
       else if (holds) {
         secretVars.add(name);
-        if (exporting) exportedVars.add(name);
+        if (exported) exportedVars.add(name);
         add(
           xtrace
             ? "print (xtrace echoes the expanded value)"
