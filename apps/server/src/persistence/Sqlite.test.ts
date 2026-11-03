@@ -9,6 +9,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
+import * as Statement from "effect/sql/Statement";
 
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -143,6 +145,44 @@ it.effect("rebuilds message search on open when a conversion was interrupted", (
       assert.deepEqual(yield* searchHits(sql), yield* messageRowids(sql));
       assert.deepEqual(yield* pendingRebuild(sql), []);
     }).pipe(Effect.provide(persistence()));
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("a failed startup VACUUM leaves search alone and still opens", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-vacuum-fail-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const persistence = () =>
+    SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer));
+  // Low disk fails the VACUUM, and would fail a search rebuild the same way. Transformers are
+  // typed infallible, but a failure here surfaces to the caller as that statement's SqlError.
+  const sqlFailure = Effect.fail(
+    new SqlError.SqlError({ reason: new SqlError.LockTimeoutError({ cause: null }) }),
+  ) as unknown as Effect.Effect<Statement.Statement<unknown>>;
+  const failVacuum: Statement.Transformer = (statement) =>
+    statement.compile()[0].trim() === "VACUUM" || statement.compile()[0].includes("'delete-all'")
+      ? sqlFailure
+      : Effect.succeed(statement);
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA auto_vacuum = NONE`;
+      yield* sql`VACUUM`;
+      yield* insertSearchableMessage(sql);
+    }).pipe(Effect.provide(persistence()));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 0 }]);
+      assert.deepEqual(yield* pendingRebuild(sql), []);
+      assert.deepEqual(yield* searchHits(sql), yield* messageRowids(sql));
+    }).pipe(
+      Effect.provide(
+        persistence().pipe(Layer.provide(Layer.succeed(Statement.CurrentTransformer, failVacuum))),
+      ),
+    );
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );

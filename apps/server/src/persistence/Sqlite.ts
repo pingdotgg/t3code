@@ -29,7 +29,10 @@ const rebuildMessageSearchIfPending = Effect.gen(function* () {
     DELETE FROM orchestration_v2_projection_metadata
     WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
   `;
-});
+}).pipe(
+  // Search must not block startup; the marker stays, so the next open retries.
+  Effect.catch((cause) => Effect.logWarning("Could not rebuild message search", { cause })),
+);
 
 // Larger databases keep auto_vacuum NONE until doctor's offline VACUUM: a minutes-long rewrite
 // would block every writer. Another process holding the file makes this fail; try next open.
@@ -51,7 +54,15 @@ const enableIncrementalVacuumIfCheap = Effect.gen(function* () {
     ON CONFLICT(projection_name) DO NOTHING
   `;
   yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
-  yield* sql`VACUUM`;
+  // A failed VACUUM leaves the file, and so every rowid, unchanged: nothing to rebuild.
+  yield* sql`VACUUM`.pipe(
+    Effect.tapError(() =>
+      sql`
+        DELETE FROM orchestration_v2_projection_metadata
+        WHERE projection_name = ${MESSAGE_SEARCH_REBUILD_PENDING}
+      `.pipe(Effect.ignore),
+    ),
+  );
 }).pipe(
   Effect.catch((cause) => Effect.logWarning("Could not enable incremental auto_vacuum", { cause })),
 );
