@@ -50,6 +50,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  resolveConfirmedSelectedRef,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   sanitizeNewRefName,
@@ -388,13 +389,7 @@ export function BranchToolbarBranchSelector({
       environmentId,
       input: { cwd, query: listedRef.name, limit: 100, refresh: true },
     });
-    const freshRef =
-      result._tag === "Success"
-        ? result.value.refs.find(
-            (ref) => ref.name === listedRef.name && ref.isRemote === listedRef.isRemote,
-          )
-        : undefined;
-    return freshRef ?? { ...listedRef, worktreePath: null };
+    return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
   const selectBranch = async (listedRef: VcsRef) => {

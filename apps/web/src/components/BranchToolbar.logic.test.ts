@@ -7,6 +7,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveConfirmedSelectedRef,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -252,5 +253,28 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveConfirmedSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "main",
+    isRemote: false,
+    current: false,
+    isDefault: true,
+    worktreePath: "/repo",
+  };
+
+  it.each([
+    ["a complete read without the ref drops the claim", { refs: [], nextCursor: null }, null],
+    ["a truncated read without the ref keeps the claim", { refs: [], nextCursor: 100 }, "/repo"],
+    ["a failed read drops the claim", null, null],
+    [
+      "a read with the ref uses its fresh worktree",
+      { refs: [{ ...listed, worktreePath: "/other" }], nextCursor: 100 },
+      "/other",
+    ],
+  ] as const)("%s", (_label, freshRead, expected) => {
+    expect(resolveConfirmedSelectedRef(listed, freshRead).worktreePath).toBe(expected);
   });
 });

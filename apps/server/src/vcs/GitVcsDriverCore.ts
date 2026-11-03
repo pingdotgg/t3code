@@ -4134,10 +4134,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ],
         { concurrency: 2 },
       );
+      const cachedWorktreeRoot = cachedRepositoryPaths.worktreeRoot;
       const cachedHeadBranch =
-        cachedSnapshot.localBranches.find(
-          (ref) => ref.worktreePath === cachedRepositoryPaths.worktreeRoot,
-        )?.name ?? cachedRepositoryPaths.currentBranch;
+        (cachedWorktreeRoot === null
+          ? undefined
+          : cachedSnapshot.localBranches.find((ref) => ref.worktreePath === cachedWorktreeRoot)
+              ?.name) ?? cachedRepositoryPaths.currentBranch;
       const isCachedHeadStale = headBranch !== undefined && headBranch !== cachedHeadBranch;
       if (isCachedHeadStale) {
         yield* invalidateListRefsSnapshot(input.cwd, cachedRepositoryPaths.gitCommonDir);

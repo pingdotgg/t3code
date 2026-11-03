@@ -1220,6 +1220,7 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
   Effect.scoped(
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let snapshotReads = 0;
       const incompleteMetadataSpawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           if (!ChildProcess.isStandardCommand(command)) {
@@ -1232,6 +1233,9 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
           if (isWorktreeRoot || isWorktreeList) {
             return makeNonRepositoryHandle();
           }
+          if (command.args.includes("for-each-ref") && command.args.includes("refs/remotes")) {
+            snapshotReads++;
+          }
           return yield* delegate.spawn(command);
         }),
       );
@@ -1243,10 +1247,20 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
         Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
       );
 
+      // Sorts before the current branch, so a worktree lookup keyed on a null root would pick it.
+      yield* git(cwd, ["branch", "aaa-other"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
       const refs = yield* driver.listRefs({ cwd, refresh: true });
 
       assert.isTrue(refs.isRepo);
       assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
+
+      const readsAfterRefresh = snapshotReads;
+      yield* driver.listRefs({ cwd });
+      yield* driver.listRefs({ cwd });
+      assert.equal(snapshotReads, readsAfterRefresh);
     }),
   ).pipe(
     Effect.provide(

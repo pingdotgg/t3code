@@ -245,6 +245,20 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
+/** Confirms a picked ref's worktree claim against a fresh read, or `null` when the read failed. */
+export function resolveConfirmedSelectedRef(
+  listedRef: VcsRef,
+  freshRead: { readonly refs: ReadonlyArray<VcsRef>; readonly nextCursor: number | null } | null,
+): VcsRef {
+  if (freshRead === null) return { ...listedRef, worktreePath: null };
+  const freshRef = freshRead.refs.find(
+    (ref) => ref.name === listedRef.name && ref.isRemote === listedRef.isRemote,
+  );
+  if (freshRef) return freshRef;
+  // A truncated read can miss the ref without disproving its worktree, so keep the listed claim.
+  return freshRead.nextCursor === null ? { ...listedRef, worktreePath: null } : listedRef;
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;
