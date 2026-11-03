@@ -59,21 +59,31 @@ describe("HistorySwipeNavigation", () => {
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 
-  // 15° off vertical: the first event leans horizontal, then the scroll drifts sideways.
+  // A vertical scroll 15° off vertical; a real swipe's first events are often diagonal.
+  const drift = Array.from({ length: 30 }, () => [-4, 15] as const);
+  const straightBack = Array.from({ length: 15 }, () => [-12, 0] as const);
   it.each([
-    ["a vertical scroll that starts slightly diagonally keeps the thread", [-5, 3]],
-    ["a swipe that turns into a vertical scroll keeps the thread", [-10, 0]],
-  ] as const)("%s", async (_name, start) => {
+    [
+      "a vertical scroll that starts slightly diagonally keeps the thread",
+      [[-5, 3], ...drift],
+      false,
+    ],
+    ["a swipe that turns into a vertical scroll keeps the thread", [[-10, 0], ...drift], false],
+    [
+      "a swipe whose first events lean diagonally navigates",
+      [[-1, -1], [-2, -1], [-3, -1], ...straightBack],
+      true,
+    ],
+  ] as const)("%s", async (_name, events, navigates) => {
     navigateHistory.mockReset();
     await using screen = await render(<HistorySwipeNavigation />);
     const panel = screen.container.appendChild(document.createElement("div"));
-    const deltas = [start, ...Array.from({ length: 30 }, () => [-4, 15] as const), [0, 0] as const];
-    for (const [deltaX, deltaY] of deltas) {
+    for (const [deltaX, deltaY] of [...events, [0, 0] as const]) {
       panel.dispatchEvent(
         new WheelEvent("wheel", { deltaX, deltaY, bubbles: true, composed: true }),
       );
     }
 
-    expect(navigateHistory).not.toHaveBeenCalled();
+    expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 });
