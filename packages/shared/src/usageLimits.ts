@@ -809,7 +809,7 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    const matchingHubCredits = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
@@ -821,10 +821,12 @@ export function collectProviderUsageLimits(
       .sort(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
-      )[0];
-    const hubCreditId = !hubCredits?.account.routingDisabled
-      ? hubCredits?.account.usageLimits.resetCredits?.nextCreditId
-      : undefined;
+      );
+    const hubCredits = matchingHubCredits[0];
+    const hubRedemption = matchingHubCredits.find(
+      ({ account }) => !account.routingDisabled && account.usageLimits.resetCredits?.nextCreditId,
+    );
+    const hubCreditId = hubRedemption?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
       (!credits ||
@@ -840,10 +842,10 @@ export function collectProviderUsageLimits(
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
       resetCreditInput:
-        hubCreditId && hubCredits
+        hubCreditId && hubRedemption
           ? {
-              sourceId: hubCredits.source.id,
-              accountId: hubCredits.account.id,
+              sourceId: hubRedemption.source.id,
+              accountId: hubRedemption.account.id,
               creditId: hubCreditId,
             }
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
