@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
+  PullRequestReviewDecision,
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
@@ -102,8 +103,8 @@ export const make = Effect.gen(function* () {
   // checkout's remote and config, so two checkouts may read the same project as different people.
   const mergeRequestDetails = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd, repository, number] = JSON.parse(key) as [string, string, number];
-      return cli.getMergeRequestDetail({ cwd, repository, number });
+      const [cwd, repository, number, host] = JSON.parse(key) as [string, string, number, string];
+      return cli.getMergeRequestDetail({ cwd, repository, number, host });
     },
     {
       capacity: READ_CACHE_CAPACITY,
@@ -112,8 +113,8 @@ export const make = Effect.gen(function* () {
   );
   const projectMergeCapabilities = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd, repository] = JSON.parse(key) as [string, string];
-      return cli.getProjectMergeCapabilities({ cwd, repository });
+      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+      return cli.getProjectMergeCapabilities({ cwd, repository, host });
     },
     {
       capacity: READ_CACHE_CAPACITY,
@@ -123,11 +124,13 @@ export const make = Effect.gen(function* () {
 
   const detailKey = (input: {
     readonly cwd: string;
+    readonly host: string;
     readonly repository: string;
     readonly number: number;
-  }) => JSON.stringify([input.cwd, input.repository, input.number]);
+  }) => JSON.stringify([input.cwd, input.repository, input.number, input.host]);
   const mergeRequestDetail = (input: {
     readonly cwd: string;
+    readonly host: string;
     readonly repository: string;
     readonly number: number;
   }) => Cache.get(mergeRequestDetails, detailKey(input));
@@ -136,7 +139,12 @@ export const make = Effect.gen(function* () {
   // write is in flight must not outlive it.
   const writing =
     <
-      I extends { readonly cwd: string; readonly repository: string; readonly number: number },
+      I extends {
+        readonly cwd: string;
+        readonly host: string;
+        readonly repository: string;
+        readonly number: number;
+      },
       A,
       E,
     >(
@@ -173,18 +181,55 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The rows were already read, so even a rate limit only leaves their decision unknown.
+  const reviewDecisions = (input: Parameters<typeof cli.getReviewDecisions>[0]) =>
+    cli.getReviewDecisions(input).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitLab merge request approval read failed", {
+          repository: input.repository,
+          reason: error._tag,
+        }).pipe(Effect.as<ReadonlyMap<number, PullRequestReviewDecision | null>>(new Map())),
+      ),
+    );
+
+  // REST omits line counts; the CLI recovers optional stats failures per batch.
+  const mergeRequestWithStats = (
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    },
+    detail = cli.getMergeRequestDetail(input),
+  ) =>
+    Effect.all(
+      [
+        detail,
+        cli.listMergeRequestStats({ cwd: input.cwd, host: input.host, changeRequests: [input] }),
+      ],
+      {
+        concurrency: 2,
+      },
+    ).pipe(
+      Effect.map(([mergeRequest, [stat]]) =>
+        stat === undefined
+          ? mergeRequest
+          : { ...mergeRequest, additions: stat.additions, deletions: stat.deletions },
+      ),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
-    getViewer: (input) =>
-      cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+    getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
         .listMergeRequests({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           state: input.state,
           involvement: input.involvement,
@@ -195,9 +240,28 @@ export const make = Effect.gen(function* () {
           filters: input.filters,
         })
         .pipe(
+          Effect.flatMap((batch) =>
+            reviewDecisions({
+              cwd: input.cwd,
+              host: input.host,
+              repository: input.repository,
+              numbers: batch.items.map((item) => item.number),
+            }).pipe(
+              Effect.map((decisions) => ({
+                ...batch,
+                items: batch.items.map((item) => withReviewDecision(item, decisions)),
+                continues: true,
+              })),
+            ),
+          ),
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({ ...batch, continues: true })),
         ),
+
+    getFileStats: (input) =>
+      cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
+
+    listChangeRequestStats: (input) =>
+      cli.listMergeRequestStats(input).pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
     getChangeRequestChecks: (input) =>
       mergeRequestDetail(input).pipe(
@@ -210,13 +274,30 @@ export const make = Effect.gen(function* () {
       cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestSummary: (input) =>
-      cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      Effect.all(
+        [
+          mergeRequestWithStats(input),
+          reviewDecisions({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            numbers: [input.number],
+          }),
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(([mergeRequest, decisions]) => withReviewDecision(mergeRequest, decisions)),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      ),
 
     getChangeRequest: (input) =>
       Effect.all(
         [
-          mergeRequestDetail(input),
-          Cache.get(projectMergeCapabilities, JSON.stringify([input.cwd, input.repository])),
+          mergeRequestWithStats(input, mergeRequestDetail(input)),
+          Cache.get(
+            projectMergeCapabilities,
+            JSON.stringify([input.cwd, input.repository, input.host]),
+          ),
         ],
         { concurrency: 2 },
       ).pipe(
@@ -275,7 +356,7 @@ export const make = Effect.gen(function* () {
     // through on, and access granted or withdrawn within the minute must count.
     getViewerPermissions: (input) =>
       cli
-        .getMergeRequestDetail(input)
+        .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     forgetChangeRequestReads: (scope) =>
@@ -312,6 +393,7 @@ export const make = Effect.gen(function* () {
       cli
         .listReviewerCandidates({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
         })
@@ -319,18 +401,29 @@ export const make = Effect.gen(function* () {
 
     listRepositoryLabels: (input) =>
       cli
-        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("listRepositoryLabels"))),
 
     searchRepositoryAuthors: (input) =>
       cli
-        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectUsers({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
     setReviewerRequest: writing((input) =>
       cli
         .setReviewerRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           reviewers: input.reviewers,
@@ -343,6 +436,7 @@ export const make = Effect.gen(function* () {
       cli
         .runMergeRequestAction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           action: input.action,
@@ -355,6 +449,7 @@ export const make = Effect.gen(function* () {
       cli
         .updateMergeRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.title === undefined ? {} : { title: input.title }),
@@ -371,6 +466,7 @@ export const make = Effect.gen(function* () {
       cli
         .updateNote({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           noteId: input.commentId,
@@ -387,6 +483,7 @@ export const make = Effect.gen(function* () {
       cli
         .replyToDiscussion({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
@@ -399,6 +496,7 @@ export const make = Effect.gen(function* () {
       cli
         .setReaction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.subjectId === undefined ? {} : { noteId: input.subjectId }),
@@ -412,6 +510,7 @@ export const make = Effect.gen(function* () {
       cli
         .setDiscussionResolution({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
@@ -423,3 +522,11 @@ export const make = Effect.gen(function* () {
 
   return provider;
 });
+
+function withReviewDecision<Item extends { readonly number: number }>(
+  item: Item,
+  decisions: ReadonlyMap<number, PullRequestReviewDecision | null>,
+): Item & { readonly reviewDecision?: PullRequestReviewDecision | null } {
+  const reviewDecision = decisions.get(item.number);
+  return reviewDecision === undefined ? item : { ...item, reviewDecision };
+}
