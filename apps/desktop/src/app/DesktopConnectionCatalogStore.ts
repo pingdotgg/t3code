@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { renameIntoPlace } from "@t3tools/shared/atomicWrite";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -256,7 +257,8 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
           }),
       ),
     );
-    yield* input.fileSystem.rename(tempPath, input.catalogPath).pipe(
+    yield* renameIntoPlace(tempPath, input.catalogPath).pipe(
+      Effect.provideService(FileSystem.FileSystem, input.fileSystem),
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({

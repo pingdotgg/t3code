@@ -1,6 +1,7 @@
 import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
+import { renameIntoPlace } from "@t3tools/shared/atomicWrite";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -173,7 +174,8 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
           }),
       ),
     );
-    yield* input.fileSystem.rename(tempPath, targetPath).pipe(
+    yield* renameIntoPlace(tempPath, targetPath).pipe(
+      Effect.provideService(FileSystem.FileSystem, input.fileSystem),
       Effect.mapError(
         (cause) =>
           new DesktopClientSettingsWriteError({

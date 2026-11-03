@@ -184,7 +184,9 @@ describe("DesktopClientSettings", () => {
           recursive: true,
         });
 
-        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
+        const error = yield* settings
+          .set(clientSettings)
+          .pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.flip);
 
         assert.equal(error.operation, "replace-settings-file");
         assert.deepEqual(

@@ -23,6 +23,7 @@ import {
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { renameIntoPlace } from "@t3tools/shared/atomicWrite";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
@@ -453,7 +454,8 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
           }),
       ),
     );
-    yield* input.fileSystem.rename(tempPath, targetPath).pipe(
+    yield* renameIntoPlace(tempPath, targetPath).pipe(
+      Effect.provideService(FileSystem.FileSystem, input.fileSystem),
       Effect.mapError(
         (cause) =>
           new DesktopSettingsWriteError({

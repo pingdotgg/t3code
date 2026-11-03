@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -274,7 +275,9 @@ describe("DesktopSettings", () => {
           recursive: true,
         });
 
-        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
+        const error = yield* settings
+          .setServerExposureMode("network-accessible")
+          .pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.flip);
 
         assert.equal(error.operation, "replace-settings-file");
         assert.deepEqual(
