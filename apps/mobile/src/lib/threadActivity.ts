@@ -1084,7 +1084,7 @@ function deriveThreadFeedRunFolds(
   }
   const groupsByRunId = new Map<
     RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
+    { entries: ThreadFeedEntry[]; startBoundary: string | null; responseBoundaryIndex: number }
   >();
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
@@ -1094,6 +1094,8 @@ function deriveThreadFeedRunFolds(
       pendingUserBoundary = entry.message.createdAt;
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = entry.message.runId ?? runlessKey;
+      const group = responseKey === null ? undefined : groupsByRunId.get(responseKey);
+      if (group) group.responseBoundaryIndex = group.entries.length;
       continue;
     }
     const ownRunId =
@@ -1112,7 +1114,7 @@ function deriveThreadFeedRunFolds(
         : ownRunId;
     let group = groupsByRunId.get(runId);
     if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary };
+      group = { entries: [], startBoundary: pendingUserBoundary, responseBoundaryIndex: 0 };
       pendingUserBoundary = null;
       groupsByRunId.set(runId, group);
     }
@@ -1148,11 +1150,26 @@ function deriveThreadFeedRunFolds(
       continue;
     }
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
+    const terminalEntryIndex = terminalAssistantId
+      ? group.entries.findIndex((entry) => entry.id === terminalAssistantId)
+      : group.entries.length;
+    let responseStartIndex = terminalEntryIndex;
+    let responseHasImages = false;
+    // Inline images split one reply into consecutive text and attachment messages.
+    for (let index = terminalEntryIndex; index >= group.responseBoundaryIndex; index--) {
+      const entry = group.entries[index];
+      if (entry?.type !== "message" || entry.message.role !== "assistant") break;
+      responseStartIndex = index;
+      if (entry.message.attachments.some((attachment) => attachment.type === "image")) {
+        responseHasImages = true;
+      }
+    }
+    if (!responseHasImages) responseStartIndex = terminalEntryIndex;
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
-          (entry) =>
-            entry.id !== terminalAssistantId &&
+          (entry, index) =>
+            (index < responseStartIndex || index > terminalEntryIndex) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
