@@ -563,6 +563,8 @@ const makeTurnHarness = (
     /** The runs the thread's projection holds, as read back after the event stream drops. */
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
     readonly providerError?: string;
+    readonly messageReadFailures?: number;
+    readonly errorReadFailures?: number;
     /** How many times the event stream fails before it starts to deliver events. */
     readonly streamFailures?: number;
     /** Reads the thread as deleted, which the projection keeps as a flagged record. */
@@ -592,6 +594,8 @@ const makeTurnHarness = (
     const failedReads = yield* Queue.unbounded<void>();
     const dropStream = yield* Deferred.make<void>();
     const firstMessage = yield* Ref.make<MessageId | null>(null);
+    const messageReads = yield* Ref.make(0);
+    const errorReads = yield* Ref.make(0);
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -607,8 +611,18 @@ const makeTurnHarness = (
             getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
               Effect.gen(function* () {
                 const first = yield* Ref.get(firstMessage);
+                const unreadableMessage =
+                  fields.includes("messages") &&
+                  (yield* Ref.getAndUpdate(messageReads, (n) => n + 1)) <
+                    (options.messageReadFailures ?? 0);
+                const unreadableError =
+                  fields.includes("turnItems") &&
+                  (yield* Ref.getAndUpdate(errorReads, (n) => n + 1)) <
+                    (options.errorReadFailures ?? 0);
                 if (
                   options.recordsUnreadable ||
+                  unreadableMessage ||
+                  unreadableError ||
                   (options.firstMessageUnreadable &&
                     first !== null &&
                     filter?.messageIds?.includes(first))
@@ -929,7 +943,11 @@ it.effect("an event landing while the resumed listener catches up is not missed"
 
 it.effect("a cancelled run is still recorded when its first save fails", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness();
+    const harness = yield* makeTurnHarness({
+      messageReadFailures: 3,
+      messageRunId: RunId.make("run:cancelled"),
+      runs: [runOf("run:cancelled", MessageId.make("unused"), "cancelled")],
+    });
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const sql = yield* SqlClient.SqlClient;
@@ -1058,7 +1076,9 @@ it.effect("catches an outcome missed by reconnect while dispatch is still in fli
       dropStreamOnCommand: true,
       liveTail: true,
       messageRunId: runId,
-      runs: [runOf(runId, MessageId.make("other"), "completed")],
+      runs: [runOf(runId, MessageId.make("other"), "failed")],
+      providerError: "Reconnect provider failure.",
+      errorReadFailures: 1,
       duringDispatch: () => Deferred.await(releaseDispatch),
     });
     yield* Effect.gen(function* () {
@@ -1071,7 +1091,9 @@ it.effect("catches an outcome missed by reconnect while dispatch is still in fli
       assert.equal(yield* Ref.get(harness.subscriptions), 2);
       yield* Deferred.succeed(releaseDispatch, undefined);
       yield* Fiber.join(dispatch);
-      yield* untilStatus(service, task.id, "succeeded");
+      yield* TestClock.adjust("5 seconds");
+      yield* untilStatus(service, task.id, "failed");
+      assert.equal((yield* service.list()).tasks[0]?.lastRunError, "Reconnect provider failure.");
       assert.equal((yield* service.list()).tasks[0]?.runCount, 1);
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),

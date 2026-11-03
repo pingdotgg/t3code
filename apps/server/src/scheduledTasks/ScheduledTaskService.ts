@@ -839,7 +839,7 @@ export const layer = Layer.effect(
     // released as failed so its row does not stay `running` and block the task.
     const settleOutcome = Effect.fn("ScheduledTaskService.settleOutcome")(function* (
       run: SettledRun,
-    ) {
+    ): Effect.fn.Return<void> {
       // Promoting a queued message to a steer cancels its queued run first and
       // moves the message into the active run afterwards, so a cancel only ends
       // the run if the message still belongs to the cancelled run. Decided once:
@@ -859,11 +859,12 @@ export const layer = Layer.effect(
                     }).pipe(Effect.as(undefined)),
                   ),
                 );
-        if (
-          moved === undefined ||
-          !trackedRuns.confirmCancel(run.messageId, run.cancelledRunId, moved)
-        )
+        if (moved === undefined) {
+          const pending = trackedRuns.pending().find((entry) => entry.messageId === run.messageId);
+          if (pending !== undefined) yield* catchUpRun(pending).pipe(Effect.forkIn(serviceScope));
           return;
+        }
+        if (!trackedRuns.confirmCancel(run.messageId, run.cancelledRunId, moved)) return;
       }
       yield* recordRunEnd(run).pipe(
         Effect.retry({ times: 2 }),
@@ -908,7 +909,6 @@ export const layer = Layer.effect(
           });
           const run = runs[0];
           if (run === undefined) return;
-          if (!trackedRuns.bindRun(messageId, runId, pending.runId)) return;
           if (run.status === "failed") {
             const { turnItems } = yield* threadManagement.getThreadRecords(
               threadId,
@@ -918,6 +918,7 @@ export const layer = Layer.effect(
                 turnItemTypes: ["error"],
               },
             );
+            if (!trackedRuns.bindRun(messageId, runId, pending.runId)) return;
             for (const item of turnItems) {
               trackedRuns.observe({
                 id: EventId.make(`scheduled-task-catch-up:${item.id}`),
@@ -928,7 +929,7 @@ export const layer = Layer.effect(
                 payload: item,
               });
             }
-          }
+          } else if (!trackedRuns.bindRun(messageId, runId, pending.runId)) return;
           const ended = trackedRuns.observe({
             id: EventId.make(`scheduled-task-catch-up:${runId}`),
             type: "run.updated",
