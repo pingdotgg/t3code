@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { installAgentSleepBlock } from "./methods/agentSleepBlock.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
@@ -74,6 +75,7 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
+  yield* installAgentSleepBlock();
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);

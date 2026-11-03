@@ -1124,6 +1124,8 @@ export interface DesktopBridge {
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
+  /** Reports whether agents are running, so the desktop shell can hold a sleep blocker while work is in flight. */
+  setAgentSleepBlock?: (active: boolean) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
