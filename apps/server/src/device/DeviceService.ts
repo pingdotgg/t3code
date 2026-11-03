@@ -50,7 +50,7 @@ import {
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -271,7 +271,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   launchers?: AgentDeviceLaunchers,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -323,7 +323,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const live = new Set(
         yield* Effect.forEach(state.sessions, (session) =>
           agentDeviceSession(session.threadId, session.hostId, session.deviceId),
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        ).pipe(Effect.provideService(Digest.Digest, digest)),
       );
       const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
       for (const [session] of retired) boundLaunchers.delete(session);
@@ -348,7 +348,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               session.threadId,
               session.hostId,
               session.deviceId,
-            ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+            ).pipe(Effect.provideService(Digest.Digest, digest));
             const launcher = boundLaunchers.get(name);
             if (!launcher || hostSessionLaunchers.has(name) || !launchers?.release) return;
             yield* launchers.release(launcher);
@@ -895,7 +895,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 session.threadId,
                 session.hostId,
                 session.deviceId,
-              ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+              ).pipe(Effect.provideService(Digest.Digest, digest));
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
@@ -1131,7 +1131,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           input.threadId,
           input.hostId,
           input.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        ).pipe(Effect.provideService(Digest.Digest, digest));
         if (boundSession) hostSessionLaunchers.add(ownSession);
         const session = boundSession ?? ownSession;
         return {
@@ -1154,7 +1154,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           target.threadId,
           target.hostId,
           target.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        ).pipe(Effect.provideService(Digest.Digest, digest));
         return yield* launcherLock.withPermit(
           Effect.gen(function* () {
             const { state } = yield* SynchronizedRef.get(stateRef);
@@ -1224,10 +1224,10 @@ export const make = Effect.gen(function* () {
   const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
     [localHost.id, localHost],
   ]);
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const configPath = (hostId: DeviceHostId, deviceId?: DeviceId) =>
     agentDeviceConfigPath(config.stateDir, hostId, path, deviceId).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
     );
   const configureAgent = Effect.fn("DeviceService.configureAgent")(
     function* (

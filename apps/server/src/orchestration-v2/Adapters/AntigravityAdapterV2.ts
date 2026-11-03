@@ -6,7 +6,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -124,7 +124,7 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 };
 
 interface AntigravityFlavorServices {
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
@@ -196,7 +196,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
       } satisfies typeof runtime;
     },
-    Effect.provideService(Crypto.Crypto, options.crypto),
+    Effect.provideService(SecureRandom.SecureRandom, options.random),
     Effect.mapError((cause): EffectAcpErrors.AcpError =>
       cause._tag === "ProviderSetupError"
         ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
@@ -289,7 +289,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
   options: AntigravityAdapterV2Options,
 ) {
   const services: AntigravityFlavorServices = {
-    crypto: yield* Crypto.Crypto,
+    random: yield* SecureRandom.SecureRandom,
     fileSystem: yield* FileSystem.FileSystem,
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
