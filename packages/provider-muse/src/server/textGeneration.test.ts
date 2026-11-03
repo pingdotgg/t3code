@@ -235,6 +235,11 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
           detail: "Muse Code usage limit reached. Try again after it resets.",
         },
         {
+          // Credential proxies can refuse with a 429 quota message and no quota object.
+          error: { kind: "modelError", message: "upstream 429: quota exceeded for this key" },
+          detail: "Muse Code usage limit reached. Try again after it resets.",
+        },
+        {
           error: { kind: "authRequired" },
           detail: "Muse Code is not signed in. Run `muse login` on this T3 server host.",
         },
@@ -252,13 +257,13 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
         const test = fixture((emit) =>
           emit("turn/completed", {
             terminal: "failed",
-            error: { ...error, message, retryable: false },
+            error: { message, ...error, retryable: false },
           }),
         );
         const service = yield* test.make;
         const failure = yield* service.generateThreadTitle(titleInput).pipe(Effect.flip);
         expect(failure).toMatchObject({ _tag: "TextGenerationError", detail });
-        expect(failure.detail).not.toContain(message);
+        expect(failure.detail).not.toContain("message" in error ? error.message : message);
         expect(test.host.close).toHaveBeenCalledOnce();
       }
     }),

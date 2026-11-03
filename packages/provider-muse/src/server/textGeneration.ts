@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
+import { isMuseUsageLimitFailure } from "./usageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
 import {
@@ -93,7 +94,7 @@ function museFailureDetail(cause: unknown): string {
       ? cause.cause.turnError
       : undefined;
   // Muse sends `quota` only for quota exhaustion, which it still labels `modelError`.
-  if (error?.quota !== undefined)
+  if (error?.quota !== undefined || isMuseUsageLimitFailure(error?.message))
     return "Muse Code usage limit reached. Try again after it resets.";
   if (error?.kind === "authRequired")
     return "Muse Code is not signed in. Run `muse login` on this T3 server host.";
