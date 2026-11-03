@@ -604,7 +604,9 @@ export const layer = Layer.effect(
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
     ) {
+      // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
       return yield* providerSource.refresh.pipe(
+        Effect.andThen(providerSource.getSnapshot),
         Effect.flatMap((nextProvider) =>
           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
             Effect.flatMap(syncProvider),
