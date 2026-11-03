@@ -14,6 +14,18 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
+// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides.
+const HIDDEN = new Set([
+  "script",
+  "style",
+  "binary-data",
+  "rPh",
+  "delText",
+  "moveFrom",
+  "instrText",
+  "delInstrText",
+  "tracked-changes",
+]);
 
 class Truncation extends Error {}
 
@@ -67,7 +79,7 @@ function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNod
   }
 }
 function* text(node: XmlNode): Generator<string, void> {
-  if (["script", "style", "binary-data", "rPh"].includes(node.name)) return;
+  if (HIDDEN.has(node.name)) return;
   if (["tab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.spaceCount !== undefined) {
@@ -80,7 +92,7 @@ function* text(node: XmlNode): Generator<string, void> {
     }
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
-  if (["script", "style", "binary-data"].includes(node.name)) return;
+  if (HIDDEN.has(node.name)) return;
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
@@ -137,11 +149,7 @@ function odfValue(cell: XmlNode): string {
 function hasCellText(cell: XmlNode): boolean {
   if (odfValue(cell).trim()) return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
-  if (
-    ["script", "style", "binary-data", "rPh"].includes(cell.name) ||
-    cell.spaceCount !== undefined
-  )
-    return false;
+  if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
   return cell.children.some((child) =>
     typeof child === "string" ? !!child.trim() : hasCellText(child),
   );

@@ -576,6 +576,26 @@ describe("question answer paths", () => {
           ext: "docx",
           bounded: true,
           parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom></w:p></w:body></w:document>',
+          },
+          expected: ["Intro 3\nFee $700"],
+          absent: ["PAGEREF", "$500", "Moved"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              "<document><text><tracked-changes><changed-region><deletion><change-info><creator>Reviewer</creator></change-info><p>$500</p></deletion></changed-region></tracked-changes><p>Fee <change/>$700</p></text></document>",
+          },
+          expected: ["Fee $700"],
+          absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
             "word/document.xml": `<w:document><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>${"A".repeat(1_000_000)}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Later cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`,
           },
           expected: ["A".repeat(32), "[Extracted text truncated at document extraction limits.]"],
