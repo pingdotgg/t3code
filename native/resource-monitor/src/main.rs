@@ -606,7 +606,7 @@ fn process_refresh_kind() -> ProcessRefreshKind {
 
 /// Name and parent pid from `/proc/<pid>/stat`: `pid (comm) state ppid ...`.
 /// The name may itself contain spaces and parentheses, so it ends at the last `)`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg(any(target_os = "linux", test))]
 fn parse_proc_stat(stat: &[u8]) -> Option<(String, u32)> {
     let open = stat.iter().position(|&byte| byte == b'(')?;
     let close = stat.iter().rposition(|&byte| byte == b')')?;
