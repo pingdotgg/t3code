@@ -94,8 +94,12 @@ export function ThreadServersPanel(props: {
   };
 
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
-      <ul className="m-0 list-none p-0">
+    <ThreadDetailsSection
+      headingId="thread-details-servers-heading"
+      title="Servers"
+      data-thread-servers-panel
+    >
+      <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0">
         {servers.map((server) => {
           const key = serverKey(server);
           const stoppable = canStop && supportsStop && server.pid !== null;
