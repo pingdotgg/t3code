@@ -4758,6 +4758,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
     it.effect("keeps generated worktree folders short and valid on Windows", () =>
       Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
         const pathService = yield* Path.Path;
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -4774,7 +4775,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           `${"a".repeat(22)}😀/${"b".repeat(30)}`,
           "z".repeat(41),
           // The files ref backend cannot create or lock these branch names on Windows.
-          ...(process.platform === "win32"
+          ...(platform === "win32"
             ? []
             : [
                 "fix/a<b",
