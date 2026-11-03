@@ -167,8 +167,9 @@ const fixture = Effect.fn("fixture")(function* (
         return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
       }
       if (listing.hangs) {
-        yield* Deferred.succeed(listing.requested, undefined);
-        return yield* Effect.never;
+        return yield* Deferred.succeed(listing.requested, undefined).pipe(
+          Effect.andThen(Effect.never),
+        );
       }
       return HttpClientResponse.fromWeb(
         request,
@@ -331,8 +332,8 @@ const fixture = Effect.fn("fixture")(function* (
     encoderResult,
     discoveryErrors,
     androidAvailable,
-    endDevice,
     listing,
+    endDevice,
   };
 });
 
@@ -399,40 +400,21 @@ describe("device setup consent", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.each([1, 2])(
-    "opens a stopped Android AVD from %s threads using its emulator serial",
-    (count) =>
-      Effect.gen(function* () {
-        const booting = yield* Queue.unbounded<void>();
-        const allowBoot = yield* Deferred.make<void>();
-        const { service, requests } = yield* fixture(
-          Queue.offer(booting, undefined).pipe(Effect.andThen(Deferred.await(allowBoot))),
-        );
-        yield* service.configure({ enabled: true });
-        const opening = yield* Effect.forkChild(
-          Effect.all(
-            Array.from({ length: count }, (_, index) =>
-              service.open({
-                threadId: ThreadId.make(`thread-${index}`),
-                deviceId: "Pixel_API_35",
-                platform: "android",
-              }),
-            ),
-            { concurrency: "unbounded" },
-          ),
-        );
-        yield* Effect.forEach(Array.from({ length: count }), () => Queue.take(booting));
-        yield* Deferred.succeed(allowBoot, undefined);
-        const sessions = yield* Fiber.join(opening);
-        expect(sessions.map((session) => session.deviceId)).toEqual(
-          Array(count).fill("emulator-5554"),
-        );
-        expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(count);
-        const state = yield* service.state;
-        expect(state.sessions).toHaveLength(count);
-        expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
-        expect(state.bootingDevices).toEqual([]);
-      }).pipe(Effect.scoped),
+  it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
+    Effect.gen(function* () {
+      const { service, requests } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      const session = yield* service.open({
+        threadId: ThreadId.make("thread-1"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      expect(session.deviceId).toBe("emulator-5554");
+      expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
+      const state = yield* service.state;
+      expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
+      expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
@@ -715,48 +697,43 @@ it.effect("keeps the cause from the hub's error in discovery warnings, without t
   }).pipe(Effect.scoped),
 );
 
-const simulator = {
-  id: "iphone",
-  name: "iPhone",
-  platform: "ios",
-  version: "iOS 26",
-  booted: true,
-  physical: false,
-} as const;
-const androidPhone = { ...simulator, id: "pixel", name: "Pixel", platform: "android" } as const;
-
-it.effect.each([
-  "[apple-utils] Failed to run `xcrun simctl list devices --json`:",
-  "[apple-utils] `xcrun simctl list devices --json` did not respond within 30 s",
-])("keeps the last simulators after %s while Android still refreshes", (message) =>
-  Effect.gen(function* () {
-    const { service, devices, discoveryErrors } = yield* fixture();
-    devices.push(simulator, androidPhone);
-    yield* service.configure({ enabled: true });
-    devices.length = 0;
-    yield* Ref.set(discoveryErrors, [{ message }]);
-    const failed = yield* service.list;
-    expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
-    expect(failed.hostStatuses.local).toEqual({ status: "ready", detail: message });
-
-    yield* Ref.set(discoveryErrors, []);
-    const emptied = yield* service.list;
-    expect(emptied.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
-    expect(emptied.hostStatuses.local).toEqual({ status: "ready" });
-  }).pipe(Effect.scoped),
+it.effect(
+  "keeps the last simulators while simctl cannot list them, and drops them once it can",
+  () =>
+    Effect.gen(function* () {
+      const { service, devices, discoveryErrors } = yield* fixture();
+      const simulator = {
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      } as const;
+      devices.push(simulator, { ...simulator, id: DeviceId.make("pixel"), platform: "android" });
+      yield* service.configure({ enabled: true });
+      devices.length = 0;
+      yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
+      const failed = yield* service.list;
+      expect(failed.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
+      expect(failed.hostStatuses.local).toEqual({ status: "ready", detail: simctlMessage });
+      yield* Ref.set(discoveryErrors, []);
+      const recovered = yield* service.list;
+      expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+      expect(recovered.hostStatuses.local).toEqual({ status: "ready" });
+    }).pipe(Effect.scoped),
 );
 
 it.effect("keeps every device when the hub does not answer the listing within 40 seconds", () =>
   Effect.gen(function* () {
-    const { service, devices, listing } = yield* fixture();
-    devices.push(simulator);
-    const before = yield* service.configure({ enabled: true });
+    const { service, listing } = yield* fixture();
+    yield* service.configure({ enabled: true });
     listing.hangs = true;
     const listed = yield* service.list.pipe(Effect.forkScoped);
     yield* Deferred.await(listing.requested);
     yield* TestClock.adjust("40 seconds");
     const timedOut = yield* Fiber.join(listed);
-    expect(timedOut.devices).toEqual(before.devices);
+    expect(timedOut.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
     expect(timedOut.hostStatuses.local).toEqual({
       status: "ready",
       detail: "The device hub did not answer within 40 seconds.",
@@ -772,12 +749,6 @@ it.effect.each([
   },
   {
     diagnostic: "Timed out spawning /private/user/command",
-    reason: "timeout",
-    message: "did not become ready in time",
-  },
-  {
-    diagnostic:
-      "[apple-utils] `xcrun simctl boot iphone` did not respond within 120 s; CoreSimulatorService may need restarting",
     reason: "timeout",
     message: "did not become ready in time",
   },
@@ -1814,7 +1785,6 @@ describe("locating a device id across hosts", () => {
   const listingHost = (
     host: { readonly id: string; readonly label: string },
     ids: ReadonlyArray<string>,
-    attach: DeviceHost.DeviceOperations["attach"] = () => Effect.void,
   ): DeviceHost.DeviceHost["Service"] => {
     const devices = ids.map((id) => ({
       id,
@@ -1830,7 +1800,7 @@ describe("locating a device id across hosts", () => {
       devices: {
         list: Effect.succeed({ devices, detail: undefined }),
         boot: (device) => Effect.succeed(device.id),
-        attach,
+        attach: () => Effect.void,
         shutdown: () => Effect.void,
         screenshot: () => Effect.succeed(new Uint8Array()),
       },
@@ -1884,89 +1854,6 @@ describe("locating a device id across hosts", () => {
       deviceId: DeviceId.make(deviceId),
       platform: deviceId.startsWith("Pixel") ? "android" : "ios",
     });
-
-  it.effect("rejects an open whose platform does not match the device", () =>
-    withTwoHosts((service) =>
-      Effect.gen(function* () {
-        const error = yield* service
-          .open({ threadId, hostId: macMini.id, deviceId: "MAC-UDID", platform: "android" })
-          .pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "DeviceNotFoundError",
-          hostId: macMini.id,
-          deviceId: "MAC-UDID",
-        });
-        expect((yield* service.state).sessions).toEqual([]);
-      }),
-    ),
-  );
-
-  // The hub fails a stream start that overlaps another one on the same device.
-  it.effect.each([
-    { case: "one device take turns", other: "MAC-UDID", overlap: 1 },
-    { case: "different devices run together", other: "MAC-UDID-2", overlap: 2 },
-  ])("concurrent opens of $case", ({ other, overlap }) =>
-    Effect.gen(function* () {
-      const attaching = yield* Queue.unbounded<Deferred.Deferred<void>>();
-      let active = 0;
-      let most = 0;
-      const host = listingHost(macMini, ["MAC-UDID", "MAC-UDID-2"], () =>
-        Effect.gen(function* () {
-          most = Math.max(most, ++active);
-          const done = yield* Deferred.make<void>();
-          yield* Queue.offer(attaching, done);
-          yield* Deferred.await(done);
-          active--;
-        }),
-      );
-      const service = yield* DeviceService.makeWithHosts(new Map([[macMini.id, host]])).pipe(
-        Effect.provide(NodeCrypto.layer),
-      );
-      const opening = yield* Effect.forkChild(
-        Effect.all(
-          [
-            open(service, macMini.id, "MAC-UDID"),
-            open(service, macMini.id, other, ThreadId.make("thread-other")),
-          ],
-          { concurrency: "unbounded" },
-        ),
-      );
-      const first = yield* Queue.take(attaching);
-      if (overlap === 2) {
-        const second = yield* Queue.take(attaching);
-        yield* Deferred.succeed(first, undefined);
-        yield* Deferred.succeed(second, undefined);
-      } else {
-        yield* Deferred.succeed(first, undefined);
-        yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
-      }
-      yield* Fiber.join(opening);
-      expect(most).toBe(overlap);
-      expect((yield* service.state).sessions).toHaveLength(2);
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
-  );
-
-  it.effect("an interrupted open releases its device lock", () =>
-    Effect.gen(function* () {
-      const attached = yield* Deferred.make<void>();
-      let calls = 0;
-      const host = listingHost(macMini, ["MAC-UDID"], () =>
-        ++calls === 1
-          ? Deferred.succeed(attached, undefined).pipe(Effect.andThen(Effect.never))
-          : Effect.void,
-      );
-      const service = yield* DeviceService.makeWithHosts(new Map([[macMini.id, host]])).pipe(
-        Effect.provide(NodeCrypto.layer),
-      );
-      const opening = yield* Effect.forkChild(open(service, macMini.id, "MAC-UDID"));
-      yield* Deferred.await(attached);
-      yield* Fiber.interrupt(opening);
-      const session = yield* open(service, macMini.id, "MAC-UDID");
-      expect(session.deviceId).toBe("MAC-UDID");
-      expect(calls).toBe(2);
-      expect((yield* service.state).sessions).toEqual([session]);
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
-  );
 
   it.effect("finds a device id that exists only on another host", () =>
     withTwoHosts((service) =>

@@ -16,7 +16,8 @@ const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
 // Let the hub's 30 s simctl timeout report its cause first.
 const LIST_TIMEOUT_SECONDS = 40;
-// simctl could not list simulators at all, so the hub's empty iOS list says nothing.
+// simctl could not list simulators, so the empty iOS list says nothing. expo-device-hub 0.19.1
+// errors carry only text (their id is a hash), so this matches its listing messages.
 const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 
@@ -208,7 +209,7 @@ export const makeDeviceHubOperations = (options: {
           diagnostics,
         )
           ? "disk_space"
-          : /timed? out|timeout|did not respond within/i.test(diagnostics)
+          : /timed? out|timeout/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
         ...(diagnostics ? { diagnostics: boundDiagnostics(diagnostics) } : {}),
