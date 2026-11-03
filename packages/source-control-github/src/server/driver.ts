@@ -55,7 +55,8 @@ const makeSignIn = Effect.gen(function* () {
 
 const starredPath = (repository: string) => {
   const segments = repository.split("/");
-  return segments.length === 2
+  // "." and ".." survive encoding and would normalize the URL out of user/starred.
+  return segments.length === 2 && segments.every((segment) => !["", ".", ".."].includes(segment))
     ? `user/starred/${segments.map(encodeURIComponent).join("/")}`
     : undefined;
 };
