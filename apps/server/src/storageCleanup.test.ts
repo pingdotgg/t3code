@@ -788,6 +788,8 @@ describe("subagent worktree ownership", () => {
     "recent-child-activity",
     "running-child",
     "pending-child",
+    "running-parent",
+    "pending-parent",
     "unsettled-child",
     "pinned-child",
     "fork",
@@ -822,7 +824,7 @@ describe("subagent worktree ownership", () => {
               ? ThreadId.make("missing")
               : scenario === "cycle"
                 ? ThreadId.make("child")
-                : scenario === "grandchild"
+                : ["grandchild", "running-parent", "pending-parent"].includes(scenario)
                   ? ThreadId.make("middle")
                   : root.id,
           rootThreadId: root.id,
@@ -837,6 +839,9 @@ describe("subagent worktree ownership", () => {
       });
       const middle = shell({
         id: ThreadId.make("middle"),
+        status: scenario === "running-parent" ? "running" : "idle",
+        pendingBackgroundTasks:
+          scenario === "pending-parent" ? [{ taskId: "task", kind: "command" }] : [],
         lineage: {
           parentThreadId: root.id,
           rootThreadId: root.id,
@@ -867,48 +872,66 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
-  it.live.each(["parent-unsettled", "parent-resettled", "child-unsettled"] as const)(
-    "cancels inherited settlement during measurement (%s)",
-    (change) =>
-      runCleanupTest(
-        Effect.gen(function* () {
-          const fixture = yield* pausedMeasurementFixture({
-            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-            worktreeSettledAfterDays: 0,
-          });
-          const root = shell({ settledAt: at(-20 * DAY_MS), settledOverride: "settled" });
-          const child = shell({
-            id: ThreadId.make("child"),
-            branch: "feature",
-            worktreePath: fixture.worktree,
-            lineage: {
-              parentThreadId: root.id,
-              rootThreadId: root.id,
-              relationshipToParent: "subagent",
-            },
-          });
-          fixture.setThreads([child, root]);
-          const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
-          yield* Deferred.await(fixture.measuring);
-          fixture.setThreads([
-            { ...child, settledOverride: change === "child-unsettled" ? "active" : null },
-            change === "child-unsettled"
-              ? root
-              : {
-                  ...root,
-                  settledAt: change === "parent-resettled" ? at(0) : null,
-                  settledOverride: change === "parent-resettled" ? "settled" : "active",
-                  updatedAt: at(0),
-                },
-          ]);
-          yield* Deferred.succeed(fixture.resume, undefined);
-          expect((yield* Fiber.join(run)).entries[0]).toMatchObject({
-            outcome: "kept",
-            reason: "Parent settlement changed since check",
-          });
-          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-        }),
-      ),
+  it.live.each([
+    "parent-unsettled",
+    "parent-resettled",
+    "child-unsettled",
+    "intermediate-running",
+    "intermediate-pending",
+  ] as const)("cancels inherited settlement during measurement (%s)", (change) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSettledAfterDays: 0,
+        });
+        const root = shell({ settledAt: at(-20 * DAY_MS), settledOverride: "settled" });
+        const middle = shell({
+          id: ThreadId.make("middle"),
+          lineage: {
+            parentThreadId: root.id,
+            rootThreadId: root.id,
+            relationshipToParent: "subagent",
+          },
+        });
+        const child = shell({
+          id: ThreadId.make("child"),
+          branch: "feature",
+          worktreePath: fixture.worktree,
+          lineage: {
+            parentThreadId: middle.id,
+            rootThreadId: root.id,
+            relationshipToParent: "subagent",
+          },
+        });
+        fixture.setThreads([child, middle, root]);
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setThreads([
+          { ...child, settledOverride: change === "child-unsettled" ? "active" : null },
+          {
+            ...middle,
+            status: change === "intermediate-running" ? "running" : "idle",
+            pendingBackgroundTasks:
+              change === "intermediate-pending" ? [{ taskId: "task", kind: "command" }] : [],
+          },
+          change === "child-unsettled" || change.startsWith("intermediate-")
+            ? root
+            : {
+                ...root,
+                settledAt: change === "parent-resettled" ? at(0) : null,
+                settledOverride: change === "parent-resettled" ? "settled" : "active",
+                updatedAt: at(0),
+              },
+        ]);
+        yield* Deferred.succeed(fixture.resume, undefined);
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Parent settlement changed since check",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
   );
 
   it.effect.each([

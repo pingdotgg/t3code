@@ -126,8 +126,15 @@ export function storageCleanupThreadIdle(
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
+  return thread.worktreePath !== null && threadIdle(thread, now, settings);
+}
+
+function threadIdle(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+  settings: LimitRecoverySettings,
+): boolean {
   return (
-    thread.worktreePath !== null &&
     thread.activeRunId === null &&
     (thread.status === "idle" ||
       thread.status === "completed" ||
@@ -217,6 +224,8 @@ function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineag
 function worktreeSettlementChain(
   thread: OrchestrationV2ThreadShell,
   byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
+  now: number,
+  settings: LimitRecoverySettings,
 ) {
   const chain = [thread];
   let current = thread;
@@ -232,7 +241,8 @@ function worktreeSettlementChain(
       parent === undefined ||
       chain.some((member) => member.id === parent.id) ||
       parent.projectId !== thread.projectId ||
-      parent.lineage.rootThreadId !== thread.lineage.rootThreadId
+      parent.lineage.rootThreadId !== thread.lineage.rootThreadId ||
+      !threadIdle(parent, now, settings)
     )
       return [];
     chain.push(parent);
@@ -837,7 +847,9 @@ const make = Effect.gen(function* () {
       const group = groups.get(worktreePath) ?? [];
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
-      const settlementChain = deleted ? [] : worktreeSettlementChain(thread, threadsById);
+      const settlementChain = deleted
+        ? []
+        : worktreeSettlementChain(thread, threadsById, now, serverSettings);
       const settledThread = settlementChain.at(-1);
       const members = deleted ? [thread, ...group] : group;
       const project = deleted
@@ -1087,6 +1099,8 @@ const make = Effect.gen(function* () {
                   (ancestor) => [ancestor.id, ancestor],
                 ),
               ),
+              now,
+              serverSettings,
             ).at(-1);
             if (
               latestSettlement?.id !== settledThread?.id ||
