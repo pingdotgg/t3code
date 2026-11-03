@@ -22,6 +22,8 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   spaceCount?: number;
+  hasText?: boolean;
+  hasTextChoice?: boolean;
 }
 
 function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
@@ -47,16 +49,22 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
     stack.push(node);
   });
   parser.on("closetag", () => {
+    const node = stack.pop()!;
+    const parent = stack.at(-1)!;
     // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
     // Keep one when no Choice carries text, such as a chart with a VML caption.
-    if (stack.pop()!.name !== "Fallback") return;
-    const parent = stack.at(-1)!;
-    if (children(parent).some((child) => child.name === "Choice" && hasText(child))) {
+    if (node.name === "Fallback" && parent.hasTextChoice) {
       parent.children.pop();
+      return;
     }
+    if (!node.hasText) return;
+    parent.hasText = true;
+    if (node.name === "Choice") parent.hasTextChoice = true;
   });
   const text = (value: string) => {
-    stack.at(-1)!.children.push(value);
+    const node = stack.at(-1)!;
+    node.children.push(value);
+    if (value.trim() !== "") node.hasText = true;
   };
   parser.on("text", text);
   parser.on("cdata", text);
@@ -66,8 +74,6 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
 
 const children = (node: XmlNode) =>
   node.children.filter((child): child is XmlNode => typeof child !== "string");
-const hasText = (node: XmlNode): boolean =>
-  node.children.some((child) => (typeof child === "string" ? child.trim() !== "" : hasText(child)));
 function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
