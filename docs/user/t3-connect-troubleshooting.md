@@ -99,7 +99,8 @@ Fix:
 
 ## Sign-in, account, or link problems
 
-T3 Connect does not have an active link between your account and the host.
+This device's T3 Connect sign-in is not ready yet, or T3 Connect does not have
+an active link between your account and the host.
 
 - **The host is linked to a different account.** Sign in to the same T3 Connect
   account on this device and on the host. On the host, run `t3 connect logout`,
@@ -107,10 +108,14 @@ T3 Connect does not have an active link between your account and the host.
 - **T3 Connect is off on the host, or the host only publishes agent activity.**
   On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `t3 connect`.
-- **The host was linked, but the server did not apply the link yet.** Run
-  `t3 service restart` on the host, or restart `t3 serve`.
+- **The host was linked, but the server did not apply the link yet.** Restart
+  the server on the host: quit and reopen the T3 Code desktop app, run
+  `t3 service restart`, or stop `t3 serve` and run it again.
 - **This device's sign-in expired, or the host no longer accepts this
   device.** Sign out of T3 Connect and sign in again.
+- **This device is still loading its T3 Connect sign-in.** Wait a moment;
+  T3 Code retries on its own. If it keeps waiting, reload or restart T3 Code on
+  this device.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
   [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)

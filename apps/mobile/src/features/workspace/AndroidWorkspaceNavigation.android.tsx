@@ -97,8 +97,8 @@ export function AndroidWorkspaceNavigation(props: {
   );
   // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
   const barWidth =
-    props.paneWidth ??
-    window.width - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+    (props.paneWidth ?? window.width) -
+    (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
   if (!rail && keyboardVisible) return null;
 
