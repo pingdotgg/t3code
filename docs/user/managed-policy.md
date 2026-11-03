@@ -181,9 +181,10 @@ provider's approvals. Pin the variables your users need, such as a gateway URL, 
 `providers.instances`.
 
 Variables in the environment that starts T3 Code itself still reach providers, and a default
-binary path such as `claude` is looked up on that environment's `PATH`. The desktop app takes both
-from the user's login shell, so a user could put their own `claude` earlier on their `PATH`. Pin an
-absolute `binaryPath` in `providers.instances` for each provider you allow.
+binary path such as `claude` is looked up on that environment's `PATH`. The desktop app builds that
+environment from settings the user controls, such as their shell profile, so a user could put their
+own `claude` earlier on their `PATH`. Pin an absolute `binaryPath` in `providers.instances` for each
+provider you allow.
 
 ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigravity's, whose modes
 T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
