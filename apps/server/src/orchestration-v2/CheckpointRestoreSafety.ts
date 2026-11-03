@@ -54,7 +54,8 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
       const taskFolderRoot =
         dependencies.taskFolders === undefined
           ? undefined
-          : yield* dependencies.taskFolders.findContaining(cwd).pipe(
+          : // Task folder roots are stored unresolved, so match the scope's path as recorded.
+            yield* dependencies.taskFolders.findContaining(path.resolve(scope.cwd)).pipe(
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.succeed(null),

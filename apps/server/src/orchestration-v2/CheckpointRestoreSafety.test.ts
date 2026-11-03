@@ -259,6 +259,8 @@ it.effect.each([
 
 it.effect.each([
   { case: "isolated", isolated: true },
+  // The worktrees directory is reached through a symlink; task folder roots are stored unresolved.
+  { case: "symlinked-worktrees", isolated: true },
   { case: "original-checkout", isolated: false },
   { case: "outside-task-folder", isolated: false },
   { case: "no-task-folder", isolated: false },
@@ -270,10 +272,12 @@ it.effect.each([
     const parent = yield* fs.realPath(
       yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-restore-repos-" }),
     );
-    const folder = (...segments: ReadonlyArray<string>) => path.join(parent, ...segments);
     for (const created of ["task/home/api", "task/web", "elsewhere/web", "originals/web"]) {
-      yield* fs.makeDirectory(folder(created), { recursive: true });
+      yield* fs.makeDirectory(path.join(parent, "real", created), { recursive: true });
     }
+    yield* fs.symlink(path.join(parent, "real"), path.join(parent, "linked"));
+    const base = path.join(parent, scenario.case === "symlinked-worktrees" ? "linked" : "real");
+    const folder = (...segments: ReadonlyArray<string>) => path.join(base, ...segments);
     const threadId = ThreadId.make("restore-repos-current");
     const otherThreadId = ThreadId.make("restore-repos-local");
     const otherProjectId = ProjectId.make("restore-repos-other-project");
@@ -345,8 +349,8 @@ it.effect.each([
             }),
         } as never,
         taskFolders: {
-          findContaining: () =>
-            scenario.case === "no-task-folder"
+          findContaining: (candidate: string) =>
+            scenario.case === "no-task-folder" || !candidate.startsWith(folder("task"))
               ? Effect.succeedNone
               : Effect.succeedSome({ root: folder("task") } as never),
         },
