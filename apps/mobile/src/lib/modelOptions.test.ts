@@ -750,7 +750,7 @@ describe("synchronized mobile model visibility", () => {
       options
         .filter((option) => option.providerKey === provider)
         .map((option) => option.selection.model),
-    ).toEqual(["second", "first", "custom"]);
+    ).toEqual(["second", "first"]);
     expect(
       options
         .filter((option) => option.providerKey === other)
@@ -758,7 +758,7 @@ describe("synchronized mobile model visibility", () => {
     ).toEqual(["hidden", "first", "second", "custom"]);
   });
 
-  it("exposes hidden built-ins for management without offering custom visibility controls", () => {
+  it("exposes hidden built-in and custom models for management", () => {
     const options = buildModelOptions(
       config,
       { instanceId: provider, model: "hidden" },
@@ -777,26 +777,26 @@ describe("synchronized mobile model visibility", () => {
       canHide: true,
     });
     expect(options.find((option) => option.selection.model === "custom")).toMatchObject({
-      isHidden: false,
-      canHide: false,
+      isHidden: true,
+      canHide: true,
     });
   });
 
-  it.each(["hidden", "missing"])("does not resurrect the hidden fallback %s", (model) => {
+  it.each(["hidden", "custom", "missing"])("does not resurrect the hidden fallback %s", (model) => {
     expect(
       buildModelOptions(config, { instanceId: provider, model }, provider, null).map(
         (option) => option.selection.model,
       ),
-    ).toEqual(["second", "first", "custom"]);
+    ).toEqual(["second", "first"]);
   });
 
   // regression: #16816 sync model favorites and visibility across clients
-  it("keeps custom models visible and restores built-in models when the server clears hidden models", () => {
+  it("restores built-in and custom models when the server clears hidden models", () => {
     expect(
       buildModelOptions(config, { instanceId: provider, model: "custom" }, provider, null).map(
         (option) => option.selection.model,
       ),
-    ).toContain("custom");
+    ).not.toContain("custom");
     const cleared = { ...config, settings: { ...config.settings, providerModelPreferences: {} } };
     expect(
       buildModelOptions(cleared, null, provider, null).map((option) => option.selection.model),
