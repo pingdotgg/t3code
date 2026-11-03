@@ -254,6 +254,7 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
         if (typeof prompt === "string") throw new Error("Expected streaming input");
         prompts.push(prompt);
         return {
+          initializationResult: async () => ({}),
           setMcpServers: prompts.length === 1 ? firstRegistration : secondRegistration,
           close: prompts.length === 1 ? firstClose : secondClose,
           [Symbol.asyncDispose]: async () => {
@@ -360,6 +361,7 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
           cleanupProgress.resolve("retry");
         }
         return {
+          initializationResult: async () => ({}),
           setMcpServers: () => {
             registrationStarted.resolve();
             return first
@@ -410,6 +412,7 @@ it.effect("stops retrying MCP registration after two timeouts and reports the ca
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
         const started = querySpy.mock.calls.length === 1 ? firstRegistration : secondRegistration;
         return {
+          initializationResult: async () => ({}),
           setMcpServers: () => {
             started.resolve();
             return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -450,6 +453,7 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
+            initializationResult: async () => ({}),
             setMcpServers: () => {
               registrationStarted.resolve();
               return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -480,6 +484,7 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
+            initializationResult: async () => ({}),
             setMcpServers: () => {
               registrationStarted.resolve();
               return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -503,6 +508,45 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
       assert.equal(result._tag, "Failure");
       assert.equal(querySpy.mock.calls.length, 1);
       assert.equal(disposed.mock.calls.length, 1);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+it.effect("starts the MCP registration deadline after a slow CLI boot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const waiting = Promise.withResolvers<void>();
+      const booted = Promise.withResolvers<void>();
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              waiting.resolve();
+              return booted.promise;
+            },
+            // The CLI answers control requests only after it has booted.
+            setMcpServers: async () => {
+              waiting.resolve();
+              await booted.promise;
+              return { added: ["t3-code"], removed: [], errors: {} };
+            },
+            close: vi.fn(),
+            [Symbol.asyncDispose]: async () => {},
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { resume, ...options } = resumedMcpQueryInput.options;
+      const opening = yield* runner
+        .open({ ...resumedMcpQueryInput, options: { ...options, sessionId: resume } })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => waiting.promise);
+      yield* TestClock.adjust("120 seconds");
+      booted.resolve();
+      const result = yield* Fiber.join(opening);
+
+      assert.equal(result._tag, "Success");
+      if (result._tag === "Success") yield* result.success.close;
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
