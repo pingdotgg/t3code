@@ -43,6 +43,7 @@ import { ProjectToolkit } from "./tools.ts";
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
+  readonly newWorktreesStartFromOrigin?: boolean;
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
@@ -72,6 +73,9 @@ const clientLaunchHarness = (input: {
       ...(input.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: input.defaultRuntimeMode }),
+      ...(input.newWorktreesStartFromOrigin === undefined
+        ? {}
+        : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
       ...(input.overrideModel === undefined
         ? {}
         : {
@@ -526,6 +530,52 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a worktree launch that omits startFromOrigin follows the new-worktree setting", () =>
+  Effect.gen(function* () {
+    const cases = [
+      { setting: true, given: undefined, expected: true },
+      { setting: false, given: undefined, expected: false },
+      { setting: true, given: false, expected: false },
+      { setting: false, given: true, expected: true },
+    ];
+    for (const { setting, given, expected } of cases) {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const checked: Array<ThreadLaunch.ThreadLaunchInput["workspaceStrategy"]> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        newWorktreesStartFromOrigin: setting,
+        checkWorktreeBase: ({ workspaceStrategy }) =>
+          Effect.sync(() => {
+            checked.push(workspaceStrategy);
+          }),
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      yield* toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          projectId,
+          workspaceStrategy: {
+            type: "worktree",
+            baseRef: "main",
+            ...(given === undefined ? {} : { startFromOrigin: given }),
+          },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      const strategy = { type: "worktree", baseRef: "main", startFromOrigin: expected };
+      expect(checked).toEqual([strategy]);
+      expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([strategy]);
+    }
   }),
 );
 
