@@ -456,8 +456,7 @@ export function useThreadActions() {
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
         });
-        if (family._tag === "Failure") return family;
-        threads = [...family.value.threads];
+        if (family._tag === "Success") threads = [...family.value.threads];
       }
       const result = await deleteThreadMutation({
         environmentId: target.environmentId,

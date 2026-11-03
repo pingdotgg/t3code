@@ -25,6 +25,7 @@ function deferred<T>() {
 
 const state = vi.hoisted(() => ({
   serverConfig: { shellThreadFamilies: false },
+  familyLookupFails: false,
   scopes: new Map<string, Set<string>>(),
   threads: [] as {
     environmentId: EnvironmentId;
@@ -78,7 +79,9 @@ vi.mock("../state/use-atom-command", () => ({
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: (family: unknown) => async (environmentId: string) =>
     family === "threadFamily"
-      ? AsyncResult.success({ threads: state.familyThreads })
+      ? state.familyLookupFails
+        ? AsyncResult.failure(Cause.fail(new Error("Family lookup failed")))
+        : AsyncResult.success({ threads: state.familyThreads })
       : state.sessionLookupFails
         ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
         : AsyncResult.success({
@@ -249,6 +252,7 @@ const operations = [
 
 beforeEach(() => {
   state.serverConfig.shellThreadFamilies = false;
+  state.familyLookupFails = false;
   state.familyThreads = [];
   state.scopes = new Map([
     [primary, new Set([AuthOrchestrationOperateScope])],
@@ -366,6 +370,16 @@ describe("thread action permissions", () => {
     );
     expect(state.localEffects).not.toContain("clear-draft:fork");
     expect(state.localEffects).not.toContain("clear-draft:other-side-chat");
+
+    // The family read only finds drafts to clear; it never blocks the delete.
+    state.familyLookupFails = true;
+    state.requests = [];
+    state.localEffects = [];
+    expect((await actions.deleteThread(target))._tag).toBe("Success");
+    expect(state.requests).toEqual([
+      expect.objectContaining({ action: "delete", environmentId: secondary }),
+    ]);
+    expect(state.localEffects).toContain("clear-draft:thread");
   });
 
   it("stops before delete and local cleanup when permission is revoked during session stop", async () => {
