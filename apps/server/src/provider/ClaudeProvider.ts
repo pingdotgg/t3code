@@ -23,6 +23,7 @@ import {
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
+  type Settings as ClaudeSdkSettings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -38,10 +39,10 @@ import {
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import {
-  discoverClaudeSkills,
+  claudeSdkLaunchArgSettings,
   readClaudeLaunchArgSettings,
-  readClaudeSettingsEnv,
-} from "./Drivers/ClaudeSkills.ts";
+} from "./Drivers/ClaudeLaunchArgSettings.ts";
+import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -205,7 +206,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
-  readonly launchArgSettings?: { readonly [key: string]: unknown } | undefined;
+  readonly launchArgSettings?: ClaudeSdkSettings | undefined;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -343,7 +344,10 @@ const probeClaudeCapabilities = (
     const launchArgSettings = yield* readClaudeLaunchArgSettings(
       claudeSettings.launchArgs,
       cwd,
-    ).pipe(Effect.orElseSucceed(() => undefined));
+    ).pipe(
+      Effect.map((settings) => settings && claudeSdkLaunchArgSettings(settings)),
+      Effect.orElseSucceed(() => undefined),
+    );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API

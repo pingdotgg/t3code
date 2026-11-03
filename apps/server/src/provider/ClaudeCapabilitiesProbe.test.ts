@@ -52,7 +52,16 @@ it.effect("probes slash commands with the instance's --settings launch arg, hook
     const path = yield* Path.Path;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
     const settingsFile = path.join(tempDir, "work-settings.json");
-    yield* fs.writeFileString(settingsFile, '{"enabledPlugins":{"work-plugin@demo-market":true}}');
+    // Legacy `false` switches make the CLI drop the whole inline layer, hook switch included.
+    yield* fs.writeFileString(
+      settingsFile,
+      JSON.stringify({
+        enabledPlugins: { "work-plugin@demo-market": true },
+        disableAutoMode: false,
+        permissions: { allow: ["Read"], disableBypassPermissionsMode: false },
+        disableAllHooks: false,
+      }),
+    );
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
       () =>
         ({
@@ -70,6 +79,7 @@ it.effect("probes slash commands with the instance's --settings launch arg, hook
 
     assert.deepEqual(query.mock.calls[0]?.[0].options?.settings, {
       enabledPlugins: { "work-plugin@demo-market": true },
+      permissions: { allow: ["Read"] },
       disableAllHooks: true,
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

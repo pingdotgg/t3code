@@ -421,12 +421,19 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         }),
       );
       yield* fs.writeFileString(path.join(configDir, "settings.json"), '{"enabledPlugins":{}}');
+      // --settings outranks the project's local settings file.
+      const workspace = path.join(tempDir, "workspace");
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
+        '{"enabledPlugins":{"work-plugin@demo-market":false}}',
+      );
       const enabled = '{"enabledPlugins":{"work-plugin@demo-market":true}}';
       const settingsFile = path.join(tempDir, "work-settings.json");
       yield* fs.writeFileString(settingsFile, enabled);
 
       for (const launchArgs of [`--settings "${settingsFile}"`, `--settings '${enabled}'`]) {
-        const skills = yield* discoverClaudeSkills({ homePath: configDir, launchArgs });
+        const skills = yield* discoverClaudeSkills({ homePath: configDir, launchArgs }, workspace);
         assert.deepEqual(skills, [
           {
             name: "work-plugin:deploy-check",

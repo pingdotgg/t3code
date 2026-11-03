@@ -5,12 +5,13 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { readClaudeLaunchArgSettings } from "./ClaudeLaunchArgSettings.ts";
 
 type ClaudeSkillScope = "user" | "project";
 
@@ -473,54 +474,6 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
     Object.assign(settingsEnv, parsed?.env);
   }
   return settingsEnv;
-});
-
-export class ClaudeSettingsLaunchArgError extends Schema.TaggedError<ClaudeSettingsLaunchArgError>()(
-  "ClaudeSettingsLaunchArgError",
-  {
-    path: Schema.optional(Schema.String),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Claude could not read the --settings launch argument${this.path === undefined ? "" : ` at ${this.path}`} as a JSON object. Fix it in the Claude launch arguments, then send the message again.`;
-  }
-}
-
-const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(Schema.Record(Schema.String, Schema.Unknown)),
-);
-
-/**
- * Reads the --settings launch argument: a value starting with a brace is inline
- * JSON, anything else is a file path relative to the cwd.
- */
-export const readClaudeLaunchArgSettings = Effect.fn("readClaudeLaunchArgSettings")(function* (
-  launchArgs: string | undefined,
-  cwd: string | undefined,
-): Effect.fn.Return<
-  { readonly [key: string]: unknown } | undefined,
-  ClaudeSettingsLaunchArgError,
-  FileSystem.FileSystem | Path.Path
-> {
-  const value = parseCliArgs(launchArgs ?? "").flags.settings;
-  if (value === undefined) return undefined;
-  const trimmed = value?.trim() ?? "";
-  if (trimmed.length === 0) return yield* new ClaudeSettingsLaunchArgError({});
-  // The CLI also wants a closing brace, but then malformed JSON, secrets included, would
-  // become the file path in the error message.
-  if (trimmed.startsWith("{")) {
-    return yield* decodeClaudeLaunchArgSettings(trimmed).pipe(
-      Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ cause })),
-    );
-  }
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const filePath = path.resolve(cwd ?? ".", trimmed);
-  return yield* fileSystem.readFileString(filePath).pipe(
-    Effect.flatMap(decodeClaudeLaunchArgSettings),
-    Effect.mapError((cause) => new ClaudeSettingsLaunchArgError({ path: filePath, cause })),
-  );
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.

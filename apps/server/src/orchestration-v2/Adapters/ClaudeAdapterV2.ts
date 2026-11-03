@@ -149,8 +149,13 @@ import {
 import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
-  readClaudeLaunchArgSettings,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+import {
+  ClaudeBypassSettings,
+  claudeSdkBypassSettings,
+  claudeSdkLaunchArgSettings,
+  readClaudeLaunchArgSettings,
+} from "../../provider/Drivers/ClaudeLaunchArgSettings.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -2636,58 +2641,10 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   };
 }
 
-const ClaudeBypassSettings = Schema.StructWithRest(
-  Schema.Struct({
-    disableAutoMode: Schema.optionalKey(Schema.Literals(["disable", false])),
-    permissions: Schema.optionalKey(
-      Schema.StructWithRest(
-        Schema.Struct({
-          disableBypassPermissionsMode: Schema.optionalKey(Schema.Literals(["disable", false])),
-          disableAutoMode: Schema.optionalKey(Schema.Literals(["disable", false])),
-        }),
-        [Schema.Record(Schema.String, Schema.Unknown)],
-      ),
-    ),
-  }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
-);
 const decodeClaudeBypassSettings = Schema.decodeUnknownEffect(
   fromLenientJson(ClaudeBypassSettings),
 );
 const decodeClaudeLaunchArgBypassSettings = Schema.decodeUnknownEffect(ClaudeBypassSettings);
-
-function claudeSdkBypassSettings(settings: typeof ClaudeBypassSettings.Type) {
-  const { disableAutoMode, permissions, ...rest } = settings;
-  const {
-    disableBypassPermissionsMode,
-    disableAutoMode: nestedAutoMode,
-    ...permissionRest
-  } = permissions ?? {};
-  return {
-    ...rest,
-    ...(disableAutoMode === "disable" ? { disableAutoMode } : {}),
-    ...(permissions
-      ? {
-          permissions: {
-            ...permissionRest,
-            ...(disableBypassPermissionsMode === "disable" ? { disableBypassPermissionsMode } : {}),
-            ...(nestedAutoMode === "disable" ? { disableAutoMode: nestedAutoMode } : {}),
-          },
-        }
-      : {}),
-  };
-}
-
-// --settings travels to the SDK as options.settings, whose type only allows "disable".
-// Shapes the schema rejects keep their current pass-through; resolveBypassAvailability
-// already treats them as a bypass failure.
-const decodeClaudeLaunchArgBypassSettingsOption = Schema.decodeUnknownOption(ClaudeBypassSettings);
-function claudeSdkLaunchArgSettings(settings: ClaudeSdkSettings): ClaudeSdkSettings {
-  const decoded = decodeClaudeLaunchArgBypassSettingsOption(settings);
-  return Option.isNone(decoded)
-    ? settings
-    : (claudeSdkBypassSettings(decoded.value) as ClaudeSdkSettings);
-}
 
 const ClaudePromptCacheTtl = Schema.Literals(["5m", "1h"]);
 const decodeClaudePromptCacheTtl = Schema.decodeUnknownOption(ClaudePromptCacheTtl);
