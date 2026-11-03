@@ -928,9 +928,13 @@ export const buildMessages = (sample: Sample) => {
     const calls = (turn.toolCalls ?? []).map((call) => {
       const tool = findTool(base, call.tool);
       if (tool === undefined) throw new Error(`${testCase.id}: unknown prior tool ${call.tool}.`);
-      const fromT3 = isDeviceTool(call.tool) || call.tool === "t3_background_wait";
-      if (call.result === "default" && fromT3 && !sample.priorResults.has(call)) {
-        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result from its world.`);
+      const builder = isDeviceTool(call.tool)
+        ? "withDevices"
+        : call.tool === "t3_background_wait"
+          ? "withBackgroundWait"
+          : undefined;
+      if (call.result === "default" && builder && !sample.priorResults.has(call)) {
+        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run ${builder}.`);
       }
       return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool, prior: call };
     });
