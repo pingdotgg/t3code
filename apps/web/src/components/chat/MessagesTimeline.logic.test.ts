@@ -4236,6 +4236,100 @@ describe("live subagents after their parent turn settles", () => {
   });
 });
 
+describe("running subagents in an open turn", () => {
+  const runId = RunId.make("open-run");
+  const threadId = ThreadId.make("open-thread");
+  const providerTurnId = ProviderTurnId.make("open-provider-turn");
+  const at = (second: number) =>
+    DateTime.makeUnsafe(`2026-10-06T10:00:${String(second).padStart(2, "0")}Z`);
+  const base = (id: string, second: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: second,
+    title: null,
+    startedAt: at(second),
+    completedAt: at(second),
+    updatedAt: at(second),
+  });
+  const userMessage = (
+    id: string,
+    second: number,
+    inputIntent: "turn_start" | "steer",
+  ): OrchestrationV2TurnItem => ({
+    ...base(id, second),
+    status: "completed",
+    type: "user_message",
+    messageId: MessageId.make(id),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent,
+    text: id,
+    attachments: [],
+  });
+  const child = (status: OrchestrationV2TurnItem["status"]): OrchestrationV2TurnItem => ({
+    ...base("child", 2),
+    status,
+    completedAt: status === "running" ? null : at(2),
+    type: "subagent",
+    subagentId: NodeId.make("child"),
+    origin: "app_owned",
+    driver: ProviderDriverKind.make("claudeAgent"),
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    childThreadId: ThreadId.make("child-thread"),
+    prompt: "Build the rooms",
+    result: null,
+  });
+  const rowsFor = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items.map((item): OrchestrationV2ProjectedTurnItem => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId,
+        status: "running",
+        startedAt: DateTime.formatIso(at(0)),
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: DateTime.formatIso(at(0)),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+  it("shows the running children instead of Thinking while the turn waits on them", () => {
+    const rows = rowsFor([userMessage("start", 0, "turn_start"), child("running")]);
+    expect(rows.some((row) => row.kind === "working")).toBe(true);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("shows Thinking while the parent reads a steer sent after the children started", () => {
+    const rows = rowsFor([
+      userMessage("start", 0, "turn_start"),
+      child("running"),
+      userMessage("steer", 3, "steer"),
+    ]);
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
+  });
+
+  it("shows Thinking once the children have finished", () => {
+    const rows = rowsFor([userMessage("start", 0, "turn_start"), child("completed")]);
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
+  });
+});
+
 describe("subagent continued by a later turn", () => {
   const threadId = ThreadId.make("parent-thread");
   const run1 = RunId.make("run-1");

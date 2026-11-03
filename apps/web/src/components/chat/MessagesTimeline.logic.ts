@@ -2097,6 +2097,24 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  // A turn waiting on its running children has nothing to think about; their cards are the
+  // activity. A user message after them is new input the parent is still reading.
+  const lastLiveSubagentIndex = timelineEntries.findLastIndex(
+    (entry, index) =>
+      index >= activeTurnHeaderIndex &&
+      entry.kind === "event" &&
+      isLiveSubagentTurnItem(entry.projectedItem.item) &&
+      runIdIsActiveResponse(entry.projectedItem.item.runId),
+  );
+  if (
+    lastLiveSubagentIndex >= 0 &&
+    !timelineEntries
+      .slice(lastLiveSubagentIndex + 1)
+      .some((entry) => entry.kind === "message" && entry.message.role === "user")
+  ) {
+    hasActivityRow = true;
+  }
+
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
