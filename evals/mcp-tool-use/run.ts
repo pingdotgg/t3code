@@ -959,8 +959,7 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (userPrompt !== "") push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
