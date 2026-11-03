@@ -20,6 +20,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -1074,6 +1075,78 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
       ]);
+    }),
+  );
+
+  it.effect("a settled branch PR is rechecked only when the branch moves or every 15 minutes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/settled"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/settled"]);
+      const pullRequest = (number: number, state: "open" | "merged"): FakeChangeRequest => ({
+        number,
+        title: "Settled",
+        url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+        baseRefName: "main",
+        headRefName: "feature/settled",
+        state,
+        updatedAt: `2026-04-0${number}T15:00:00Z`,
+      });
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          prListSequence: [
+            [pullRequest(1, "merged")],
+            [pullRequest(1, "merged")],
+            [pullRequest(1, "merged")],
+          ],
+          prListOtherwise: [pullRequest(2, "open")],
+        },
+      });
+      const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/settled" });
+      const freshLookups = () => gitCommands.filter((args) => args === "remote").length;
+
+      expect((yield* lookup)?.state).toBe("merged");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
+        "config",
+        "config",
+        "for-each-ref",
+        "for-each-ref",
+      ]);
+      expect(freshLookups()).toBe(0);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "settled.txt"), "new work\n");
+      yield* runGit(repoDir, ["add", "settled.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "New work"]);
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(1);
+      gitCommands.length = 0;
+      yield* lookup;
+      expect(freshLookups()).toBe(0);
+
+      // Remembered git state expires after 5 minutes; that rereads git without a recheck.
+      yield* TestClock.adjust("10 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(1);
+
+      yield* TestClock.adjust("5 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(2);
+
+      // A new PR from the reused branch shows on the next host query.
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* lookup)?.number).toBe(2);
     }),
   );
 
