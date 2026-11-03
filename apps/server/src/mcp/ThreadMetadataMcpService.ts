@@ -9,7 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -110,7 +110,7 @@ function resultFromThread(input: {
 }
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
@@ -145,9 +145,7 @@ const make = Effect.gen(function* () {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
     const requestKey =
-      input.clientRequestId === undefined
-        ? yield* crypto.randomUUIDv4().pipe(Effect.orDie)
-        : input.clientRequestId;
+      input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;
     const updateCommandId = commandId({
       scope,
       threadId,
@@ -200,5 +198,5 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService.ThreadManagementService
+  SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService
 > = Layer.effect(ThreadMetadataMcpService, make);
