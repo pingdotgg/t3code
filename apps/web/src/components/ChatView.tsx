@@ -3153,7 +3153,7 @@ export default function ChatView(props: ChatViewProps) {
     onOpenProviderSetup: openProviderSetupStable,
     onOpenTerminal: () => setTerminalOpenStable(true),
     onProviderModelSelect: onProviderModelSelectStable,
-    onShowLimits: usageLimitsOffered && usageLimitsKey !== null ? openUsageLimits : null,
+    limitsAvailable: usageLimitsOffered && usageLimitsKey !== null,
     threadId: activeThread?.id ?? null,
     threadError: timelineThreadError,
     threadErrorClass: threadErrorIsServerRuntimeError
