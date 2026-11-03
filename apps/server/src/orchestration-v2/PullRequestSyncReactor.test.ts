@@ -979,6 +979,49 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("stops reading a pull request a day after it closed, until a refresh asks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const closed = (closedAt: string | null) => ({ state: "closed" as const, closedAt });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("closed", {
+              pullRequests: [
+                makeLink(1, closed("2026-08-20T00:00:00.000Z")),
+                makeLink(2, closed("2026-08-26T00:00:00.000Z")),
+                makeLink(3, closed("2026-08-28T11:00:00.000Z")),
+                makeLink(4, closed(null)),
+              ],
+            }),
+          ]),
+          summary: (input) =>
+            Effect.succeed(makeSummary(input, { state: "closed", closedAt: NOW })),
+        });
+        const reads = Ref.get(fixture.summaryCalls).pipe(
+          Effect.map((calls) => calls.map((call) => call.number).toSorted()),
+        );
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          // Closed within the day, or with no close time, keeps the fifteen-minute cadence.
+          assert.deepStrictEqual(yield* reads, [3, 4]);
+          for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
+          assert.deepStrictEqual(yield* reads, [3, 3, 4, 4]);
+
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 1,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* reads, [1, 3, 3, 4, 4]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("re-reads a merged pull request until the host supplies its merge time", () =>
     Effect.scoped(
       Effect.gen(function* () {

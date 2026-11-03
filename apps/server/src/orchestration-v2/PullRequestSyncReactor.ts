@@ -44,6 +44,9 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // requested refreshes, watches and a host CLI's merge command still read it at once.
 const QUIET_AFTER_MS = 30 * 60 * 1_000;
 const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+// A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
+// does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
+const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -351,13 +354,12 @@ export const make = Effect.gen(function* () {
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     // Merged snapshots without mergedAt cannot settle threads; reread slowly until supplied.
-    if (
-      active.every(
-        (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt != null,
-      )
-    ) {
-      return false;
-    }
+    const isFinal = ({ link: { snapshot } }: LinkEntry) =>
+      snapshot?.state === "merged"
+        ? snapshot.mergedAt != null
+        : snapshot?.state === "closed" &&
+          nowMs - Date.parse(snapshot.closedAt ?? "") >= CLOSED_FINAL_AFTER_MS;
+    if (active.every(isFinal)) return false;
     const last = lastSyncedAt.get(key);
     const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
     const open = active.filter((entry) => entry.link.snapshot?.state === "open");
