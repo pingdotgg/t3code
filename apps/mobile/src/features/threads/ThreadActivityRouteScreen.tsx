@@ -43,15 +43,24 @@ function StepRow(props: {
   readonly emphasized?: boolean;
   readonly muted?: boolean;
   readonly trailing?: string;
+  /** Spoken after the label, because the icon that shows the status is hidden from screen readers. */
+  readonly spokenStatus?: string;
   readonly onPress?: () => void;
 }) {
   const content = (
     <View className="flex-row items-start gap-3 px-4 py-3">
-      <View className="pt-0.5">
+      <View
+        className="pt-0.5"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
         <SymbolView name={props.icon} size={16} tintColorClassName={props.tint} />
       </View>
       <Text
         textRole="body"
+        {...(props.spokenStatus
+          ? { accessibilityLabel: `${props.label}, ${props.spokenStatus}` }
+          : {})}
         className={cn(
           "min-w-0 flex-1",
           props.emphasized ? "font-t3-bold text-foreground" : "text-foreground",
@@ -125,6 +134,7 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
 
   return (
     <View
+      accessible
       accessibilityRole="summary"
       accessibilityLiveRegion="polite"
       className={cn(
@@ -132,7 +142,11 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
         phase === "waiting" ? "border-warning-border bg-warning" : "border-border bg-card",
       )}
     >
-      <View className="pt-0.5">
+      <View
+        className="pt-0.5"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
         <SymbolView name={icon} size={20} tintColorClassName={tint} />
       </View>
       <View className="min-w-0 flex-1 gap-1">
@@ -245,6 +259,13 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
                   label={step.text}
                   emphasized={step.status === "running"}
                   muted={step.status !== "running"}
+                  spokenStatus={
+                    step.status === "completed"
+                      ? "done"
+                      : step.status === "running"
+                        ? "in progress"
+                        : "not started"
+                  }
                 />
               ))}
             </ListSection>
@@ -284,6 +305,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
                   icon={step.failed ? "xmark" : "checkmark"}
                   tint={step.failed ? "accent-danger-foreground" : "accent-icon-muted"}
                   label={step.label}
+                  {...(step.failed ? { spokenStatus: "failed" } : {})}
                 />
               ))}
             </ListSection>
