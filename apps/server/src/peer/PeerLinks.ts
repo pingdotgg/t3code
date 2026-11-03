@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The pinned Effect Crypto service has no digest API.
+import * as NodeCrypto from "node:crypto";
 import {
   AuthMcpClientAccess,
   AuthMcpRegistrationError,
@@ -192,9 +194,7 @@ const make = Effect.gen(function* () {
   // Relinking replaces the destination OAuth namespace. A pending launch may
   // replay only through its original grant, even when its environment is unchanged.
   const launchIdentity = (secretName: string) =>
-    crypto
-      .digest("SHA-256", new TextEncoder().encode(secretName))
-      .pipe(Effect.map(Hex.encode), Effect.orDie);
+    Effect.sync(() => NodeCrypto.createHash("sha256").update(secretName).digest("hex"));
 
   // Only the origin `peerOrigin` checked may receive a pairing code or token:
   // a redirect could forward them anywhere, including plain http.
