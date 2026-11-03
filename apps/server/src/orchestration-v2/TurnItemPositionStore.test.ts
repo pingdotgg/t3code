@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -54,64 +53,6 @@ it.effect("reuses an item's position without attempting another allocation inser
     assert.equal(
       yield* positions.allocate({ ...input, threadId: ThreadId.make("thread:other") }),
       1,
-    );
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("orders external history before live messages and upgrades legacy positions", () =>
-  Effect.gen(function* () {
-    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
-    const threadId = ThreadId.make("external-history");
-    const input = { threadId, runId: null, turnItemId: TurnItemId.make("recent") };
-    const legacy = yield* positions.allocate(input);
-    assert.equal(legacy, 1);
-    const recentAt = DateTime.makeUnsafe("2026-11-02T12:00:00Z");
-    const recent = yield* positions.allocate({
-      ...input,
-      chronological: true,
-      sourceTimestamp: recentAt,
-    });
-    const old = yield* positions.allocate({
-      ...input,
-      turnItemId: TurnItemId.make("history"),
-      chronological: true,
-      sourceTimestamp: DateTime.makeUnsafe("2026-11-01T12:00:00Z"),
-    });
-    const simultaneous = yield* positions.allocate({
-      ...input,
-      turnItemId: TurnItemId.make("tool"),
-      chronological: true,
-      sourceTimestamp: recentAt,
-    });
-    assert.isBelow(old, recent);
-    assert.isAbove(simultaneous, recent);
-    const managed = {
-      ...input,
-      turnItemId: TurnItemId.make("managed"),
-      runId: RunId.make("managed-run"),
-      runOrdinal: 1,
-    };
-    const beforeRepair = yield* positions.allocate(managed);
-    assert.isBelow(beforeRepair, old);
-    const afterRepair = yield* positions.allocate({
-      ...managed,
-      sourceTimestamp: DateTime.makeUnsafe("2026-11-02T14:00:00Z"),
-    });
-    assert.isAbove(afterRepair, simultaneous);
-    assert.equal(
-      yield* positions.allocate({
-        ...managed,
-        sourceTimestamp: DateTime.makeUnsafe("2026-11-02T15:00:00Z"),
-      }),
-      afterRepair,
-    );
-    assert.equal(
-      yield* positions.allocate({
-        ...input,
-        chronological: true,
-        sourceTimestamp: DateTime.makeUnsafe("2026-11-02T13:00:00Z"),
-      }),
-      recent,
     );
   }).pipe(Effect.provide(layerTest)),
 );

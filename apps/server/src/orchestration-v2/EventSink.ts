@@ -74,7 +74,6 @@ const encodeEventIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Sche
 export interface EventSinkV2Shape {
   readonly write: (input: {
     /** Idempotent ingestion of source records whose event IDs are deterministic. */
-    readonly chronological?: boolean;
     readonly expectedThread?: OrchestrationV2AppThread;
     readonly skipExistingEventIds?: boolean;
     /** Return no events if another thread owns this native session at commit time. */
@@ -87,7 +86,6 @@ export interface EventSinkV2Shape {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
-    readonly chronological?: boolean;
     readonly expectedThread?: OrchestrationV2AppThread;
     readonly skipExistingEventIds?: boolean;
     /**
@@ -343,7 +341,6 @@ const layerBase: Layer.Layer<
 
     const normalizeEvents = Effect.fnUntraced(function* (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
-      chronological = false,
     ) {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -360,7 +357,6 @@ const layerBase: Layer.Layer<
                 .normalize(
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                  chronological,
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
@@ -474,7 +470,6 @@ const layerBase: Layer.Layer<
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
               : events,
-            input.chronological,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

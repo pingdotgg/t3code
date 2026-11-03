@@ -194,6 +194,10 @@ it.effect.each(["wait", "interrupt"] as const)(
           yield* service.change({ action: "handoff", threadId: attached.threadId, interrupt }),
         ).toEqual({ threadId: attached.threadId, attached: false, readOnly: false });
         expect(interruptions).toBe(interrupt ? 1 : 0);
+        const imported = yield* sql<{ ordinal: number }>`SELECT ordinal
+          FROM orchestration_v2_projection_turn_items WHERE thread_id = ${attached.threadId}
+          ORDER BY ordinal`;
+        expect(imported.map((item) => item.ordinal)).toEqual([1, 2]);
         const after = yield* projections.getThread(attached.threadId);
         expect(after.worktreePath).toBe("/work/later");
         // Deployed histories retain these former fields; the current codec strips them without a migration.

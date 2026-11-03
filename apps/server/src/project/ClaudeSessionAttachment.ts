@@ -464,7 +464,6 @@ const make = Effect.gen(function* () {
     }
     for (let i = 0; i < events.length; i += 100)
       yield* sink.write({
-        chronological: true,
         skipExistingEventIds: true,
         events: events.slice(i, i + 100),
       });
