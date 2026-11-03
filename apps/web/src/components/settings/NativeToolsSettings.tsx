@@ -54,7 +54,6 @@ export function NativeToolsSettings() {
               key={tool.name}
               title={tool.name}
               description={tool.description}
-              serverScoped
               managedPaths={[`nativeToolEnabled.${tool.name}`]}
               control={
                 <Switch
