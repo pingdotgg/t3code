@@ -28,7 +28,6 @@ export class SourceControlSignIn extends Context.Service<
     ) => Effect.Effect<void, SourceControlSignInError>;
     readonly access: (input: SourceControlAppAccessInput) => Effect.Effect<SourceControlAppAccess>;
     readonly starred: (input: SourceControlStarredInput) => Effect.Effect<boolean>;
-    readonly star: (input: SourceControlStarredInput) => Effect.Effect<boolean>;
   }
 >()("t3/sourceControl/SourceControlSignIn") {}
 
@@ -70,11 +69,6 @@ const make = Effect.gen(function* () {
       const isStarred = drivers.find(({ driver }) => driver.kind === input.provider)?.instance
         .isRepositoryStarred;
       return isStarred === undefined ? false : yield* isStarred(input.host, input.repository);
-    }),
-    star: Effect.fn("SourceControlSignIn.star")(function* (input) {
-      const star = drivers.find(({ driver }) => driver.kind === input.provider)?.instance
-        .starRepository;
-      return star === undefined ? false : yield* star(input.host, input.repository);
     }),
   });
 });

@@ -195,6 +195,7 @@ export interface CommandPaletteItem {
   /** The title as plain text, for searching, when `title` is styled. */
   readonly searchTitle?: string;
   readonly description?: ReactNode;
+  readonly descriptionBelow?: boolean;
   readonly threadContentMatch?: CommandPaletteThreadContentMatch;
   readonly timestamp?: string;
   /** Thread rows rank by this, with use history, instead of by `searchTerms`. */
@@ -392,6 +393,7 @@ export function buildProjectActionItems(input: {
       ],
       title: project.displayName,
       description: input.renderDescription?.(project) ?? project.workspaceRoot,
+      descriptionBelow: true,
       icon: input.icon(project),
       ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
       ...(pin ? { pin } : {}),

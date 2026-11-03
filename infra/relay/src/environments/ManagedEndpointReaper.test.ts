@@ -140,7 +140,6 @@ function harness(input?: {
       }),
     create: () => Effect.die("unused"),
     putConfiguration: () => Effect.die("unused"),
-    getConfiguration: () => Effect.die("unused"),
     getToken: () => Effect.die("unused"),
     delete: (tunnelId) =>
       input?.failAllDeletes === true ||
