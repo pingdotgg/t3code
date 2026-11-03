@@ -18765,6 +18765,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   describe("native goals", () => {
+    it("preserves a multiline /goal as a native command when its objective mentions a skill", () => {
+      const skills = new Map([["review", { path: "/home/me/.claude/skills/review/SKILL.md" }]]);
+      const text = "/goal fix all the gaps.\ndecompile target.ipa into ./target/\n$review";
+      const message = ClaudeAdapterV2.makeClaudeUserMessage({ text, skills });
+      assert.equal(message.message.content, text);
+    });
+
     const syntheticFrame = (uuid: string, text: string) =>
       claudeSdkFrame({
         type: "assistant",
