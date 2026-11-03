@@ -67,9 +67,10 @@ import {
   MessageCircleQuestionMarkIcon,
   RefreshCwIcon,
   ShieldQuestionMarkIcon,
+  ArrowDownIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
+import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {
   liveWorkEntryLabel,
   resolveWorkGroupScrollIndex,
@@ -923,17 +924,6 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
       observer?.disconnect();
     };
   }, [open, head]);
-  const [full, setFull] = useState(false);
-  const observeHeight = (element: HTMLDivElement | null) => {
-    windowRef.current = element;
-    if (!element) return;
-    const update = () => {
-      const next = element.clientHeight >= WORKING_WINDOW_MAX_HEIGHT - 1;
-      setFull((current) => (current === next ? current : next));
-    };
-    update();
-    return observeResize(element, update);
-  };
   const { workGroupViewState, onToggleWorkEntry } = ctx;
   // Entries opened in the history keep their state, and toggling one keeps the bar in place.
   const groupView = (() => ({
@@ -961,7 +951,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   return (
     <WorkGroupViewCtx value={groupView}>
       <div
-        ref={observeHeight}
+        ref={windowRef}
         role="region"
         aria-label="Work history"
         className={cn(
@@ -970,24 +960,132 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           open
             ? "[height:calc-size(auto,size)]"
             : "[height:calc-size(auto,min(size,220px))] not-supports-[height:calc-size(auto,size)]:max-h-[220px]",
-          !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
         )}
       >
-        {history ? window.items.slice(0, headEnd).map(renderItem) : null}
-        {unmounted > 0 ? (
-          <div
-            ref={spacerRef}
-            aria-hidden
-            className="shrink-0"
-            style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+        {history === null ? (
+          <CollapsedWorkingWindow
+            key={window.key}
+            items={window.items}
+            itemKey={itemKey}
+            showThinking={showThinking}
           />
-        ) : null}
-        {shown.map(renderItem)}
-        {showThinking ? (
-          <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active />
-        ) : null}
+        ) : (
+          <>
+            {history ? window.items.slice(0, headEnd).map(renderItem) : null}
+            {unmounted > 0 ? (
+              <div
+                ref={spacerRef}
+                aria-hidden
+                className="shrink-0"
+                style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+              />
+            ) : null}
+            {shown.map(renderItem)}
+            {showThinking ? (
+              <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active />
+            ) : null}
+          </>
+        )}
       </div>
     </WorkGroupViewCtx>
+  );
+}
+
+function CollapsedWorkingWindow({
+  items,
+  itemKey,
+  showThinking,
+}: {
+  items: WorkingWindow["items"];
+  itemKey: string;
+  showThinking: boolean;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+  const prependRef = useRef<{ height: number; top: number } | null>(null);
+  const [following, setFollowing] = useState(true);
+  const [start, setStart] = useState(() => Math.max(0, items.length - WORKING_WINDOW_TAIL));
+  const getViewport = () =>
+    rootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  // Following runs in ResizeObserver after layout; only a prepend needs correction before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves the visible offset when mounting an older batch
+  useLayoutEffect(() => {
+    const prepend = prependRef.current;
+    if (!prepend) return;
+    const viewport = getViewport();
+    if (!viewport) return;
+    viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
+    prependRef.current = null;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- content can grow between renders while markdown and command output stream
+  useLayoutEffect(() => {
+    const viewport = rootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+    return observeResize([content, viewport], () => {
+      if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
+    });
+  }, []);
+
+  return (
+    <div className="relative min-h-0 min-w-0 shrink-0">
+      <ScrollArea
+        ref={rootRef}
+        className="h-auto max-h-[212px]"
+        scrollFade
+        scrollFadePadding={false}
+        chainVerticalScroll
+        viewportTabIndex={0}
+        onScrollCapture={(event) => {
+          const viewport = getViewport();
+          if (!viewport || event.target !== viewport || prependRef.current) return;
+          const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+          followRef.current = atEnd;
+          setFollowing(atEnd);
+          if (atEnd) {
+            setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
+          } else if (viewport.scrollTop < 80 && start > 0) {
+            prependRef.current = { height: viewport.scrollHeight, top: viewport.scrollTop };
+            setStart(Math.max(0, start - WORKING_HISTORY_BATCH));
+          }
+        }}
+      >
+        <div ref={contentRef} className="flex min-w-0 flex-col gap-1">
+          {items.slice(start).map((item) => (
+            <div key={item.id} className="min-w-0">
+              <WorkingWindowItemView
+                item={item}
+                itemKey={itemKey}
+                current={item === items.at(-1)}
+              />
+            </div>
+          ))}
+          {showThinking ? <LiveActivityRow label="Thinking" iconName="brain" active /> : null}
+        </div>
+      </ScrollArea>
+      {!following ? (
+        <div className="pointer-events-none absolute end-2 bottom-1">
+          <div className="pointer-events-auto">
+            <Button
+              size="compact"
+              variant="secondary"
+              onClick={() => {
+                followRef.current = true;
+                setFollowing(true);
+                const viewport = getViewport();
+                if (viewport) viewport.scrollTop = viewport.scrollHeight;
+              }}
+            >
+              <ArrowDownIcon aria-hidden />
+              Jump to latest
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -999,9 +1097,6 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
     subagentItemIsLive(member.status),
   );
 }
-
-// Includes the 8px gap under the bar so the fade reaches its hairline.
-const WORKING_WINDOW_MAX_HEIGHT = 220;
 
 const WORKING_WINDOW_TAIL = 12;
 
