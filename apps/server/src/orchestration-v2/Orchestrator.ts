@@ -5953,12 +5953,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // behind a long parent turn is never seen. Never interrupt/restart a turn
     // for a notification.
     if (
-      delegatedCompletion !== undefined
+      !freshContext &&
+      (delegatedCompletion !== undefined
         ? delegatedCompletion.taskIds.every(
             (id) =>
               projection.subagents.find((task) => task.id === id)?.completionWake === "always",
           )
-        : command.notification?.source.kind === "delegated_task"
+        : command.notification?.source.kind === "delegated_task")
     ) {
       const active = projection.runs.find((run) => run.status === "running");
       const providerThread = projection.providerThreads.find(
