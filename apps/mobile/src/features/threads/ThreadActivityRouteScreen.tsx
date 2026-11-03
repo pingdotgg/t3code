@@ -7,6 +7,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import * as Option from "effect/Option";
 import { useEffect, useRef } from "react";
 import { AccessibilityInfo, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -195,9 +196,12 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
   const structure = useQuietThreadStructure(
     scopeThreadRef(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId)),
   );
-  const threadDeleted =
-    useEnvironmentThread(EnvironmentId.make(params.environmentId), ThreadId.make(params.threadId))
-      .status === "deleted";
+  const threadState = useEnvironmentThread(
+    EnvironmentId.make(params.environmentId),
+    ThreadId.make(params.threadId),
+  );
+  const threadDeleted = threadState.status === "deleted";
+  const threadError = Option.getOrNull(threadState.error);
   const runActive =
     structure !== null && threadRuntimeIsActive(deriveThreadStructureRuntime(structure.projection));
   const summary = deriveActivitySummary(
@@ -253,6 +257,8 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
               title="This thread was deleted"
               detail="There is no activity to show."
             />
+          ) : threadError !== null ? (
+            <EmptyState variant="plain" title="Could not load this thread" detail={threadError} />
           ) : (
             <AppActivityIndicator colorClassName="accent-icon-muted" />
           )}
