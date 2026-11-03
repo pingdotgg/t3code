@@ -52,7 +52,7 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { getMainAppHref, isAppModalPage } from "./sidebar/mainAppLocation";
+import { isAppModalPage } from "./sidebar/mainAppLocation";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { isLayoutDragActive } from "../layout/layoutDrag";
@@ -233,19 +233,11 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
           isLayoutDragActive()
         )
           return;
-        const inPane = router.state.location.search.pane === 1;
-        if (
-          inPane &&
-          selectFocusedTab(useLayoutStore.getState().layout)?.content.kind !== "pull-requests"
-        )
+        if (selectFocusedTab(useLayoutStore.getState().layout)?.content.kind !== "pull-requests")
           return;
         event.preventDefault();
         const activeElement = document.activeElement;
         if (activeElement instanceof HTMLElement) activeElement.blur();
-        if (!inPane) {
-          void router.navigate({ href: getMainAppHref() ?? "/" });
-          return;
-        }
         if (router.state.location.state.__TSR_index !== 0) {
           window.history.back();
           return;
