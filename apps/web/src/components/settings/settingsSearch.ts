@@ -70,6 +70,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly telemetrySettingOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -82,6 +83,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasTelemetrySetting?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -845,6 +847,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Product usage data",
     to: "/settings/about",
     scope: "environment",
+    telemetrySettingOnly: true,
     searchTerms: ["telemetry analytics usage data tracking opt out disable posthog traces"],
   },
   {
@@ -1451,7 +1454,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.telemetrySettingOnly || availability.hasTelemetrySetting === true),
   );
 }
 
