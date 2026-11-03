@@ -36,6 +36,8 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   spaceCount?: number;
+  hasText?: boolean;
+  hasTextChoice?: boolean;
 }
 
 function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
@@ -61,10 +63,22 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
     stack.push(node);
   });
   parser.on("closetag", () => {
-    stack.pop();
+    const node = stack.pop()!;
+    const parent = stack.at(-1)!;
+    // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
+    // Keep one when no Choice carries text, such as a chart with a VML caption.
+    if (node.name === "Fallback" && parent.hasTextChoice) {
+      parent.children.pop();
+      return;
+    }
+    if (!node.hasText) return;
+    parent.hasText = true;
+    if (node.name === "Choice") parent.hasTextChoice = true;
   });
   const text = (value: string) => {
-    stack.at(-1)!.children.push(value);
+    const node = stack.at(-1)!;
+    node.children.push(value);
+    if (value.trim() !== "") node.hasText = true;
   };
   parser.on("text", text);
   parser.on("cdata", text);
