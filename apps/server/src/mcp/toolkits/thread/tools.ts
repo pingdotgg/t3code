@@ -27,6 +27,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadHandoverService from "../../../orchestration-v2/ThreadHandoverService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
@@ -236,6 +237,31 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadHandoverTool = Tool.make("t3_thread_handover", {
+  ...commandTool,
+  description:
+    "Hand this thread off to a deterministic new top-level continuation: a fresh thread in the same workspace and project, not a fork or clone. `message` is the next user request in the successor; `title` names it; `modelSelection` overrides its setup. The source thread settles only after the handover artifact is written and the successor is launched. Rejected while delegated work is active. Omit `threadId` for this thread.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    message: Schema.String.check(Schema.isMaxLength(100000)),
+    title: Schema.optional(TrimmedNonEmptyString),
+    modelSelection: Schema.optional(ModelSelection),
+    clientRequestId: Schema.optional(Schema.String),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    handoverId: Schema.String,
+    manifestPath: Schema.String,
+    link: Schema.optional(Schema.String),
+    settlesWhenTurnEnds: Schema.Boolean,
+  }),
+  dependencies: [...commandTool.dependencies, ThreadHandoverService.ThreadHandoverService],
+})
+  .annotate(Tool.Title, "Hand thread to a new top-level continuation")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
@@ -244,4 +270,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
+  ThreadHandoverTool,
 );

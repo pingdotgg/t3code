@@ -7,9 +7,11 @@ import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -88,7 +90,7 @@ const layerEnrichmentCompletions = Layer.effectContext(
   }),
 );
 
-const layerTestFor = (
+const layerProjectServiceBaseFor = (
   projectMetadataLayer: Layer.Layer<
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
@@ -100,8 +102,34 @@ const layerTestFor = (
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
+  );
+
+const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" }).pipe(
+  Layer.provide(NodeServices.layer),
+);
+
+const layerTestFor = (
+  projectMetadataLayer: Layer.Layer<
+    | ProjectFaviconResolver.ProjectFaviconResolver
+    | RepositoryIdentityResolver.RepositoryIdentityResolver
+  >,
+) =>
+  layerProjectServiceBaseFor(projectMetadataLayer).pipe(
+    Layer.provide(layerConfig),
     Layer.provide(NodeServices.layer),
+    Layer.provideMerge(layerEnrichmentCompletions),
+  );
+
+// The artifact-cleanup test must observe the same ServerConfig the service was
+// built with, so only this variant exposes FileSystem/Path/ServerConfig.
+const layerTestExposingRuntimeFor = (
+  projectMetadataLayer: Layer.Layer<
+    | ProjectFaviconResolver.ProjectFaviconResolver
+    | RepositoryIdentityResolver.RepositoryIdentityResolver
+  >,
+) =>
+  layerProjectServiceBaseFor(projectMetadataLayer).pipe(
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, layerConfig)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
@@ -120,8 +148,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -470,6 +498,49 @@ it.layer(layerTest)("ProjectService", (it) => {
       `;
       assert.deepEqual(events, [{ command_id: input.commandId }]);
     }),
+  );
+
+  it.effect("deletion removes the project's artifacts without touching a sibling's", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const artifactsRoot = path.join(stateDir, "artifacts", "projects");
+
+      const targetId = ProjectId.make("project:artifacts-target");
+      const siblingId = ProjectId.make("project:artifacts-sibling");
+      // Artifact directories URI-encode the raw id so Windows accepts ':' in path segments.
+      const targetArtifacts = path.join(artifactsRoot, encodeURIComponent(targetId));
+      const siblingArtifacts = path.join(artifactsRoot, encodeURIComponent(siblingId));
+      yield* service.create({
+        commandId: CommandId.make("command:artifacts-target:create"),
+        projectId: targetId,
+        title: "Artifacts target",
+        workspaceRoot: "/work/artifacts-target",
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:artifacts-sibling:create"),
+        projectId: siblingId,
+        title: "Artifacts sibling",
+        workspaceRoot: "/work/artifacts-sibling",
+      });
+
+      const targetFile = path.join(targetArtifacts, "nested", "output.txt");
+      const siblingFile = path.join(siblingArtifacts, "keep.txt");
+      yield* fileSystem.makeDirectory(path.join(targetArtifacts, "nested"), { recursive: true });
+      yield* fileSystem.writeFileString(targetFile, "target artifact");
+      yield* fileSystem.makeDirectory(siblingArtifacts, { recursive: true });
+      yield* fileSystem.writeFileString(siblingFile, "sibling artifact");
+
+      yield* service.delete({
+        commandId: CommandId.make("command:artifacts-target:delete"),
+        projectId: targetId,
+      });
+
+      assert.isFalse(yield* fileSystem.exists(targetArtifacts));
+      assert.equal(yield* fileSystem.readFileString(siblingFile), "sibling artifact");
+    }).pipe(Effect.provide(layerTestExposingRuntimeFor(layerMetadata))),
   );
 
   it.effect("treats a deleted project as missing for updates and new deletes", () =>

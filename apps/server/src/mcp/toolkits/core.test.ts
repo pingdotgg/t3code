@@ -38,6 +38,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadHandoverService from "../../orchestration-v2/ThreadHandoverService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
@@ -74,6 +75,7 @@ const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadHandoverService.ThreadHandoverService)({})),
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
@@ -133,6 +135,73 @@ it.effect("checks capability through the production registration", () =>
     ),
   ),
 );
+
+it.effect("the same client request id hands over to the same command from any session", () => {
+  const commandIds: CommandId[] = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const handover = (requestNamespace: string) =>
+      server
+        .callTool({
+          name: "t3_thread_handover",
+          arguments: { message: "continue", clientRequestId: "handover-request-1" },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scope,
+            requestNamespace,
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    expect((yield* handover("mcp-core-session")).isError).toBe(false);
+    expect((yield* handover("mcp-core-session")).isError).toBe(false);
+    expect((yield* handover("mcp-core-other-session")).isError).toBe(false);
+
+    expect(commandIds).toHaveLength(3);
+    expect(commandIds[1]).toBe(commandIds[0]);
+    expect(commandIds[2]).toBe(commandIds[0]);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(
+          Layer.mock(ThreadHandoverService.ThreadHandoverService)({
+            handover: (input) =>
+              Effect.sync(() => {
+                commandIds.push(input.commandId);
+                return {
+                  threadId: ThreadId.make("handover-successor"),
+                  handoverId: `handover:${input.commandId}`,
+                  manifestPath: "/tmp/manifest.json",
+                  settlesWhenTurnEnds: false,
+                };
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            getThreadProjection: (id) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("an answered question reports already answered instead of not found", () => {
   const shell = McpToolAccessTestkit.liveThreadShell(threadId);

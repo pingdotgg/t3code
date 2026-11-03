@@ -1,5 +1,5 @@
 import {
-  type CommandId,
+  CommandId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -7,7 +7,9 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
@@ -22,6 +24,7 @@ import {
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadHandover from "../../../orchestration-v2/ThreadHandoverService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -90,6 +93,28 @@ const required = <A>(value: A | undefined, name: string) =>
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+
+const handoverCommandId = Effect.fn("mcp.handoverCommandId")(function* (
+  sourceThreadId: ThreadId,
+  key: string,
+) {
+  const crypto = yield* Crypto.Crypto;
+  // @effect-diagnostics-next-line preferSchemaOverJson:off - a JSON pair keeps the source thread apart from the key.
+  const bytes = new TextEncoder().encode(JSON.stringify([sourceThreadId, key]));
+  const digest = yield* crypto.digest("SHA-256", bytes).pipe(Effect.mapError(unavailable));
+  return CommandId.make(`mcp:handover:${Hex.encode(digest)}`);
+});
+
+const handoverFailure = (
+  error: ThreadHandover.ThreadHandoverRejectedError | ThreadHandover.ThreadHandoverError,
+) =>
+  new OrchestratorMcpFailure({
+    code: error._tag === "ThreadHandoverRejectedError" ? "invalid_request" : "orchestration_error",
+    message:
+      error._tag === "ThreadHandoverRejectedError"
+        ? error.message
+        : "The thread handover could not be completed.",
+  });
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
@@ -323,6 +348,40 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         }
       }),
     ),
+  ),
+  t3_thread_handover: writesThread((input) =>
+    Effect.gen(function* () {
+      const { caller, threads } = yield* readThread(input.threadId);
+      const sourceId = input.threadId ?? caller?.id;
+      if (sourceId === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "target_required",
+          message: "Pass threadId: this MCP client is not running inside a T3 thread.",
+        });
+      }
+      const projection = yield* threads
+        .getThreadProjection(sourceId)
+        .pipe(Effect.mapError(unavailable));
+      const environmentId = yield* McpInvocationContext.McpInvocationContext.pipe(
+        Effect.map((scope) => scope.environmentId),
+      );
+      const commandId =
+        input.clientRequestId === undefined
+          ? yield* newCommandId()
+          : yield* handoverCommandId(sourceId, input.clientRequestId);
+      const handovers = yield* ThreadHandover.ThreadHandoverService;
+      const result = yield* handovers
+        .handover({
+          commandId,
+          projection,
+          message: input.message,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          byOwnAgent: caller?.id === sourceId,
+        })
+        .pipe(Effect.mapError(handoverFailure));
+      return { ...result, link: formatThreadLink({ environmentId, threadId: result.threadId }) };
+    }),
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
