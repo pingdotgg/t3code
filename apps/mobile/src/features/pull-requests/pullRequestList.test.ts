@@ -20,6 +20,7 @@ import {
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
+  pullRequestListRowActions,
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
@@ -240,6 +241,47 @@ describe("all-environment PR list", () => {
         merged.localSearchHosts,
       ).map((row) => row.environmentId),
     ).toEqual([mbp]);
+  });
+  it("offers only the row actions each environment's host reports", () => {
+    const bitbucket = {
+      host: "Bitbucket.org",
+      kind: SourceControlProviderKind.make("bitbucket"),
+      searchesOnHost: false,
+      projectCount: 1,
+      configured: true,
+      detail: null,
+    };
+    const row = (environmentId: EnvironmentId, patch: Partial<PullRequestListEntry>) => ({
+      ...entry(1, {
+        provider: SourceControlProviderKind.make("bitbucket"),
+        host: "bitbucket.org",
+        ...patch,
+      }),
+      environmentId,
+    });
+    const { hostActions } = mergeEnvironmentPullRequestPages([
+      {
+        environmentId: cups,
+        pages: pullRequestListHead(null, {
+          ...page([]),
+          providers: [{ ...bitbucket, actions: ["merge", "close"] }],
+        }),
+      },
+      {
+        environmentId: mbp,
+        pages: pullRequestListHead(null, { ...page([]), providers: [bitbucket] }),
+      },
+    ]);
+    expect(pullRequestListRowActions(row(cups, {}), hostActions)).toEqual(["close"]);
+    expect(pullRequestListRowActions(row(cups, { isDraft: true }), hostActions)).toEqual(["close"]);
+    expect(pullRequestListRowActions(row(cups, { state: "closed" }), hostActions)).toEqual([]);
+    expect(pullRequestListRowActions(row(mbp, {}), hostActions)).toEqual([]);
+    expect(
+      pullRequestListRowActions(
+        { ...entry(1, { state: "closed" }), environmentId: mbp },
+        hostActions,
+      ),
+    ).toEqual(["reopen"]);
   });
 });
 

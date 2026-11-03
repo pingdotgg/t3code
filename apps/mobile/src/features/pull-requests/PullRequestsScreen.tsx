@@ -185,6 +185,7 @@ export function PullRequestsScreen(
   const { actions, select, busyKey } = usePullRequestListActions(
     connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
+    result.data.hostActions,
   );
   const sidebar = props.sidebar === true || primaryColumn !== null;
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
