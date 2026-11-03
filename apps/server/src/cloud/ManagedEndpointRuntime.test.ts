@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -72,7 +73,7 @@ const runtimeDependencies = (
     relayClientLayer,
     secretStoreLayer,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
-  ).pipe(Layer.provideMerge(NodeServices.layer));
+  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
@@ -433,7 +434,7 @@ describe("CloudManagedEndpointRuntime", () => {
         const context = yield* Layer.build(
           ServerSecretStore.layer.pipe(
             Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         );
         const secretStoreLayer = Layer.succeed(
@@ -644,7 +645,7 @@ describe("CloudManagedEndpointRuntime", () => {
           ),
         ).toBe(true);
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("discards a pending fallback when its connector is replaced or removed", () =>
