@@ -1863,3 +1863,29 @@ it("keeps the earlier script when a Write or Edit fails", () => {
   ] as Run["calls"]);
   assert.deepEqual(sources.at(-1), [`cat ${F}\n`]);
 });
+
+it("keeps a child shell's variables out of the parent", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  assert.isFalse(
+    verdicts(`bash -c 'T="$(cat ${F})"'; adb pair 10.0.0.2:4242 "$T"`).some((verdict) =>
+      verdict.startsWith("consume"),
+    ),
+  );
+  assert.include(verdicts(`T="$(cat ${F})"; bash -c 'T=x'; echo "$T"`), "print");
+});
+
+it("reads a one-line Python with suite", () => {
+  const cmd = `python3 -c "import subprocess\nwith open('${F}') as f: subprocess.run(['adb', 'pair', '10.0.0.2:4242', f.read()])"`;
+  assert.deepEqual(
+    classifyFileUse(cmd, [F]).map((use) => use.verdict),
+    ["consume (program passes the value to a program)"],
+  );
+});
+
+it("stops the value at a pass-through stage's own redirect", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  assert.deepEqual(verdicts(`cat ${F} | cat > /tmp/leaked | adb pair 10.0.0.2:4242`), ["copy"]);
+  assert.deepEqual(verdicts(`cat ${F} | adb pair 10.0.0.2:4242 > /tmp/log | wc -l`), [
+    "consume (piped to a program)",
+  ]);
+});

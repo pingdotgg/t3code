@@ -825,8 +825,20 @@ const programStatements = (program: string, language: Language): Array<Statement
   let start = 0;
   let depth = 0;
   const cut = (end: number) => {
-    if (masked.slice(start, end).trim())
-      statements.push({ raw: program.slice(start, end), code: masked.slice(start, end) });
+    const code = masked.slice(start, end);
+    // `with open(f) as x: run(x.read())` binds x, then runs the suite on the same line.
+    const header =
+      language === "python" ? /^\s*(?:async\s+)?with\b.*?\bas\s+\w+\s*:(?=\s*\S)/.exec(code) : null;
+    const parts = header ? [header[0].length, code.length] : [code.length];
+    let from = 0;
+    for (const to of parts) {
+      if (code.slice(from, to).trim())
+        statements.push({
+          raw: program.slice(start + from, start + to),
+          code: code.slice(from, to),
+        });
+      from = to;
+    }
     start = end + 1;
   };
   for (let i = 0; i < masked.length; i++) {
@@ -1314,6 +1326,15 @@ export const classifyFileUse = (
   const ids = [...new Set(files.map(fileId))].join("|");
   const secretVars = new Set<string>();
   const exportedVars = new Set<string>();
+  // A child shell sees the parent's variables, but what it assigns stays in the child.
+  const inChild = (run: () => void) => {
+    const saved = [fileVars, dirVars, secretVars, exportedVars].map((vars) => new Set(vars));
+    run();
+    [fileVars, dirVars, secretVars, exportedVars].forEach((vars, i) => {
+      vars.clear();
+      for (const name of saved[i]!) vars.add(name);
+    });
+  };
   let xtrace = false;
   const fileRef = () =>
     [
@@ -1413,6 +1434,10 @@ export const classifyFileUse = (
         return { verdict: "unknown (piped to an inline program)", at: stage };
       if (!PRINTERS.test(head) && !/^grep\b/.test(head))
         return { verdict: "consume (piped to a program)", at: stage };
+      // A pass-through stage that redirects its stdout sends the value there, not down the pipe.
+      const sent = /(?:^|\s)(?:1|&)?>>?\s*([^&\s]\S*)/.exec(stage)?.[1];
+      if (sent !== undefined)
+        return { verdict: sent === "/dev/null" ? "meta (discarded)" : "copy", at: stage };
     }
     if (redirect === "/dev/null") return { verdict: "meta (discarded)", at };
     return { verdict: redirect ? "copy" : "print", at };
@@ -1511,7 +1536,7 @@ export const classifyFileUse = (
           ) {
             const before = uses.length;
             reading.add(path);
-            visit(source);
+            inChild(() => visit(source));
             reading.delete(path);
             if (uses.length > before) {
               if (routed)
@@ -1560,9 +1585,11 @@ export const classifyFileUse = (
         const [source = "", ...args] = words(bare.slice(shell[0].length)).map(decodeShell);
         const traced = xtrace;
         if (/x/.test(shell[1]! + shell[2]!)) xtrace = true;
-        visit(
-          source.replace(/"?\$\{?(\d)\}?"?/g, (whole, n: string) =>
-            args[Number(n)] === undefined ? whole : `"${args[Number(n)]}"`,
+        inChild(() =>
+          visit(
+            source.replace(/"?\$\{?(\d)\}?"?/g, (whole, n: string) =>
+              args[Number(n)] === undefined ? whole : `"${args[Number(n)]}"`,
+            ),
           ),
         );
         xtrace = traced;
