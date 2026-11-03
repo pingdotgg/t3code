@@ -357,7 +357,7 @@ const SHELL = new Set(["Bash", "Monitor", "exec"]);
 // A redirect into a file (not /dev/null or another descriptor), tee, or an interpreter's file write.
 // The redirect and tee are read outside quotes and heredoc bodies, where a `>` is text.
 const REDIRECTS_TO_FILE =
-  /(?:^|[^<>&\d=-])\d?>>?(?![>&=])(?!\s*(?:\/dev\/null\b|&\d))\s*\S|\btee\b/;
+  /(?:^|[^<>&\d=-])\d?>>?(?![>&=])(?!\s*(?:\/dev\/null\b|&\d))\s*\S|&>>?(?!\s*\/dev\/null\b)\s*\S|>&(?![\d-])(?!\s*\/dev\/null\b)\s*\S|\btee\b/;
 const shellSyntax = (command: string) =>
   command
     .replace(new RegExp(HEREDOC.source, "g"), (_, _q, _tag, rest: string) => `<<${rest}`)
@@ -1248,12 +1248,15 @@ const scriptsBefore = (calls: SecretRun["calls"]): Array<Scripts> => {
     return before;
   });
 };
+// Where a written script loads or runs another: an import, a require, or a process call.
+const SCRIPT_EDGE =
+  "(?:\\bimport\\b|\\bfrom\\b|\\brequire\\s*\\(|\\b(?:spawn|exec|fork|execFile|run|call|Popen|check_output|check_call|system)\\w*\\s*\\()";
 const SCRIPT_RUNNER =
   /(?:^|[\s(;&|])(?:node|python3?|ruby|perl|deno(?:\s+run)?|bun|tsx|ts-node|bash|sh|zsh|npx\s+tsx)(?=\s)/;
 /**
  * The written scripts one pipeline stage runs: named after an interpreter or shell (`node run.mjs
  * signup.mjs`, `python3 /tmp/login.py`), or run by path (`./login.sh`). Scripts match by file
- * name, and a script's imports of other written scripts are followed.
+ * name, and a script's imports and process calls of other written scripts are followed.
  */
 const runsScripts = (stage: string, scripts: Scripts) => {
   const ran = new Set(
@@ -1270,9 +1273,9 @@ const runsScripts = (stage: string, scripts: Scripts) => {
     for (const other of scripts.keys())
       if (
         !ran.has(other) &&
-        new RegExp(`['"\`](?:[^'"\`\\s]*/)?${escape(baseName(other))}['"\`]`).test(
-          scripts.get(path)!,
-        )
+        new RegExp(
+          `${SCRIPT_EDGE}[^\\n;]*?['"\`](?:[^'"\`\\s]*/)?${escape(baseName(other))}['"\`]`,
+        ).test(scripts.get(path)!)
       )
         ran.add(other);
   return [...ran];
