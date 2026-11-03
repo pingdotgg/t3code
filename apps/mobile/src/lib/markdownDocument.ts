@@ -447,13 +447,13 @@ function markdownWithImageParagraphs(markdown: string): string {
     )
       continue;
     const images = block.children.filter(isImage);
-    const gaps = images.slice(1).map((image, index) => ({
-      start: images[index]!.position?.end.offset ?? -1,
-      end: image.position?.start.offset ?? -1,
-    }));
-    const lineEnds = gaps.map(({ start, end }) => /\r\n?|\n/.exec(markdown.slice(start, end)));
-    if (gaps.length === 0 || lineEnds.some((ending) => ending === null)) continue;
-    gaps.forEach((gap, index) => edits.push({ ...gap, content: lineEnds[index]![0].repeat(2) }));
+    for (const [index, image] of images.slice(1).entries()) {
+      const start = images[index]!.position?.end.offset;
+      const end = image.position?.start.offset;
+      if (start === undefined || end === undefined) continue;
+      const ending = /\r\n?|\n/.exec(markdown.slice(start, end));
+      if (ending) edits.push({ start, end, content: ending[0].repeat(2) });
+    }
   }
   return applyMarkdownEdits(markdown, edits);
 }
