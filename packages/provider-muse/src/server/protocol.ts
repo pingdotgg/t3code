@@ -160,6 +160,7 @@ export const MuseTurnCompleted = Schema.Struct({
   ),
   usage: Schema.optional(MuseUsage),
 });
+export const MuseTurnForegroundCompleted = Schema.Struct({ turnId: NonEmptyString });
 /** The latest instant a JavaScript Date holds; formatting a later one throws. */
 export const LATEST_DATE_MS = 8.64e15;
 const DateMillis = Schema.Finite.check(

@@ -54,6 +54,7 @@ import {
   MuseTodoList,
   MuseTurnRetryScheduled,
   MuseTurnCompleted,
+  MuseTurnForegroundCompleted,
   MuseTurnStartResult,
   MuseUserInput,
   museApprovalChoices,
@@ -1440,6 +1441,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.forkIn(scope),
               );
             }
+            break;
+          }
+          case "turn/foregroundCompleted": {
+            if (turn.compact) return;
+            // Blocking reminder checks hold the native turn open; the answer itself is done.
+            const result = yield* decode(MuseTurnForegroundCompleted, params);
+            if (result.turnId === turn.nativeId) yield* finish(turn, "completed");
             break;
           }
           case "turn/completed": {
