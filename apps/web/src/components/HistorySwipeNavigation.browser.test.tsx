@@ -14,6 +14,108 @@ function swipe(target: Element, deltaX: number) {
 
 describe("HistorySwipeNavigation", () => {
   it.each([
+    [
+      "a diagonal start followed by vertical scrolling",
+      [
+        [-5, 3],
+        [-5, 15],
+        [-40, 200],
+        [-40, 200],
+        [-40, 200],
+      ],
+      false,
+    ],
+    [
+      "a mostly diagonal gesture",
+      [
+        [-30, 20],
+        [-100, 100],
+      ],
+      false,
+    ],
+    [
+      "a horizontal start that turns vertical after arming",
+      [
+        [-30, 0],
+        [-100, 0],
+        [0, 100],
+        [-200, 0],
+      ],
+      false,
+    ],
+    [
+      "vertical movement in alternating directions before axis lock",
+      [
+        [-10, 5],
+        [-10, -5],
+        [-110, 0],
+      ],
+      false,
+    ],
+    [
+      "vertical movement in alternating directions",
+      [
+        [-30, 5],
+        [-50, 60],
+        [-50, -60],
+      ],
+      false,
+    ],
+    [
+      "vertical movement as horizontal momentum starts",
+      [
+        [-30, 0],
+        [-50, 0],
+        [-45, 0],
+        [-40.5, 0],
+        [-36.45, 0],
+        [-32.805, 200],
+      ],
+      false,
+    ],
+    [
+      "a deliberate swipe released by horizontal momentum",
+      [
+        [-30, 0],
+        [-50, 0],
+        [-45, 0],
+        [-40.5, 0],
+        [-36.45, 0],
+        [-32.805, 0],
+      ],
+      true,
+    ],
+    [
+      "a deliberate back swipe with slight vertical drift",
+      [
+        [-5, 3],
+        [-25, 1],
+        [-100, 5],
+      ],
+      true,
+    ],
+    [
+      "a deliberate forward swipe with slight vertical drift",
+      [
+        [10, 1],
+        [20, 1],
+        [100, 5],
+      ],
+      true,
+    ],
+  ] as const)("%s", async (_name, deltas, navigates) => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    for (const [deltaX, deltaY] of [...deltas, [0, 0]]) {
+      screen.container.dispatchEvent(new WheelEvent("wheel", { deltaX, deltaY, bubbles: true }));
+    }
+    expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
+    if (navigates) {
+      expect(navigateHistory).toHaveBeenCalledWith(deltas[0][0] < 0 ? "back" : "forward");
+    }
+  });
+
+  it.each([
     ["scrolling left inside a shadow-root scroller keeps the thread", "shadow", 100, -130, false],
     ["scrolling right inside a shadow-root scroller keeps the thread", "shadow", 100, 130, false],
     [

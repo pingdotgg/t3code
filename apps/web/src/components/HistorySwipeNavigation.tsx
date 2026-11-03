@@ -6,7 +6,8 @@ import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../n
 
 const SWIPE_TRIGGER_DISTANCE = 120;
 // Movement needed before the gesture picks an axis; first events are often diagonal.
-const SWIPE_AXIS_LOCK_DISTANCE = 8;
+const SWIPE_AXIS_LOCK_DISTANCE = 24;
+const SWIPE_HORIZONTAL_RATIO = 2;
 const MOMENTUM_SAMPLE_SIZE = 5;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
@@ -16,6 +17,7 @@ type SwipeGesture =
       kind: "tracking";
       direction: HistoryDirection;
       distance: number;
+      verticalDistance: number;
       deltas: number[];
       y: number;
       bounds: SwipeBounds;
@@ -56,7 +58,7 @@ function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
-  if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
+  if (Math.abs(sumX) <= SWIPE_HORIZONTAL_RATIO * sumY) return { kind: "ignored" };
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
     return { kind: "ignored" };
   }
@@ -67,6 +69,7 @@ function lockSwipeAxis(
     kind: "tracking",
     direction,
     distance: Math.abs(sumX),
+    verticalDistance: sumY,
     deltas: [],
     y: pending.y,
     bounds: readMainContentBounds(),
@@ -123,16 +126,23 @@ export function HistorySwipeNavigation() {
       if (gesture.kind === "ignored") return;
       if (gesture.kind === "pending") {
         gesture.sumX += event.deltaX;
-        gesture.sumY += event.deltaY;
-        if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
+        gesture.sumY += Math.abs(event.deltaY);
+        if (Math.abs(gesture.sumX) + gesture.sumY < SWIPE_AXIS_LOCK_DISTANCE) return;
         gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
         if (gesture.kind === "ignored") return;
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
+        const distance = Math.max(0, gesture.distance + delta);
+        gesture.verticalDistance += Math.abs(event.deltaY);
+        if (distance <= SWIPE_HORIZONTAL_RATIO * gesture.verticalDistance) {
+          gesture = { kind: "ignored" };
+          hideIndicator();
+          return;
+        }
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
-        gesture.distance = Math.max(0, gesture.distance + delta);
+        gesture.distance = distance;
       }
       setSwipe({
         direction: gesture.direction,
