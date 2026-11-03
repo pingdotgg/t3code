@@ -232,15 +232,11 @@ describe("scan cache round trip", () => {
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
-      expect(restored.get("/clean-codex.jsonl")).toEqual(
-        version >= 8
-          ? cleanCodex
-          : {
-              ...cleanCodex,
-              size: -1,
-              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-            },
-      );
+      expect(restored.get("/clean-codex.jsonl")).toEqual({
+        ...cleanCodex,
+        size: version >= 8 ? cleanCodex.size : -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -252,6 +248,33 @@ describe("scan cache round trip", () => {
       );
     },
   );
+
+  it("re-parses a v11 Codex entry that skipped records but resumes a clean one", () => {
+    const codex = (malformedRecords: number): CachedFile => ({
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords,
+      position: position({
+        state: { ...initialCodexScanState(), model: "gpt-6-astra", sessionId: "session-a" },
+      }),
+    });
+    const original: ScanCache = new Map([
+      ["/skipped-codex.jsonl", codex(1)],
+      ["/clean-codex.jsonl", codex(0)],
+    ]);
+    const v11 = { ...JSON.parse(makeScanCacheWriter()(original, {})), version: 11 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v11)), TEST_FORMAT_MAP);
+    expect(restored.get("/skipped-codex.jsonl")).toEqual({
+      ...codex(1),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    expect(restored.get("/clean-codex.jsonl")).toEqual(codex(0));
+  });
 
   it("re-parses a Claude transcript cached before advisor usage was counted", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);

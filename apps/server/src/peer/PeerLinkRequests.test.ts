@@ -152,7 +152,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
