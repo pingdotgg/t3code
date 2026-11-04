@@ -4,6 +4,7 @@ import {
 } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -11,6 +12,7 @@ import type {
   PullRequestComment,
   PullRequestMergeMethod,
   PullRequestMergeability,
+  PullRequestReviewDecision,
   PullRequestState,
 } from "@t3tools/contracts";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
@@ -23,6 +25,13 @@ const RawIdentitySchema = Schema.Struct({
   displayName: Schema.optional(Schema.NullOr(Schema.String)),
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+// Vote and flags stay unknown so an odd value reads as no vote instead of dropping the row.
+const RawReviewerSchema = Schema.Struct({
+  ...RawIdentitySchema.fields,
+  vote: Schema.optional(Schema.Unknown),
+  isRequired: Schema.optional(Schema.Unknown),
 });
 
 const RawPullRequestSchema = Schema.Struct({
@@ -43,7 +52,7 @@ const RawPullRequestSchema = Schema.Struct({
   ),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
-  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
+  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawReviewerSchema))),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -74,6 +83,9 @@ const RawPullRequestSchema = Schema.Struct({
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** Values are `{ $type, $value }`; system threads name their event in `CodeReviewThreadType`. */
+  properties: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
+  identities: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
   threadContext: Schema.optional(
     Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
@@ -122,8 +134,11 @@ export interface AzureDevOpsPullRequest {
   readonly updatedAt: string;
   readonly closedAt: string | null;
   readonly body: string;
+  /** Reviewers yet to vote. */
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  /** Absent when Azure listed no reviewers to decide from. */
+  readonly reviewDecision?: PullRequestReviewDecision | null;
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -187,14 +202,36 @@ function toAutoMergeMethod(
   }
 }
 
+/** Azure's vote scale: 10 approved, 5 with suggestions, 0 none, -5 waiting for author, -10 rejected. */
+type AzureDevOpsVote = 10 | 5 | 0 | -5 | -10;
+
+function toVote(value: unknown): AzureDevOpsVote | null {
+  const vote = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return vote === 10 || vote === 5 || vote === 0 || vote === -5 || vote === -10 ? vote : null;
+}
+
+/** Any wait or rejection wins; a required reviewer yet to approve outranks optional approvals. */
+function toReviewDecision(
+  reviewers: ReadonlyArray<{ readonly vote: AzureDevOpsVote; readonly isRequired: boolean }>,
+): PullRequestReviewDecision | null {
+  if (reviewers.some((reviewer) => reviewer.vote < 0)) return "changes-requested";
+  if (reviewers.some((reviewer) => reviewer.isRequired && reviewer.vote === 0)) {
+    return "review-required";
+  }
+  return reviewers.some((reviewer) => reviewer.vote > 0) ? "approved" : null;
+}
+
 function toPullRequest(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsPullRequest | null {
   const autoMergeMethod = toAutoMergeMethod(raw);
-  const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
+  const voters = (raw.reviewers ?? []).flatMap((reviewer) => {
     const actor = toActor(reviewer);
-    return actor === null ? [] : [actor];
+    return actor === null
+      ? []
+      : [{ actor, vote: toVote(reviewer.vote) ?? 0, isRequired: reviewer.isRequired === true }];
   });
+  const reviewers = voters.map((voter) => voter.actor);
   const closedAt = trimmed(raw.closedDate);
   const url = trimmed(
     azureDevOpsPullRequestWebUrl({
@@ -223,8 +260,11 @@ function toPullRequest(
     updatedAt: closedAt ?? raw.creationDate,
     closedAt,
     body: raw.description ?? "",
-    reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
+    reviewRequestLogins: voters
+      .filter((voter) => voter.vote === 0)
+      .map((voter) => voter.actor.login),
     reviewers,
+    ...(raw.reviewers == null ? {} : { reviewDecision: toReviewDecision(voters) }),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
@@ -236,6 +276,7 @@ const decodePullRequestEntry = Schema.decodeUnknownExit(RawPullRequestSchema);
 const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
+const decodeIdentity = Schema.decodeUnknownOption(RawIdentitySchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
@@ -285,6 +326,55 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
+function propertyValue(
+  properties: Readonly<Record<string, unknown>> | null | undefined,
+  key: string,
+): unknown {
+  const property = properties?.[key];
+  return typeof property === "object" && property !== null && "$value" in property
+    ? property.$value
+    : undefined;
+}
+
+const VOTE_REVIEW_STATES: Record<AzureDevOpsVote, string> = {
+  10: "APPROVED",
+  5: "APPROVED",
+  0: "DISMISSED",
+  [-5]: "CHANGES_REQUESTED",
+  [-10]: "CHANGES_REQUESTED",
+};
+
+/** Azure posts each vote as a system thread, usually authored by a service account. */
+function toVoteReview(
+  thread: Schema.Schema.Type<typeof RawThreadSchema>,
+): PullRequestComment | null {
+  if (propertyValue(thread.properties, "CodeReviewThreadType") !== "VoteUpdate") return null;
+  const vote = toVote(propertyValue(thread.properties, "CodeReviewVoteResult"));
+  const comment = thread.comments?.find((entry) => entry.isDeleted !== true);
+  const createdAt = trimmed(comment?.publishedDate);
+  if (vote === null || comment === undefined || createdAt === null) return null;
+  // Newer payloads name the voter by a key into the thread's identities; older ones only by name.
+  const identityKey = propertyValue(thread.properties, "CodeReviewVotedByIdentity");
+  const identity = typeof identityKey === "string" ? thread.identities?.[identityKey] : undefined;
+  const votedBy =
+    identity === undefined ? null : toActor(Option.getOrNull(decodeIdentity(identity)));
+  const votedByName = propertyValue(thread.properties, "CodeReviewVotedByDisplayName");
+  const namedVoter =
+    typeof votedByName === "string" && trimmed(votedByName) !== null
+      ? { login: votedByName.trim(), name: votedByName.trim(), avatarUrl: null }
+      : null;
+  return {
+    id: `${thread.id}:${comment.id ?? 0}`,
+    kind: "review",
+    author: votedBy ?? namedVoter,
+    body: "",
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: VOTE_REVIEW_STATES[vote],
+  };
+}
+
 export function decodeThreadsJson(
   raw: string,
 ): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
@@ -298,6 +388,11 @@ export function decodeThreadsJson(
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
+    const vote = toVoteReview(thread);
+    if (vote !== null) {
+      comments.push(vote);
+      continue;
+    }
     const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);

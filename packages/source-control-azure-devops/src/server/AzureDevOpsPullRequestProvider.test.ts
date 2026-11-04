@@ -189,6 +189,40 @@ describe("getChangeRequest", () => {
   );
 });
 
+describe("review decision", () => {
+  it.effect("carries the decision Azure's votes add up to into every read of a pull request", () =>
+    Effect.gen(function* () {
+      const voted = { ...PULL_REQUEST, reviewDecision: "changes-requested" as const };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            listPullRequests: () =>
+              Effect.succeed({ items: [voted], truncated: false, cursorAdvance: 1 }),
+            getPullRequest: () => Effect.succeed(voted),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
+          }),
+        ),
+      );
+      const ref = { cwd: "/w", repository: "acme/web", host: "dev.azure.com" };
+
+      const listed = yield* provider.listChangeRequests({
+        ...ref,
+        state: "open",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 10,
+      });
+      const summary = yield* provider.getChangeRequestSummary!({ ...ref, number: 7 });
+      const detail = yield* provider.getChangeRequest({ ...ref, number: 7 });
+
+      expect(listed.items[0]?.reviewDecision).toBe("changes-requested");
+      expect(summary.reviewDecision).toBe("changes-requested");
+      expect(detail.reviewDecision).toBe("changes-requested");
+    }),
+  );
+});
+
 describe("getDiff reads", () => {
   it.effect("holds every reader together to one request's worth of processes", () =>
     Effect.gen(function* () {

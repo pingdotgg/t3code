@@ -94,6 +94,52 @@ describe("decodePullRequestListJson", () => {
     });
   });
 
+  const reviewer = (login: string, fields: Record<string, unknown> = {}) => ({
+    displayName: login,
+    uniqueName: `${login}@acme.dev`,
+    ...fields,
+  });
+
+  it.each([
+    ["no reviewers", [], null, []],
+    ["an optional reviewer yet to vote", [reviewer("a", { vote: 0 })], null, ["a"]],
+    ["an approval", [reviewer("a", { vote: 10 })], "approved", []],
+    ["an approval with suggestions", [reviewer("a", { vote: 5 })], "approved", []],
+    ["a wait for the author", [reviewer("a", { vote: -5 })], "changes-requested", []],
+    [
+      "a rejection beside an approval",
+      [reviewer("a", { vote: 10 }), reviewer("b", { vote: -10 })],
+      "changes-requested",
+      [],
+    ],
+    [
+      "a required reviewer yet to vote beside an optional approval",
+      [reviewer("a", { vote: 10 }), reviewer("b", { vote: 0, isRequired: true })],
+      "review-required",
+      ["b"],
+    ],
+    [
+      "a required group yet to vote",
+      [reviewer("leads", { vote: 0, isRequired: true, isContainer: true })],
+      "review-required",
+      ["leads"],
+    ],
+    [
+      "a required vote Azure has no meaning for",
+      [reviewer("a", { vote: 7, isRequired: true }), reviewer("b", { vote: "soon" })],
+      "review-required",
+      ["a", "b"],
+    ],
+  ])("reads %s as a review decision", (_case, reviewers, reviewDecision, requested) => {
+    const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ reviewers })])));
+
+    expect(batch.items[0]?.reviewDecision).toBe(reviewDecision);
+    expect(batch.items[0]?.reviewRequestLogins).toEqual(
+      requested.map((login) => `${login}@acme.dev`),
+    );
+    expect(batch.items[0]?.reviewers).toHaveLength(reviewers.length);
+  });
+
   it("skips a malformed row but still counts it, so paging does not stop early", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(asJson([{ pullRequestId: "nope" }, pullRequest()])),
@@ -246,6 +292,86 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments.map((comment) => comment.id)).toEqual(["4:1", "4:2", "4:3"]);
+  });
+
+  it("reads a vote Azure records on a system thread as a review by the voter", () => {
+    const service = {
+      displayName: "[acme]\\Project Collection Service Accounts",
+      isContainer: true,
+    };
+    const property = (value: unknown) => ({ $type: "System.String", $value: value });
+    const voteThread = (
+      id: number,
+      properties: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      properties: { CodeReviewThreadType: property("VoteUpdate"), ...properties },
+      comments: [
+        {
+          id: 1,
+          content: "Somebody voted",
+          commentType: "system",
+          author: service,
+          publishedDate: `2026-07-0${id}T00:00:00Z`,
+        },
+      ],
+      ...extra,
+    });
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            voteThread(
+              1,
+              {
+                CodeReviewVoteResult: property("10"),
+                CodeReviewVotedByIdentity: property("1"),
+                CodeReviewVotedByDisplayName: property("Julius"),
+              },
+              { identities: { "1": { displayName: "Julius", uniqueName: "julius@acme.dev" } } },
+            ),
+            voteThread(2, {
+              CodeReviewVoteResult: { $type: "System.Int32", $value: -5 },
+              CodeReviewVotedByDisplayName: property("Bilal"),
+            }),
+            voteThread(3, { CodeReviewVoteResult: property("0") }),
+            voteThread(4, { CodeReviewVoteResult: property("7") }),
+            {
+              id: 5,
+              properties: { CodeReviewThreadType: property("MergeAttempt") },
+              comments: [
+                {
+                  id: 1,
+                  content: "The pull request is mergeable.",
+                  commentType: "system",
+                  publishedDate: "2026-07-05T00:00:00Z",
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(comments).toEqual([
+      {
+        id: "1:1",
+        kind: "review",
+        author: { login: "julius@acme.dev", name: "Julius", avatarUrl: null },
+        body: "",
+        createdAt: "2026-07-01T00:00:00Z",
+        url: null,
+        path: null,
+        reviewState: "APPROVED",
+      },
+      expect.objectContaining({
+        id: "2:1",
+        author: { login: "Bilal", name: "Bilal", avatarUrl: null },
+        reviewState: "CHANGES_REQUESTED",
+      }),
+      expect.objectContaining({ id: "3:1", author: null, reviewState: "DISMISSED" }),
+    ]);
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
