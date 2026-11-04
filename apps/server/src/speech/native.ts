@@ -25,11 +25,11 @@ process.on("message", async (message) => {
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsTranslation: model.capabilities.supportsTranslate,
-        // Vocabulary prompts are a Whisper run extension until generic prompting lands here.
-        supportsInitialPrompt: model.supports("initial_prompt") && model.accepts({ kind: "whisper" }) });
+        supportsVocabulary: model.supports("vocabulary") });
     } else if (message.kind === "begin") {
       session = model.createSession();
-      stream = await session.stream({ timestamps: "none", language: message.language });
+      stream = await session.stream({ timestamps: "none", language: message.language,
+        vocabulary: message.vocabulary });
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "feed") {
       const update = await stream.feed(message.pcm);
@@ -105,7 +105,7 @@ type Reply = {
   readonly error?: string;
   readonly supportsStreaming?: boolean;
   readonly supportsTranslation?: boolean;
-  readonly supportsInitialPrompt?: boolean;
+  readonly supportsVocabulary?: boolean;
   readonly backend?: string;
   readonly revision?: number;
   readonly preview?: SpeechStreamText | null;
@@ -306,9 +306,9 @@ async function loadNativeSpeechModelOnce(
     backend: loaded.backend ?? "unknown",
     supportsStreaming: loaded.supportsStreaming === true,
     supportsTranslation: loaded.supportsTranslation === true,
-    supportsInitialPrompt: loaded.supportsInitialPrompt === true,
-    begin: async (language?: string) => {
-      await send({ kind: "begin", language });
+    supportsVocabulary: loaded.supportsVocabulary === true,
+    begin: async (language?: string, vocabulary?: readonly string[]) => {
+      await send({ kind: "begin", language, vocabulary });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });
@@ -348,7 +348,7 @@ async function loadNativeSpeechModelOnce(
         readonly task?: "translate";
         readonly targetLanguage?: "en";
         readonly language?: string;
-        readonly family?: { readonly kind: "whisper"; readonly initialPrompt: string };
+        readonly vocabulary?: readonly string[];
       },
     ) => {
       const result = await send({ kind: "transcribe", pcm, options });
