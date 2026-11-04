@@ -1314,6 +1314,11 @@ function stringEnum(schema: Record<string, unknown> | undefined): ReadonlyArray<
     : [];
 }
 
+function enumOption(value: string) {
+  const label = value.trim() || JSON.stringify(value);
+  return { label, description: label, ...(label === value ? {} : { value }) };
+}
+
 export function elicitationFormQuestion(
   id: string,
   property: unknown,
@@ -1325,7 +1330,7 @@ export function elicitationFormQuestion(
   const enumValues = stringEnum(isArray ? unknownRecord(record.items) : record);
   const options =
     enumValues.length > 0
-      ? enumValues.map((value) => ({ label: value, description: value }))
+      ? enumValues.map(enumOption)
       : record?.type === "boolean"
         ? [
             { label: "true", description: "Yes" },
@@ -1337,7 +1342,7 @@ export function elicitationFormQuestion(
     header: nonEmptyText(record?.title, `Question ${index + 1}`),
     question: nonEmptyText(record?.description, message),
     options,
-    ...(isArray && options.length > 0 ? { multiSelect: true } : {}),
+    ...(isArray && options.length > 0 ? { multiSelect: true, allowCustomAnswer: false } : {}),
   };
 }
 

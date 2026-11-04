@@ -19,7 +19,22 @@ describe("elicitationFormQuestion", () => {
         { label: "SQLite", description: "SQLite" },
       ],
       multiSelect: true,
+      allowCustomAnswer: false,
     });
+  });
+
+  it("keeps enum values that aren't valid labels exact", () => {
+    const question = elicitationFormQuestion(
+      "tag",
+      { type: "string", enum: [" padded ", "", "plain"] },
+      0,
+      "Pick a tag",
+    );
+    assert.deepStrictEqual(question.options, [
+      { label: "padded", description: "padded", value: " padded " },
+      { label: '""', description: '""', value: "" },
+      { label: "plain", description: "plain" },
+    ]);
   });
 
   it("keeps single-choice enums, booleans and free text as before", () => {
