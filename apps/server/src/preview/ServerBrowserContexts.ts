@@ -107,9 +107,7 @@ export class ServerBrowserContexts {
       args: [
         "--disable-gpu",
         // QUIC and non-proxied WebRTC UDP would leave the browser outside the HTTP proxy.
-        ...(proxy
-          ? ["--disable-quic", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
-          : []),
+        ...(proxy ? ["--disable-quic", "--webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
         "--force-device-scale-factor=2",
         "--disable-blink-features=AutomationControlled",
       ],

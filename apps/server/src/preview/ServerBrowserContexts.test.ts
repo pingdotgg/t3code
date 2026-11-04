@@ -112,6 +112,7 @@ describe("ServerBrowserContexts", () => {
         bypass: "<-loopback>,localhost,*.localhost,127.0.0.0/8,[::1]",
       });
       expect(launch?.args).toContain("--disable-quic");
+      expect(launch?.args).toContain("--webrtc-ip-handling-policy=disable_non_proxied_udp");
     }
     await pool.close();
   });

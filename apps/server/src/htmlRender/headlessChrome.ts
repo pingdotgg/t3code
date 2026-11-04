@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { publicProxy } from "./publicProxy.ts";
+import { publicProxy, resolvePreviewEgressProxy } from "./publicProxy.ts";
 
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
   "HtmlRenderBrowserError",
@@ -197,6 +197,9 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--proxy-bypass-list=<-loopback>",
           // WebRTC would otherwise send UDP, which no proxy carries.
           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+          ...(resolvePreviewEgressProxy() !== undefined
+            ? ["--disable-quic", "--webrtc-ip-handling-policy=disable_non_proxied_udp"]
+            : []),
           ...(input.noSandbox ? ["--no-sandbox"] : []),
           `--user-data-dir=${input.profileDirectory}`,
           "about:blank",
