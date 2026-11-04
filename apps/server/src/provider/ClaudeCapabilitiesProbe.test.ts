@@ -21,6 +21,7 @@ import {
 } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
+vi.mock("node:os", { spy: true });
 
 const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
 
@@ -311,7 +312,7 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
     }
 
     const managedPath = (entry: string) =>
-      entry.replace(/^\/etc\/claude-code(?=\/|$)/, path.join(root, "ClaudeCode"));
+      entry.replace(/^[/\\]etc[/\\]claude-code(?=[/\\]|$)/, path.join(root, "ClaudeCode"));
     yield* Effect.gen(function* () {
       const managedCommands = yield* makeCommands();
       const dropIn = path.join(root, "ClaudeCode", "managed-settings.d", "plugins.json");
