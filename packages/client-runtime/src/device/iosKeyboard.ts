@@ -1,9 +1,9 @@
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 
-export const HID_CONTROL = 0xe0;
+const HID_CONTROL = 0xe0;
 export const HID_SHIFT = 0xe1;
 export const HID_OPTION = 0xe2;
-export const HID_COMMAND = 0xe3;
+const HID_COMMAND = 0xe3;
 
 export type UsKey = { usage: number; shift: boolean };
 export type UsKeyStroke = UsKey & { option: boolean };
