@@ -14,7 +14,7 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-function readCpu() {
+export function readCpu() {
   const cpus = NodeOS.cpus();
   const cpu = cpus.reduce(
     (sum, { times }) => ({

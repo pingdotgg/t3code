@@ -16,6 +16,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import { readCpu } from "../resourceTelemetry/HostResources.ts";
 import * as Metrics from "./Metrics.ts";
 
 // Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
@@ -58,6 +59,8 @@ export interface EventLoopReadings {
   readonly elapsedMs: number;
   /** One-minute load average, undefined on Windows. */
   readonly loadAverage: number | undefined;
+  /** Share of all cores' time spent running work, undefined if the core count changed. */
+  readonly cpuBusy: number | undefined;
   readonly cpuCount: number;
 }
 
@@ -74,8 +77,11 @@ const makeNodeSampler = Effect.gen(function* () {
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
   let sampledAt = NodePerfHooks.performance.now();
+  let cpu = readCpu();
 
   return Effect.sync(() => {
+    const nextCpu = readCpu();
+    const cpuTotal = nextCpu.total - cpu.total;
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
     const nextSampledAt = NodePerfHooks.performance.now();
@@ -98,9 +104,14 @@ const makeNodeSampler = Effect.gen(function* () {
       elapsedMs: nextSampledAt - sampledAt,
       // Windows has no load average and reports 0, which a running process never sees elsewhere.
       loadAverage: NodeOS.loadavg()[0] || undefined,
+      cpuBusy:
+        nextCpu.count === cpu.count && cpuTotal > 0
+          ? 1 - (nextCpu.idle - cpu.idle) / cpuTotal
+          : undefined,
       cpuCount: NodeOS.availableParallelism(),
     };
     histogram.reset();
+    cpu = nextCpu;
     elu = nextElu;
     usage = nextUsage;
     sampledAt = nextSampledAt;
@@ -171,7 +182,7 @@ const layerWith = (
         yield* recordGauges(readings);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
-        const { utilization, usage, rssBytes, loadAverage, cpuCount } = readings;
+        const { utilization, usage, rssBytes, loadAverage, cpuBusy, cpuCount } = readings;
         const now = yield* DateTime.now;
         const detectedAt = DateTime.formatIso(now);
         if (delayMaxMs >= NOTICEABLE_STALL_MS) {
@@ -183,6 +194,7 @@ const layerWith = (
               ...(loadAverage === undefined
                 ? {}
                 : { loadAverage: Math.round(loadAverage * 10) / 10 }),
+              ...(cpuBusy === undefined ? {} : { cpuBusy: Math.round(cpuBusy * 100) / 100 }),
               cpuCount,
             },
           });

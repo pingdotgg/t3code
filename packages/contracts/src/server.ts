@@ -603,6 +603,11 @@ export const ServerEventLoopStall = Schema.Struct({
   durationMs: NonNegativeInt,
   /** One-minute load average when the stall was seen. Absent on Windows, which has none. */
   loadAverage: Schema.optionalKey(Schema.Number),
+  /**
+   * Share of all cores' time spent running work over the sample that saw the
+   * stall. Load counts tasks blocked on I/O too, so this tells CPU from I/O.
+   */
+  cpuBusy: Schema.optionalKey(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: PositiveInt,
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
