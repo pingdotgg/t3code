@@ -237,7 +237,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
-  const triggerText = props.triggerLabel ?? multipleLabel ?? compactSessionModel(triggerTitle);
+  const triggerText =
+    props.triggerLabel ??
+    multipleLabel ??
+    (props.isComposerOwned ? triggerTitle : compactSessionModel(triggerTitle));
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",

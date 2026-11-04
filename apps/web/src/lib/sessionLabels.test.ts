@@ -7,6 +7,7 @@ describe("session labels", () => {
     ["GPT-6 Astra", "A6"],
     ["Claude Opus 4.6", "O4.6"],
     ["claude-opus-4-6", "O4.6"],
+    ["claude-opus-4-20250514", "O4"],
     ["Fable 5.5", "F5.5"],
     ["Opus", "O"],
     ["Gemini 3 Pro", "Gemini 3 Pro"],

@@ -2404,6 +2404,11 @@ export const make = Effect.gen(function* () {
       if (!input.includeCheckoutDetails || !status.isRepo) return status;
       const checkoutDetails = yield* readCheckoutDetails(cacheKey).pipe(
         Effect.provideService(GitVcsDriver.GitVcsDriver, gitCore),
+        Effect.catch((error) =>
+          Effect.logWarning("GitManager.localStatus checkout details failed", {
+            errorTag: error._tag,
+          }).pipe(Effect.as(undefined)),
+        ),
       );
       return { ...status, ...(checkoutDetails ? { checkoutDetails } : {}) };
     },

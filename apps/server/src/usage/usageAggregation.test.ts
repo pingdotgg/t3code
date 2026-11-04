@@ -97,6 +97,29 @@ describe("UsageAggregator", () => {
       unpricedRecords: 1,
     });
   });
+  it("attributes a copied inference when its linked session is scanned second", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      threadIdsBySession: new Map([["claude:session-linked", ["thread-a"]]]),
+    });
+    aggregator.add(record({ sessionId: "session-unlinked", dedupeKey: "copied-inference" }));
+    aggregator.add(record({ sessionId: "session-linked", dedupeKey: "copied-inference" }));
+    aggregator.add(record({ sessionId: "session-linked", dedupeKey: "copied-inference" }));
+    const result = aggregator.finish();
+
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.duplicatesDropped).toBe(2);
+    expect(result.threadUsage).toEqual([
+      expect.objectContaining({
+        threadId: "thread-a",
+        totals: expect.objectContaining({ outputTokens: 50 }),
+      }),
+    ]);
+  });
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 

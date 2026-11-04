@@ -256,6 +256,20 @@ export const make = Effect.gen(function* () {
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const checkoutDetailDemandRef = yield* Ref.make(new Map<string, number>());
+
+  const retainCheckoutDetails = (cwd: string) =>
+    Ref.update(checkoutDetailDemandRef, (current) =>
+      new Map(current).set(cwd, (current.get(cwd) ?? 0) + 1),
+    );
+  const releaseCheckoutDetails = (cwd: string) =>
+    Ref.update(checkoutDetailDemandRef, (current) => {
+      const next = new Map(current);
+      const count = next.get(cwd) ?? 0;
+      if (count <= 1) next.delete(cwd);
+      else next.set(cwd, count - 1);
+      return next;
+    });
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -378,7 +392,13 @@ export const make = Effect.gen(function* () {
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
+          const includeCheckoutDetails = yield* Ref.get(checkoutDetailDemandRef).pipe(
+            Effect.map((demand) => demand.has(cwd)),
+          );
+          const local = yield* workflow.localStatus({
+            cwd,
+            ...(includeCheckoutDetails ? { includeCheckoutDetails: true } : {}),
+          });
           localRefreshResults.set(cwd, { startedAt, local });
           return yield* updateCachedLocalStatus(cwd, local, { publish: true });
         }),
@@ -729,42 +749,41 @@ export const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
-        const subscription = yield* PubSub.subscribe(changesPubSub);
-        const initialLocal = input.includeCheckoutDetails
-          ? yield* workflow.localStatus({ cwd, includeCheckoutDetails: true })
-          : yield* getOrLoadLocalStatus(cwd);
-        const cachedStatus = yield* getCachedStatus(cwd);
-        const initialRemote = cachedStatus?.remote?.value ?? null;
-        if (input.includeRemote !== false) {
-          yield* retainRemotePoller(
-            cwd,
-            input.cwd,
-            cachedStatus?.remote === null || cachedStatus?.remote === undefined,
-          );
-        }
-        const release =
-          input.includeRemote === false
-            ? Effect.void
-            : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
+        if (input.includeCheckoutDetails) yield* retainCheckoutDetails(cwd);
+        const releaseCheckoutDetailDemand = input.includeCheckoutDetails
+          ? releaseCheckoutDetails(cwd)
+          : Effect.void;
+        return yield* Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changesPubSub);
+          const initialLocal = input.includeCheckoutDetails
+            ? yield* workflow.localStatus({ cwd, includeCheckoutDetails: true })
+            : yield* getOrLoadLocalStatus(cwd);
+          const cachedStatus = yield* getCachedStatus(cwd);
+          const initialRemote = cachedStatus?.remote?.value ?? null;
+          if (input.includeRemote !== false) {
+            yield* retainRemotePoller(
+              cwd,
+              input.cwd,
+              cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+            );
+          }
+          const release =
+            input.includeRemote === false
+              ? Effect.void
+              : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
-        return Stream.concat(
-          Stream.make({
-            _tag: "snapshot" as const,
-            local: initialLocal,
-            remote: initialRemote,
-          }),
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter((event) => event.cwd === cwd),
-            Stream.map((event) => event.event),
-            Stream.mapEffect((event) =>
-              input.includeCheckoutDetails && event._tag === "localUpdated"
-                ? workflow
-                    .localStatus({ cwd, includeCheckoutDetails: true })
-                    .pipe(Effect.map((local) => ({ ...event, local })))
-                : Effect.succeed(event),
+          return Stream.concat(
+            Stream.make({
+              _tag: "snapshot" as const,
+              local: initialLocal,
+              remote: initialRemote,
+            }),
+            Stream.fromSubscription(subscription).pipe(
+              Stream.filter((event) => event.cwd === cwd),
+              Stream.map((event) => event.event),
             ),
-          ),
-        ).pipe(Stream.ensuring(release));
+          ).pipe(Stream.ensuring(Effect.all([release, releaseCheckoutDetailDemand])));
+        }).pipe(Effect.onError(() => releaseCheckoutDetailDemand));
       }),
     );
 

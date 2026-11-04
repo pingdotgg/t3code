@@ -137,6 +137,7 @@ export class UsageAggregator {
   readonly #threadUsage = new Map<string, UsageThreadTotals>();
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Set<string>();
+  readonly #threadSeen = new Map<string, Set<string>>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -170,12 +171,14 @@ export class UsageAggregator {
   add(input: UsageRecord, sourcePath?: string): boolean {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
+    let duplicate = false;
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {
         this.#duplicatesDropped += 1;
-        return false;
+        duplicate = true;
+      } else {
+        this.#seen.add(record.dedupeKey);
       }
-      this.#seen.add(record.dedupeKey);
     }
 
     if (
@@ -183,7 +186,7 @@ export class UsageAggregator {
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
-      this.#outOfWindow += 1;
+      if (!duplicate) this.#outOfWindow += 1;
       return false;
     }
 
@@ -192,7 +195,7 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
-      this.#outOfWindow += 1;
+      if (!duplicate) this.#outOfWindow += 1;
       return false;
     }
 
@@ -200,12 +203,16 @@ export class UsageAggregator {
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
-
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
     for (const threadId of this.#options.threadIdsBySession?.get(
       `${record.provider}:${record.sessionId}`,
     ) ?? []) {
+      if (record.dedupeKey !== null) {
+        const seen = this.#threadSeen.get(threadId);
+        if (seen?.has(record.dedupeKey)) continue;
+        if (seen) seen.add(record.dedupeKey);
+        else this.#threadSeen.set(threadId, new Set([record.dedupeKey]));
+      }
       const previous = this.#threadUsage.get(threadId);
       const costs = priced.categoryCostUsd;
       const add = <K extends keyof UsageTokenTotals>(key: K) =>
@@ -232,6 +239,9 @@ export class UsageAggregator {
       });
     }
 
+    if (duplicate) return false;
+
+    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
     const totals = bucket.totals;
     totals.uncachedInputTokens += record.totals.uncachedInputTokens;
     totals.cachedInputTokens += record.totals.cachedInputTokens;
