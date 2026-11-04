@@ -292,6 +292,38 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("stops after a few reads of Reviewing pages the viewer has all voted on", () =>
+    Effect.gen(function* () {
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev", vote: 10 };
+      for (let page = 0; page < 5; page += 1) {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify(
+                pullRequestRows(3, page * 3 + 1).map((row) => ({ ...row, reviewers: [viewer] })),
+              ),
+            ),
+          ),
+        );
+      }
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "all",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      expect(batch.items).toEqual([]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 9);
+    }),
+  );
+
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

@@ -234,6 +234,7 @@ describe("decodePullRequestJson", () => {
       "changes-requested",
     ],
     ["without reviewers", [], [], null],
+    ["approved only by its author", [{ uniqueName: "bilal@acme.dev", vote: 10 }], [], null],
   ])(
     "reads the reviewers' votes on a pull request %s",
     (_case, votes, reviewRequestLogins, reviewDecision) => {
@@ -370,7 +371,7 @@ describe("decodeThreadsJson", () => {
     ]);
   });
 
-  it("names a voter who is not among the reviewers by their display name", () => {
+  it("keeps voters who are no longer reviewers apart even when they share a display name", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
         asJson({
@@ -379,7 +380,13 @@ describe("decodeThreadsJson", () => {
               id: 2,
               vote: "10",
               voterId: "0f0f0f0f-0000-0000-0000-000000000000",
-              voterName: "Normal Paulk",
+              voterName: "Sam Lee",
+            }),
+            voteThread({
+              id: 3,
+              vote: "-10",
+              voterId: "0e0e0e0e-0000-0000-0000-000000000000",
+              voterName: "Sam Lee",
             }),
           ],
         }),
@@ -388,7 +395,14 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments).toMatchObject([
-      { reviewState: "APPROVED", author: { login: "Normal Paulk", name: "Normal Paulk" } },
+      {
+        reviewState: "APPROVED",
+        author: { login: "0f0f0f0f000000000000000000000000", name: "Sam Lee" },
+      },
+      {
+        reviewState: "CHANGES_REQUESTED",
+        author: { login: "0e0e0e0e000000000000000000000000", name: "Sam Lee" },
+      },
     ]);
   });
 

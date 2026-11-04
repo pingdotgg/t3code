@@ -223,8 +223,11 @@ function toAutoMergeMethod(
 }
 
 function toReviewDecision(
-  reviewers: ReadonlyArray<Schema.Schema.Type<typeof RawReviewerSchema>>,
+  allReviewers: ReadonlyArray<Schema.Schema.Type<typeof RawReviewerSchema>>,
+  author: PullRequestActor | null,
 ): PullRequestReviewDecision | null {
+  // Azure adds an author who votes as a reviewer, but their vote does not review the change.
+  const reviewers = allReviewers.filter((reviewer) => toActor(reviewer)?.login !== author?.login);
   if (reviewers.length === 0) return null;
   const votes = reviewers.map((reviewer) => reviewer.vote ?? 0);
   if (votes.some((vote) => vote < 0)) return "changes-requested";
@@ -259,8 +262,10 @@ function toVoter(
   const key = identityKey(propertyText(properties?.CodeReviewVotedByTfId));
   const reviewer = key === null ? undefined : reviewersById.get(key);
   if (reviewer !== undefined) return reviewer;
+  // Display names are not unique, so a voter no longer among the reviewers keeps their Azure id.
   const name = propertyText(properties?.CodeReviewVotedByDisplayName);
-  return name === null ? null : { login: name, name, avatarUrl: null };
+  const login = key ?? name;
+  return login === null ? null : { login, name, avatarUrl: null };
 }
 
 function toPullRequest(
@@ -312,7 +317,7 @@ function toPullRequest(
     reviewRequestLogins,
     reviewers,
     reviewersById,
-    reviewDecision: toReviewDecision(rawReviewers),
+    reviewDecision: toReviewDecision(rawReviewers, toActor(raw.createdBy)),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),

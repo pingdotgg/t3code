@@ -105,6 +105,8 @@ export type AzureDevOpsPullRequestCliError =
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+/** Reviewing drops rows the viewer voted on; bound the reads one listing may spend skipping them. */
+const PULL_REQUEST_LIST_MAX_READS = 3;
 /** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** JSON escaping and base64 can exceed the decoded file's size. */
@@ -385,6 +387,7 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly skip: number;
     readonly cursorAdvance: number;
+    readonly reads: number;
     readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
   }): Effect.Effect<
     {
@@ -453,10 +456,10 @@ export const make = Effect.gen(function* () {
         }
 
         const items = [...input.items, ...batch.items];
-        if (batch.rawCount < top) {
+        if (batch.rawCount < top || input.reads + 1 >= PULL_REQUEST_LIST_MAX_READS) {
           return Effect.succeed({
             items,
-            truncated: false,
+            truncated: batch.rawCount === top,
             cursorAdvance: input.cursorAdvance + batch.rawCount,
           });
         }
@@ -464,6 +467,7 @@ export const make = Effect.gen(function* () {
           ...input,
           skip: input.skip + batch.rawCount,
           cursorAdvance: input.cursorAdvance + batch.rawCount,
+          reads: input.reads + 1,
           items,
         });
       }),
@@ -535,6 +539,7 @@ export const make = Effect.gen(function* () {
         limit: input.limit,
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
+        reads: 0,
         items: [],
       });
     }),
