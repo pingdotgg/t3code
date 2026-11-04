@@ -2,6 +2,11 @@
   "name": "railway-website-astro",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/railway-website-astro"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -14,6 +19,8 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/railway": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -24,10 +31,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/railway-website-astro"
   }
 }
