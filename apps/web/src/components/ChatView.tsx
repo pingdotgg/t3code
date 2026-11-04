@@ -1,4 +1,4 @@
-import { requestMarkdownFindOpen } from "./files/markdownFindActionBus";
+import { getMarkdownFindTarget, requestMarkdownFindOpen } from "./files/markdownFindActionBus";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -2662,6 +2662,7 @@ export default function ChatView(props: ChatViewProps) {
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
     previewFocus: isPreviewFocused(),
+    fileFindFocus: getMarkdownFindTarget(eventTarget) !== null,
     previewOpen: previewPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
@@ -2707,8 +2708,8 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.find": ({ event }) => {
-        if (requestMarkdownFindOpen(event.target, rightPanelMaximized)) return;
+      "file.find": ({ event }) => requestMarkdownFindOpen(event.target, rightPanelMaximized),
+      "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
         openThreadFind(activeThreadKey);

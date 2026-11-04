@@ -4,7 +4,7 @@ import "~/index.css";
 
 import { act, render } from "../../../test/render";
 import { MarkdownDetails } from "../chat/MarkdownDetails";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { SearchableMarkdownPreview } from "./SearchableMarkdownPreview";
 import { getMarkdownFindTarget, requestMarkdownFindOpen } from "./markdownFindActionBus";
 
 const highlighted = (name = "t3-markdown-find-active") =>
@@ -12,7 +12,7 @@ const highlighted = (name = "t3-markdown-find-active") =>
 
 it("finds inline phrases, preserves Unicode offsets, and excludes controls and block boundaries", async () => {
   await using screen = await render(
-    <MarkdownPreview>
+    <SearchableMarkdownPreview>
       <p>
         İstanbul 🐈 <strong>NEE</strong>dle
       </p>
@@ -27,7 +27,7 @@ it("finds inline phrases, preserves Unicode offsets, and excludes controls and b
           <span>dle</span>
         </code>
       </pre>
-    </MarkdownPreview>,
+    </SearchableMarkdownPreview>,
   );
   const paragraph = screen.container.querySelector("p")!;
   await act(() => {
@@ -58,12 +58,12 @@ it("finds inline phrases, preserves Unicode offsets, and excludes controls and b
 
 it("reveals folded Markdown and refreshes matches when the rendered text changes", async () => {
   const content = (text: string) => (
-    <MarkdownPreview>
+    <SearchableMarkdownPreview>
       <MarkdownDetails>
         <summary>Details</summary>
         <p>{text}</p>
       </MarkdownDetails>
-    </MarkdownPreview>
+    </SearchableMarkdownPreview>
   );
   await using screen = await render(content("Hidden needle"));
   const preview = screen.container.querySelector<HTMLElement>("[data-markdown-preview]")!;
@@ -83,9 +83,9 @@ it("reveals folded Markdown and refreshes matches when the rendered text changes
 
 it("reuses its DOM index while typing and its ranges while navigating", async () => {
   await using screen = await render(
-    <MarkdownPreview>
+    <SearchableMarkdownPreview>
       <p>needle NEEDLE needle</p>
-    </MarkdownPreview>,
+    </SearchableMarkdownPreview>,
   );
   using ranges = vi.spyOn(document, "createRange");
   const preview = screen.container.querySelector<HTMLElement>("[data-markdown-preview]")!;
@@ -108,13 +108,13 @@ it("reuses its DOM index while typing and its ranges while navigating", async ()
 it("reveals code matches inside horizontal and vertical scroll containers without moving the page", async () => {
   await using screen = await render(
     <div style={{ display: "flex", width: 360, height: 240 }}>
-      <MarkdownPreview>
+      <SearchableMarkdownPreview>
         <p>Start</p>
         <div style={{ height: 600 }} />
         <pre style={{ overflow: "auto", whiteSpace: "pre", fontFamily: "monospace" }}>
           needle {"x".repeat(400)}needle
         </pre>
-      </MarkdownPreview>
+      </SearchableMarkdownPreview>
     </div>,
   );
   const paragraph = screen.container.querySelector("p")!;
@@ -149,13 +149,13 @@ it("routes file toolbar focus to the visible preview, leaving hidden tabs and ch
       <div data-file-preview-panel>
         <button>File action</button>
         <div hidden>
-          <MarkdownPreview>
+          <SearchableMarkdownPreview>
             <p>Hidden</p>
-          </MarkdownPreview>
+          </SearchableMarkdownPreview>
         </div>
-        <MarkdownPreview>
+        <SearchableMarkdownPreview>
           <p>Visible</p>
-        </MarkdownPreview>
+        </SearchableMarkdownPreview>
       </div>
       <textarea aria-label="Chat" />
     </>,

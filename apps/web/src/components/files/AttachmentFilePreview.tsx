@@ -1,4 +1,4 @@
-import { MarkdownPreview } from "./MarkdownPreview";
+import { SearchableMarkdownPreview } from "./SearchableMarkdownPreview";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -287,13 +287,13 @@ export function AttachmentFilePreview(props: {
         <MermaidFilePreview text={content.text} />
       </Suspense>
     ) : kind === "markdown" && rendered ? (
-      <MarkdownPreview>
+      <SearchableMarkdownPreview>
         <ChatMarkdown
           text={maskMarkdownFrontmatter(content.text)}
           cwd={undefined}
           className="mx-auto max-w-4xl px-6 py-5"
         />
-      </MarkdownPreview>
+      </SearchableMarkdownPreview>
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
     )

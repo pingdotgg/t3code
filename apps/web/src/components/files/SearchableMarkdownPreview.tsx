@@ -6,7 +6,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { createMarkdownFind } from "./markdownFind";
 import { MARKDOWN_FIND_OPEN_EVENT } from "./markdownFindActionBus";
 
-export function MarkdownPreview({ children }: { readonly children: ReactNode }) {
+export function SearchableMarkdownPreview({ children }: { readonly children: ReactNode }) {
   const [preview, setPreview] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);

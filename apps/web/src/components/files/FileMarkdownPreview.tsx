@@ -4,7 +4,7 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 
-import { MarkdownPreview } from "./MarkdownPreview";
+import { SearchableMarkdownPreview } from "./SearchableMarkdownPreview";
 
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
@@ -26,7 +26,7 @@ export function FileMarkdownPreview(props: {
       : props.cwd;
 
   return (
-    <MarkdownPreview>
+    <SearchableMarkdownPreview>
       <ChatMarkdown
         text={maskMarkdownFrontmatter(props.text)}
         cwd={props.cwd}
@@ -36,6 +36,6 @@ export function FileMarkdownPreview(props: {
         className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={props.onTaskListChange}
       />
-    </MarkdownPreview>
+    </SearchableMarkdownPreview>
   );
 }

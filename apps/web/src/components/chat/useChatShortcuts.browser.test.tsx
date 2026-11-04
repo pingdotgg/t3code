@@ -11,6 +11,7 @@ import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
+import { getMarkdownFindTarget } from "../files/markdownFindActionBus";
 import { isPreviewFocused } from "~/lib/previewFocus";
 
 const shortcutContext = {
@@ -198,13 +199,20 @@ function PreviewShortcuts(props: { keybindings: ResolvedKeybindingsConfig; recei
     enabled: true,
     keybindings: props.keybindings,
     scriptKeybindings: [],
-    getShortcutContext: () => ({ ...shortcutContext, previewFocus: isPreviewFocused() }),
+    getShortcutContext: (target) => ({
+      ...shortcutContext,
+      previewFocus: isPreviewFocused(),
+      fileFindFocus: getMarkdownFindTarget(target) !== null,
+    }),
     threadFindActive: false,
     composerRef: { current: null },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     commands: {
       "chat.find": () => {
+        props.received.push("chat-find");
+      },
+      "file.find": () => {
         props.received.push("find");
       },
       "preview.refresh": () => {
@@ -239,7 +247,12 @@ it.each([
     const received: string[] = [];
     const keybindings = mergeWithDefaultKeybindings(
       compileResolvedKeybindingsConfig([
-        { key: `mod+${findKey}`, command: "chat.find", when: "!terminalFocus && !previewFocus" },
+        { key: `mod+${findKey}`, command: "file.find", when: "!terminalFocus && fileFindFocus" },
+        {
+          key: "mod+h",
+          command: "chat.find",
+          when: "!terminalFocus && !previewFocus && !fileFindFocus",
+        },
         { key: "mod+x", command: "thread.stop", when: "!previewFocus" },
       ]),
     );
@@ -264,6 +277,7 @@ it.each([
     expect(press(markdown, findKey)).toBe(true);
     expect(press(markdown, "r")).toBe(true);
     expect(press(markdown, "x")).toBe(false);
+    expect(press(markdown, "h")).toBe(false);
     expect(press(browser, findKey)).toBe(false);
     if (findKey !== "f") expect(press(markdown, "f")).toBe(false);
     expect(received).toEqual(["find", "refresh"]);

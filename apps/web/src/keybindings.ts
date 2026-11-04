@@ -58,6 +58,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     terminalFocus: false,
     terminalOpen: false,
     previewFocus: false,
+    fileFindFocus: false,
     previewOpen: false,
     isWeb: !isElectron,
     isDesktop: isElectron,

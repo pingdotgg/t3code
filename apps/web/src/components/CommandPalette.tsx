@@ -1285,7 +1285,7 @@ function OpenCommandPaletteDialog(props: {
       title: "Find in rendered file",
       searchTerms: ["search", "markdown", "file", "preview"],
       icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
-      shortcutCommand: "chat.find",
+      shortcutCommand: "file.find",
       run: async () => {
         requestMarkdownFindOpen(markdownFindTarget);
       },
