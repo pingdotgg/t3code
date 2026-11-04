@@ -277,6 +277,7 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
+        onImageExpand={ctx.onImageExpand}
       />
     </div>
   );

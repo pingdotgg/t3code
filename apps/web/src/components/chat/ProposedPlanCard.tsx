@@ -17,6 +17,7 @@ import {
   normalizePlanMarkdownForExport,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -45,6 +46,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  onImageExpand,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -52,6 +54,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -202,6 +205,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               threadRef={threadRef}
               isStreaming={false}
               headingLevelOffset={3}
+              onImageExpand={onImageExpand}
             />
           ) : (
             <ChatMarkdown
@@ -211,6 +215,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               threadRef={threadRef}
               isStreaming={false}
               headingLevelOffset={3}
+              onImageExpand={onImageExpand}
             />
           )}
           {isCollapsed ? (
