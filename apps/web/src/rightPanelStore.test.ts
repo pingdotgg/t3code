@@ -701,7 +701,34 @@ describe("rightPanelStore", () => {
       byThreadKey: {},
       threadPanelVisibilityByThreadKey: {
         "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
+        "env-1:thread-B": { inlineOpen: true, popoverOpen: false },
       },
+    });
+  });
+
+  it("persists explicit inline choices both ways so the default only decides untouched threads", async () => {
+    const store = useRightPanelStore.getState();
+    store.toggleThreadPanel(refA, "inline", false);
+    store.toggleThreadPanel(refB, "inline", true);
+    await reloadRightPanelStore();
+
+    const visibility = useRightPanelStore.getState().threadPanelVisibilityByThreadKey;
+    const untouched = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-C"));
+    expect(selectThreadPanelVisibility(visibility, refA, false)).toEqual({
+      inlineOpen: true,
+      popoverOpen: false,
+    });
+    expect(selectThreadPanelVisibility(visibility, refB, true)).toEqual({
+      inlineOpen: false,
+      popoverOpen: false,
+    });
+    expect(selectThreadPanelVisibility(visibility, untouched, false)).toEqual({
+      inlineOpen: false,
+      popoverOpen: false,
+    });
+    expect(selectThreadPanelVisibility(visibility, untouched, true)).toEqual({
+      inlineOpen: true,
+      popoverOpen: false,
     });
   });
 
@@ -713,6 +740,7 @@ describe("rightPanelStore", () => {
       selectThreadPanelVisibility(
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
+        true,
       ),
     ).toEqual({ inlineOpen: true, popoverOpen: false });
   });
@@ -728,6 +756,7 @@ describe("rightPanelStore", () => {
       selectThreadPanelVisibility(
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
+        true,
       ),
     ).toEqual({ inlineOpen: true, popoverOpen: true });
   });
