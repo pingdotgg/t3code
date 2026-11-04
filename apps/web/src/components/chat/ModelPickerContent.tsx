@@ -435,8 +435,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [vendorSectionOverrides, setVendorSectionOverrides] = useState(
     () => new Map<string, boolean>(),
   );
-  // Picks keep a docked picker open, so sections open from the model it opened with.
+  // Picks and stars keep a docked picker open, so sections open from its state at open.
   const [openedWithModelKey] = useState(activeModelKey);
+  const [favoritesAtOpen] = useState(favoritesSet);
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -696,23 +697,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
+    const models = legacySection?.currentModels ?? filteredModels;
     const grouped = groupModelPickerVendors(
-      legacySection?.currentModels ?? filteredModels,
+      models,
       (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-      flatModels.find(
-        (model) =>
-          model.instanceId === selectedInstanceId &&
-          modelPickerModelKey(model.instanceId, model.slug) === openedWithModelKey,
-      )?.subProvider,
+      undefined,
     );
     if (!grouped) {
       return null;
     }
+    const defaultVendor =
+      groupModelPickerVendors(
+        models,
+        (model) => favoritesAtOpen.has(providerModelKey(model.instanceId, model.slug)),
+        flatModels.find(
+          (model) =>
+            model.instanceId === selectedInstanceId &&
+            modelPickerModelKey(model.instanceId, model.slug) === openedWithModelKey,
+        )?.subProvider,
+      )?.defaultVendor ?? grouped.defaultVendor;
     return {
       pinned: grouped.pinned,
       sections: grouped.sections.map((section) => {
         const key = modelPickerVendorSectionKey(selectedInstanceId, section.vendor);
-        const expandedByDefault = section.vendor === grouped.defaultVendor;
+        const expandedByDefault = section.vendor === defaultVendor;
         return {
           ...section,
           key,
