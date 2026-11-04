@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ProviderThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
@@ -32,6 +33,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
+    /** The thread a history-less handoff points at; a side chat names its lesson. */
+    readonly historyThreadId?: ThreadId | undefined;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     /** Handoffs that are dropped whole, rather than failing the turn, when they do not fit. */
@@ -56,7 +59,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           (handoff) =>
             `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
               handoff.history?.coverage ??
-              `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
+              (input.historyThreadId === undefined
+                ? `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
+                : `From thread ${input.historyThreadId} (the lesson). Recover history with t3_thread_read({threadId:"${input.historyThreadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition.`)
             }`,
         )
         .join("\n");
