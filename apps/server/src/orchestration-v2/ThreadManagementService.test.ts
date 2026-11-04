@@ -98,8 +98,22 @@ const layerDispatchChokepointTest =
                   model: "test",
                 },
               },
-              runs: [],
+              // The steer retry test's send, accepted into a turn that has since ended.
+              runs: [{ id: RunId.make("run:thread-management:steer-replay"), status: "completed" }],
               providerTurns: [],
+              messages: [
+                {
+                  id: MessageId.make("message:thread-management:steer-replay"),
+                  runId: RunId.make("run:thread-management:steer-replay"),
+                },
+              ],
+              turnItems: [
+                {
+                  type: "user_message",
+                  messageId: MessageId.make("message:thread-management:steer-replay"),
+                  inputIntent: "steer",
+                },
+              ],
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
@@ -221,21 +235,19 @@ it.effect("a retried steer replays its accepted send after the steered turn has 
     });
 
     const threads = yield* ThreadManagementService.ThreadManagementService;
-    // The stub projection has no messages, so the send fails after dispatch; only the dispatch matters.
-    yield* Effect.exit(
-      threads.sendToThread({
-        projectId,
-        commandId,
-        threadId,
-        messageId: MessageId.make("message:thread-management:steer-replay"),
-        text: "CI failed.",
-        attachments: [],
-        mode: "steer",
-        createdBy: "user",
-        creationSource: "server",
-      }),
-    );
+    const result = yield* threads.sendToThread({
+      projectId,
+      commandId,
+      threadId,
+      messageId: MessageId.make("message:thread-management:steer-replay"),
+      text: "CI failed.",
+      attachments: [],
+      mode: "steer",
+      createdBy: "user",
+      creationSource: "server",
+    });
 
+    expect(result.delivery).toBe("steered");
     expect(dispatched).toEqual(["message.dispatch"]);
   }).pipe(Effect.provide(layerTest));
 });
