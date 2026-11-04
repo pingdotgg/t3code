@@ -44,6 +44,7 @@ import {
   waitForRevertedMessage,
 } from "../ChatView.logic";
 import { readPreparedConnection } from "../../state/session";
+import { asKnownContextRecord, resolveUserMessageContext } from "../../lib/composerContextRecords";
 import { recallableComposerPrompt } from "./composerPromptHistory";
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
@@ -219,7 +220,9 @@ export async function rewindToMessage(input: {
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     });
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
-    const restoredPrompt = recallableComposerPrompt(message.text);
+    const restoredPrompt = recallableComposerPrompt(message.text, {
+      preserveThreadReferences: true,
+    });
     const nextPrompt =
       restoredPrompt.length === 0
         ? currentPrompt
@@ -227,6 +230,14 @@ export async function rewindToMessage(input: {
           ? `${currentPrompt}\n\n${restoredPrompt}`
           : restoredPrompt;
     store.setPrompt(draftTarget, nextPrompt);
+    store.addThreadContexts(
+      draftTarget,
+      resolveUserMessageContext(message).records.flatMap((record) => {
+        const known = asKnownContextRecord(record);
+        return known?.kind === "thread" ? [known] : [];
+      }),
+      { appendReference: false },
+    );
     const images: ComposerImageAttachment[] = [];
     const restoredFiles: ComposerFileAttachment[] = [];
     files.forEach((file, index) => {

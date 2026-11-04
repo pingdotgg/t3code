@@ -70,7 +70,10 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
   return result;
 }
 
-export function recallableComposerPrompt(messageText: string): string {
+export function recallableComposerPrompt(
+  messageText: string,
+  options?: { readonly preserveThreadReferences: boolean },
+): string {
   let prompt = messageText.trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
@@ -99,8 +102,9 @@ export function recallableComposerPrompt(messageText: string): string {
     break;
   }
 
-  // Recall strips chips because their backing records are absent.
+  // History recall has no backing records; rewinds restore thread records separately.
   for (const reference of collectComposerContextReferences(prompt).toReversed()) {
+    if (options?.preserveThreadReferences && reference.kind === "thread") continue;
     let { start, end } = reference;
     if (prompt[end] === " ") end += 1;
     else if (prompt[start - 1] === " ") start -= 1;
