@@ -141,12 +141,7 @@ binary WebSocket; Android multiplexes SEMU-framed H.264 and JSON gestures over
 one WebSocket. [`DeviceStreamView.tsx`](../../apps/web/src/components/device/DeviceStreamView.tsx)
 speaks both so one panel covers both platforms.
 
-Simulators encode H.264 High 5.1 without frame reordering, but the hub's fallback
-encoder can omit the SPS VUI that declares its reorder limits. Chromium's hardware
-decoder then retains frames for seconds despite `optimizeForLatency` and an empty
-`decodeQueueSize`. The iOS AVCC viewer restores the missing metadata before
-configuring the decoder so hardware decoding can remain enabled. WebCodecs is
-secure-context only, so the viewer probes `isConfigSupported` and falls back to
+WebCodecs is secure-context only, so the viewer probes `isConfigSupported` and falls back to
 MJPEG on iOS when decoding is unavailable. Android's SEMU socket has no MJPEG;
 there the panel reports that it cannot decode.
 
