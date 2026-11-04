@@ -37,10 +37,8 @@ const failed: WorktreeSetupSnapshot = {
   error: "Fetch base branch failed",
 };
 
-it("shows the retry's progress after a failed worktree setup", async () => {
-  mocks.server = failed;
-  const seen: Array<WorktreeSetupSnapshot | null> = [];
-  function Probe(props: { preparing: boolean }) {
+function createProbe(seen: Array<WorktreeSetupSnapshot | null>) {
+  return function Probe(props: { preparing: boolean }) {
     const { snapshot } = useWorktreeSetup({
       environmentId,
       threadId,
@@ -53,7 +51,13 @@ it("shows the retry's progress after a failed worktree setup", async () => {
       seen.push(snapshot);
     });
     return null;
-  }
+  };
+}
+
+it("shows the retry's progress after a failed worktree setup", async () => {
+  mocks.server = failed;
+  const seen: Array<WorktreeSetupSnapshot | null> = [];
+  const Probe = createProbe(seen);
 
   const root = createRoot(document.createElement("div"));
   await act(async () => root.render(<Probe preparing />));
@@ -71,5 +75,35 @@ it("shows the retry's progress after a failed worktree setup", async () => {
   mocks.server = retry;
   await act(async () => root.render(<Probe preparing />));
   expect(seen.at(-1)).toBe(retry);
+  act(() => root.unmount());
+});
+
+it("shows a retry that fails before its first snapshot arrives", async () => {
+  mocks.server = failed;
+  const seen: Array<WorktreeSetupSnapshot | null> = [];
+  const Probe = createProbe(seen);
+
+  const root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe preparing />));
+  await act(async () => root.render(<Probe preparing={false} />));
+  mocks.server = null;
+  await act(async () => root.render(<Probe preparing />));
+  await act(async () => root.render(<Probe preparing={false} />));
+  expect(seen.at(-1)).toBe(failed);
+
+  const retryFailed: WorktreeSetupSnapshot = {
+    ...failed,
+    sequence: 1,
+    startedAt: "2026-10-30T00:01:00.000Z",
+    endedAt: "2026-10-30T00:01:00.050Z",
+    error: "Checkout failed",
+  };
+  mocks.server = retryFailed;
+  await act(async () => root.render(<Probe preparing={false} />));
+  expect(seen.at(-1)).toBe(retryFailed);
+
+  mocks.server = { ...retryFailed, sequence: 2 };
+  await act(async () => root.render(<Probe preparing={false} />));
+  expect(seen.at(-1)).toBe(retryFailed);
   act(() => root.unmount());
 });
