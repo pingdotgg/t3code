@@ -9,7 +9,6 @@ export function useThreadHeaderOptions(
     // Android renders header actions as children, not native item factories.
     optionsVersion: [],
     titleMaxWidth: 0, // The Android app bar constrains its title content directly.
-    sidebar: true,
     fallback: null,
   };
 }

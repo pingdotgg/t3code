@@ -3,9 +3,9 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Stream from "effect/Stream";
 import { ConfigError, SystemError } from "../RuntimeError.shared.ts";
 
 export class Access extends Context.Service<
@@ -26,16 +26,11 @@ export const layer = Layer.effect(
       // to "domain does not use Access" so we don't pop a login prompt for
       // every transient hiccup. This mirrors workers-sdk's behavior.
       lookup: (domain: string) =>
-        Effect.promise((signal) =>
-          fetch(`https://${domain}`, { redirect: "manual", signal }),
-        ).pipe(
+        Effect.promise((signal) => fetch(`https://${domain}`, { redirect: "manual", signal })).pipe(
           Effect.map(
             (response) =>
               response.status === 302 &&
-              (response.headers
-                .get("location")
-                ?.includes("cloudflareaccess.com") ??
-                false),
+              (response.headers.get("location")?.includes("cloudflareaccess.com") ?? false),
           ),
           Effect.timeout(1000),
           Effect.orElseSucceed(() => false),
@@ -44,28 +39,24 @@ export const layer = Layer.effect(
     });
     const login = (domain: string) =>
       ChildProcess.make("cloudflared", ["access", "login", domain]).pipe(
-        spawner.spawn,
+        (command) => spawner.spawn(command),
         Effect.flatMap((process) => Stream.runCollect(process.stdout)),
-        Effect.mapError(
-          (error) =>
-            new SystemError({
-              subtag: "CloudflaredMissing",
-              message: `The domain "${domain}" uses Cloudflare Access but the \`cloudflared\` CLI could not be invoked.`,
-              hint: "Install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation, or set CLOUDFLARE_ACCESS_CLIENT_ID and CLOUDFLARE_ACCESS_CLIENT_SECRET.",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SystemError.make({
+            subtag: "CloudflaredMissing",
+            message: `The domain "${domain}" uses Cloudflare Access but the \`cloudflared\` CLI could not be invoked.`,
+            hint: "Install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation, or set CLOUDFLARE_ACCESS_CLIENT_ID and CLOUDFLARE_ACCESS_CLIENT_SECRET.",
+            cause: error,
+          }),
         ),
         Effect.flatMap((stdout) => {
-          const matches = stdout
-            .toString()
-            .match(/fetched your token:\n\n(.*)/m);
+          const matches = stdout.toString().match(/fetched your token:\n\n(.*)/m);
           return matches && matches.length >= 2
             ? Effect.succeed({ Cookie: `CF_Authorization=${matches[1]}` })
             : Effect.fail(
-                new SystemError({
+                SystemError.make({
                   subtag: "CloudflaredAuth",
-                  message:
-                    "Failed to extract a token from `cloudflared access login`.",
+                  message: "Failed to extract a token from `cloudflared access login`.",
                   hint: "Try running `cloudflared access login <domain>` manually to debug.",
                   detail: { stdout: stdout.toString() },
                 }),
@@ -75,9 +66,7 @@ export const layer = Layer.effect(
       );
 
     const getEnv = (name: string) =>
-      Config.String(name).pipe(
-        Effect.catchTag("ConfigError", () => Effect.succeed(undefined)),
-      );
+      Config.String(name).pipe(Effect.catchTag("ConfigError", () => Effect.undefined));
 
     return Access.of({
       getAccessHeaders: Effect.fn(function* (domain) {
@@ -95,18 +84,16 @@ export const layer = Layer.effect(
         }
 
         if (clientId !== undefined || clientSecret !== undefined) {
-          return yield* Effect.fail(
-            new ConfigError({
-              subtag: "AccessTokenIncomplete",
-              message:
-                "Both CLOUDFLARE_ACCESS_CLIENT_ID and CLOUDFLARE_ACCESS_CLIENT_SECRET must be set to use Access service-token authentication.",
-              hint: `Only ${
-                clientId !== undefined
-                  ? "CLOUDFLARE_ACCESS_CLIENT_ID"
-                  : "CLOUDFLARE_ACCESS_CLIENT_SECRET"
-              } was found. Set the missing variable, unset both to fall back to interactive login, or remove the value to disable service-token auth.`,
-            }),
-          );
+          return yield* ConfigError.make({
+            subtag: "AccessTokenIncomplete",
+            message:
+              "Both CLOUDFLARE_ACCESS_CLIENT_ID and CLOUDFLARE_ACCESS_CLIENT_SECRET must be set to use Access service-token authentication.",
+            hint: `Only ${
+              clientId !== undefined
+                ? "CLOUDFLARE_ACCESS_CLIENT_ID"
+                : "CLOUDFLARE_ACCESS_CLIENT_SECRET"
+            } was found. Set the missing variable, unset both to fall back to interactive login, or remove the value to disable service-token auth.`,
+          });
         }
 
         return yield* login(domain);
