@@ -8,12 +8,15 @@ import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 
 const entries: readonly ProjectEntry[] = [
-  { path: "docs", kind: "directory", mtimeMs: 100 },
-  { path: "src", kind: "directory", mtimeMs: 200 },
-  { path: "src/a.ts", kind: "file", mtimeMs: 10 },
-  { path: "src/b.ts", kind: "file", mtimeMs: 20 },
-  { path: "README.md", kind: "file", mtimeMs: 50 },
-  { path: "zeta.md", kind: "file", mtimeMs: 300 },
+  { path: "src", kind: "directory", mtimeMs: 100 },
+  { path: ".config", kind: "directory", mtimeMs: 200 },
+  { path: "alpha", kind: "directory", mtimeMs: 300 },
+  { path: "alpha/a-new.ts", kind: "file", mtimeMs: 900 },
+  { path: "alpha/b-old.ts", kind: "file", mtimeMs: 800 },
+  { path: "README.md", kind: "file", mtimeMs: 400 },
+  { path: ".env", kind: "file", mtimeMs: 200 },
+  { path: "b.txt", kind: "file", mtimeMs: 100 },
+  { path: "c.txt", kind: "file", mtimeMs: 300 },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory = {
@@ -40,14 +43,6 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 
-function treeRowPaths(): string[] {
-  for (const host of document.querySelectorAll("*")) {
-    const rows = host.shadowRoot?.querySelectorAll<HTMLElement>("[data-item-path]");
-    if (rows?.length) return [...rows].map((row) => row.dataset.itemPath!);
-  }
-  return [];
-}
-
 function findTreeRow(path: string): HTMLElement | null {
   for (const host of document.querySelectorAll("*")) {
     const row = host.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`);
@@ -55,6 +50,55 @@ function findTreeRow(path: string): HTMLElement | null {
   }
   return null;
 }
+
+function visibleRowPaths(): string[] {
+  for (const host of document.querySelectorAll("*")) {
+    const rows = host.shadowRoot?.querySelectorAll<HTMLElement>("[data-item-path]");
+    if (rows?.length) return Array.from(rows, (row) => row.dataset.itemPath ?? "");
+  }
+  return [];
+}
+
+function tooltipTexts(): string[] {
+  return Array.from(
+    document.querySelectorAll('[data-slot="tooltip-popup"]'),
+    (popup) => popup.textContent ?? "",
+  );
+}
+
+const SORT_STORAGE_KEY = "t3code:file-browser-sort";
+
+function setupSort(): Disposable {
+  localStorage.removeItem(SORT_STORAGE_KEY);
+  return { [Symbol.dispose]: () => localStorage.removeItem(SORT_STORAGE_KEY) };
+}
+
+function renderPanel() {
+  return render(
+    <FileBrowserPanel
+      environmentId={EnvironmentId.make("env-files")}
+      cwd="/repo"
+      projectName="repo"
+      selectedPath={null}
+      selectedPathRevealId={0}
+      onOpenFile={() => {}}
+      workspaceMutationId={null}
+    />,
+  );
+}
+
+const sortKeyButton = (name: "Sort by date modified" | "Sort by name") =>
+  page.getByRole("button", { name, exact: true });
+const sortDirectionButton = (name: "Sort descending" | "Sort ascending") =>
+  page.getByRole("button", { name, exact: true });
+
+const expectRows = (expected: readonly string[]) =>
+  vi.waitFor(() => expect(visibleRowPaths()).toEqual(expected));
+
+const NAME_ASC = [".config/", "alpha/", "src/", ".env", "b.txt", "c.txt", "README.md"];
+const NAME_DESC = ["src/", "alpha/", ".config/", "README.md", "c.txt", "b.txt", ".env"];
+const MODIFIED_ASC = ["src/", ".config/", "alpha/", "b.txt", ".env", "c.txt", "README.md"];
+const MODIFIED_DESC = ["alpha/", ".config/", "src/", "README.md", "c.txt", ".env", "b.txt"];
 
 describe("FileBrowserPanel", () => {
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
@@ -94,60 +138,6 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
-  it("re-sorts by date modified and direction while keeping folders open and the selection", async () => {
-    using _sortOrder = {
-      [Symbol.dispose]: () => localStorage.removeItem("t3code:file-browser-sort"),
-    };
-    await using _screen = await render(
-      <FileBrowserPanel
-        environmentId={EnvironmentId.make("env-files")}
-        cwd="/repo"
-        projectName="repo"
-        selectedPath={null}
-        selectedPathRevealId={0}
-        onOpenFile={() => {}}
-        workspaceMutationId={null}
-      />,
-    );
-    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
-    expect(treeRowPaths()).toEqual(["docs/", "src/", "README.md", "zeta.md"]);
-    findTreeRow("src/")!.click();
-    await vi.waitFor(() => expect(findTreeRow("src/b.ts")).not.toBeNull());
-    findTreeRow("src/b.ts")!.click();
-    await vi.waitFor(() =>
-      expect(findTreeRow("src/b.ts")!.getAttribute("aria-selected")).toBe("true"),
-    );
-
-    await userEvent.click(page.getByRole("button", { name: "Sort by date modified" }));
-    await vi.waitFor(() =>
-      expect(treeRowPaths()).toEqual([
-        "docs/",
-        "src/",
-        "src/a.ts",
-        "src/b.ts",
-        "README.md",
-        "zeta.md",
-      ]),
-    );
-    expect(findTreeRow("src/b.ts")!.getAttribute("aria-selected")).toBe("true");
-
-    await userEvent.click(page.getByRole("button", { name: "Sort descending" }));
-    await expect.element(page.getByRole("button", { name: "Sort ascending" })).toBeVisible();
-    await vi.waitFor(() =>
-      expect(treeRowPaths()).toEqual([
-        "src/",
-        "src/b.ts",
-        "src/a.ts",
-        "docs/",
-        "zeta.md",
-        "README.md",
-      ]),
-    );
-    expect(localStorage.getItem("t3code:file-browser-sort")).toBe(
-      '{"key":"modified","direction":"desc"}',
-    );
-  });
-
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     const onOpenFile = vi.fn();
     await using _screen = await render(
@@ -180,5 +170,138 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("FileBrowserPanel sorting", () => {
+  it("keeps folders first by name ascending and offers both sort buttons", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await expectRows(NAME_ASC);
+
+    await expect.element(sortKeyButton("Sort by date modified")).toBeVisible();
+    await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
+
+    await userEvent.hover(sortKeyButton("Sort by date modified"));
+    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort by date modified"));
+    await userEvent.hover(sortDirectionButton("Sort descending"));
+    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort descending"));
+  });
+
+  it("sorts by date modified, oldest first, with folders before files", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await expectRows(NAME_ASC);
+
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+
+    await expectRows(MODIFIED_ASC);
+    await expect.element(sortKeyButton("Sort by name")).toBeVisible();
+    await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
+
+    await userEvent.hover(sortKeyButton("Sort by name"));
+    await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort by name"));
+  });
+
+  it("reverses the order in name mode when the direction is toggled", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await expectRows(NAME_ASC);
+
+    await userEvent.click(sortDirectionButton("Sort descending"));
+    await expectRows(NAME_DESC);
+    await expect.element(sortDirectionButton("Sort ascending")).toBeVisible();
+
+    await userEvent.click(sortDirectionButton("Sort ascending"));
+    await expectRows(NAME_ASC);
+    await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
+  });
+
+  it("reverses the order in modified mode when the direction is toggled", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await expectRows(MODIFIED_ASC);
+
+    await userEvent.click(sortDirectionButton("Sort descending"));
+    await expectRows(MODIFIED_DESC);
+    await expect.element(sortDirectionButton("Sort ascending")).toBeVisible();
+
+    await userEvent.click(sortDirectionButton("Sort ascending"));
+    await expectRows(MODIFIED_ASC);
+  });
+
+  it("returns to name order when the key is toggled back", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await expectRows(MODIFIED_ASC);
+
+    await userEvent.click(sortKeyButton("Sort by name"));
+
+    await expectRows(NAME_ASC);
+    await expect.element(sortKeyButton("Sort by date modified")).toBeVisible();
+  });
+
+  it("keeps the chosen order after the panel is mounted again", async () => {
+    using _sort = setupSort();
+    {
+      await using _first = await renderPanel();
+      await userEvent.click(sortKeyButton("Sort by date modified"));
+      await userEvent.click(sortDirectionButton("Sort descending"));
+      await expectRows(MODIFIED_DESC);
+      expect(localStorage.getItem(SORT_STORAGE_KEY)).not.toBeNull();
+    }
+
+    await using _second = await renderPanel();
+
+    await expectRows(MODIFIED_DESC);
+    await expect.element(sortKeyButton("Sort by name")).toBeVisible();
+    await expect.element(sortDirectionButton("Sort ascending")).toBeVisible();
+  });
+
+  it("keeps expanded folders open and sorts their children when the order changes", async () => {
+    using _sort = setupSort();
+    await using _screen = await renderPanel();
+    await expectRows(NAME_ASC);
+
+    findTreeRow("alpha/")!.click();
+    await expectRows([
+      ".config/",
+      "alpha/",
+      "alpha/a-new.ts",
+      "alpha/b-old.ts",
+      "src/",
+      ".env",
+      "b.txt",
+      "c.txt",
+      "README.md",
+    ]);
+
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await expectRows([
+      "src/",
+      ".config/",
+      "alpha/",
+      "alpha/b-old.ts",
+      "alpha/a-new.ts",
+      "b.txt",
+      ".env",
+      "c.txt",
+      "README.md",
+    ]);
+
+    await userEvent.click(sortDirectionButton("Sort descending"));
+    await expectRows([
+      "alpha/",
+      "alpha/a-new.ts",
+      "alpha/b-old.ts",
+      ".config/",
+      "src/",
+      "README.md",
+      "c.txt",
+      ".env",
+      "b.txt",
+    ]);
   });
 });
