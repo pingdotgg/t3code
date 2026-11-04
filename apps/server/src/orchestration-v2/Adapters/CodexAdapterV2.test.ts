@@ -2894,6 +2894,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "new-run",
     "steer",
     "start-fails",
+    "network-budget",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3033,6 +3034,40 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               }
             }
           }
+          if (outcome === "network-budget")
+            entries.push(
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId(attempt),
+                    willRetry: true,
+                    error: capacityError,
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 5,
+                  method: "turn/interrupt",
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId(attempt) },
+                },
+              },
+              { type: "emit_inbound", frame: { id: 5, result: {} } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId(attempt), status: "interrupted" }),
+                  },
+                },
+              },
+            );
           if (outcome === "exhaust") entries.push(...failureEntries(attempt));
           if (
             outcome === "recover" ||
@@ -3171,6 +3206,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               providerTurnId,
             });
           }
+        }
+        if (outcome === "network-budget") {
+          yield* Queue.take(milestones);
+          yield* TestClock.adjust("10 minutes");
+          assert.lengthOf(harness.terminalEvents(), 1, "a continued retry must obey the budget");
         }
         yield* harness.awaitTerminal(1);
         if (outcome === "new-run") {
@@ -3317,143 +3357,154 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each(["completed", "different-error", "unanswered"] as const)(
-    "fails a turn that waits for the network past the retry budget: %s",
-    (response) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const scenario = `codex-connection-retry-budget-${response}`;
-          const nativeThreadId = `native-${scenario}-thread`;
-          const nativeTurnId = `native-${scenario}-turn`;
-          const networkWait = (label: string, afterMs?: number) => ({
-            type: "emit_inbound" as const,
-            label,
-            ...(afterMs === undefined ? {} : { afterMs }),
-            frame: {
-              method: "error",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                willRetry: true,
-                error: {
-                  message: "Reconnecting... waiting for network",
-                  additionalDetails: "Connection failed: error sending request",
-                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
-                },
+  it.effect.each([
+    "completed",
+    "different-error",
+    "unanswered",
+    "acknowledged",
+    "rejected",
+  ] as const)("fails a turn that waits for the network past the retry budget: %s", (response) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = `codex-connection-retry-budget-${response}`;
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const networkWait = (label: string, afterMs?: number) => ({
+          type: "emit_inbound" as const,
+          label,
+          ...(afterMs === undefined ? {} : { afterMs }),
+          frame: {
+            method: "error",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              willRetry: true,
+              error: {
+                message: "Reconnecting... waiting for network",
+                additionalDetails: "Connection failed: error sending request",
+                codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
               },
             },
-          });
-          const transcript = makeCodexReplayTranscript({
-            scenario,
-            entries: [
-              ...codexReplayPreamble({
-                nativeThreadId,
-                nativeTurnId,
-                prompt: "Summarize the repo.",
-              }),
-              networkWait("error/network-wait-1"),
-              networkWait("error/network-wait-2", 5 * 60 * 1000),
-              {
-                type: "expect_outbound",
-                label: "turn/interrupt",
-                frame: {
-                  id: 4,
-                  method: "turn/interrupt",
-                  params: { threadId: nativeThreadId, turnId: nativeTurnId },
-                },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "Summarize the repo.",
+            }),
+            networkWait("error/network-wait-1"),
+            networkWait("error/network-wait-2", 5 * 60 * 1000),
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
               },
-              ...(response === "unanswered"
-                ? []
-                : [
-                    {
-                      type: "emit_inbound" as const,
-                      label: "turn/interrupt",
-                      frame: { id: 4, result: {} },
-                    },
-                    {
-                      type: "emit_inbound" as const,
-                      label: "turn/completed",
-                      frame: {
-                        method: "turn/completed",
-                        params: {
-                          threadId: nativeThreadId,
-                          turn: {
-                            ...makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
-                            ...(response === "different-error"
-                              ? {
-                                  error: {
-                                    message: "Interrupted while reconnecting",
-                                    codexErrorInfo: null,
-                                    additionalDetails: null,
-                                  },
-                                }
-                              : {}),
+            },
+            ...(response === "unanswered"
+              ? []
+              : [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "turn/interrupt",
+                    frame:
+                      response === "rejected"
+                        ? { id: 4, error: { code: -32603, message: "interrupt failed" } }
+                        : { id: 4, result: {} },
+                  },
+                  ...(response === "acknowledged" || response === "rejected"
+                    ? []
+                    : [
+                        {
+                          type: "emit_inbound" as const,
+                          label: "turn/completed",
+                          frame: {
+                            method: "turn/completed",
+                            params: {
+                              threadId: nativeThreadId,
+                              turn: {
+                                ...makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                                ...(response === "different-error"
+                                  ? {
+                                      error: {
+                                        message: "Interrupted while reconnecting",
+                                        codexErrorInfo: null,
+                                        additionalDetails: null,
+                                      },
+                                    }
+                                  : {}),
+                              },
+                            },
                           },
                         },
-                      },
-                    },
-                  ]),
-            ],
-          });
-          const interruptSent = yield* Deferred.make<void>();
-          let interrupts = 0;
-          const harness = yield* makeCodexReplayHarness(
-            transcript,
-            () => Effect.void,
-            (method) =>
-              method === "turn/interrupt"
-                ? Effect.sync(() => {
-                    interrupts += 1;
-                  }).pipe(Effect.andThen(Deferred.succeed(interruptSent, undefined)))
-                : Effect.void,
+                      ]),
+                ]),
+          ],
+        });
+        const interruptSent = yield* Deferred.make<void>();
+        let interrupts = 0;
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt"
+              ? Effect.sync(() => {
+                  interrupts += 1;
+                }).pipe(Effect.andThen(Deferred.succeed(interruptSent, undefined)))
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-connection-retry-budget"),
+            text: "Summarize the repo.",
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+          ),
+        );
+        yield* TestClock.adjust("5 minutes");
+        assert.equal(interrupts, 0, "a wait inside the budget must not stop the turn");
+        yield* TestClock.adjust("5 minutes");
+        yield* Deferred.await(interruptSent);
+        if (response === "unanswered" || response === "acknowledged" || response === "rejected") {
+          yield* TestClock.adjust("10 seconds");
+          assert.lengthOf(
+            harness.terminalEvents(),
+            1,
+            "an unconfirmed interrupt must settle the turn",
           );
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make("attempt-codex-connection-retry-budget"),
-              text: "Summarize the repo.",
-            }),
-          );
-          yield* harness.until(() =>
-            harness.events.some(
-              (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
-            ),
-          );
-          yield* TestClock.adjust("5 minutes");
-          assert.equal(interrupts, 0, "a wait inside the budget must not stop the turn");
-          yield* TestClock.adjust("5 minutes");
-          yield* Deferred.await(interruptSent);
-          if (response === "unanswered") {
-            yield* TestClock.adjust("10 seconds");
-            assert.lengthOf(
-              harness.terminalEvents(),
-              1,
-              "an unanswered interrupt must settle the turn",
-            );
-          }
-          yield* harness.awaitTerminal(1);
+        }
+        yield* harness.awaitTerminal(1);
 
-          assert.equal(interrupts, 1);
-          assert.lengthOf(harness.terminalEvents(), 1);
-          const terminal = harness.terminalEvents()[0];
-          assert.equal(terminal?.status, "failed");
-          if (terminal?.status !== "failed") return;
-          assert.equal(terminal.failure.message, "Connection failed: error sending request");
-          assert.equal(terminal.failure.class, "transport_error");
-          assert.equal(terminal.retry?.attempt, 2);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
+        assert.equal(interrupts, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.message, "Connection failed: error sending request");
+        assert.equal(terminal.failure.class, "transport_error");
+        assert.equal(terminal.retry?.attempt, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
           ),
         ),
       ),
+    ),
   );
 
   it.effect("keeps a user Stop interrupted when the retry budget passes before it settles", () =>

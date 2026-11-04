@@ -8899,7 +8899,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["closed", "interrupt-hangs", "close-hangs", "unconfirmed"] as const)(
+  it.effect.each(["closed", "interrupt-hangs", "close-hangs", "unconfirmed", "synthetic"] as const)(
     "fails a turn whose API retries outlast the retry budget: %s",
     (response) =>
       Effect.scoped(
@@ -8912,13 +8912,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               Effect.andThen(response === "interrupt-hangs" ? Effect.never : Effect.void),
             ),
             close: (sdkMessages) =>
-              Deferred.succeed(closeRequested, undefined).pipe(Effect.andThen(
-              response === "close-hangs"
-                ? Deferred.await(releaseClose).pipe(Effect.andThen(Queue.shutdown(sdkMessages)))
-                : response === "unconfirmed"
-                  ? Effect.void
-                  : Queue.shutdown(sdkMessages),
-              )),
+              Deferred.succeed(closeRequested, undefined).pipe(
+                Effect.andThen(
+                  response === "close-hangs"
+                    ? Deferred.await(releaseClose).pipe(Effect.andThen(Queue.shutdown(sdkMessages)))
+                    : response === "unconfirmed"
+                      ? Effect.void
+                      : Queue.shutdown(sdkMessages),
+                ),
+              ),
           });
           yield* Effect.addFinalizer(() => Deferred.succeed(releaseClose, undefined));
           yield* harness.runtime.startTurn(
@@ -8953,6 +8955,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 event.turnItem.status === "running",
             ),
           );
+          if (response === "synthetic") {
+            yield* Queue.offer(
+              harness.sdkMessages,
+              claudeSdkFrame({
+                type: "assistant",
+                message: {
+                  model: "<synthetic>",
+                  id: "retry-notice",
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: "Retrying after an API error" }],
+                  stop_reason: "end_turn",
+                  stop_sequence: null,
+                  usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                  },
+                },
+                parent_tool_use_id: null,
+                uuid: "retry-notice",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+              ),
+            );
+            const retryEvents = harness.events.filter(
+              (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+            );
+            assert.nestedPropertyVal(retryEvents.at(-1), "turnItem.status", "running");
+          }
           // The next attempt hangs: no frame arrives until the budget stops the turn.
           yield* TestClock.adjust("9 minutes");
           assert.lengthOf(harness.terminalEvents(), 0);

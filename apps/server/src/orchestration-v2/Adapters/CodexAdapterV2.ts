@@ -1165,6 +1165,7 @@ interface ActiveCodexTurnContext {
   hookStopReason?: string;
   capacityRetryAttempt?: number;
   retryBudgetExhausted?: boolean;
+  retryBudgetStartedAt?: DateTime.Utc;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
@@ -4755,10 +4756,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               driver: CODEX_PROVIDER,
               turnItem: codexRetryTurnItem(context, state, "running", updatedAt),
             });
-            if (previous === undefined) {
+            if (context.retryBudgetStartedAt !== state.startedAt) {
+              context.retryBudgetStartedAt = state.startedAt;
               // Codex waits for the network without limit; stop the turn once this
               // retry window outlasts the budget, even if no further notice arrives.
-              yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
+              yield* Effect.sleep(
+                Math.max(
+                  0,
+                  PROVIDER_RETRY_BUDGET_MS -
+                    (DateTime.toEpochMillis(updatedAt) - DateTime.toEpochMillis(state.startedAt)),
+                ),
+              ).pipe(
                 Effect.andThen(
                   Effect.gen(function* () {
                     const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
@@ -4775,37 +4783,39 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       nativeCode: current.nativeCode,
                       failure: current.failure,
                     };
-                    const interrupted = yield* client
+                    yield* client
                       .request("turn/interrupt", {
                         threadId: payload.threadId,
                         turnId: payload.turnId,
                       })
-                      .pipe(Effect.timeoutOption("10 seconds"));
-                    if (Option.isNone(interrupted)) {
-                      const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
-                        context.providerTurnId,
+                      .pipe(
+                        Effect.timeoutOption("10 seconds"),
+                        Effect.catch((cause) =>
+                          Effect.logWarning("orchestration-v2.codex-retry-budget-stop-failed", {
+                            cause,
+                          }),
+                        ),
                       );
-                      if (
-                        currentAfterTimeout?.startedAt !== state.startedAt ||
-                        (yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
-                      )
-                        return;
-                      context.latestProviderFailure = {
-                        nativeMessage: currentAfterTimeout.nativeMessage,
-                        nativeCode: currentAfterTimeout.nativeCode,
-                        failure: currentAfterTimeout.failure,
-                      };
-                      yield* finalizeCodexTurn({
-                        context,
-                        nativeTurnId: payload.turnId,
-                        status: "failed",
-                        completedAt: yield* DateTime.now,
-                      });
-                    }
+                    const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
+                      context.providerTurnId,
+                    );
+                    if (
+                      currentAfterTimeout?.startedAt !== state.startedAt ||
+                      (yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
+                    )
+                      return;
+                    context.latestProviderFailure = {
+                      nativeMessage: currentAfterTimeout.nativeMessage,
+                      nativeCode: currentAfterTimeout.nativeCode,
+                      failure: currentAfterTimeout.failure,
+                    };
+                    yield* finalizeCodexTurn({
+                      context,
+                      nativeTurnId: payload.turnId,
+                      status: "failed",
+                      completedAt: yield* DateTime.now,
+                    });
                   }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("orchestration-v2.codex-retry-budget-stop-failed", { cause }),
                 ),
                 Effect.forkIn(scope),
               );
@@ -6482,6 +6492,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               : codexErrorInfoCode(terminal.failureErrorInfo);
           if (
             terminal.status !== "failed" ||
+            context.retryBudgetExhausted ||
             code !== "serverOverloaded" ||
             context.subagent !== null ||
             (context.input.message.attachments.length === 0 &&
