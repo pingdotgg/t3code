@@ -94,8 +94,8 @@ export type PreviewEgressProxy = { readonly host: string; readonly port: number 
 export const resolvePreviewEgressProxy = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): PreviewEgressProxy | "invalid" | undefined => {
-  const raw = env.T3CODE_PREVIEW_EGRESS_PROXY?.trim();
-  if (!raw) return undefined;
+  const raw = env.T3CODE_PREVIEW_EGRESS_PROXY;
+  if (raw === undefined) return undefined;
   try {
     const url = new URL(raw);
     const port = Number(url.port || 80);

@@ -75,7 +75,13 @@ beforeEach(() => {
 
 describe("ServerBrowserContexts", () => {
   it("refuses launches when the egress proxy setting is unusable", async () => {
-    for (const value of ["socks5://127.0.0.1:18991", "http://user:pass@127.0.0.1:1", "bad-url"]) {
+    for (const value of [
+      "socks5://127.0.0.1:18991",
+      "http://user:pass@127.0.0.1:1",
+      "bad-url",
+      "",
+      "   ",
+    ]) {
       const pool = new ServerBrowserContexts({
         ...options(),
         env: { T3CODE_PREVIEW_EGRESS_PROXY: value },

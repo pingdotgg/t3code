@@ -327,7 +327,13 @@ describe("publicProxy", () => {
 
     it.effect("refuses rather than dialing directly when the proxy setting is unusable", () =>
       Effect.gen(function* () {
-        for (const value of ["socks5://127.0.0.1:1", "http://user:pass@127.0.0.1:1", "not a url"]) {
+        for (const value of [
+          "socks5://127.0.0.1:1",
+          "http://user:pass@127.0.0.1:1",
+          "not a url",
+          "",
+          "   ",
+        ]) {
           yield* withEnv(
             { T3CODE_PREVIEW_EGRESS_PROXY: value },
             Effect.gen(function* () {
