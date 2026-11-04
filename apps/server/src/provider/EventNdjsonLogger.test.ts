@@ -120,6 +120,45 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       }),
   );
 
+  it.effect("does not persist Claude hook output or mutate the provider frame", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+      const threadId = ThreadId.make("thread-hook-output");
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath);
+        const logger = store.logger("native");
+        for (const subtype of ["hook_progress", "hook_response"]) {
+          const payload = {
+            type: "system",
+            subtype,
+            stdout: "secret-out",
+            stderr: "secret-err",
+            output: "secret-output",
+          };
+          yield* logger.write(
+            { event: { direction: "incoming", stage: "decoded", payload } },
+            threadId,
+          );
+          assert.equal(payload.stdout, "secret-out");
+          assert.equal(payload.stderr, "secret-err");
+          assert.equal(payload.output, "secret-output");
+        }
+        yield* logger.write({ type: "system", subtype: "hook_started" }, threadId);
+        yield* store.close();
+        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-hook-output"), "utf8")
+          .trim()
+          .split("\n");
+        assert.equal(lines.length, 1);
+        assert.deepEqual(decodeUnknownJson(parseLogLine(lines[0]!).payload), {
+          type: "system",
+          subtype: "hook_started",
+        });
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
   it.effect("shares one thread writer across native and canonical streams", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
