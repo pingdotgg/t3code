@@ -435,7 +435,10 @@ describe("mobile task permissions", () => {
 
   it("sends a goal command with the thread's model, not the draft's", async () => {
     state.grantedEnvironments.add("secondary");
-    state.draft.modelSelection = { instanceId: "claudeAgent", model: "claude-sonnet-5-5" };
+    state.draft.modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
     const composer = useThreadComposerState();
     await composer.onSendCommand("/goal resume");
     expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
