@@ -300,6 +300,7 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
 it.effect.each([
   { case: "a readable rule list", errors: undefined, readable: true },
   { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
+  { case: "a reply without a rule list", response: {}, readable: false },
 ])("reads Claude's permission rules only when no settings file was skipped: $case", (testCase) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -308,7 +309,12 @@ it.effect.each([
         () =>
           ({
             close: vi.fn(),
-            request: async () => ({ response: { state: { rules, errors: testCase.errors } } }),
+            request: async () => ({
+              response:
+                "response" in testCase
+                  ? testCase.response
+                  : { state: { rules, errors: testCase.errors } },
+            }),
           }) as unknown as ClaudeSdk.Query,
       );
       yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
