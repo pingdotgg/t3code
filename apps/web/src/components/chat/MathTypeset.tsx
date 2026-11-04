@@ -8,6 +8,46 @@ import { LRUCache } from "../../lib/lruCache";
 // that from typesetting the same formulas again. "" records a parse error.
 const typesetCache = new LRUCache<string>(1000, 4 * 1024 * 1024);
 
+/**
+ * Escapes each `%` written right after other text, as in `\text{3.18% yield}`.
+ * A `%` at a line start or after whitespace stays a comment. Skips escapes and
+ * `\verb` like KaTeX's lexer, in one linear pass.
+ */
+function escapeLiteralPercents(tex: string): string {
+  let repaired = "";
+  let copied = 0;
+  let index = 0;
+  while (index < tex.length) {
+    const char = tex[index];
+    if (char === "\\") {
+      if (tex.startsWith("\\verb", index)) {
+        const starred = tex[index + 5] === "*";
+        const delimiter = tex[index + (starred ? 6 : 5)];
+        if (delimiter !== undefined && (starred || !/[*a-zA-Z]/.test(delimiter))) {
+          const bodyStart = index + (starred ? 7 : 6);
+          let close = bodyStart;
+          while (close < tex.length && ![delimiter, "\n", "\r"].includes(tex[close]!)) close++;
+          // KaTeX rejects a \verb that does not close on its own line.
+          if (tex[close] !== delimiter) return tex;
+          index = close + 1;
+          continue;
+        }
+      }
+      // A control symbol such as `\%` or `\\` is two characters.
+      index += 2;
+    } else if (char === "%" && index > 0 && !/\s/.test(tex[index - 1]!)) {
+      repaired += `${tex.slice(copied, index)}\\%`;
+      copied = ++index;
+    } else if (char === "%") {
+      const newline = tex.indexOf("\n", index);
+      index = newline === -1 ? tex.length : newline + 1;
+    } else {
+      index++;
+    }
+  }
+  return copied === 0 ? tex : repaired + tex.slice(copied);
+}
+
 function typeset(tex: string, display: boolean): string {
   const key = `${display ? "display" : "inline"}:${tex}`;
   const cached = typesetCache.get(key);
@@ -26,13 +66,7 @@ function typeset(tex: string, display: boolean): string {
   try {
     html = katex.renderToString(tex, options);
   } catch {
-    // A percent before a newline may be an authored TeX comment; leave it alone.
-    const lastNewline = Math.max(tex.lastIndexOf("\n"), tex.lastIndexOf("\r"));
-    const repaired = tex.includes("\\verb")
-      ? tex
-      : tex.replace(/(\\*)%/g, (match, backslashes: string, offset: number) =>
-          backslashes.length % 2 === 0 && offset > lastNewline ? `${backslashes}\\%` : match,
-        );
+    const repaired = escapeLiteralPercents(tex);
     if (repaired !== tex) {
       try {
         html = katex.renderToString(repaired, options);
