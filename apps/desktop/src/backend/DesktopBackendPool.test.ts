@@ -256,4 +256,37 @@ describe("DesktopBackendPool", () => {
       ),
     );
   });
+
+  it.effect("still quits when the unavailable T3 home error cannot be shown", () => {
+    const quit = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+      yield* primary.start;
+      yield* Deferred.await(quit);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerPool(Ref.makeUnsafe("Windows"), {
+          primaryExitCode: SERVER_EXIT_CODE_STATE_DIR_OWNED,
+          electronDialog: {
+            pickFolder: () => Effect.die("unexpected folder picker"),
+            pickFiles: () => Effect.die("unexpected file picker"),
+            showMessageBox: (options) =>
+              Effect.fail(
+                new ElectronDialog.ElectronDialogShowMessageBoxError({
+                  type: options.type ?? null,
+                  titleLength: null,
+                  messageLength: options.message.length,
+                  detailLength: null,
+                  buttonCount: 0,
+                  cause: new Error("dialog unavailable"),
+                }),
+              ),
+            showErrorBox: () => Effect.die("unexpected error box"),
+          },
+          electronApp: { quit: Deferred.succeed(quit, undefined).pipe(Effect.asVoid) },
+        }),
+      ),
+    );
+  });
 });
