@@ -27,6 +27,8 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
+const UNHEALTHY_PROBE_LIMIT = 3;
+
 const Probe = Schema.Struct({
   nodePath: Schema.String,
   tools: Schema.optional(DeviceToolVersions),
@@ -365,7 +367,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       : next;
     yield* onStatus("ready");
     // Reconnect also repairs helpers that died while SSH itself stayed connected.
+    // A loaded host can miss a probe or two while still working, and reconnecting
+    // then drops the forward in use, so only consecutive misses count.
     const unhealthy = Effect.gen(function* () {
+      let misses = 0;
       while (true) {
         yield* Effect.sleep("10 seconds");
         const alive = yield* http.get(`${next.hub.origin}/readyz`).pipe(
@@ -380,7 +385,8 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               Effect.orElseSucceed(() => false),
             )
           : true;
-        if (!alive || !daemonAlive) return;
+        misses = alive && daemonAlive ? 0 : misses + 1;
+        if (misses >= UNHEALTHY_PROBE_LIMIT) return;
       }
     });
     yield* Effect.gen(function* () {
