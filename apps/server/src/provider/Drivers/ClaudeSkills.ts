@@ -707,6 +707,7 @@ export const fingerprintClaudeCommandSources = Effect.fn("fingerprintClaudeComma
       return undefined;
     }
     const home = yield* HostProcess.HomeDirectory;
+    if (environment.HOME !== undefined && environment.HOME !== home) return undefined;
     const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
     const pluginsPath = yield* resolveClaudePluginsPath(configDirPath, cwd, environment);
     const hash = NodeCrypto.createHash("sha256").update(encodeMachineState(machineState));

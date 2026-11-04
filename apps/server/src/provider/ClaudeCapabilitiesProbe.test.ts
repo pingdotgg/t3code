@@ -73,8 +73,8 @@ const makeCommandSourcesFixture = Effect.gen(function* () {
   let probes = 0;
   let failing = false;
   const config = path.join(root, "config");
-  const makeCommands = (environment: NodeJS.ProcessEnv = {}) =>
-    makeClaudeWorkspaceCommands({ homePath: config }, environment, () =>
+  const makeCommands = (environment: NodeJS.ProcessEnv = {}, homePath = config) =>
+    makeClaudeWorkspaceCommands({ homePath }, environment, () =>
       Effect.suspend(() => {
         probes += 1;
         return failing ? Effect.fail("probe failed") : Effect.succeed([{ name: "review" }]);
@@ -201,6 +201,12 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
         yield* commands.get(machine, cwd);
         assert.strictEqual(probes(), before + 2);
       });
+
+    const childHome = path.join(root, "child-home");
+    const homeCommands = yield* makeCommands({ HOME: childHome }, "");
+    yield* probesTwice(homeCommands);
+    yield* write(path.join(childHome, ".claude", "commands", "home.md"), "updated command");
+    yield* probesTwice(homeCommands);
 
     yield* probesTwice(yield* makeCommands({ CLAUDE_CODE_PLUGIN_DIRS: "/elsewhere" }));
     for (const environment of [
