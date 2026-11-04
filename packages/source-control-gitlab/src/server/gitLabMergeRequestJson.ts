@@ -1067,16 +1067,29 @@ export function decodeSourceBranchJson(
 const decodeBranch = decodeJsonResult(
   Schema.Struct({
     default: Schema.optional(Schema.NullOr(Schema.Boolean)),
-    commit: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.String }))),
+    commit: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          id: Schema.String,
+          authored_date: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
   }),
 );
 
-export function decodeBranchJson(
-  raw: string,
-): Result.Result<{ readonly isDefault: boolean; readonly headSha: string | null }, DecodeFailure> {
+export function decodeBranchJson(raw: string): Result.Result<
+  {
+    readonly isDefault: boolean;
+    readonly headSha: string | null;
+    readonly headAuthoredDate: string | null;
+  },
+  DecodeFailure
+> {
   return Result.map(decodeBranch(raw), (branch) => ({
     isDefault: branch.default === true,
     headSha: trimmed(branch.commit?.id),
+    headAuthoredDate: trimmed(branch.commit?.authored_date),
   }));
 }
 

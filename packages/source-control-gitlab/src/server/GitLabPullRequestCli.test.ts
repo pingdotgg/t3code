@@ -1176,7 +1176,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
           Effect.succeed(output(sourceBranchJson({ sourceProject: { fullPath: "fork/web" } }))),
         )
         .mockReturnValueOnce(
-          Effect.succeed(output(JSON.stringify({ default: false, commit: { id: "head" } }))),
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                default: false,
+                commit: { id: "head", authored_date: "2026-11-03T20:29:40.000-07:00" },
+              }),
+            ),
+          ),
         )
         .mockReturnValueOnce(Effect.succeed(output("")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -1194,6 +1201,8 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "projects/fork%2Fweb/repository/branches/feat%2Fpage",
         "--method",
         "DELETE",
+        "--header",
+        "If-Unmodified-Since: Wed, 04 Nov 2026 03:29:40 GMT",
       ]);
     }),
   );
