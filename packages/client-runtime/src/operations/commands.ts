@@ -28,6 +28,7 @@ import {
   type UploadChatAttachment,
   type GuestMessageId,
   delegatedTaskYieldsLiveRun,
+  isOrchestrationV2RunActive,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -805,29 +806,47 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
       const child = yield* getProjection(childThreadId);
       // The child's live turn belongs to another task, so only this task's queued turns go.
       if (delegatedTaskYieldsLiveRun(child.runs, subagent.id)) {
-        const cancelled = yield* Effect.gen(function* () {
-          let result = { sequence: 0 };
-          for (const run of child.runs) {
-            if (run.status !== "queued" || run.delegatedTaskId !== subagent.id) continue;
-            result = yield* dispatch({
-              type: "queued-run.cancel",
-              commandId: yield* allocateCommandId({}),
-              threadId: childThreadId,
-              runId: run.id,
-            });
-          }
-          return result;
-        }).pipe(
-          // A queued turn that started meanwhile owns the live turn now; the stop below ends it.
-          Effect.catch((error) =>
-            Effect.flatMap(getProjection(childThreadId), (latest) =>
-              delegatedTaskYieldsLiveRun(latest.runs, subagent.id)
-                ? Effect.fail(error)
-                : Effect.succeed(null),
+        const readRun = (runId: RunId) =>
+          Effect.map(getProjection(childThreadId), (latest) =>
+            latest.runs.find((run) => run.id === runId),
+          );
+        const settled = { sequence: 0 };
+        // By its id: a thread-wide stop could reach, or hold, another task's turn. A turn that
+        // ended before the interrupt landed needs nothing more.
+        const interruptOwnRun = (runId: RunId) =>
+          Effect.flatMap(allocateCommandId({}), (commandId) =>
+            dispatch({ type: "run.interrupt", commandId, threadId: childThreadId, runId }),
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.flatMap(readRun(runId), (run) =>
+                run !== undefined && isOrchestrationV2RunActive(run.status)
+                  ? Effect.fail(error)
+                  : Effect.succeed(settled),
+              ),
             ),
-          ),
-        );
-        if (cancelled !== null) return cancelled;
+          );
+        let result = settled;
+        for (const run of child.runs) {
+          if (run.status !== "queued" || run.delegatedTaskId !== subagent.id) continue;
+          result = yield* dispatch({
+            type: "queued-run.cancel",
+            commandId: yield* allocateCommandId({}),
+            threadId: childThreadId,
+            runId: run.id,
+          }).pipe(
+            // A turn that started meanwhile is no longer queued.
+            Effect.catch((error) =>
+              Effect.flatMap(readRun(run.id), (latest) =>
+                latest?.status === "queued"
+                  ? Effect.fail(error)
+                  : latest !== undefined && isOrchestrationV2RunActive(latest.status)
+                    ? interruptOwnRun(run.id)
+                    : Effect.succeed(settled),
+              ),
+            ),
+          );
+        }
+        return result;
       }
       threadId = childThreadId;
     } else {

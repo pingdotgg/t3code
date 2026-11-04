@@ -2637,7 +2637,39 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
-        const stopThread = Effect.gen(function* () {
+        const readRuns = threadManagement.getThreadRecords(childThreadId, ["runs"]).pipe(
+          Effect.map(({ runs }) => runs),
+          Effect.mapError(threadManagementFailure),
+        );
+        const readRun = (runId: RunId) =>
+          Effect.map(readRuns, (runs) => runs.find((run) => run.id === runId));
+        // By its id: a thread-wide stop could reach another task's turn the queue promoted
+        // meanwhile. A turn that ended before the interrupt landed needs nothing more.
+        const interruptOwnRun = (runId: RunId) =>
+          threadManagement
+            .dispatch({
+              type: "run.interrupt",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: `cancel-task-run:${runId}`,
+              }),
+              threadId: childThreadId,
+              runId,
+              reason,
+            })
+            .pipe(
+              Effect.mapError(threadManagementFailure),
+              Effect.catch((error) =>
+                Effect.flatMap(readRun(runId), (run) =>
+                  run !== undefined && ThreadManagementService.isActiveRun(run)
+                    ? Effect.fail(error)
+                    : Effect.void,
+                ),
+              ),
+            );
+        // The child's live turn belongs to another task, so only this task's queued turns go.
+        if (!delegatedTaskYieldsLiveRun(yield* readRuns, input.taskId)) {
           yield* threadManagement
             .dispatch({
               type: "thread.stop",
@@ -2664,17 +2696,13 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
-        });
-        const readRuns = threadManagement.getThreadRecords(childThreadId, ["runs"]).pipe(
-          Effect.map(({ runs }) => runs),
-          Effect.mapError(threadManagementFailure),
-        );
-        const ownRun = (run: OrchestrationV2Run) =>
-          run.delegatedTaskId === input.taskId || run.id === current.childRunId;
-        const yieldsLiveRun = delegatedTaskYieldsLiveRun(yield* readRuns, input.taskId);
-        if (!yieldsLiveRun) yield* stopThread;
+        }
         for (const run of yield* readRuns) {
-          if (run.status !== "queued" || !ownRun(run)) continue;
+          if (
+            run.status !== "queued" ||
+            (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
+          )
+            continue;
           // Stop preserves the queue for Resume. Cancelling a task must also
           // remove that task's queued turn, including a previously held one.
           yield* threadManagement
@@ -2690,22 +2718,17 @@ const make = Effect.gen(function* () {
             })
             .pipe(
               Effect.mapError(threadManagementFailure),
-              // A turn that started meanwhile is no longer queued; it is stopped below.
+              // A turn that started meanwhile is no longer queued.
               Effect.catch((error) =>
-                Effect.flatMap(readRuns, (runs) =>
-                  runs.some((latest) => latest.id === run.id && latest.status === "queued")
+                Effect.flatMap(readRun(run.id), (latest) =>
+                  latest?.status === "queued"
                     ? Effect.fail(error)
-                    : Effect.void,
+                    : latest !== undefined && ThreadManagementService.isActiveRun(latest)
+                      ? interruptOwnRun(run.id)
+                      : Effect.void,
                 ),
               ),
             );
-        }
-        // The other task's turn can end and promote this task's queued turn before its cancel lands.
-        if (
-          yieldsLiveRun &&
-          (yield* readRuns).some((run) => ownRun(run) && ThreadManagementService.isActiveRun(run))
-        ) {
-          yield* stopThread;
         }
       });
       // Checked above; a user raising one of these threads meanwhile is

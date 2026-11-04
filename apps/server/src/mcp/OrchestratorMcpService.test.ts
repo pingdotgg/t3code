@@ -818,107 +818,139 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  // Task C's queued turn is promoted when another task's turn ends, before C's queued cancel lands.
+  const cancelPromotedTask = Effect.fn("cancelPromotedTask")(function* (input: {
+    readonly name: string;
+    // C's turn also ends, and D's queued turn starts, before C's interrupt lands.
+    readonly endsBeforeInterrupt: boolean;
+  }) {
+    const parentThreadId = ThreadId.make(`thread:${input.name}-parent`);
+    const childThreadId = ThreadId.make(`thread:${input.name}-child`);
+    const otherTaskId = NodeId.make(`node:${input.name}-other-task`);
+    const taskId = NodeId.make(`node:${input.name}-task`);
+    const laterTaskId = NodeId.make(`node:${input.name}-later-task`);
+    const otherRunId = RunId.make(`run:${input.name}-other`);
+    const runId = RunId.make(`run:${input.name}-run`);
+    const laterRunId = RunId.make(`run:${input.name}-later`);
+    const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+    const parentProjection = {
+      thread: { id: parentThreadId },
+      runs: [],
+      contextTransfers: [],
+      subagents: [
+        {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          driver: "codex",
+          model: "gpt-5.6-terra",
+          result: null,
+          completionDelivery: { state: "pending" },
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const childProjection = (statuses: readonly [string, string, string]) =>
+      ({
+        thread: { id: childThreadId, title: "Child" },
+        runs: [
+          { id: otherRunId, ordinal: 2, status: statuses[0], delegatedTaskId: otherTaskId },
+          { id: runId, ordinal: 3, status: statuses[1], delegatedTaskId: taskId },
+          { id: laterRunId, ordinal: 4, status: statuses[2], delegatedTaskId: laterTaskId },
+        ],
+        contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
+        runtimeRequests: [],
+      }) as unknown as OrchestrationV2ThreadProjection;
+    const child = yield* Ref.make(childProjection(["running", "queued", "queued"]));
+    const layerDependencies = Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: (threadId) =>
+          threadId === parentThreadId ? Effect.succeed(parentProjection) : Ref.get(child),
+        getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+        listAppOwnedChildThreadIds: () => Effect.succeed([]),
+        stopDelegatedTasks: () => Effect.void,
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            yield* Ref.update(dispatched, (commands) => [...commands, command]);
+            if (command.type === "queued-run.cancel") {
+              yield* Ref.set(child, childProjection(["completed", "running", "queued"]));
+              return yield* Effect.fail(new Error("Run is not queued.") as never);
+            }
+            if (command.type === "run.interrupt" && input.endsBeforeInterrupt) {
+              yield* Ref.set(child, childProjection(["completed", "completed", "running"]));
+              return yield* Effect.fail(new Error("Run is not interruptible.") as never);
+            }
+            return {} as never;
+          }),
+      }),
+      ServerSettings.layerTest(),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        list: () => Effect.succeed([]),
+      }),
+      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+    );
+    const scope: McpInvocationScope = {
+      environmentId: EnvironmentId.make(`environment:${input.name}`),
+      requestNamespace: `provider-session:${input.name}`,
+      thread: {
+        threadId: parentThreadId,
+        providerSessionId: `provider-session:${input.name}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    const result = yield* Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.cancelTask(scope, { taskId, clientRequestId: `${input.name}-cancel` });
+    }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    return {
+      status: result.status,
+      runId,
+      commands: (yield* Ref.get(dispatched)).map((command) => ({
+        type: command.type,
+        runId: "runId" in command ? command.runId : undefined,
+      })),
+    };
+  });
+
   it.effect("stops a queued follow-up task whose turn starts while it is cancelled", () =>
     Effect.gen(function* () {
-      const parentThreadId = ThreadId.make("thread:mcp-cancel-promoted-parent");
-      const childThreadId = ThreadId.make("thread:mcp-cancel-promoted-child");
-      const otherTaskId = NodeId.make("node:mcp-cancel-promoted-other-task");
-      const taskId = NodeId.make("node:mcp-cancel-promoted-task");
-      const otherRunId = RunId.make("run:mcp-cancel-promoted-other");
-      const queuedRunId = RunId.make("run:mcp-cancel-promoted-queued");
-      const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
-      const parentProjection = {
-        thread: { id: parentThreadId },
-        runs: [],
-        contextTransfers: [],
-        subagents: [
-          {
-            id: taskId,
-            threadId: parentThreadId,
-            origin: "app_owned",
-            childThreadId,
-            driver: "codex",
-            model: "gpt-5.6-terra",
-            result: null,
-            completionDelivery: { state: "pending" },
-          },
-        ],
-      } as unknown as OrchestrationV2ThreadProjection;
-      const childProjection = (runs: ReadonlyArray<unknown>) =>
-        ({
-          thread: { id: childThreadId, title: "Child" },
-          runs,
-          contextTransfers: [],
-          messages: [],
-          subagents: [],
-          providerThreads: [],
-          runtimeRequests: [],
-        }) as unknown as OrchestrationV2ThreadProjection;
-      const child = yield* Ref.make(
-        childProjection([
-          { id: otherRunId, ordinal: 2, status: "running", delegatedTaskId: otherTaskId },
-          { id: queuedRunId, ordinal: 3, status: "queued", delegatedTaskId: taskId },
-        ]),
-      );
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            threadId === parentThreadId ? Effect.succeed(parentProjection) : Ref.get(child),
-          getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
-          listAppOwnedChildThreadIds: () => Effect.succeed([]),
-          stopDelegatedTasks: () => Effect.void,
-          dispatch: (command) =>
-            Effect.gen(function* () {
-              yield* Ref.update(dispatched, (commands) => [...commands, command]);
-              if (command.type !== "queued-run.cancel") return {} as never;
-              // The other task's turn ended and promoted this task's turn before the cancel.
-              yield* Ref.set(
-                child,
-                childProjection([
-                  { id: otherRunId, ordinal: 2, status: "completed", delegatedTaskId: otherTaskId },
-                  { id: queuedRunId, ordinal: 3, status: "running", delegatedTaskId: taskId },
-                ]),
-              );
-              return yield* Effect.fail(new Error("Run is not queued.") as never);
-            }),
-        }),
-        ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-          list: () => Effect.succeed([]),
-        }),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-      const scope: McpInvocationScope = {
-        environmentId: EnvironmentId.make("environment:mcp-cancel-promoted"),
-        requestNamespace: "provider-session:mcp-cancel-promoted",
-        thread: {
-          threadId: parentThreadId,
-          providerSessionId: "provider-session:mcp-cancel-promoted",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(["orchestration"]),
-        issuedAt: 1,
-      };
+      const cancelled = yield* cancelPromotedTask({
+        name: "mcp-cancel-promoted",
+        endsBeforeInterrupt: false,
+      });
+      assert.equal(cancelled.status, "cancel_requested");
+      assert.deepEqual(cancelled.commands, [
+        { type: "queued-run.cancel", runId: cancelled.runId },
+        { type: "run.interrupt", runId: cancelled.runId },
+        { type: "delegated_task.completion-delivery.dispose", runId: undefined },
+      ]);
+    }),
+  );
 
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.cancelTask(scope, {
-          taskId,
-          clientRequestId: "cancel-promoted-task",
-        });
-        assert.equal(result.status, "cancel_requested");
-        assert.deepEqual(
-          (yield* Ref.get(dispatched)).map((command) => command.type),
-          ["queued-run.cancel", "thread.stop", "delegated_task.completion-delivery.dispose"],
-        );
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+  it.effect("never stops the turn the queue starts after a cancelled task's turn ends", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelPromotedTask({
+        name: "mcp-cancel-promoted-ended",
+        endsBeforeInterrupt: true,
+      });
+      assert.equal(cancelled.status, "cancel_requested");
+      assert.deepEqual(cancelled.commands, [
+        { type: "queued-run.cancel", runId: cancelled.runId },
+        { type: "run.interrupt", runId: cancelled.runId },
+        { type: "delegated_task.completion-delivery.dispose", runId: undefined },
+      ]);
     }),
   );
 

@@ -15,6 +15,7 @@ import {
   TurnItemId,
   WS_METHODS,
   type OrchestrationV2Command,
+  OrchestrationV2DispatchCommandError,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
@@ -63,13 +64,16 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly childProjections?: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
+  readonly onCommand?: (
+    command: OrchestrationV2Command,
+  ) => Effect.Effect<void, OrchestrationV2DispatchCommandError>;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
         return { sequence: input.commands.length };
-      }),
+      }).pipe(Effect.tap(() => input.onCommand?.(command) ?? Effect.void)),
     [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
       readonly threadId: ThreadId;
     }) =>
@@ -534,92 +538,155 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestRandom)),
   );
 
+  // Task B's turn runs on the child thread while tasks C and D are queued behind it.
+  const stopQueuedFollowupTask = Effect.fn("stopQueuedFollowupTask")(function* (
+    // C's turn had started, or also ended, when its queued cancel landed.
+    promoted?: "running" | "completed",
+  ) {
+    const childThreadId = ThreadId.make("app-owned-child-thread");
+    const runningTaskId = NodeId.make("running-follow-up-task");
+    const queuedTaskId = NodeId.make("queued-follow-up-task");
+    const laterTaskId = NodeId.make("later-follow-up-task");
+    const queuedRunId = RunId.make("queued-follow-up-run");
+    const task = (id: NodeId, status: "running" | "pending") => ({
+      id,
+      threadId: v2ThreadId,
+      runId: RunId.make("parent-run"),
+      parentNodeId: NodeId.make("owner-node"),
+      origin: "app_owned" as const,
+      createdBy: "agent" as const,
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      prompt: "Work",
+      title: null,
+      model: null,
+      result: null,
+      status,
+      startedAt: v2Now,
+      completedAt: null,
+      updatedAt: v2Now,
+    });
+    const childRun = (
+      id: RunId,
+      ordinal: number,
+      status: "running" | "queued" | "completed",
+      taskId: NodeId,
+    ) => ({
+      id,
+      threadId: childThreadId,
+      ordinal,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message-${id}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: v2Now,
+      startedAt: status === "queued" ? null : v2Now,
+      completedAt: status === "completed" ? v2Now : null,
+      checkpointId: null,
+      contextHandoffId: null,
+      delegatedTaskId: taskId,
+    });
+    const childProjection = (
+      running: "running" | "completed",
+      queued: "running" | "queued" | "completed",
+    ) => ({
+      ...v2Projection,
+      thread: { ...v2Projection.thread, id: childThreadId },
+      runs: [
+        childRun(RunId.make("running-follow-up-run"), 2, running, runningTaskId),
+        childRun(queuedRunId, 3, queued, queuedTaskId),
+        childRun(RunId.make("later-follow-up-run"), 4, "queued", laterTaskId),
+      ],
+    });
+    const childProjections = new Map([[childThreadId, childProjection("running", "queued")]]);
+    const commands: OrchestrationV2Command[] = [];
+    const supervisor = yield* makeSupervisor({
+      commands,
+      projects: [],
+      advertiseThreadStop: true,
+      projection: {
+        ...v2Projection,
+        subagents: [
+          task(runningTaskId, "running"),
+          task(queuedTaskId, "pending"),
+          task(laterTaskId, "pending"),
+        ],
+      },
+      childProjections,
+      onCommand: (command) => {
+        if (command.type !== "queued-run.cancel" || promoted === undefined) return Effect.void;
+        childProjections.set(childThreadId, childProjection("completed", promoted));
+        return Effect.fail(
+          new OrchestrationV2DispatchCommandError({
+            commandId: command.commandId,
+            commandType: command.type,
+            message: "Run is not queued.",
+          }),
+        );
+      },
+    });
+
+    yield* interruptThreadTurn({ threadId: v2ThreadId, subagentId: queuedTaskId }).pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    );
+    return {
+      childThreadId,
+      queuedRunId,
+      commands: commands.filter(
+        (command) => "threadId" in command && command.threadId === childThreadId,
+      ),
+    };
+  });
+
   it.effect("stopping a queued follow-up task leaves another task's running child turn alone", () =>
     Effect.gen(function* () {
-      const childThreadId = ThreadId.make("app-owned-child-thread");
-      const runningTaskId = NodeId.make("running-follow-up-task");
-      const queuedTaskId = NodeId.make("queued-follow-up-task");
-      const queuedRunId = RunId.make("queued-follow-up-run");
-      const task = (id: NodeId, status: "running" | "pending") => ({
-        id,
-        threadId: v2ThreadId,
-        runId: RunId.make("parent-run"),
-        parentNodeId: NodeId.make("owner-node"),
-        origin: "app_owned" as const,
-        createdBy: "agent" as const,
-        driver: ProviderDriverKind.make("codex"),
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Work",
-        title: null,
-        model: null,
-        result: null,
-        status,
-        startedAt: v2Now,
-        completedAt: null,
-        updatedAt: v2Now,
-      });
-      const childRun = (
-        id: RunId,
-        ordinal: number,
-        status: "running" | "queued",
-        taskId: NodeId,
-      ) => ({
-        id,
-        threadId: childThreadId,
-        ordinal,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        modelSelection: v2Projection.thread.modelSelection,
-        providerThreadId: null,
-        userMessageId: MessageId.make(`message-${id}`),
-        rootNodeId: null,
-        activeAttemptId: null,
-        status,
-        requestedAt: v2Now,
-        startedAt: status === "running" ? v2Now : null,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-        delegatedTaskId: taskId,
-      });
-      const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        projects: [],
-        advertiseThreadStop: true,
-        projection: {
-          ...v2Projection,
-          subagents: [task(runningTaskId, "running"), task(queuedTaskId, "pending")],
-        },
-        childProjections: new Map([
-          [
-            childThreadId,
-            {
-              ...v2Projection,
-              thread: { ...v2Projection.thread, id: childThreadId },
-              runs: [
-                childRun(RunId.make("running-follow-up-run"), 2, "running", runningTaskId),
-                childRun(queuedRunId, 3, "queued", queuedTaskId),
-              ],
-            },
-          ],
-        ]),
-      });
-
-      yield* interruptThreadTurn({ threadId: v2ThreadId, subagentId: queuedTaskId }).pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      );
-
-      expect(
-        commands.filter((command) => "threadId" in command && command.threadId === childThreadId),
-      ).toEqual([
+      const stopped = yield* stopQueuedFollowupTask();
+      expect(stopped.commands).toEqual([
         {
           type: "queued-run.cancel",
           commandId: expect.any(String),
-          threadId: childThreadId,
-          runId: queuedRunId,
+          threadId: stopped.childThreadId,
+          runId: stopped.queuedRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("stopping a follow-up task whose turn just started interrupts only that turn", () =>
+    Effect.gen(function* () {
+      const stopped = yield* stopQueuedFollowupTask("running");
+      expect(stopped.commands).toEqual([
+        {
+          type: "queued-run.cancel",
+          commandId: expect.any(String),
+          threadId: stopped.childThreadId,
+          runId: stopped.queuedRunId,
+        },
+        {
+          type: "run.interrupt",
+          commandId: expect.any(String),
+          threadId: stopped.childThreadId,
+          runId: stopped.queuedRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("stopping a follow-up task whose turn already ended holds no other task's turn", () =>
+    Effect.gen(function* () {
+      const stopped = yield* stopQueuedFollowupTask("completed");
+      expect(stopped.commands).toEqual([
+        {
+          type: "queued-run.cancel",
+          commandId: expect.any(String),
+          threadId: stopped.childThreadId,
+          runId: stopped.queuedRunId,
         },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),

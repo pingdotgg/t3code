@@ -928,6 +928,12 @@ export function isOrchestrationV2WorkActive(
   return status === "pending" || status === "running" || status === "waiting";
 }
 
+export function isOrchestrationV2RunActive(status: OrchestrationV2Run["status"]): boolean {
+  return (
+    status === "preparing" || status === "starting" || status === "running" || status === "waiting"
+  );
+}
+
 /**
  * Whether the child's live run belongs to another delegated task. Stopping this task then
  * cancels only its own queued runs instead of stopping the child thread.
@@ -938,10 +944,7 @@ export function delegatedTaskYieldsLiveRun(
 ): boolean {
   return runs.some(
     (run) =>
-      (run.status === "preparing" ||
-        run.status === "starting" ||
-        run.status === "running" ||
-        run.status === "waiting") &&
+      isOrchestrationV2RunActive(run.status) &&
       run.delegatedTaskId !== undefined &&
       run.delegatedTaskId !== taskId,
   );
