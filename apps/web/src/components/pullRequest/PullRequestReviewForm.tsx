@@ -137,16 +137,12 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (
-    verdict: PullRequestReviewVerdict,
-    summary: string,
-    commentCount = comments.length,
-  ) =>
+  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string, commentCount: number) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
   const placeholder =
-    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
+    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
       ? "Summarize your review (optional)"
       : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
         ? "Summarize your review (required to request changes)"
@@ -210,7 +206,7 @@ export function PullRequestReviewForm({
             speech.preparing ||
             pending ||
             selectedVerdict === undefined ||
-            (!canSubmit(selectedVerdict.value, body) && !speech.blocksSubmission)
+            (!canSubmit(selectedVerdict.value, body, comments.length) && !speech.blocksSubmission)
           }
           onClick={() => {
             if (selectedVerdict !== undefined)
