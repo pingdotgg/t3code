@@ -14,6 +14,9 @@ import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
+// A pointer resting where options appear would otherwise answer a question nobody has read.
+const QUESTION_READ_DELAY_MS = 500;
+
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
@@ -87,6 +90,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const questionShownRef = useRef<{ questionId: string; at: number } | null>(null);
   const advance = useStableCallback(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
@@ -115,8 +119,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setOptimisticSingleSelect(null);
   }
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question is shown and clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
   useEffect(() => {
+    if (
+      activeQuestion?.id !== undefined &&
+      questionShownRef.current?.questionId !== activeQuestion.id
+    ) {
+      questionShownRef.current = { questionId: activeQuestion.id, at: performance.now() };
+    }
     const clearAutoAdvance = () => {
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);
@@ -317,6 +327,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     aria-pressed={isSelected}
                     disabled={disabled || isResponding}
                     onClick={() => {
+                      const shown = questionShownRef.current;
+                      if (
+                        shown?.questionId !== activeQuestion.id ||
+                        performance.now() - shown.at < QUESTION_READ_DELAY_MS
+                      ) {
+                        return;
+                      }
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={className}
