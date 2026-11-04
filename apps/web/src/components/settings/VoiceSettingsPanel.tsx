@@ -540,7 +540,7 @@ function EnvironmentModelsSection(props: {
     let timer: number | undefined;
     const poll = async () => {
       await refresh(prepared);
-      if (!cancelled) timer = window.setTimeout(() => void poll(), 500);
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000);
     };
     void poll();
     return () => {
@@ -880,8 +880,8 @@ export function VoiceSettingsPanel() {
     (environment) => environment.environmentId === destination.environmentId,
   );
   const chosenUnsupported =
-    chosenEnvironment?.serverConfig !== null &&
-    chosenEnvironment?.serverConfig?.environment.capabilities.voiceTranscription !== true;
+    chosenEnvironment?.serverConfig != null &&
+    chosenEnvironment.serverConfig.environment.capabilities.voiceTranscription !== true;
   const model = prepared && modelStatus?.supported ? modelStatus : null;
 
   return (
@@ -944,8 +944,8 @@ export function VoiceSettingsPanel() {
         >
           {destination.environmentId && chosenUnsupported ? (
             <p className="mt-2 text-xs text-destructive">
-              {chosenEnvironment?.label ?? "This environment"} cannot transcribe audio. Voice input
-              stays off until you choose an environment that can.
+              {chosenEnvironment.label} cannot transcribe audio. Voice input stays off until you
+              choose an environment that can.
             </p>
           ) : null}
         </SettingsRow>

@@ -272,19 +272,21 @@ const make = Effect.gen(function* () {
   const selectedModel = (settings: SettingsSnapshot): SpeechModel =>
     getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
 
-  const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")((
+  let silenceRetryAt = 0;
+  const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")(function* (
     purpose: "installation" | "recording",
-  ) => {
-    const acquisition = store.download(SILERO_VAD);
-    return (
-      purpose === "recording" ? acquisition.pipe(Effect.timeout("15 seconds")) : acquisition
-    ).pipe(
-      Effect.catch(() =>
-        Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.").pipe(
-          Effect.as(undefined),
-        ),
-      ),
+  ) {
+    if (purpose === "recording" && now() < silenceRetryAt) return undefined;
+    const path = yield* store.download(SILERO_VAD).pipe(
+      Effect.timeout(purpose === "recording" ? "15 seconds" : "2 minutes"),
+      Effect.orElseSucceed(() => undefined),
     );
+    if (path !== undefined) {
+      silenceRetryAt = 0;
+      return path;
+    }
+    silenceRetryAt = now() + 10 * 60_000;
+    yield* Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.");
   });
 
   // The transfer runs in the service scope, so a dropped request keeps it going and

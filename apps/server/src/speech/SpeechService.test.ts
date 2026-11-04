@@ -236,7 +236,6 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
     const started = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
     const helperStarted = yield* Deferred.make<void>();
-    const helperFinish = yield* Deferred.make<void>();
     let helperStartedDuringInstall = false;
     let helperInterrupted = false;
     download
@@ -254,8 +253,7 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
             }),
           ),
           Effect.andThen(Deferred.succeed(helperStarted, undefined)),
-          Effect.andThen(Deferred.await(helperFinish)),
-          Effect.as("silero.gguf"),
+          Effect.andThen(Effect.never),
           Effect.onInterrupt(() =>
             Effect.sync(() => {
               helperInterrupted = true;
@@ -275,7 +273,8 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
     const join = yield* speech
       .downloadModel("test-model")
       .pipe(Effect.forkChild({ startImmediately: true }));
-    yield* Deferred.succeed(helperFinish, undefined);
+    yield* TestClock.adjust("2 minutes");
+    expect(helperInterrupted).toBe(true);
     yield* Fiber.join(join);
     expect(download.mock.calls.map(([model]) => model.id)).toEqual(["test-model", SILERO_VAD.id]);
     expect(helperStartedDuringInstall).toBe(true);
@@ -329,6 +328,16 @@ it.effect("keeps the installed speech model usable when optional Silero acquisit
     const installed = yield* speech.downloadModel("test-model");
     expect(installed.models.find((model) => model.id === "test-model")?.state).toBe("installed");
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        expect(yield* stream.finish).toBe("hello");
+      }),
+    );
+    expect(download).toHaveBeenCalledTimes(2);
+    yield* TestClock.adjust("10 minutes");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    expect(download).toHaveBeenCalledTimes(3);
   }).pipe(Effect.provide(layer)),
 );
 

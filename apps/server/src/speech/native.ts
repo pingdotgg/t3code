@@ -62,8 +62,6 @@ const begin = async (message, live) => {
       useVad = false;
       warnVad();
     }
-  } else if (message.filterSilence || (!model.capabilities.supportsStreaming && !model.supports("long_form"))) {
-    warnVad();
   }
   audio = newAudio(useVad && message.filterSilence);
   await openAsr();

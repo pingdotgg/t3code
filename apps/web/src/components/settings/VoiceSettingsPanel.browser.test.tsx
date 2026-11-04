@@ -1,4 +1,5 @@
-import { expect, it } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
@@ -23,7 +24,7 @@ it.each([
       </SettingsScopeProvider>,
       { router: `/#${target}` },
     );
-    expect(document.activeElement?.id).toBe(prerequisite);
+    await vi.waitFor(() => expect(document.activeElement?.id).toBe(prerequisite));
     await expect
       .element(screen.getByRole("combobox", { name: "Send microphone audio to" }))
       .toHaveTextContent("Off");
@@ -32,6 +33,22 @@ it.each([
       .not.toBeChecked();
   },
 );
+
+it("keeps a missing destination selected without claiming it cannot transcribe", async () => {
+  __setClientSettingsForTests(getClientSettings());
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  chooseAudioDestination({ kind: "environment", environmentId: EnvironmentId.make("missing") });
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  await expect
+    .element(screen.getByRole("combobox", { name: "Send microphone audio to" }))
+    .toHaveTextContent("Chosen environment (unavailable)");
+  await expect.element(screen.getByText(/cannot transcribe audio/)).not.toBeInTheDocument();
+});
 
 it("shows the model's effective language and restores the saved preference when supported again", async () => {
   const previous = getClientSettings();
