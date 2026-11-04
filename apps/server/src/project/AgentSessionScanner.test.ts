@@ -1983,7 +1983,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
                 return neighbourConfigs.has(filePath)
                   ? runner
                       .run(input)
-                      .pipe(Effect.tap(() => Queue.offer(finishedNeighbourReads, filePath)))
+                      .pipe(Effect.ensuring(Queue.offer(finishedNeighbourReads, filePath)))
                   : runner.run(input);
               },
             });
