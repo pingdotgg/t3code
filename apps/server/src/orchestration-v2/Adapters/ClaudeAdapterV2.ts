@@ -2742,16 +2742,14 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
   ),
 );
 const decodeClaudeCompactSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(
+  Schema.fromJsonString(
     Schema.Struct({
       autoCompactWindow: Schema.optionalKey(Schema.Unknown),
-      modelSettings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+      modelSettings: Schema.optionalKey(Schema.Unknown),
     }),
   ),
 );
-const decodeClaudeCompactWindow = Schema.decodeUnknownOption(
-  Schema.Union([Schema.Int, Schema.Literal("auto")]),
-);
+const decodeClaudeCompactWindow = Schema.decodeUnknownOption(Schema.Int);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -4803,13 +4801,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           : undefined;
       const validWindow = (value: unknown) => {
         const selected = Option.getOrUndefined(decodeClaudeCompactWindow(value));
-        return selected === "auto"
-          ? ""
-          : typeof selected === "number" && selected >= 100_000 && selected <= 1_000_000
-            ? String(selected)
-            : undefined;
+        return typeof selected === "number" && selected >= 100_000 && selected <= 1_000_000
+          ? String(selected)
+          : undefined;
       };
-      return validWindow(modelWindow) ?? validWindow(Reflect.get(settings, "autoCompactWindow"));
+      return modelWindow === "auto"
+        ? ""
+        : (validWindow(modelWindow) ?? validWindow(Reflect.get(settings, "autoCompactWindow")));
     };
     const launchWindow = windowFrom(launchArgSettings);
     if (launchWindow !== undefined) return launchWindow;
