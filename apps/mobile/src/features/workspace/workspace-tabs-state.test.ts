@@ -212,7 +212,7 @@ vi.mock("./WorkspaceExtraTab", () => ({
   },
 }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
 vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
 vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
@@ -232,6 +232,11 @@ vi.mock("./AndroidWorkspaceNavigation", () => ({
   FloatingWorkspaceTabs: () => null,
 }));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+vi.mock("../../components/ui/Pane", () => ({ usePaneRole: () => "screen" }));
+vi.mock("./AndroidWorkspaceSidebar.android", () => ({ AndroidWorkspaceSidebar: () => null }));
+vi.mock("../../components/ui/WorkspaceAppBar.android", () => ({
+  WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
+}));
 
 function setup(split: boolean, floating: boolean) {
   mocks.split = split;
