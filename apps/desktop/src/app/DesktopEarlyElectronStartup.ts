@@ -40,6 +40,7 @@ const trimNonEmpty = (value: string | undefined): string | null => {
 
 const EarlyDesktopSettingsJson = fromLenientJson(
   Schema.Struct({
+    disableGpuAcceleration: Schema.optionalKey(Schema.Boolean),
     linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   }),
 );
@@ -78,6 +79,34 @@ export function resolveEarlyLinuxPasswordStorePreference(
   } catch {
     return DEFAULT_LINUX_PASSWORD_STORE;
   }
+}
+
+const isWaylandSession = (env: NodeJS.ProcessEnv): boolean =>
+  (trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland";
+
+const isNvidiaPresent = (existsSync: (path: string) => boolean): boolean =>
+  existsSync("/dev/nvidiactl") || existsSync("/dev/nvidia0");
+
+export function shouldDisableGpuOnNvidiaWayland(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly homeDirectory: string;
+  readonly joinPath: JoinPath;
+  readonly existsSync: (path: string) => boolean;
+  readonly readFileString: (path: string) => string;
+  readonly hasSwitch: (name: string) => boolean;
+}): boolean {
+  if (!isWaylandSession(input.env)) return false;
+  if (input.hasSwitch("disable-gpu") || input.hasSwitch("enable-gpu")) return false;
+  const settingsPath = resolveEarlyDesktopSettingsPath({
+    env: input.env,
+    homeDirectory: input.homeDirectory,
+    joinPath: input.joinPath,
+  });
+  try {
+    const parsed = decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
+    if (parsed.disableGpuAcceleration === false) return false;
+  } catch {}
+  return isNvidiaPresent(input.existsSync);
 }
 
 const WAYLAND_COLOR_MANAGER_FEATURE = "WaylandWpColorManagerV1";

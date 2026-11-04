@@ -6,6 +6,7 @@ import {
   restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
+  shouldDisableGpuOnNvidiaWayland,
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
@@ -195,5 +196,78 @@ describe("Linux device scale persistence failures", () => {
     assert.deepEqual(writes, ["1"]);
     assert.deepEqual(reads, []);
     assert.deepEqual(applied, []);
+  });
+
+  describe("shouldDisableGpuOnNvidiaWayland", () => {
+    const base = {
+      homeDirectory: "/home/user",
+      joinPath: NodePath.posix.join,
+      existsSync: (path: string) => path === "/dev/nvidiactl",
+      readFileString: () => "{}",
+      hasSwitch: () => false,
+    };
+
+    it("is true on NVIDIA Wayland with no explicit GPU switch", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({ ...base, env: { XDG_SESSION_TYPE: "wayland" } }),
+      );
+    });
+
+    it("is false on X11", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({ ...base, env: { XDG_SESSION_TYPE: "x11" } }),
+      );
+    });
+
+    it("is false without NVIDIA devices", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          existsSync: () => false,
+        }),
+      );
+    });
+
+    it("is false when --disable-gpu or --enable-gpu was passed explicitly", () => {
+      for (const name of ["disable-gpu", "enable-gpu"]) {
+        assert.isFalse(
+          shouldDisableGpuOnNvidiaWayland({
+            ...base,
+            env: { XDG_SESSION_TYPE: "wayland" },
+            hasSwitch: (switchName) => switchName === name,
+          }),
+        );
+      }
+    });
+
+    it("is false when the user opts out via disableGpuAcceleration=false", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          readFileString: () => JSON.stringify({ disableGpuAcceleration: false }),
+        }),
+      );
+    });
+
+    it("is true when the setting is explicit true or missing file", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          readFileString: () => JSON.stringify({ disableGpuAcceleration: true }),
+        }),
+      );
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          readFileString: () => {
+            throw new Error("missing");
+          },
+        }),
+      );
+    });
   });
 });
