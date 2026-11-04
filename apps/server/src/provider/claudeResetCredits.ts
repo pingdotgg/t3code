@@ -2,6 +2,7 @@ import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import type { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -214,6 +215,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly version: string;
   readonly grantId: string;
   readonly requestId: string;
+  readonly usageHttpClient?: Effect.Success<ReturnType<typeof makeUsageHttpClient>>;
 }) {
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
@@ -227,6 +229,12 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   const organization = config.oauthAccount?.organizationUuid?.trim();
   if (!token || !organization) {
     return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+  }
+  if (
+    input.usageHttpClient &&
+    (yield* input.usageHttpClient.isCoolingDown(API_BASE, `Bearer ${token}`))
+  ) {
+    return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
   }
   const client = yield* HttpClient.HttpClient;
   const response = yield* client

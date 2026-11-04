@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ClaudeResetCredits from "./claudeResetCredits.ts";
@@ -158,7 +160,14 @@ const ClaimBody = Schema.fromJsonString(
 );
 const decodeClaimBody = Schema.decodeEffect(ClaimBody);
 
-const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requestId: "r-1" }) =>
+const consume = (
+  client: HttpClient.HttpClient,
+  ids: {
+    grantId: string;
+    requestId: string;
+    usageHttpClient?: Effect.Success<ReturnType<typeof makeUsageHttpClient>>;
+  } = { grantId: "grant_a", requestId: "r-1" },
+) =>
   Effect.gen(function* () {
     const login = yield* writeLogin;
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
@@ -173,6 +182,42 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
+  it.effect("blocks redemption until the account usage cooldown expires", () =>
+    Effect.gen(function* () {
+      let redemptions = 0;
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          if (new URL(request.url).pathname === "/api/oauth/usage") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({}, { status: 429, headers: { "retry-after": "600" } }),
+            );
+          }
+          redemptions++;
+          return HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }));
+        }),
+      );
+      const usageHttpClient = yield* makeUsageHttpClient(client);
+      yield* usageHttpClient.execute(
+        HttpClientRequest.get("https://api.anthropic.com/api/oauth/usage").pipe(
+          HttpClientRequest.bearerToken("oauth-token"),
+        ),
+      );
+      const ids = { grantId: "grant_a", requestId: "r-1", usageHttpClient };
+      for (const elapsed of ["0 minutes", "9 minutes"] as const) {
+        yield* TestClock.adjust(elapsed);
+        expect(yield* consume(client, ids)).toMatchObject({
+          _tag: "Failure",
+          failure: { reason: "coolingDown" },
+        });
+        expect(redemptions).toBe(0);
+      }
+      yield* TestClock.adjust("1 minute");
+      expect(yield* consume(client, ids)).toMatchObject({ _tag: "Success", success: "reset" });
+      expect(redemptions).toBe(1);
+    }),
+  );
+
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {
       const client = HttpClient.make((request) =>
