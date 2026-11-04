@@ -76,10 +76,20 @@ export function makeSpeechTextCorrector(
       return [...new Set(keys)].filter(isAsciiKey).map((key) => ({ word, key }));
     });
 
-  const bestMatch = (candidate: string, keys: readonly CustomWordKey[]) => {
-    if (!isAsciiKey(candidate) || candidate.length > 50) return undefined;
-    let best: { readonly word: string; readonly score: number } | undefined;
+  const possessive = /['’]s$/iu;
+  const innerPossessives = (value: string) => value.match(/['’]s(?=\s)/giu)?.length ?? 0;
+  type Match = { readonly word: string; readonly score: number; readonly suffix: string };
+  const bestMatch = (phrase: string, keys: readonly CustomWordKey[]) => {
+    const key = matchKey(phrase);
+    const suffix = phrase.match(possessive)?.[0] ?? "";
+    const stem = suffix ? key.slice(0, -1) : key;
+    if (!isAsciiKey(stem) || stem.length > 50) return undefined;
+    const inner = innerPossessives(phrase);
+    let best: Match | undefined;
     for (const custom of keys) {
+      if (inner > 0 && inner > innerPossessives(custom.word)) continue;
+      const keepSuffix = suffix !== "" && !possessive.test(custom.word);
+      const candidate = keepSuffix ? stem : key;
       const longest = Math.max(candidate.length, custom.key.length);
       if (Math.abs(candidate.length - custom.key.length) > Math.max(longest * 0.25, 2)) continue;
       const distance = editDistance(candidate, custom.key) / longest;
@@ -87,7 +97,7 @@ export function makeSpeechTextCorrector(
       const score =
         phonetic && soundex(candidate) === soundex(custom.key) ? distance * 0.3 : distance;
       if (score < MATCH_THRESHOLD && (!best || score < best.score))
-        best = { word: custom.word, score };
+        best = { word: custom.word, score, suffix: keepSuffix ? suffix : "" };
     }
     return best;
   };
@@ -105,9 +115,7 @@ export function makeSpeechTextCorrector(
     const output: string[] = [];
     let cursor = 0;
     for (let index = 0; index < tokens.length;) {
-      let best:
-        | { readonly count: number; readonly word: string; readonly score: number }
-        | undefined;
+      let best: (Match & { readonly count: number }) | undefined;
       for (let count = Math.min(4, tokens.length - index); count >= 1; count -= 1) {
         const slice = tokens.slice(index, index + count);
         if (
@@ -119,7 +127,7 @@ export function makeSpeechTextCorrector(
             )
         )
           continue;
-        const match = bestMatch(matchKey(slice.map(({ value }) => value).join("")), keys);
+        const match = bestMatch(text.slice(slice[0]!.start, slice[count - 1]!.end), keys);
         if (
           match &&
           (!best || match.score < best.score || (match.score === best.score && count < best.count))
@@ -131,7 +139,11 @@ export function makeSpeechTextCorrector(
         continue;
       }
       const first = tokens[index]!;
-      output.push(text.slice(cursor, first.start), preserveCase(first.value, best.word));
+      output.push(
+        text.slice(cursor, first.start),
+        preserveCase(first.value, best.word),
+        best.suffix,
+      );
       cursor = tokens[index + best.count - 1]!.end;
       index += best.count;
     }
