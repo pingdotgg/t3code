@@ -1,4 +1,10 @@
-import { DEFAULT_CLIENT_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -6,12 +12,15 @@ import { render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
-import { useProjects } from "../state/entities";
+import { useProjects, useQuietThreadShells } from "../state/entities";
+import { useEnvironmentConnectionSummaries } from "../state/environments";
+import { makeThreadFixture } from "../test-fixtures";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
+vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
@@ -84,6 +93,96 @@ describe("sidebar header new thread", () => {
     } else {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
+    }
+  });
+});
+
+describe("Working shelf connections", () => {
+  it("keeps running and waiting threads shelved through reconnects and resubscription", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => {
+      __setClientSettingsForTests(previousSettings);
+      vi.mocked(useQuietThreadShells).mockRestore();
+      vi.mocked(useEnvironmentConnectionSummaries).mockRestore();
+    });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarWorkingShelfEnabled: true,
+    });
+    const remote = project("remote");
+    const runtime = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-11-04T10:00:00.000Z",
+    };
+    const thread = (id: string) =>
+      makeThreadFixture({
+        id: ThreadId.make(id),
+        title: id,
+        projectId: remote.id,
+        environmentId: remote.environmentId,
+      });
+    vi.mocked(useProjects).mockReturnValue([remote]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      { ...thread("Running remotely"), runtime },
+      {
+        ...thread("Waiting remotely"),
+        runtime: { ...runtime, status: "idle" },
+        pendingBackgroundTasks: [
+          { taskId: "background", description: "Watch build", kind: "monitor", awaited: true },
+        ],
+      },
+      thread("Ready for input"),
+    ]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    const connection = {
+      environmentId: remote.environmentId,
+      environmentLabel: "Remote",
+      displayUrl: "https://remote.example",
+      isRelayManaged: true,
+      isEnabled: true,
+      connectionError: null,
+      connectionErrorTraceId: null,
+    };
+    vi.mocked(useEnvironmentConnectionSummaries).mockReturnValue([
+      { ...connection, connectionState: "connecting" },
+    ]);
+    const sidebar = () => (
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>
+    );
+    await using screen = await render(sidebar());
+    await expect.element(screen.getByRole("button", { name: /^Working\s*2$/ })).toBeInTheDocument();
+
+    for (const connectionState of ["reconnecting", "connected", "offline", "connecting"] as const) {
+      vi.mocked(useEnvironmentConnectionSummaries).mockReturnValue([
+        { ...connection, connectionState },
+      ]);
+      await screen.rerender(sidebar());
+      await expect
+        .element(screen.getByRole("button", { name: /^Working\s*2$/ }))
+        .toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("button", { name: /^Running remotely,/ }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("button", { name: /^Waiting remotely,/ }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("button", { name: "Ready for input, remote", exact: true }))
+        .toBeInTheDocument();
     }
   });
 });
