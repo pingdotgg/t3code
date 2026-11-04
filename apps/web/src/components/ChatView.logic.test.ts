@@ -1094,16 +1094,22 @@ describe("planComposerTurn", () => {
     });
   });
 
-  it("queues behind a compaction of a stale session, except for /compact itself", () => {
+  it("queues behind a compaction of a stale session, except for /compact and /clear", () => {
     const stale = { ...base, resumeCompactionTokens: 120_000 };
-    for (const messageText of ["hello", "/compactfoo"]) {
+    for (const messageText of ["hello", "/compactfoo", "/clearly not a command"]) {
       expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
         compactBeforeSend: true,
         turnDispatchMode: "queue",
         shouldQueueBehindActiveRun: true,
       });
     }
-    for (const messageText of ["/COMPACT", "/compact keep the API notes", "/compact\n  tests"]) {
+    for (const messageText of [
+      "/COMPACT",
+      "/compact keep the API notes",
+      "/compact\n  tests",
+      "/clear",
+      "/Clear ",
+    ]) {
       expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
         compactBeforeSend: false,
         turnDispatchMode: "auto",

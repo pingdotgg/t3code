@@ -835,8 +835,9 @@ export function shouldShowPlanFollowUpPrompt(input: {
 }
 
 // A typed `/compact`, with or without instructions, is already the compaction. Queueing a
-// bare one ahead of it would run an uninstructed compaction first and charge for two.
-const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+// bare one ahead of it would run an uninstructed compaction first and charge for two. A typed
+// `/clear` discards the old context, so compacting it first pays for a summary nobody reads.
+const NO_COMPACT_BEFORE_COMMAND_PATTERN = /^\/(?:compact|clear)(?:\s|$)/i;
 
 const sessionDismissedBranchMismatchKeys = new Set<string>();
 
@@ -1425,7 +1426,7 @@ export function planComposerTurn(input: {
   const compactBeforeSend =
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
-    !COMPACT_COMMAND_PATTERN.test(input.messageText);
+    !NO_COMPACT_BEFORE_COMMAND_PATTERN.test(input.messageText);
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
