@@ -125,6 +125,7 @@ const connectThroughProxy = (
   const socket = NodeNet.connect({ host: proxy.host, port: proxy.port });
   const authority = (NodeNet.isIPv6(host) ? `[${host}]` : host) + ":" + port;
   let head = Buffer.alloc(0);
+  let headerBytes = 0;
   let finished = false;
   const finish = (error: Error | undefined, rest = Buffer.alloc(0)) => {
     if (finished) return;
@@ -134,15 +135,20 @@ const connectThroughProxy = (
   };
   const onData = (chunk: Buffer) => {
     head = Buffer.concat([head, chunk]);
-    const end = head.indexOf("\r\n\r\n");
-    if ((end === -1 ? head.length : end + 4) > 16 * 1024) {
-      return finish(new Error("oversized proxy response"));
+    while (true) {
+      const end = head.indexOf("\r\n\r\n");
+      if (headerBytes + (end === -1 ? head.length : end + 4) > 16 * 1024) {
+        return finish(new Error("oversized proxy response"));
+      }
+      if (end === -1) return;
+      const status = /^HTTP\/1\.[01] ([12]\d{2}) [^\r\n]*\r\n/.exec(head.toString("latin1"));
+      if (!status) return finish(new Error("egress proxy refused"));
+      headerBytes += end + 4;
+      head = head.subarray(end + 4);
+      // RFC 9110 sections 15.2 and 9.3.6: skip informational responses; any 2xx tunnels.
+      if (status[1]!.startsWith("1")) continue;
+      return finish(undefined, head);
     }
-    if (end === -1) return;
-    // RFC 9110 section 9.3.6: any 2xx response establishes the tunnel.
-    const success = /^HTTP\/1\.[01] 2\d{2} [^\r\n]*\r\n/.test(head.toString("latin1"));
-    if (!success) return finish(new Error("egress proxy refused"));
-    finish(undefined, head.subarray(end + 4));
   };
   socket.on("data", onData);
   socket.once("error", (error) => finish(error));

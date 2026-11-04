@@ -306,6 +306,12 @@ describe("publicProxy", () => {
 
     it.effect.each([
       ["another successful status", "HTTP/1.1 201 Created\r\n\r\n", 0],
+      ["informational response", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n", 0],
+      [
+        "oversized informational headers",
+        `${`HTTP/1.1 103 Early Hints\r\nX: ${"x".repeat(9 * 1024)}\r\n\r\n`.repeat(2)}HTTP/1.1 200 OK\r\n\r\n`,
+        5,
+      ],
       ["malformed status", "HTTP/1.1 200evil\r\n\r\n", 5],
       ["oversized complete headers", `HTTP/1.1 200 OK\r\nX: ${"x".repeat(16 * 1024)}\r\n\r\n`, 5],
       ["oversized incomplete headers", `HTTP/1.1 200 OK\r\nX: ${"x".repeat(16 * 1024)}`, 5],
