@@ -309,7 +309,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.resolve.outputs.relay_url }}
       label: macOS arm64 preview
-      runner: blacksmith-12vcpu-macos-26
+      runner: macos-26
       platform: mac
       target: dmg
       arch: arm64
@@ -325,7 +325,7 @@ jobs:
     name: Publish anonymous download
     needs: [resolve, build]
     if: needs.resolve.outputs.eligible == 'true' && needs.build.result == 'success'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Its own group, so a publish never cancels a newer commit's signing job
     # (they would share the build group) and is never cancelled mid-upload.

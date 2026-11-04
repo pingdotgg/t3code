@@ -40,7 +40,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: relay-preview-cleanup
@@ -101,7 +101,7 @@ jobs:
   list_closed_previews:
     name: List closed relay previews
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       numbers: ${{ steps.list.outputs.numbers }}
@@ -125,7 +125,7 @@ jobs:
     name: Retry teardown for PR ${{ matrix.number }}
     needs: list_closed_previews
     if: github.ref == 'refs/heads/main' && needs.list_closed_previews.outputs.numbers != '[]'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
