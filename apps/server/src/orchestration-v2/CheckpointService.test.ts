@@ -21,7 +21,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
+import { checkpointRestoreRefusal } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -183,7 +183,7 @@ const runTurnsAcrossWorktrees = Effect.fn("runTurnsAcrossWorktrees")(function* (
 
   const turn1 = yield* runTurn(1, worktreeA, "turn-1.txt");
   const turn2 = yield* runTurn(2, worktreeB, "turn-2.txt");
-  return { threadId, worktreeB, turn1, turn2, projectedScopes };
+  return { git, repo, threadId, worktreeA, worktreeB, turn1, turn2, projectedScopes, runTurn };
 });
 
 it.live("lists only turn 2's edit after the thread moves to another worktree of the repo", () =>
@@ -194,6 +194,29 @@ it.live("lists only turn 2's edit after the thread moves to another worktree of 
       turn2.files.map((file) => file.path),
       ["turn-2.txt"],
       "turn 2's checkpoint lists differences between worktree A's and worktree B's trees",
+    );
+  }).pipe(Effect.provide(layerGitCheckpoints)),
+);
+
+it.live("a worktree recreated after a rollback lists only its next turn's edit", () =>
+  Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const { git, repo, worktreeA, worktreeB, turn2, projectedScopes, runTurn } =
+      yield* runTurnsAcrossWorktrees("per-workspace");
+
+    // Back in worktree A with B removed, a rollback to the thread start discards turn 2.
+    yield* git(repo, "worktree", "remove", "--force", worktreeB);
+    yield* checkpoints.deleteStaleRefs({
+      scope: projectedScopes.get(turn2.scopeId)!,
+      checkpoints: [turn2],
+      fallbackCwd: worktreeA,
+    });
+    yield* git(repo, "worktree", "add", worktreeB, "branch-b");
+    const turn3 = yield* runTurn(3, worktreeB, "turn-3.txt");
+
+    assert.deepEqual(
+      turn3.files.map((file) => file.path),
+      ["turn-3.txt"],
     );
   }).pipe(Effect.provide(layerGitCheckpoints)),
 );
@@ -210,7 +233,7 @@ it.live.each(["per-workspace", "legacy"] as const)(
       const scope = projectedScopes.get(turn1.scopeId)!;
 
       // "Edit from here?" on turn 1 with "Revert files too", as CheckpointRollbackService runs it.
-      const isolated = yield* isCheckpointRestoreIsolated(
+      const refusal = yield* checkpointRestoreRefusal(
         { id: threadId, worktreePath: worktreeB },
         scope,
         {
@@ -223,12 +246,12 @@ it.live.each(["per-workspace", "legacy"] as const)(
           projects: {} as never,
         },
       );
-      if (isolated) yield* checkpoints.restore({ scope, checkpoint: turn1 });
+      if (refusal === null) yield* checkpoints.restore({ scope, checkpoint: turn1 });
 
       assert.deepEqual(
         (yield* fileSystem.readDirectory(worktreeB)).filter((entry) => entry !== ".git").toSorted(),
         ["b-only.txt", "shared.txt", "turn-2.txt"],
       );
-      assert.isFalse(isolated);
+      assert.isNotNull(refusal);
     }).pipe(Effect.provide(layerGitCheckpoints)),
 );

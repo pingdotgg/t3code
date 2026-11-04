@@ -137,6 +137,8 @@ export interface CheckpointServiceV2Shape {
   readonly deleteStaleRefs: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+    /** Deletes through this checkout when the scope's own is gone; worktrees of a repository share refs. */
+    readonly fallbackCwd: string;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
 }
 
@@ -549,23 +551,42 @@ export const layer: Layer.Layer<
         ),
       );
 
-    const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
-      withWorkspaceLock(
-        input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
-        }),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CheckpointDeleteStaleRefsError({
-              scopeId: input.scope.id,
-              checkpointIds: input.checkpoints.map((checkpoint) => checkpoint.id),
-              cause,
-            }),
+    const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = Effect.fn(
+      "CheckpointService.deleteStaleRefs",
+    )(
+      function* (input) {
+        // A recreated workspace gets the same scope id, so a surviving stale ref would become its baseline.
+        const cwd = (yield* isGitCheckpointable(input.scope.cwd))
+          ? input.scope.cwd
+          : (yield* isGitCheckpointable(input.fallbackCwd))
+            ? input.fallbackCwd
+            : null;
+        if (cwd === null) {
+          return yield* Effect.logWarning(
+            "orchestration V2 rollback could not reach stale checkpoint refs of a removed workspace",
+            { scopeId: input.scope.id, cwd: input.scope.cwd, fallbackCwd: input.fallbackCwd },
+          );
+        }
+        yield* withWorkspaceLock(
+          cwd,
+          checkpointStore.deleteCheckpointRefs({
+            cwd,
+            checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          }),
+        );
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new CheckpointDeleteStaleRefsError({
+                scopeId: input.scope.id,
+                checkpointIds: input.checkpoints.map((checkpoint) => checkpoint.id),
+                cause,
+              }),
+          ),
         ),
-      );
+    );
 
     return CheckpointServiceV2.of({
       prepareRootRunScope: (input) =>

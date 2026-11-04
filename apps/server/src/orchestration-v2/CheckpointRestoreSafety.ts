@@ -8,11 +8,21 @@ import { legacyRootScopeId } from "./CheckpointService.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
-export const SHARED_WORKSPACE_RESTORE_MESSAGE =
+const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
+export const LEGACY_CHECKPOINT_RESTORE_MESSAGE =
+  "This turn was recorded before T3 Code tracked which worktree each turn ran in, so its files can't be restored. Rewind the conversation without restoring files instead.";
+
+export type CheckpointRestoreRefusal = "shared-workspace" | "legacy-checkpoint";
+
+export const checkpointRestoreRefusalMessage = (refusal: CheckpointRestoreRefusal) =>
+  refusal === "legacy-checkpoint"
+    ? LEGACY_CHECKPOINT_RESTORE_MESSAGE
+    : SHARED_WORKSPACE_RESTORE_MESSAGE;
+
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
-export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
+export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRestoreRefusal")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
     scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">,
@@ -25,6 +35,10 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
     },
   ) {
     const { fileSystem, idAllocator, projections, projects, path } = dependencies;
+    // The legacy scope's projected cwd is only its latest; older checkpoints may hold another workspace.
+    if (scope.id === (yield* legacyRootScopeId(idAllocator, thread.id))) {
+      return "legacy-checkpoint" as const;
+    }
     const contains = (parent: string, child: string) => {
       const relative = path.relative(parent, child);
       return (
@@ -45,9 +59,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         );
       const cwd = yield* resolve(scope.cwd);
       const worktreeCwd = yield* resolve(worktreePath);
-      // The legacy scope's projected cwd is only its latest; older checkpoints may hold another workspace.
-      shared =
-        cwd !== worktreeCwd || scope.id === (yield* legacyRootScopeId(idAllocator, thread.id));
+      shared = cwd !== worktreeCwd;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();
@@ -85,7 +97,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           ].filter((value): value is string => value !== null);
           if (otherThread.worktreePath === null) {
             const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
-            if (Option.isNone(project)) return false;
+            if (Option.isNone(project)) return "shared-workspace" as const;
             paths.push(project.value.workspaceRoot);
           }
           for (const candidate of paths) {
@@ -106,6 +118,6 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         }
       }
     }
-    return !shared;
+    return shared ? ("shared-workspace" as const) : null;
   },
 );
