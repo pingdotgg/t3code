@@ -39,12 +39,30 @@ function unmatchedLabelBacktick(label: string): number | undefined {
 
 function* threadLinkMatches(markdown: string) {
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  let spanOpeners: Set<number> | undefined;
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
     const label = match.groups?.label;
     const unmatched = label === undefined ? undefined : unmatchedLabelBacktick(label);
     if (unmatched !== undefined) {
-      pattern.lastIndex = match.index + 1 + unmatched;
-      continue;
+      // Index possible closers once; a backtick without one is literal Markdown text.
+      if (spanOpeners === undefined) {
+        spanOpeners = new Set<number>();
+        const lengths = new Set<number>();
+        const runs = [...markdown.matchAll(/`+|\n/g)];
+        for (let index = runs.length - 1; index >= 0; index--) {
+          const run = runs[index]!;
+          if (run[0] === "\n") lengths.clear();
+          else {
+            if (lengths.has(run[0].length)) spanOpeners.add(run.index);
+            lengths.add(run[0].length);
+          }
+        }
+      }
+      const opener = match.index + 1 + unmatched;
+      if (spanOpeners.has(opener)) {
+        pattern.lastIndex = opener;
+        continue;
+      }
     }
     yield match;
   }

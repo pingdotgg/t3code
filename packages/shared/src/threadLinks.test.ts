@@ -178,8 +178,8 @@ describe("thread links", () => {
 });
 
 describe("hosted thread links", () => {
-  it.each(["Fix `ci`", "`foo`", "Use ``a ` b``", "`a` and ``b``"])(
-    "relabels a copied hosted link with balanced code in label %s as one link",
+  it.each(["Fix `ci`", "`foo`", "Use ``a ` b``", "`a` and ``b``", "Fix `typo"])(
+    "relabels a copied hosted link with backticks in label %s as one link",
     (label) => {
       const markdown = formatHostedThreadLink(ref("one", "same"), label);
       expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "same")]);
