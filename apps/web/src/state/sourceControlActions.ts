@@ -37,7 +37,8 @@ export type SourceControlActionKind =
   | "pull"
   | "publishRepository"
   | "runStackedAction"
-  | "preparePullRequestThread";
+  | "preparePullRequestThread"
+  | "splitCommits";
 
 export interface SourceControlActionScope {
   readonly environmentId: EnvironmentId | null;
@@ -68,6 +69,7 @@ const ACTION_OPERATION = {
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
+  splitCommits: "split_commits",
 } as const satisfies Record<SourceControlActionKind, VcsActionOperation>;
 
 function useAction<

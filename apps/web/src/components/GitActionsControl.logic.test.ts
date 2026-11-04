@@ -10,6 +10,7 @@ import {
   requiresDefaultBranchConfirmation,
   requiresForcePushConfirmation,
   resolveChangesTotals,
+  resolveGitActionProgressPresentation,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
@@ -593,5 +594,21 @@ describe("resolveRegeneratePullRequestCandidates", () => {
       ],
     });
     assert.equal(candidates.length, 2);
+  });
+});
+
+describe("git action progress presentation", () => {
+  it("shows commit splitting in the same progress area as change-request creation", () => {
+    assert.deepEqual(
+      resolveGitActionProgressPresentation({
+        isRunning: true,
+        operation: "split_commits",
+        currentLabel: "Splitting into logical commits...",
+        lastOutputLine: null,
+        phaseStartedAtMs: 1_000,
+        hookStartedAtMs: null,
+      }),
+      { status: "Splitting into logical commits...", output: null, startedAtMs: 1_000 },
+    );
   });
 });

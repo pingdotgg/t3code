@@ -136,7 +136,9 @@ export function resolveGitActionProgressPresentation(input: {
 }): GitActionProgressPresentation | null {
   if (
     !input.isRunning ||
-    (input.operation !== "run_change_request" && input.operation !== "pull")
+    (input.operation !== "run_change_request" &&
+      input.operation !== "pull" &&
+      input.operation !== "split_commits")
   ) {
     return null;
   }
