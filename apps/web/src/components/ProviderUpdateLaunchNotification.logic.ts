@@ -217,7 +217,10 @@ export function getProviderUpdateRunOutcome(
     (provider) => provider.instanceId === run.instanceId,
   )?.updateState;
   return updateState?.status === "succeeded"
-    ? { status: "updated", message: updateState.message }
+    ? {
+        status: "updated",
+        message: updateState.message ? `${label}: ${updateState.message}` : null,
+      }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
