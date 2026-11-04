@@ -13,6 +13,7 @@ import * as Deferred from "effect/Deferred";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -116,6 +117,9 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+// A Mac asleep at launch fails the first probe on wake, and nothing else would probe again.
+const DISCOVERY_RETRY_DELAY = Duration.seconds(30);
+const DISCOVERY_RETRIES = 10;
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
   Option.fromNullishOr(value).pipe(
@@ -594,7 +598,7 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(latest, Option.some(message));
     yield* PubSub.publish(changes, message);
   });
-  const refresh = Effect.gen(function* () {
+  const probe = Effect.gen(function* () {
     // Refresh from the inherited baseline so removed cached paths and values do not survive.
     const fresh = { ...inherited };
     const prepared = yield* installShellEnvironment({ env: fresh, platform: environment.platform });
@@ -621,7 +625,24 @@ export const make = Effect.gen(function* () {
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.withSpan("desktop.shellEnvironment.refresh"),
+  );
+  const refresh = probe.pipe(
     Effect.onExit((exit) => Deferred.done(discovered, exit)),
+    Effect.flatMap((prepared) =>
+      prepared
+        ? Effect.void
+        : Effect.sleep(DISCOVERY_RETRY_DELAY).pipe(
+            Effect.andThen(
+              probe.pipe(
+                Effect.repeat({
+                  until: (retried) => retried,
+                  schedule: Schedule.spaced(DISCOVERY_RETRY_DELAY),
+                  times: DISCOVERY_RETRIES - 1,
+                }),
+              ),
+            ),
+          ),
+    ),
   );
   const installIntoProcess = yield* Effect.cached(
     Effect.gen(function* () {
