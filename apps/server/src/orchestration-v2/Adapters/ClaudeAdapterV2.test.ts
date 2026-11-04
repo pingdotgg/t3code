@@ -68,6 +68,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -3139,6 +3140,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly reportedModels?: ReadonlyArray<ClaudeSdk.ModelInfo>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3201,6 +3203,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
+        ...(options?.reportedModels === undefined
+          ? {}
+          : { reportedModels: yield* Ref.make(options.reportedModels) }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -8633,7 +8638,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("records the root model Claude reports for each turn, not the requested one", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        reportedModels: [
+          {
+            value: "gateway/best",
+            resolvedModel: "gateway/claude-future",
+            displayName: "Best",
+            description: "",
+          },
+        ],
+      });
       const executed = () => {
         const { model, modelSubstituted } = lastProviderTurn(harness.events);
         return { model, modelSubstituted };
@@ -8770,19 +8785,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
       assert.deepEqual(executed(), { model: "claude-sonnet-4-6", modelSubstituted: true });
 
-      // A requested alias that the catalog resolves to the reported model is no substitution.
-      const aliasTurn = (ordinal: number, reported: string) =>
+      // An alias the catalog or Claude Code resolves to the reported model is no substitution.
+      const aliasTurn = (ordinal: number, reported: string, requested = "opus") =>
         Effect.gen(function* () {
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               ...turnInput,
-              modelSelection: { ...turnInput.modelSelection, model: "opus" },
+              modelSelection: { ...turnInput.modelSelection, model: requested },
               attemptId: RunAttemptId.make(`attempt-claude-restricted-model-${ordinal}`),
               providerTurnOrdinal: ordinal,
               text: "Use the alias.",
             }),
           );
-          yield* Queue.offerAll(harness.sdkMessages, [
+          yield* Queue.offerAll(harness.processQueues.at(-1) ?? harness.sdkMessages, [
             usageStreamFrame({
               type: "message_start",
               message: { id: `alias-model-${ordinal}`, model: reported, usage: zeroUsage },
@@ -8798,6 +8813,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const opus = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus");
       assert.deepEqual(yield* aliasTurn(5, opus), { model: opus, modelSubstituted: false });
       assert.deepEqual(yield* aliasTurn(6, "claude-sonnet-4-6"), {
+        model: "claude-sonnet-4-6",
+        modelSubstituted: true,
+      });
+      assert.deepEqual(yield* aliasTurn(7, "gateway/claude-future", "gateway/best"), {
+        model: "gateway/claude-future",
+        modelSubstituted: false,
+      });
+      assert.equal(harness.getOpenedOptions()?.model, "gateway/best");
+      assert.deepEqual(yield* aliasTurn(8, "claude-sonnet-4-6", "gateway/best"), {
         model: "claude-sonnet-4-6",
         modelSubstituted: true,
       });

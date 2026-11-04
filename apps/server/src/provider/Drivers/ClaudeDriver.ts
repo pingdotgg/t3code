@@ -1,3 +1,4 @@
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -146,6 +147,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    const reportedModels = yield* Ref.make<ReadonlyArray<ClaudeModelInfo>>([]);
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -155,7 +157,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         enabled,
         config,
       },
-      { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        scopedLimitNames,
+        reportedModels,
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -189,7 +195,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               })),
             ),
           ),
-          Effect.tap(({ capabilities }) => Ref.set(lastGoodCapabilities, capabilities)),
+          Effect.tap(({ capabilities }) =>
+            Ref.set(lastGoodCapabilities, capabilities).pipe(
+              Effect.andThen(Ref.set(reportedModels, capabilities.models ?? [])),
+            ),
+          ),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
               Effect.flatMap((capabilities) =>

@@ -48,6 +48,7 @@ import {
   getSubagentMessages,
   type HookCallback,
   type McpServerStatus as ClaudeMcpServerStatus,
+  type ModelInfo,
   query,
   resolveSettings as resolveClaudeSettings,
   type Options as ClaudeQueryOptions,
@@ -4852,6 +4853,8 @@ export interface ClaudeAdapterV2Options {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
+  /** Models this instance's Claude Code reported, with the model each alias resolves to. */
+  readonly reportedModels?: Ref.Ref<ReadonlyArray<ModelInfo>>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
@@ -5963,19 +5966,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ...executedModelField(input.context),
         });
 
-        const recordExecutedModel = (context: ActiveClaudeTurnContext, model: unknown) => {
+        // Untraced: it runs for every root assistant frame.
+        const recordExecutedModel = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          model: unknown,
+        ) {
           const reported = typeof model === "string" ? model.trim() : "";
           // "<synthetic>" identifies CLI notices, not a model.
           if (reported.length > 0 && reported !== "<synthetic>") {
-            const executed = resolveClaudeModelSlug(subagentModelCatalog, reported);
+            const discovered = adapterOptions.reportedModels
+              ? yield* Ref.get(adapterOptions.reportedModels)
+              : [];
+            const executed = resolveClaudeModelSlug(subagentModelCatalog, reported, discovered);
             // An alias such as `opus` requests the model its canonical slug names.
             const requested = resolveClaudeModelSlug(
               subagentModelCatalog,
               context.input.modelSelection.model,
+              discovered,
             );
             context.executedModel = { model: executed, modelSubstituted: requested !== executed };
           }
-        };
+        });
 
         const buildToolCallArtifacts = (input: {
           readonly context: ActiveClaudeTurnContext | null;
@@ -8949,7 +8960,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             message.subtype === "init" &&
             context === (yield* Ref.get(activeTurn))
           ) {
-            recordExecutedModel(context, message.model);
+            yield* recordExecutedModel(context, message.model);
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
@@ -8979,7 +8990,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const event = message.event;
             const reasoning = context.reasoning;
             if (event.type === "message_start") {
-              recordExecutedModel(context, event.message.model);
+              yield* recordExecutedModel(context, event.message.model);
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
@@ -9088,7 +9099,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (message.message.model && message.message.model !== "<synthetic>") {
                 context.rootModels.add(message.message.model);
               }
-              recordExecutedModel(context, message.message.model);
+              yield* recordExecutedModel(context, message.message.model);
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
@@ -12321,7 +12332,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "reportedModels" | "onUsageLimits"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
