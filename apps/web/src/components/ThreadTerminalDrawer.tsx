@@ -510,6 +510,7 @@ export function TerminalViewport(props: TerminalViewportProps) {
 }
 
 const latestTerminalLinkActivations = new Map<string, symbol>();
+const latestTerminalLinkValidations = new Map<string, symbol>();
 
 function TerminalSessionViewport({
   advancedTypography,
@@ -570,8 +571,7 @@ function TerminalSessionViewport({
       readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
   );
   const validateTerminalLink = useEffectEvent(async (text: string) => {
-    const activation = Symbol();
-    latestTerminalLinkActivations.set(linkActivationScope, activation);
+    latestTerminalLinkValidations.delete(linkActivationScope);
     if (isTerminalUrl(text)) return true;
     if (
       (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
@@ -585,9 +585,13 @@ function TerminalSessionViewport({
       metadataThreadRef,
     );
     if (!query) return false;
+    const validation = Symbol();
+    latestTerminalLinkValidations.set(linkActivationScope, validation);
     const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    const isCurrent = latestTerminalLinkValidations.get(linkActivationScope) === validation;
+    if (isCurrent) latestTerminalLinkValidations.delete(linkActivationScope);
     return (
-      latestTerminalLinkActivations.get(linkActivationScope) === activation &&
+      isCurrent &&
       result._tag === "Success" &&
       (result.value?.kind === "file" ||
         (result.value?.kind === "directory" &&
@@ -1098,6 +1102,7 @@ function TerminalSessionViewport({
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         latestTerminalLinkActivations.delete(linkActivationScope);
+        latestTerminalLinkValidations.delete(linkActivationScope);
         if (isTerminalUrl(text)) {
           if (!localApi) {
             writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");

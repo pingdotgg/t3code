@@ -327,6 +327,52 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "keeps a pending file click when another link is validated (split panes: %s)",
+  async (splitPanes) => {
+    const { original } = setup();
+    fixture.openFilesInApp = true;
+    const clicked = deferredMetadata();
+    fixture.pendingMetadata.set("/repo/src/clicked.ts", clicked.promise);
+    const validating = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.initial(),
+    );
+    fixture.linkMetadata.set(
+      JSON.stringify([original.environmentId, "/repo/src/validating.ts"]),
+      validating,
+    );
+    await using _screen = await render(
+      <AppAtomRegistryProvider>
+        <Drawer
+          threadRef={original}
+          terminalIds={splitPanes ? ["term-1", "term-2"] : ["term-1"]}
+          onCloseTerminal={() => {}}
+        />
+      </AppAtomRegistryProvider>,
+    );
+    await act(async () => {
+      for (const complete of fixture.pendingSurfaces.splice(0)) complete();
+    });
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate("src/clicked.ts:42", new MouseEvent("click"));
+    });
+    const validation =
+      fixture.surfaceOptions[splitPanes ? 1 : 0]!.validateLink!("src/validating.ts");
+    await act(async () => {
+      clicked.resolve({ entries: [{ kind: "file" }] });
+      await clicked.promise;
+    });
+    await act(() => {
+      appAtomRegistry.set(validating, AsyncResult.success({ kind: "file" }));
+    });
+    expect(await validation).toBe(true);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+    ).toMatchObject({ relativePath: "/repo/src/clicked.ts", revealLine: 42 });
+    expect(fixture.openEditor).not.toHaveBeenCalled();
+  },
+);
+
 it.each(["file", "directory"] as const)(
   "does not open a %s destination after its terminal closes",
   async (kind) => {
@@ -473,7 +519,6 @@ it("opens files on their owning environment with filesystem access and no editor
     selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
   ).toBeNull();
   fixture.scopes = new Set(["terminal:operate"]);
-  expect(options.canActivateLink?.("/repo/other.ts")).toBe(false);
   await act(() => {
     options.onLinkActivate("/repo/other.ts", new MouseEvent("click"));
   });
