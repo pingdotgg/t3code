@@ -702,6 +702,7 @@ export function NewTaskDraftScreen(props: {
       : "Wait for shared content to finish importing.";
   const showWorktreeBaseBranchHint =
     setupBlockReason === WORKTREE_BASE_BRANCH_BLOCK_REASON &&
+    selectedBranchName === null &&
     flow.isGitRepoKnown &&
     !flow.branchesLoading;
   const chooseProject = () => {
