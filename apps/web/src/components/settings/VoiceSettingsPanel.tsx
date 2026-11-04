@@ -304,7 +304,7 @@ function DictionaryEditor(props: {
                   maxLength={50}
                   aria-label={`Alias for ${term}`}
                   placeholder="Misspelling"
-                  className="h-6 w-32"
+                  className="w-32"
                   onChange={(event) => setAliasDraft({ term, value: event.target.value })}
                   onBlur={() => setAliasDraft(null)}
                   onKeyDown={(event) => {
