@@ -7293,13 +7293,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             registry: target.toolCalls,
           });
 
-        const mcpAppError = (detail: string) => (cause: unknown) =>
-          new ProviderAdapter.ProviderAdapterProtocolError({
-            driver: CLAUDE_PROVIDER,
-            detail,
-            cause,
-          });
-
         // App requests never start a CLI; they reuse the live process that ran the tool.
         const mcpAppQuery = Effect.fn("ClaudeAdapterV2.mcpAppQuery")(function* (
           providerThread: OrchestrationV2ProviderThread,
@@ -7332,7 +7325,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const liveQuery = yield* mcpAppQuery(providerThread);
           const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
-            Effect.mapError(mcpAppError("Failed to list Claude MCP tools.")),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Failed to list Claude MCP tools.",
+                  cause,
+                }),
+            ),
           );
           if (claudeMcpServerPrefixOverlaps(statuses, server)) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
@@ -11766,14 +11766,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     tool: claudeMcpToolName(call.server, call.tool),
                     arguments: call.arguments,
                   })
-                  .pipe(Effect.mapError(mcpAppError("Claude MCP tool call failed."))),
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: CLAUDE_PROVIDER,
+                          detail: "Claude MCP tool call failed.",
+                          cause,
+                        }),
+                    ),
+                  ),
               );
             }),
             readResource: Effect.fn("ClaudeAdapterV2.readMcpResource")(function* (read) {
               const { liveQuery } = yield* mcpAppServerStatuses(read.providerThread, read.server);
               return yield* liveQuery.query
                 .readMcpResource({ server: read.server, uri: read.uri })
-                .pipe(Effect.mapError(mcpAppError("Claude MCP resource read failed.")));
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: "Claude MCP resource read failed.",
+                        cause,
+                      }),
+                  ),
+                );
             }),
           },
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
