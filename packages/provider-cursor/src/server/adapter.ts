@@ -910,7 +910,7 @@ interface ActiveCursorSubagent {
   readonly turnItemOrdinal: number;
   nextChildOrdinal: number;
   resultProjected: boolean;
-  /** Mid-flight taskUpdate deltas already filled the child; skip the conversationSteps tool dump. */
+  /** Live nested tools were projected; skip the conversationSteps tool dump. */
   liveProjected: boolean;
   /** Live assistant text was projected; skip dumping task.result at completion. */
   liveAssistantProjected: boolean;
@@ -2176,7 +2176,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const taskUpdate = update.taskUpdate;
           switch (taskUpdate.type) {
             case "text-delta":
-              subagent.liveProjected = true;
               subagent.liveAssistantProjected = true;
               yield* completeSubagentReasoning(subagent);
               yield* appendSubagentText({
@@ -2188,7 +2187,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* emitSubagentAssistant(subagent, false);
               return;
             case "thinking-delta":
-              subagent.liveProjected = true;
               yield* completeSubagentAssistant(subagent);
               yield* appendSubagentText({
                 subagent,

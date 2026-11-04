@@ -1874,6 +1874,209 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("still dumps Cursor task conversationSteps tools after live thinking and text", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-task-text-tools-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-task-text-tools-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-task-text-tools",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  const args = {
+                    description: "Explore",
+                    prompt: "Read package.json.",
+                    subagentType: { kind: "unspecified" as const },
+                    agentId: "cursor-task-agent",
+                    mode: "unspecified" as const,
+                  };
+                  yield* input.onDelta!({
+                    type: "tool-call-started",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: { type: "task", args },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-delta",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    taskUpdate: { type: "thinking-delta", text: "Reading package.json." },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-delta",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    taskUpdate: { type: "thinking-completed", thinkingDurationMs: 1 },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-delta",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    taskUpdate: { type: "text-delta", text: "Looking it up." },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-completed",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: {
+                      type: "task",
+                      args,
+                      result: {
+                        status: "success",
+                        value: {
+                          conversationSteps: [
+                            {
+                              type: "toolCall",
+                              callId: "nested-read",
+                              message: {
+                                type: "read",
+                                args: { path: `${workspace}/package.json` },
+                                result: {
+                                  status: "success",
+                                  value: {
+                                    content: '{"name":"fixture"}',
+                                    totalLines: 1,
+                                    fileSize: 18,
+                                  },
+                                },
+                              },
+                            },
+                            {
+                              type: "assistantMessage",
+                              message: { text: "should not replace live text" },
+                            },
+                          ],
+                          isBackground: false,
+                          backgroundReason: "unspecified",
+                        },
+                      },
+                    },
+                  });
+                  return {
+                    agentId: "native-cursor-task-text-tools",
+                    runId: "native-cursor-run",
+                    wait: Effect.succeed({
+                      id: "native-cursor-run",
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }).pipe(Effect.orDie),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-task-text-tools-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-task-text-tools-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-task-text-tools-attempt"),
+        rootNodeId: NodeId.make("cursor-task-text-tools-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-task-text-tools-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor subagent text tools",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-task-text-tools-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Spawn a subagent.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+      const childThreadId = events.findLast((event) => event.type === "subagent.updated")?.subagent
+        .childThreadId;
+      assert.isDefined(childThreadId);
+      const childItems = events.flatMap((event): ReadonlyArray<unknown> => {
+        if (event.type !== "turn_item.updated" || event.turnItem.threadId !== childThreadId) {
+          return [];
+        }
+        const item = event.turnItem;
+        if (item.type === "reasoning" && item.status === "completed") {
+          return [{ type: "reasoning", text: item.text }];
+        }
+        if (item.type === "dynamic_tool" && item.status === "completed") {
+          return [{ type: "dynamic_tool", toolName: item.toolName }];
+        }
+        if (item.type === "assistant_message" && item.status === "completed") {
+          return [{ type: "assistant_message", text: item.text }];
+        }
+        return [];
+      });
+      assert.deepEqual(childItems, [
+        { type: "reasoning", text: "Reading package.json." },
+        { type: "assistant_message", text: "Looking it up." },
+        { type: "dynamic_tool", toolName: "Read" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("still dumps Cursor task conversationSteps after step-only taskUpdates", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
