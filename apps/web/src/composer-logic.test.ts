@@ -145,6 +145,22 @@ describe("composerSubmissionIntentForKey", () => {
     ).toBe("alternate");
   });
 
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)("sends a draft in the foreground with %s for %j", (sendShortcut, prompt) => {
+    const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+    expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+      "foreground",
+    );
+    expect(
+      composerSubmissionIntentForKey({
+        ...draft,
+        event: { ...enter, ctrlKey: true, shiftKey: true },
+      }),
+    ).toBe("background");
+  });
+
   it.each(["enter", "mod-enter", "mod-enter-multiline"] as const)(
     "uses remapped keys and removes the old action bindings with %s",
     (sendShortcut) => {
