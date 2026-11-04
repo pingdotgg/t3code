@@ -2819,7 +2819,19 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // A persistent local identity keeps Keychain approvals valid across fork rebuilds.
+    const localSigningIdentity = signed
+      ? undefined
+      : loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY?.trim();
     buildConfig.mac = {
+      ...(localSigningIdentity
+        ? {
+            identity: localSigningIdentity,
+            type: "development",
+            forceCodeSigning: true,
+            notarize: false,
+          }
+        : {}),
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
