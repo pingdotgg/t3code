@@ -18,7 +18,7 @@ const PROBE_TIMEOUT = Duration.millis(1500);
 const PROBE_RETRY_INTERVAL = Duration.millis(500);
 const MAX_PROBE_RETRIES = 3;
 
-export const isProcessAlive = (pid: number): boolean => {
+const isProcessAlive = (pid: number): boolean => {
   if (pid <= 0) {
     return false;
   }
@@ -39,9 +39,7 @@ const decodePersistedState = Schema.decodeUnknownOption(
   Schema.fromJsonString(PersistedServerRuntimeState),
 );
 
-export const probeServerReady = Effect.fn("desktop.autoAttach.probeServerReady")(function* (
-  origin: URL,
-) {
+const probeServerReady = Effect.fn("desktop.autoAttach.probeServerReady")(function* (origin: URL) {
   const client = yield* HttpClient.HttpClient;
   const probeUrl = new URL(WELL_KNOWN_ENVIRONMENT_PATH, origin).toString();
   const request = HttpClientRequest.get(probeUrl);
