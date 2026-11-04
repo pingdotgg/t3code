@@ -294,6 +294,19 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           />
         ) : null}
         <ListRow
+          icon="arrow.branch"
+          label="Split into logical commits"
+          sublabel="Build a dependency-ordered history using your Source Control settings"
+          disabled={!canWriteSourceControl || !gitActions.canChangeThreadBranch || busy || !isRepo}
+          onPress={() =>
+            navigation.navigate("GitCommit", {
+              environmentId: String(environmentId),
+              threadId: String(threadId),
+              workflow: true,
+            })
+          }
+        />
+        <ListRow
           icon="text.bubble"
           label="Review changes"
           description="Inspect changes, uncommitted edits, and turn diffs"

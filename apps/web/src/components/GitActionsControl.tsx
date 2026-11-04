@@ -119,6 +119,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { CommitFileSelection } from "./CommitFileSelection";
 import { RewriteCommitMessagesDialog } from "./RewriteCommitMessagesDialog";
+import { CommitWorkflowDialog } from "./CommitWorkflowDialog";
 import { RegeneratePullRequestsDialog } from "./RegeneratePullRequestsDialog";
 
 interface GitActionsControlProps {
@@ -143,7 +144,6 @@ interface RunGitActionWithToastInput {
   action: GitStackedAction;
   forceWithLease?: boolean;
   commitMessage?: string;
-  splitCommits?: boolean;
   onConfirmed?: () => void;
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
@@ -983,7 +983,7 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isRefreshingQuickAction, setIsRefreshingQuickAction] = useState(false);
-  const [isSplitCommitDialogOpen, setIsSplitCommitDialogOpen] = useState(false);
+  const [isCommitWorkflowDialogOpen, setIsCommitWorkflowDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1302,7 +1302,6 @@ export default function GitActionsControl({
     action,
     forceWithLease = false,
     commitMessage,
-    splitCommits = false,
     onConfirmed,
     skipDefaultBranchPrompt = false,
     statusOverride,
@@ -1359,7 +1358,6 @@ export default function GitActionsControl({
       action,
       ...(forceWithLease ? { forceWithLease: true } : {}),
       ...(commitMessage ? { commitMessage } : {}),
-      ...(splitCommits ? { splitCommits: true } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
@@ -1586,19 +1584,6 @@ export default function GitActionsControl({
     });
   };
 
-  const runSplitDialogAction = (featureBranch = false) => {
-    if (!isSplitCommitDialogOpen) return;
-    setIsSplitCommitDialogOpen(false);
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
-      action: "commit",
-      splitCommits: true,
-      ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
-      ...(featureBranch ? { featureBranch: true, skipDefaultBranchPrompt: true } : {}),
-    });
-  };
-
   const openChangedFileInEditor = (filePath: string) => {
     if (workingTreeRoot === null) {
       toastManager.add({
@@ -1698,12 +1683,13 @@ export default function GitActionsControl({
         disabled={
           !canWriteSourceControl ||
           isGitActionRunning ||
-          !gitStatusForActions?.hasWorkingTreeChanges
+          !gitStatusForActions?.isRepo ||
+          !activeServerThread
         }
         onClick={() => {
           setExcludedFiles(new Set());
           setIsEditingFiles(false);
-          setIsSplitCommitDialogOpen(true);
+          setIsCommitWorkflowDialogOpen(true);
         }}
       >
         <GitCommitIcon />
@@ -1979,83 +1965,29 @@ export default function GitActionsControl({
         cwd={gitCwd}
         onOpenChange={setIsRewriteCommitMessagesDialogOpen}
       />
-      <Dialog
-        open={isSplitCommitDialogOpen}
-        onOpenChange={(open) => {
-          setIsSplitCommitDialogOpen(open);
-          if (!open) {
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
+      {isCommitWorkflowDialogOpen && activeThreadRef && activeServerThread && gitCwd && (
+        <CommitWorkflowDialog
+          key={successScopeKey + threadRefreshKey}
+          threadRef={activeThreadRef}
+          cwd={gitCwd}
+          hasChanges={gitStatusForActions?.hasWorkingTreeChanges ?? false}
+          isDefaultRef={gitStatusForActions?.isDefaultRef ?? false}
+          branch={gitStatusForActions?.refName ?? null}
+          {...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {})}
+          fileSelection={
+            <CommitFileSelection
+              files={allFiles}
+              excludedFiles={excludedFiles}
+              isEditing={isEditingFiles}
+              onExcludedFilesChange={setExcludedFiles}
+              onEditingChange={setIsEditingFiles}
+              onOpenFile={openChangedFileInEditor}
+              canOpenFile={canOperateThread}
+            />
           }
-        }}
-      >
-        <DialogPopup>
-          <DialogHeader>
-            <DialogTitle>Split into logical commits</DialogTitle>
-            <DialogDescription>
-              T3 Code will use the configured model to group the selected changes into focused
-              commits.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
-                <span className="text-muted-foreground">Branch</span>
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-medium">
-                    {gitStatusForActions?.refName ?? "(detached HEAD)"}
-                  </span>
-                  {isDefaultRef && (
-                    <span className="text-right text-warning">Warning: default refName</span>
-                  )}
-                </span>
-              </div>
-              <CommitFileSelection
-                files={allFiles}
-                excludedFiles={excludedFiles}
-                isEditing={isEditingFiles}
-                onExcludedFilesChange={setExcludedFiles}
-                onEditingChange={setIsEditingFiles}
-                onOpenFile={openChangedFileInEditor}
-                canOpenFile={canOperateThread && workingTreeRoot !== null}
-              />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Separate Git diff hunks can go into different commits. Binary files, renames, mode
-              changes, and nearby edits that share one hunk stay together.
-            </p>
-          </DialogPanel>
-          <DialogFooter variant="bare">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsSplitCommitDialogOpen(false);
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!canWriteSourceControl || noneSelected}
-              onClick={() => runSplitDialogAction(true)}
-            >
-              Commit on new branch
-            </Button>
-            <Button
-              size="sm"
-              disabled={!canWriteSourceControl || noneSelected}
-              onClick={() => runSplitDialogAction()}
-            >
-              Split &amp; commit
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-
+          onClose={() => setIsCommitWorkflowDialogOpen(false)}
+        />
+      )}
       {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
       {showActions ? (
         <PublishRepositoryDialog
