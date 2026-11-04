@@ -192,6 +192,10 @@ vi.mock("react-native-safe-area-context", () => ({
   SafeAreaInsetsContext: createContext({ top: 0, right: 0, bottom: 24, left: 0 }),
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 24, left: 0 }),
 }));
+vi.mock("../../state/preferences", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.initial()) };
+});
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
     layout: { usesSplitView: mocks.split },
@@ -271,3 +275,49 @@ it.each([
     }
   },
 );
+
+it("a linked chat or pull request selects its tab and keeps it after Back, unlike Usage's own drill-in", async () => {
+  using _actEnvironment = setup(false, false);
+  const { WorkspaceTabsProvider, useWorkspaceTabs } =
+    await vi.importActual<typeof import("./WorkspaceTabsContext")>("./WorkspaceTabsContext");
+  function TabProbe() {
+    const workspace = useWorkspaceTabs()!;
+    return createElement(
+      "button",
+      { onClick: () => workspace.dispatch({ type: "select", tab: "usage" }) },
+      workspace.state.selectedTab,
+    );
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const show = (...routes: string[]) =>
+    act(async () =>
+      root.render(
+        createElement(WorkspaceTabsProvider, {
+          routes: routes.map((name) => ({ name, key: `${name}-1` })),
+          children: createElement(TabProbe),
+        }),
+      ),
+    );
+  const selected = () => container.querySelector("button")!.textContent;
+  const selectUsage = () => act(async () => container.querySelector("button")!.click());
+
+  await show("Home");
+  await selectUsage();
+  await show("Home", "Thread");
+  expect(selected()).toBe("threads");
+  await show("Home");
+  expect(selected()).toBe("threads");
+
+  await selectUsage();
+  await show("Home", "PullRequest");
+  expect(selected()).toBe("pullRequests");
+  await selectUsage();
+  await show("Home", "PullRequest");
+  expect(selected()).toBe("usage");
+
+  await show("Home");
+  await show("Home", "SettingsUsageAccount");
+  expect(selected()).toBe("usage");
+});

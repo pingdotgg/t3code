@@ -35,7 +35,7 @@ export function AndroidWorkspaceTabsProvider(props: {
     settingsIndex < 0 ? null : (props.state.routes[settingsIndex + 1]?.name ?? null);
   const root = { key, settingsOpen, settingsRoute, settingsPage };
   return Platform.OS === "android" ? (
-    <WorkspaceTabsProvider>
+    <WorkspaceTabsProvider routes={props.state.routes.slice(0, props.state.index + 1)}>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>
     </WorkspaceTabsProvider>
   ) : (

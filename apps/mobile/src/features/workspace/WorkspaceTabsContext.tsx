@@ -1,6 +1,13 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useLayoutEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+} from "react";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -11,6 +18,7 @@ import {
 import {
   initialWorkspaceTabsState,
   resolveWorkspaceTabOrder,
+  workspaceDetailTab,
   workspaceTabsReducer,
   type WorkspaceSearchTab,
   type WorkspaceTab,
@@ -75,10 +83,22 @@ function createWorkspaceTabsModel() {
 export function WorkspaceTabsProvider(props: {
   readonly children: ReactNode;
   readonly settingsOpen?: boolean;
+  /** The root stack's routes up to the focused one. */
+  readonly routes?: readonly { readonly name: string; readonly key: string }[];
 }) {
   const registry = use(RegistryContext);
   const [model] = useState(createWorkspaceTabsModel);
   const state = useAtomValue(model.resolved);
+  const detailKey = props.routes?.[1]?.key;
+  const detailTab = workspaceDetailTab(props.routes ?? []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Links select a page in the router, past the row handler that selects its tab; this keeps the tab in step before paint.
+  useLayoutEffect(() => {
+    if (detailKey === undefined || !detailTab) return;
+    registry.set(
+      model.stored,
+      workspaceTabsReducer(registry.get(model.resolved), { type: "select", tab: detailTab }),
+    );
+  }, [detailKey, detailTab, model, registry]);
   const context = {
     state,
     dispatch: (action: WorkspaceTabsAction) =>
