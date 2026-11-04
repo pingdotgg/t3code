@@ -86,6 +86,25 @@ const decodeEnvelope = Schema.decodeUnknownOption(
   ),
 );
 
+// The bundled schema drops retryAfterMs from a failure, so read it from the raw frame.
+const decodeRetryAfter = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        error: Schema.Struct({ retryAfterMs: Schema.optional(Schema.Int) }),
+      }),
+    }),
+  ),
+);
+
+const withRetryAfter = (event: OpenCodeEvent, frame: string): OpenCodeEvent => {
+  if (event.type !== "session.execution.failed") return event;
+  const retryAfterMs = Option.getOrUndefined(decodeRetryAfter(frame))?.data.error.retryAfterMs;
+  if (retryAfterMs === undefined) return event;
+  const error = { ...event.data.error, retryAfterMs };
+  return { ...event, data: { ...event.data, error } };
+};
+
 // Rejected stream frames can be frequent when the server introduces new event types.
 const undecodable = Effect.fnUntraced(function* (data: string) {
   const envelope = decodeEnvelope(data);
@@ -130,7 +149,9 @@ const readEvents = HttpClient.get("/api/event", {
       Stream.filterMapEffect((frame) => {
         const decoded = decodeEvent(frame.data);
         return Result.isSuccess(decoded)
-          ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
+          ? Effect.succeed(
+              Result.succeed<OpenCode2StreamEvent>(withRetryAfter(decoded.success, frame.data)),
+            )
           : undecodable(frame.data);
       }),
     ),
