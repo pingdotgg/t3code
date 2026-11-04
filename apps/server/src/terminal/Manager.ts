@@ -527,9 +527,9 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped.
+  const command = trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
+  return command || null;
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
