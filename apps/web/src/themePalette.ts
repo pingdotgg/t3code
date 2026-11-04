@@ -1601,13 +1601,26 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 const SIDEBAR_SELECTION_FOREGROUND_VARIABLE = "--app-theme-sidebar-row-selected-foreground";
 
 function applySidebarSelectionForeground(root: HTMLElement, colors: ThemeColors): void {
-  const selection = themeColorToHex(colors.sidebarRowSelected);
-  const isHighlight =
-    selection?.length === 7 && selection === themeColorToHex(colors.accentSurface);
-  root.style.setProperty(
-    SIDEBAR_SELECTION_FOREGROUND_VARIABLE,
-    isHighlight ? "var(--contrast-accent-foreground)" : "var(--contrast-sidebar-foreground)",
-  );
+  const selection = parseThemeColor(colors.sidebarRowSelected);
+  let foreground = "var(--contrast-sidebar-foreground)";
+  if (selection?.alpha === 1) {
+    const surface = themeOklchToRgb(selection.color, false);
+    const contrastOnSelection = (value: string) => {
+      const color = parseThemeColor(value);
+      return color
+        ? themeContrastRatio(
+            mixThemeRgbColors(surface, themeOklchToRgb(color.color, false), color.alpha),
+            surface,
+          )
+        : 0;
+    };
+    if (contrastOnSelection(colors.accentSurfaceForeground) >= 4.5) {
+      foreground = "var(--contrast-accent-foreground)";
+    } else if (contrastOnSelection(colors.sidebarForeground) < 4.5) {
+      foreground = themeRgbToThemeColor(readableThemeForeground(surface));
+    }
+  }
+  root.style.setProperty(SIDEBAR_SELECTION_FOREGROUND_VARIABLE, foreground);
 }
 
 export const THEME_PREVIEW_ID = "__preview";

@@ -557,11 +557,14 @@ describe("theme files", () => {
 
 describe("sidebar selection foreground", () => {
   it.each([
-    ["#88c0d0", "--contrast-accent-foreground"],
-    ["rgb(136 192 208)", "--contrast-accent-foreground"],
-    ["#2e3440", "--contrast-sidebar-foreground"],
-    ["#88c0d033", "--contrast-sidebar-foreground"],
-  ])("pairs selection %s with its own surface", (selection, foreground) => {
+    ["#88c0d0", "--contrast-accent-foreground", "#88c0d0"],
+    ["rgb(136 192 208)", "--contrast-accent-foreground", "#88c0d0"],
+    ["#2e3440", "--contrast-sidebar-foreground", "#88c0d0"],
+    ["#88c0d033", "--contrast-sidebar-foreground", "#88c0d0"],
+    ["#88c0d0", "--contrast-accent-foreground", "#88c0d1"],
+    ["#88c0d033", "--contrast-sidebar-foreground", "#88c0d033"],
+    ["#808080", null, "#88c0d0"],
+  ] as const)("pairs selection %s with readable text", (selection, foreground, highlight) => {
     const properties = new Map<string, string>();
     vi.stubGlobal("window", { localStorage: { getItem: () => null } });
     vi.stubGlobal("document", {
@@ -579,18 +582,21 @@ describe("sidebar selection foreground", () => {
       applyThemeColorPreview(
         {
           ...getStandardThemeColors("dark"),
-          accentSurface: "#88c0d0",
+          accentSurface: highlight,
           accentSurfaceForeground: "#18232b",
           sidebarRowSelected: selection,
         },
         "dark",
       );
-      expect(properties.get("--app-theme-sidebar-row-selected-foreground")).toBe(
-        `var(${foreground})`,
-      );
+      const selectedForeground = properties.get("--app-theme-sidebar-row-selected-foreground")!;
+      if (foreground === null) {
+        expect(contrastRatio(selectedForeground, selection)).toBeGreaterThanOrEqual(4.5);
+      } else {
+        expect(selectedForeground).toBe(`var(${foreground})`);
+      }
       applyThemePalette("t3-chat", "dark");
       expect(properties.get("--app-theme-sidebar-row-selected-foreground")).toBe(
-        "var(--contrast-sidebar-foreground)",
+        "var(--contrast-accent-foreground)",
       );
       applyThemePalette("system", "dark");
       expect(properties.has("--app-theme-sidebar-row-selected-foreground")).toBe(false);
