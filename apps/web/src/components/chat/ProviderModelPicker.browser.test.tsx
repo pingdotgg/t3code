@@ -217,7 +217,9 @@ it("folds an aggregator's vendors into sections that open on click and stay sear
   await using screen = await render(<Picker />);
   await screen.getByRole("button", { name: "Choose model" }).click();
   const gptPro = page.getByRole("option", { name: /GPT Pro/ });
-  await expect.element(page.getByRole("option", { name: /Claude Sonnet/ })).toBeVisible();
+  await expect
+    .element(page.getByRole("option", { name: /Claude Sonnet.*Anthropic/ }))
+    .toBeVisible();
   await expect.element(gptPro).not.toBeInTheDocument();
 
   await userEvent.keyboard("gpt");
