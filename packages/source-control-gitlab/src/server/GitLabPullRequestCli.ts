@@ -1525,19 +1525,22 @@ export const make = Effect.gen(function* () {
       ) {
         return rest;
       }
-      return graphqlListPage({
+      const graphql = graphqlListPage({
         ...input,
         after: input.cursor?.resumeAfter,
         collected: [],
         states: new Map(),
         cursorAdvance: 0,
         reads: Math.ceil(input.limit / MAX_PAGE_SIZE) + 1,
-      }).pipe(
+      });
+      // GraphQL counts only filtered rows, so its `delivered` is no REST offset once resumed.
+      if (input.cursor !== undefined) return graphql;
+      return graphql.pipe(
         Effect.catchTags({
           GitLabMergeRequestReadError: (error) =>
             Effect.logWarning("GitLab GraphQL merge request list failed; reading REST instead", {
               repository: input.repository,
-              cause: error.cause,
+              reason: error._tag,
             }).pipe(Effect.andThen(rest)),
         }),
       );

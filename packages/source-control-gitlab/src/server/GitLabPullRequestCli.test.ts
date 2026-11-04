@@ -375,7 +375,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads REST for a cursor REST handed out, and when the GraphQL read fails", () =>
+  it.effect("reads REST for a cursor REST handed out, and when a first GraphQL read fails", () =>
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))))
@@ -384,9 +384,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
             output(JSON.stringify({ errors: [{ message: "Field 'search' doesn't exist" }] })),
           ),
         )
-        .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))));
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))))
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ errors: [] }))));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-      const list = (cursor?: { updatedBefore: string; delivered: number }) =>
+      const list = (cursor?: { updatedBefore: string; delivered: number; resumeAfter?: string }) =>
         cli.listMergeRequests({
           cwd: "/w",
           repository: "acme/web",
@@ -400,6 +401,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       yield* list({ updatedBefore: "2026-07-03T00:00:00Z", delivered: 10 });
       const fellBack = yield* list();
+      // A resumed GraphQL read fails instead, since REST would read `delivered` as an offset.
+      const resumed = yield* Effect.result(
+        list({ updatedBefore: "2026-07-03T00:00:00Z", delivered: 10, resumeAfter: "c1" }),
+      );
 
       expect(fellBack.items.map((item) => item.number)).toEqual([1]);
       expect(fellBack).not.toHaveProperty("resumeAfter");
@@ -407,7 +412,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "projects/acme%2Fweb/merge_requests",
         "graphql",
         "projects/acme%2Fweb/merge_requests",
+        "graphql",
       ]);
+      expect(resumed).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "GitLabMergeRequestReadError" },
+      });
     }),
   );
 
