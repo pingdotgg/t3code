@@ -6,7 +6,10 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { resolveShortcutCommand } from "../../keybindings";
-import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestTerms,
+  setMergeRequestTerms,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import {
   buildKeybindingRows,
@@ -29,6 +32,17 @@ describe("KeybindingsSettings.logic", () => {
       setMergeRequestTerms(false);
     }
     expect(commandLabel("pullRequest.copyNumber")).toBe("Pull Request: Copy Number");
+
+    const mergeRequestTerms = changeRequestTerms(true);
+    expect(commandLabel("pullRequest.copyNumber", mergeRequestTerms)).toBe(
+      "Merge Request: Copy Number",
+    );
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([{ command: "pullRequest.copyNumber", key: "mod+shift+c" }]),
+      undefined,
+      mergeRequestTerms,
+    );
+    expect(rows.map((row) => row.label)).toEqual(["Merge Request: Copy Number"]);
   });
 
   it("keeps sibling row identities when a saved binding moves to the end", () => {
