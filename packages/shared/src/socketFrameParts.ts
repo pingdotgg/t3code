@@ -7,7 +7,7 @@ export const SOCKET_FRAME_PARTS_QUERY_PARAM = "frameParts";
 
 // WebSocket messages arrive whole. At 4,000 bytes/s each part takes about
 // 12 seconds, leaving margin before the client's 15-second liveness timeout.
-export const SOCKET_FRAME_PART_BYTES = 48 * 1024;
+const SOCKET_FRAME_PART_BYTES = 48 * 1024;
 
 // No JSON message starts with a record separator. It marks every part but the last.
 const PART_PREFIX = "\u001e";
