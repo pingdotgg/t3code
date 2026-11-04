@@ -17,6 +17,7 @@ const THEME_ROLE_LABELS: Partial<Record<ThemeColorRole, string>> = {
   toolbarControlForeground: msg("Toolbar control text"),
   toolbarControlHover: msg("Toolbar control hover"),
   accent: msg("Accent color"),
+  accentSurfaceForeground: msg("Highlight text"),
   errorForeground: msg("Error text"),
   errorSurface: msg("Error background"),
   warningForeground: msg("Warning text"),
