@@ -14,9 +14,41 @@ const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${H
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
 // Neither part may hold `[`, which keeps the scan linear: no match attempt runs past the next `[`.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n\x60]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"[^"[\n]*"|'[^'[\n]*'|\([^()[\n]*\)))?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"[^"[\n]*"|'[^'[\n]*'|\([^()[\n]*\)))?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
+
+// Pair equal-length backtick runs once, then skip complete spans. Each label is scanned
+// linearly; a rejected label resumes at its unmatched opener so code outside it stays shielded.
+function unmatchedLabelBacktick(label: string): number | undefined {
+  const runs = [...label.matchAll(/`+/g)];
+  const next = new Map<number, number>();
+  const closing: Array<number | undefined> = [];
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const length = runs[index]![0].length;
+    closing[index] = next.get(length);
+    next.set(length, index);
+  }
+  for (let index = 0; index < runs.length;) {
+    const end = closing[index];
+    if (end === undefined) return runs[index]!.index;
+    index = end + 1;
+  }
+  return undefined;
+}
+
+function* threadLinkMatches(markdown: string) {
+  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+    const label = match.groups?.label;
+    const unmatched = label === undefined ? undefined : unmatchedLabelBacktick(label);
+    if (unmatched !== undefined) {
+      pattern.lastIndex = match.index + 1 + unmatched;
+      continue;
+    }
+    yield match;
+  }
+}
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
@@ -152,8 +184,7 @@ export function threadLinkRefs(
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+  for (const match of threadLinkMatches(markdown)) {
     if (match.groups?.title !== undefined) continue;
     const href = match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
@@ -180,15 +211,19 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
-  return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as Partial<
-      Record<"href" | "autolink" | "bare" | "label" | "title", string>
-    >;
-    if (groups.title !== undefined) return source;
+  let result = "";
+  let cursor = 0;
+  for (const match of threadLinkMatches(markdown)) {
+    const groups = match.groups!;
+    if (groups.title !== undefined) continue;
     const href = groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
-  });
+    const replacement = link === null ? undefined : replace(link, groups.label);
+    if (replacement === undefined) continue;
+    result += markdown.slice(cursor, match.index) + replacement;
+    cursor = match.index + match[0].length;
+  }
+  return result + markdown.slice(cursor);
 }
 
 /**

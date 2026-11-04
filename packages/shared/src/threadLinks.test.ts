@@ -178,6 +178,27 @@ describe("thread links", () => {
 });
 
 describe("hosted thread links", () => {
+  it.each(["Fix `ci`", "`foo`", "Use ``a ` b``", "`a` and ``b``"])(
+    "relabels a copied hosted link with balanced code in label %s as one link",
+    (label) => {
+      const markdown = formatHostedThreadLink(ref("one", "same"), label);
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "same")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        "[Title](t3-thread://v2/one/same)",
+      );
+      expect(relabelThreadLinks(markdown, local, () => undefined)).toBe(label);
+    },
+  );
+
+  it("shields a cross-boundary span and still processes the following live link", () => {
+    const shielded = "[before ``](https://example.com) https://app.t3.codes/threads/one/hidden``";
+    const markdown = `${shielded} https://app.t3.codes/threads/one/live`;
+    expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "live")]);
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+      `${shielded} [Title](t3-thread://v2/one/live)`,
+    );
+  });
+
   it("does not consume a code span's opening backtick as an ordinary link label", () => {
     const markdown = "[before `](https://example.com) https://app.t3.codes/threads/one/same`";
     expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
@@ -187,9 +208,11 @@ describe("hosted thread links", () => {
   it.each(['"title"', "'title'", "(title)"])(
     "leaves a link with Markdown title %s intact",
     (title) => {
-      const markdown = `[label](https://app.t3.codes/threads/one/same ${title})`;
-      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
-      expect(threadLinkRefs(markdown, local)).toEqual([]);
+      for (const label of ["label", "label `code`"]) {
+        const markdown = `[${label}](https://app.t3.codes/threads/one/same ${title})`;
+        expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+        expect(threadLinkRefs(markdown, local)).toEqual([]);
+      }
     },
   );
 
