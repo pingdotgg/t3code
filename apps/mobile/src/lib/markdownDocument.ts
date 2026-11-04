@@ -191,10 +191,19 @@ export function markdownHtmlContent(
     anchorMarkdown(tags.map((tag) => tag[0]).filter((tag) => ANCHOR_TAG.test(tag)));
   let result = "";
   let end = 0;
+  // A dropped icon leaves its gap behind; `** Title**` would no longer be bold.
+  let dropSpace = false;
+  const nextText = (text: string) => {
+    if (!text) return text;
+    const trimmed = dropSpace ? text.replace(/^[ \t]/, "") : text;
+    dropSpace = false;
+    return anchors.open > 0 ? escapeLinkLabel(trimmed) : trimmed;
+  };
   for (const match of tags) {
-    const text = content.slice(end, match.index);
-    result += anchors.open > 0 ? escapeLinkLabel(text) : text;
+    result += nextText(content.slice(end, match.index));
     const replacement = htmlTagMarkdown(match[0], anchors, options);
+    if (replacement) dropSpace = false;
+    else if (/^<img\b/i.test(match[0])) dropSpace = /[\s*_[(]/.test(result.at(-1) ?? "\n");
     if (replacement === "[" && bangBefore(result, result.length))
       result = `${result.slice(0, -1)}\\!`;
     result +=
@@ -203,8 +212,24 @@ export function markdownHtmlContent(
         : replacement;
     end = match.index + match[0].length;
   }
-  const text = content.slice(end);
-  return result + (anchors.open > 0 ? escapeLinkLabel(text) : text);
+  return result + nextText(content.slice(end));
+}
+
+const ICON_MAX_SIZE = 24;
+
+function iconSized(tag: string): boolean {
+  return ["width", "height"].some((name) => {
+    const value = attribute(tag, name)?.trim();
+    return (
+      value !== undefined &&
+      /^\d+(?:\.\d+)?(?:px)?$/i.test(value) &&
+      Number.parseFloat(value) <= ICON_MAX_SIZE
+    );
+  });
+}
+
+function markdownText(text: string): string {
+  return text.replace(/[\\`*_[\]<>&|~]/g, "\\$&");
 }
 
 function htmlTagMarkdown(
@@ -222,6 +247,8 @@ function htmlTagMarkdown(
   if (/^<img\b/i.test(tag)) {
     const src = attribute(tag, "src");
     if (!src) return "";
+    // Native draws an image that starts a line as a 200pt block, so icons keep only their text.
+    if (iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
@@ -431,9 +458,39 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const SVG_URL = /\.svg(?:$|[?#])/i;
+
+/**
+ * Native image attachments cannot decode SVG and leave an empty box. Only a standalone image
+ * paragraph outside lists reaches the React image renderer, so every other SVG keeps its alt text.
+ */
+function markdownWithInlineSvgAsText(markdown: string): string {
+  if (!/\.svg/i.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode, inSlotContainer: boolean) => {
+    if (!("children" in node)) return;
+    const standalone = inSlotContainer && node.type === "paragraph" && node.children.length === 1;
+    const hostsSlots = node.type === "root" || (node.type === "blockquote" && inSlotContainer);
+    for (const child of node.children) {
+      if (child.type !== "image") {
+        visit(child, hostsSlots);
+        continue;
+      }
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      if (!standalone && SVG_URL.test(child.url) && start !== undefined && end !== undefined)
+        edits.push({ start, end, content: markdownText(child.alt ?? "") });
+    }
+  };
+  visit(parser.parse(markdown), true);
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  return markdownWithInlineSvgAsText(
+    markdownWithWindowsPathDestinations(markdownWithHtml(markdown)),
+  );
 }
 
 export function parseMarkdownDocument(markdown: string): Root {

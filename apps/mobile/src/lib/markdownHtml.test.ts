@@ -28,6 +28,46 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
+  it("keeps only the text of icon-sized HTML images so bot headings stay compact", () => {
+    expect(
+      markdownWithHtml(
+        '<details>\n<summary><strong><picture><img src="https://example.com/cog.png" width="16" height="16" alt=""></picture> Run configuration</strong></summary>\n\nBody\n\n</details>',
+      ),
+    ).toContain("**Run configuration**");
+    expect(
+      markdownHtmlContent(
+        'Checks: <img src="https://example.com/ok.png" width="14" alt="Passed"> 3 and <img width="900" src="https://example.com/shot.png" alt="Shot">',
+      ),
+    ).toBe("Checks: Passed 3 and ![Shot](<https://example.com/shot.png>)");
+  });
+
+  it("keeps the alt text of SVG images the native renderer would draw as empty boxes", () => {
+    const markdown = [
+      "[![Review →](https://example.com/banner.svg?v=3)](https://example.com)",
+      "",
+      "| Check | Status |",
+      "| --- | --- |",
+      "| Title | ![Passed](https://example.com/passed.svg) |",
+      "",
+      "- ![In list](https://example.com/list.svg)",
+      "",
+      "![Diagram](https://example.com/diagram.svg)",
+    ].join("\n");
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(
+      [
+        "[Review →](https://example.com)",
+        "",
+        "| Check | Status |",
+        "| --- | --- |",
+        "| Title | Passed |",
+        "",
+        "- In list",
+        "",
+        "![Diagram](https://example.com/diagram.svg)",
+      ].join("\n"),
+    );
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
