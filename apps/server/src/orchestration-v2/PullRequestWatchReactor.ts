@@ -508,9 +508,9 @@ export const make = Effect.gen(function* () {
     }
     readFailures.delete(group.key);
     const [detail, activity] = read.value;
-    const headSha = detail.headSha ?? null;
     for (const target of group.targets) {
       const life = lifeOf(target);
+      const headSha = detail.headSha ?? life.headSha;
       const pushed = life.headSha !== null && headSha !== life.headSha;
       lives.set(lifeKey(target), {
         ...life,

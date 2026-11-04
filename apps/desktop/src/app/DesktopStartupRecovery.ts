@@ -33,7 +33,8 @@ export type StartupRecoveryOffer =
   | { readonly _tag: "Update"; readonly version: string }
   | { readonly _tag: "Downloading"; readonly version: string; readonly percent: number | null }
   | { readonly _tag: "Reinstall"; readonly version: string }
-  | { readonly _tag: "Releases" };
+  | { readonly _tag: "Releases" }
+  | { readonly _tag: "ManagedPolicy" };
 
 const STARTUP_RECOVERY_ACTIONS = ["update", "reinstall", "releases", "copy", "quit"] as const;
 type StartupRecoveryAction = (typeof STARTUP_RECOVERY_ACTIONS)[number];
@@ -42,6 +43,7 @@ type StartupRecoveryAction = (typeof STARTUP_RECOVERY_ACTIONS)[number];
 export function resolveStartupRecoveryOffer(
   update: DesktopUpdateState,
   lastStartedVersion: string | null,
+  managedPolicy = false,
 ): StartupRecoveryOffer {
   if (update.status === "downloading" && update.availableVersion !== null) {
     return {
@@ -56,6 +58,8 @@ export function resolveStartupRecoveryOffer(
   if (updateVersion !== null && updateVersion !== update.notAppliedVersion) {
     return { _tag: "Update", version: updateVersion };
   }
+  // A newer release can know a key this one refuses; an older one or the releases page cannot help.
+  if (managedPolicy) return { _tag: "ManagedPolicy" };
   if (update.enabled && (update.status === "idle" || update.status === "checking")) {
     return { _tag: "Checking" };
   }
@@ -98,6 +102,11 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       return {
         text: "Get a different version from the releases page.",
         action: actionLink("releases", "Open releases", true),
+      };
+    case "ManagedPolicy":
+      return {
+        text: "Your organization's managed policy stopped T3 Code from starting. Send the details below to your IT administrator.",
+        action: "",
       };
   }
 }
@@ -172,8 +181,14 @@ export const listen: Effect.Effect<
   const { latest, changes: updateChanges } = yield* updates.subscribe;
   const updateStateRef = yield* Ref.make(latest);
 
-  const offer = Ref.get(updateStateRef).pipe(
-    Effect.map((state) => resolveStartupRecoveryOffer(state, lastStartedVersion)),
+  const offer = Effect.all([Ref.get(updateStateRef), Ref.get(failureRef)]).pipe(
+    Effect.map(([state, failure]) =>
+      resolveStartupRecoveryOffer(
+        state,
+        lastStartedVersion,
+        Option.exists(failure, ({ managedPolicy }) => managedPolicy),
+      ),
+    ),
   );
 
   const render = Effect.gen(function* () {
@@ -333,7 +348,8 @@ export const listen: Effect.Effect<
         }
         if (startup._tag !== "Failing") return;
         if (Option.isSome(yield* Ref.get(failureRef))) return;
-        yield* Ref.set(failureRef, Option.some({ reason: startup.reason, output: startup.output }));
+        const { _tag, ...failure } = startup;
+        yield* Ref.set(failureRef, Option.some(failure));
         // The backend manager already logs each failure's reason.
         yield* logWarning("primary backend failing to start");
         yield* show();

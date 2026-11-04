@@ -71,6 +71,7 @@ import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -886,6 +887,66 @@ describe("CodexAdapterV2 process exit", () => {
       ),
     ),
   );
+
+  it.effect("counts the app-server as a running agent until its session closes", () => {
+    let runningAgents = 0;
+    const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
+      Layer.provide(
+        Layer.mock(PortScanner.PortDiscovery)({
+          trackAgent: () => {
+            runningAgents += 1;
+            return () => {
+              runningAgents -= 1;
+            };
+          },
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+          native: undefined,
+          canonical: undefined,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(999_999_999),
+                exitCode: Effect.never,
+                isRunning: Effect.succeed(true),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.never,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
+      yield* Effect.scoped(
+        factory
+          .open({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            threadId: ThreadId.make("thread-codex-agent"),
+            providerSessionId: ProviderSessionId.make("session-codex-agent"),
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            settings: DEFAULT_CODEX_SETTINGS,
+            environment: {},
+          })
+          .pipe(Effect.tap(() => Effect.sync(() => assert.equal(runningAgents, 1)))),
+      );
+      assert.equal(runningAgents, 0);
+    }).pipe(Effect.provide(factoryLayer));
+  });
 });
 
 describe("CodexAdapterV2 session initialize", () => {
@@ -3243,6 +3304,78 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ),
           );
         }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports a thread another Codex client is writing to as in use", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "thread-open-elsewhere";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-resume-active-writer",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+                    model: CODEX_TEST_MODEL_SELECTION.model,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "active writer",
+                frame: {
+                  id: 3,
+                  error: {
+                    code: -32600,
+                    message: `thread ${nativeThreadId} already has an active writer`,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+
+        const error = yield* Effect.flip(
+          harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          }),
+        );
+
+        assert.equal(error._tag, "ProviderAdapterThreadInUseError");
+        assert.nestedPropertyVal(error, "providerThreadId", harness.providerThread.id);
+        assert.include(error.message, "open in another Codex client");
+        assert.nestedPropertyVal(
+          error,
+          "cause.errorMessage",
+          `thread ${nativeThreadId} already has an active writer`,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -8109,6 +8242,84 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("unarchives an archived Codex source thread before forking it", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "archived-fork-source";
+      const forkThreadId = "archived-fork-target";
+      const forkParams = {
+        threadId: nativeThreadId,
+        lastTurnId: "native-turn-first",
+        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+      };
+      const exchange = (
+        id: number,
+        method: string,
+        params: unknown,
+        reply: { readonly result: unknown } | { readonly error: unknown },
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        { type: "expect_outbound", label: method, frame: { id, method, params } },
+        { type: "emit_inbound", label: method, frame: { id, ...reply } },
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-archived-fork",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "archived-fork-turn",
+            prompt: "unused",
+          }).slice(0, 5),
+          ...exchange(3, "thread/fork", forkParams, {
+            error: {
+              code: -32600,
+              message: `session ${nativeThreadId} is archived. Run \`codex unarchive ${nativeThreadId}\` to unarchive it first.`,
+            },
+          }),
+          ...exchange(
+            4,
+            "thread/unarchive",
+            { threadId: nativeThreadId },
+            { result: codexReplayThreadResult({ nativeThreadId, forkedFromId: null }) },
+          ),
+          ...exchange(5, "thread/fork", forkParams, {
+            result: codexReplayThreadResult({
+              nativeThreadId: forkThreadId,
+              forkedFromId: nativeThreadId,
+            }),
+          }),
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const now = yield* DateTime.now;
+      const firstTurn = codexReplaySourceTurn({
+        id: "provider-turn-first",
+        ordinal: 1,
+        nativeId: "native-turn-first",
+        providerThreadId: harness.providerThread.id,
+        now,
+      });
+
+      const forkedProviderThread = yield* harness.runtime.forkThread({
+        sourceProviderThread: harness.providerThread,
+        sourceProviderTurns: [firstTurn],
+        providerTurnId: firstTurn.id,
+        targetThreadId: ThreadId.make("thread-archived-fork-target"),
+      });
+
+      assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, forkThreadId);
+      assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   describe("native goals", () => {

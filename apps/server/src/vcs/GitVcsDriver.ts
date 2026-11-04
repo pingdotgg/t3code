@@ -1168,6 +1168,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...indexConfig,
               ...durableWrite,
               ...longPaths,
+              // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
+              "-c",
+              "core.safecrlf=false",
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
               // add -A rejects ignored directories even when they contain tracked files.
@@ -1367,14 +1370,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // On Windows the same clean can remove './' and exit 0.
       yield* recreateWorkspace;
 
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      }
+      yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [...longPaths, "reset", "--quiet", "--", "."],
+      });
 
       return true;
     }),
@@ -1428,6 +1428,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",
+          "--submodule=short",
           ...PATCH_RENDER_PREFIX_ARGS,
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
