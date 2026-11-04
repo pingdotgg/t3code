@@ -18,8 +18,10 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { InputGroup, InputGroupInput } from "../ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd } from "../ui/kbd";
+import { Text } from "../ui/text";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -109,31 +111,51 @@ function PendingSecretRequestForm(props: {
       // leaves it alone so the reason can still be copied.
       onClick={(event) => {
         if (!(event.target instanceof Element)) return;
-        if (event.target.closest("input, button, a")) return;
+        if (event.target.closest("input, button, a, [data-slot='tooltip-trigger']")) return;
         if (window.getSelection()?.isCollapsed === false) return;
         document.getElementById(inputId)?.focus();
       }}
     >
-      <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3.5 pb-1.5">
+      <div className="flex min-h-10 min-w-0 items-center gap-2 px-3.5 pb-1.5">
         <KeyRoundIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
-        <label htmlFor={inputId} className="text-label text-foreground">
-          {item.label}
-        </label>
-        {item.reason.trim() ? (
-          <p className="min-w-0 text-body wrap-anywhere text-muted-foreground">{item.reason}</p>
-        ) : null}
-        <p
-          id={privacyId}
-          className="ms-auto flex min-w-0 items-center gap-1 text-meta text-muted-foreground"
-        >
-          <ShieldCheckIcon className="size-3 shrink-0" aria-hidden />
-          {secretRequestPrivacyNote(item)}
-        </p>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <label htmlFor={inputId} className="min-w-0 truncate text-label text-foreground">
+            {item.label}
+          </label>
+          {item.reason.trim() ? (
+            <p className="min-w-0 flex-1 truncate text-body text-muted-foreground">{item.reason}</p>
+          ) : null}
+        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                tabIndex={0}
+                aria-describedby={privacyId}
+                className="ms-auto flex shrink-0 items-center gap-1 whitespace-nowrap text-meta text-muted-foreground"
+              />
+            }
+          >
+            <ShieldCheckIcon className="size-3 shrink-0" aria-hidden />
+            {item.delivery === "file" ? "Private file, 24 hours" : "Hidden from agent"}
+          </TooltipTrigger>
+          <TooltipPopup>{secretRequestPrivacyNote(item)}</TooltipPopup>
+        </Tooltip>
       </div>
+      <span id={privacyId} className="sr-only">
+        {secretRequestPrivacyNote(item)}
+      </span>
       <div className="flex min-w-0 flex-col gap-2 rounded-lg surface-composer p-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <div className="min-w-40 flex-1">
             <InputGroup size="lg">
+              <InputGroupAddon className="max-w-1/2 min-w-0 shrink-0">
+                <div className="min-w-0 border-e border-divider pe-3">
+                  <Text render={<p />} variant="body" tone="muted" mono truncate title={item.label}>
+                    {item.label}
+                  </Text>
+                </div>
+              </InputGroupAddon>
               <InputGroupInput
                 size="lg"
                 id={inputId}

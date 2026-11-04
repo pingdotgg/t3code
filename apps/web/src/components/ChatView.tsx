@@ -3622,7 +3622,8 @@ export default function ChatView(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — docked at the bottom; an empty draft centers its headline above it. */}
+            {/* Input bar — docked at the bottom on the pane's surface, which hides the
+                timeline's end inset under it; an empty draft centers its headline above it. */}
             <div
               {...composerArea}
               ref={(overlay: HTMLDivElement | null) => {

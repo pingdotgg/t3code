@@ -46,6 +46,7 @@ export function BranchPicker({
   getItemType,
   getItemGroup,
   children,
+  renderPopup,
 }: {
   items: string[];
   filteredItems: string[];
@@ -65,6 +66,8 @@ export function BranchPicker({
   getItemType?: ((value: string) => string) | undefined;
   getItemGroup?: ((value: string) => string) | undefined;
   children: ReactNode;
+  /** Compose the existing searchable list into a larger context menu. */
+  renderPopup?: ((content: ReactNode) => ReactNode) | undefined;
 }) {
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
@@ -138,8 +141,115 @@ export function BranchPicker({
     };
   };
 
+  const content = (
+    <>
+      <ComboboxSearchInput
+        variant="inset"
+        placeholder="Search refs..."
+        value={query}
+        onChange={(event) => {
+          highlightedValueRef.current = null;
+          onQueryChange(event.target.value);
+          void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
+          const highlightedValue = highlightedValueRef.current;
+          const selectedValue =
+            highlightedValue !== null && filteredItems.includes(highlightedValue)
+              ? highlightedValue
+              : renderPopup
+                ? filteredItems[0]
+                : undefined;
+          if (selectedValue === undefined && !renderPopup) return;
+          (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+          event.preventDefault();
+          event.stopPropagation();
+          highlightedValueRef.current = null;
+          if (selectedValue !== undefined) onSelectItem(selectedValue);
+        }}
+      />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ComboboxEmpty>No refs found.</ComboboxEmpty>
+        <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
+          <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
+            <LegendList<string>
+              ref={attachBranchList}
+              data={filteredItems}
+              keyExtractor={(item) => item}
+              {...(getItemType ? { getItemType } : {})}
+              renderItem={({ item, index }) => {
+                const group = getItemGroup?.(item);
+                const previous = index > 0 ? getItemGroup?.(filteredItems[index - 1]!) : null;
+                return (
+                  <>
+                    {group && group !== previous ? (
+                      <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
+                        {group}
+                      </div>
+                    ) : null}
+                    {renderItem(item, index)}
+                  </>
+                );
+              }}
+              ItemSeparatorComponent={BranchPickerSeparator}
+              estimatedItemSize={33}
+              drawDistance={336}
+              onLayout={() => {
+                updateBranchListScrollFades();
+                previousBranchListScrollTopRef.current =
+                  branchListScrollElementRef.current?.scrollTop ?? null;
+              }}
+              onScroll={() => {
+                updateBranchListScrollFades();
+                maybeFetchNextBranchPage();
+              }}
+              className={cn(
+                "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain px-0.5 pb-0.5",
+                getVirtualizedScrollFadeClassName({
+                  top: showTopBranchScrollFade,
+                  bottom: showBottomBranchScrollFade,
+                }),
+              )}
+            />
+          </ComboboxListVirtualized>
+        </div>
+        {originControl ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <label
+                  htmlFor={startFromOriginSwitchId}
+                  className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta"
+                >
+                  <Switch
+                    id={startFromOriginSwitchId}
+                    checked={originControl.checked}
+                    size="sm"
+                    aria-label="Start worktree from remote"
+                    onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
+                  />
+                  <span className="min-w-0 flex-1 truncate">Start from remote</span>
+                  <span className="text-caption text-dim-foreground">fetches first</span>
+                </label>
+              }
+            />
+            <TooltipPopup side="top" className="max-w-72 whitespace-normal">
+              Uses the latest commit of the base branch’s tracked remote branch, even if its name
+              differs. Otherwise uses the same-named branch on origin. Uses your local branch if
+              that remote branch is missing.
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
+      </div>
+    </>
+  );
+
   return (
     <Combobox
+      inline={renderPopup !== undefined}
       items={items}
       filteredItems={filteredItems}
       autoHighlight
@@ -159,104 +269,13 @@ export function BranchPicker({
       value={value}
     >
       {children}
-      <ComboboxPopup spacing="relaxed" {...popupProps}>
-        <ComboboxSearchInput
-          variant="inset"
-          placeholder="Search refs..."
-          value={query}
-          onChange={(event) => {
-            onQueryChange(event.target.value);
-            void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
-              return;
-            const highlightedValue = highlightedValueRef.current;
-            if (highlightedValue === null || !filteredItems.includes(highlightedValue)) return;
-            (
-              event as typeof event & { preventBaseUIHandler?: () => void }
-            ).preventBaseUIHandler?.();
-            event.preventDefault();
-            event.stopPropagation();
-            highlightedValueRef.current = null;
-            onSelectItem(highlightedValue);
-          }}
-        />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
-          <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
-            <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
-              <LegendList<string>
-                ref={attachBranchList}
-                data={filteredItems}
-                keyExtractor={(item) => item}
-                {...(getItemType ? { getItemType } : {})}
-                renderItem={({ item, index }) => {
-                  const group = getItemGroup?.(item);
-                  const previous = index > 0 ? getItemGroup?.(filteredItems[index - 1]!) : null;
-                  return (
-                    <>
-                      {group && group !== previous ? (
-                        <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
-                          {group}
-                        </div>
-                      ) : null}
-                      {renderItem(item, index)}
-                    </>
-                  );
-                }}
-                ItemSeparatorComponent={BranchPickerSeparator}
-                estimatedItemSize={33}
-                drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
-                className={cn(
-                  "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain px-0.5 pb-0.5",
-                  getVirtualizedScrollFadeClassName({
-                    top: showTopBranchScrollFade,
-                    bottom: showBottomBranchScrollFade,
-                  }),
-                )}
-              />
-            </ComboboxListVirtualized>
-          </div>
-          {originControl ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <label
-                    htmlFor={startFromOriginSwitchId}
-                    className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta"
-                  >
-                    <Switch
-                      id={startFromOriginSwitchId}
-                      checked={originControl.checked}
-                      size="sm"
-                      aria-label="Start worktree from remote"
-                      onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
-                    />
-                    <span className="min-w-0 flex-1 truncate">Start from remote</span>
-                    <span className="text-caption text-dim-foreground">fetches first</span>
-                  </label>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Uses the latest commit of the base branch’s tracked remote branch, even if its name
-                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
-                that remote branch is missing.
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
-        </div>
-      </ComboboxPopup>
+      {renderPopup ? (
+        renderPopup(content)
+      ) : (
+        <ComboboxPopup spacing="relaxed" {...popupProps}>
+          {content}
+        </ComboboxPopup>
+      )}
     </Combobox>
   );
 }
