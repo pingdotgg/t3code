@@ -550,6 +550,8 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   if (otherActionRequired > 0) {
     return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
   }
-  if (pending > 0) return `${pending} of ${checks.length} running`;
+  if (pending > 0) {
+    return `${checks.length - pending} of ${checks.length} completed`;
+  }
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }

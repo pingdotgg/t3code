@@ -98,4 +98,16 @@ describe("mobile overview check status", () => {
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
   });
+
+  it("counts finished checks toward the total while work remains", () => {
+    expect(
+      pullRequestChecksSummary({
+        checks: [check("success"), check("success"), check("success"), check("pending")],
+      }),
+    ).toMatchObject({
+      title: "Checks running",
+      label: "3 of 4 completed",
+      count: "3 of 4",
+    });
+  });
 });

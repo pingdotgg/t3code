@@ -112,9 +112,9 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
     } as const;
   if (pending)
     return {
-      label: `${pending} pending`,
+      label: `${pr.checks.length - pending} of ${pr.checks.length} completed`,
       title: "Checks running",
-      count: `${pending} pending`,
+      count: `${pr.checks.length - pending} of ${pr.checks.length}`,
       icon: "clock",
       tint: "accent-warning-foreground",
     } as const;

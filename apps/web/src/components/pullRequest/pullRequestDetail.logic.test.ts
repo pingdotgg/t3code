@@ -55,8 +55,11 @@ import {
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
   readableFailure,
+  describePullRequestChecks,
+  formatPullRequestChecksProgressCount,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+import { summarizePullRequestChecks } from "./pullRequestPresentation";
 
 describe("pull request checkout commands", () => {
   it("quotes shell metacharacters in Forgejo repository URLs", () => {
@@ -1192,6 +1195,54 @@ describe("when the source branch can be deleted", () => {
   it("needs both the host capability and the viewer's permission", () => {
     expect(canDeletePullRequestBranch(branchDetail("merged", { deleteBranch: false }))).toBe(false);
     expect(canDeletePullRequestBranch(branchDetail("merged", { allowed: false }))).toBe(false);
+  });
+});
+
+describe("pull request checks progress", () => {
+  const check = (status: PullRequestCheck["status"]): PullRequestCheck => ({
+    name: status,
+    status,
+    description: null,
+    url: null,
+  });
+
+  it("counts finished checks toward the total while work remains", () => {
+    expect(
+      formatPullRequestChecksProgressCount([
+        check("success"),
+        check("success"),
+        check("success"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+      ]),
+    ).toBe("3/8");
+    expect(formatPullRequestChecksProgressCount([check("pending"), check("pending")])).toBe("0/2");
+    expect(formatPullRequestChecksProgressCount([check("success"), check("pending")])).toBe("1/2");
+    expect(formatPullRequestChecksProgressCount([check("success"), check("skipped")])).toBeNull();
+  });
+
+  it("describes progress as completed toward the total, not remaining running", () => {
+    expect(
+      describePullRequestChecks([
+        check("success"),
+        check("success"),
+        check("success"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+        check("pending"),
+      ]),
+    ).toBe("3 of 8 completed");
+    expect(summarizePullRequestChecks([check("success"), check("pending"), check("pending")])).toBe(
+      "1 of 3 completed",
+    );
+    expect(describePullRequestChecks([check("success"), check("pending"), check("failure")])).toBe(
+      "2 of 3 completed · 1 failed",
+    );
   });
 });
 

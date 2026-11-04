@@ -319,6 +319,18 @@ export function classifyPullRequestChecks(
   return "passing";
 }
 
+/** Finished / total while work remains; counts up toward the total as checks settle. */
+export function formatPullRequestChecksProgressCount(
+  checks: ReadonlyArray<PullRequestCheck>,
+): string | null {
+  if (checks.length === 0) return null;
+  const incomplete = checks.filter(
+    (check) => check.status === "pending" || check.status === "action-required",
+  ).length;
+  if (incomplete === 0) return null;
+  return `${checks.length - incomplete}/${checks.length}`;
+}
+
 export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
   const failed = checks.filter(
@@ -327,9 +339,14 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const pending = checks.filter((check) => check.status === "pending").length;
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
+  const incomplete = pending + actionRequired;
   const parts: string[] = [];
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  if (incomplete > 0) {
+    parts.push(`${checks.length - incomplete} of ${checks.length} completed`);
+  }
+  if (actionRequired > 0) {
+    parts.push(`${actionRequired} ${actionRequired === 1 ? "check" : "checks"} awaiting action`);
+  }
   if (failed > 0) {
     parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
   }
