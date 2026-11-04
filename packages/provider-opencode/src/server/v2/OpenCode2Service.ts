@@ -1,6 +1,6 @@
 import { Service } from "@opencode/client/effect/service";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -39,7 +39,10 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     // The configured URL may be another machine's server, which this install must leave alone.
     if ((yield* Service.incumbent({ file, url: input.serverUrl })) === undefined) return;
 
-    const command = yield* resolveSpawnCommand(input.binaryPath, ["serve", "--service"], {
+    // Configured variables below can change PATH, which a bare name would then resolve against.
+    const executable = yield* resolveCommandPath(input.binaryPath, { env: input.environment });
+    if (executable === null) return;
+    const command = yield* resolveSpawnCommand(executable, ["serve", "--service"], {
       env: input.environment,
       extendEnv: true,
       bypassNpmShim: true,
@@ -52,8 +55,8 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     const config = yield* fileSystem
       .readFileString(
         path.join(
-          input.environment.XDG_CONFIG_HOME ?? path.join(home, ".config"),
-          "opencode",
+          input.environment.OPENCODE_CONFIG_DIR ??
+            path.join(input.environment.XDG_CONFIG_HOME ?? path.join(home, ".config"), "opencode"),
           "service.json",
         ),
       )

@@ -1617,6 +1617,7 @@ it.layer(
             "afterUpdate",
             true,
           ]);
+          assert.notInclude(yield* second.takeMaintenanceReads, "afterUpdate");
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(

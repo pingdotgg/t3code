@@ -22,17 +22,21 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fileSystem.makeTempDirectoryScoped();
-      yield* fileSystem.makeDirectory(path.join(home, ".config", "opencode"), { recursive: true });
+      const binDirectory = path.join(home, "bin");
+      yield* fileSystem.makeDirectory(binDirectory);
+      yield* fileSystem.writeFileString(path.join(binDirectory, "opencode"), "");
+      yield* fileSystem.chmod(path.join(binDirectory, "opencode"), 0o755);
+      const environment = { HOME: home, PATH: binDirectory, OPENCODE_CONFIG_DIR: home };
       yield* fileSystem.writeFileString(
-        path.join(home, ".config", "opencode", "service.json"),
-        JSON.stringify({ env: { CONFIGURED: "yes", XDG_STATE_HOME: "/elsewhere" } }),
+        path.join(home, "service.json"),
+        JSON.stringify({ env: { PATH: "/nowhere", XDG_STATE_HOME: "/elsewhere" } }),
       );
       const file = path.join(home, ".local", "state", "opencode", "service.json");
       const run = (binary: string) =>
         replaceOutdatedService({
-          binaryPath: "/bin/opencode",
+          binaryPath: "opencode",
           serverUrl: "http://127.0.0.1:49374",
-          environment: { HOME: home },
+          environment,
         }).pipe(
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtimeWithBinaryVersion(binary)),
         );
@@ -52,8 +56,8 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
       expect(service.ensure).toHaveBeenCalledWith({
         file,
         version: "2.2.5",
-        command: ["/bin/opencode", "serve", "--service"],
-        env: { HOME: home, CONFIGURED: "yes" },
+        command: [path.join(binDirectory, "opencode"), "serve", "--service"],
+        env: { ...environment, PATH: "/nowhere" },
       });
     }).pipe(Effect.scoped),
   );
