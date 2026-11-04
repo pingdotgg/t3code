@@ -190,7 +190,7 @@ export function synchronizeTerminalOutput(
   const selection = cells > 0 && compared ? terminal.getSelection() : "";
   writeTerminalOutputUpdate(terminal, update);
   if (!compared || (cells > 0 && terminal.getSelection() !== selection)) {
-    terminal.clearSelection();
+    terminal.clearSelection({ source: "output" });
   }
   return update.cursor;
 }
@@ -536,7 +536,12 @@ function TerminalSessionViewport({
   const metadataThreadRef = useContext(FileMetadataThreadContext);
   const linkMetadataQuery =
     linkPath !== null && canOpenHostEditor && canReadFilesystem
-      ? getFileMetadataQueryAtom(environmentId, linkPath, cwd, metadataThreadRef)
+      ? getFileMetadataQueryAtom(
+          environmentId,
+          resolvePathLinkTarget(linkPath, cwd),
+          cwd,
+          metadataThreadRef,
+        )
       : null;
   const canActivateTerminalLink = useEffectEvent((text: string) => {
     if (isTerminalUrl(text)) return true;
@@ -552,7 +557,12 @@ function TerminalSessionViewport({
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
     )
       return false;
-    const query = getFileMetadataQueryAtom(environmentId, text, cwd, metadataThreadRef);
+    const query = getFileMetadataQueryAtom(
+      environmentId,
+      resolvePathLinkTarget(text, cwd),
+      cwd,
+      metadataThreadRef,
+    );
     if (!query) return false;
     const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
     return (

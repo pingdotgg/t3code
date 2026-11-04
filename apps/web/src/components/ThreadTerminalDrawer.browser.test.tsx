@@ -108,13 +108,14 @@ vi.mock("../hooks/useSettings", async () => {
 
 function Drawer(props: {
   threadRef: ScopedThreadRef;
+  cwd?: string;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
 }) {
   return (
     <ThreadTerminalDrawer
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
-      cwd="/repo"
+      cwd={props.cwd ?? "/repo"}
       height={240}
       terminalIds={["term-1"]}
       activeTerminalId="term-1"
@@ -188,7 +189,7 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
       AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "directory" }),
     ),
   );
-  await using _screen = await render(
+  await using screen = await render(
     <AppAtomRegistryProvider>
       <Drawer threadRef={threadRef} onCloseTerminal={() => {}} />
     </AppAtomRegistryProvider>,
@@ -196,9 +197,10 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
-  const canActivate = (text: string) => fixture.surfaceOptions[0]!.canActivateLink!(text);
-  const validate = (text: string) => fixture.surfaceOptions[0]!.validateLink!(text);
-  const hover = (text: string | null) => act(() => fixture.surfaceOptions[0]!.onLinkHover!(text));
+  const canActivate = (text: string) => fixture.surfaceOptions.at(-1)!.canActivateLink!(text);
+  const validate = (text: string) => fixture.surfaceOptions.at(-1)!.validateLink!(text);
+  const hover = (text: string | null) =>
+    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text));
 
   expect(canActivate("https://example.com")).toBe(true);
   for (const branch of ["t3/fix-html-image-details", "t3/fix-html-…mage-details"]) {
@@ -228,4 +230,21 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   }
   await hover(null);
   expect(canActivate("/repo/src")).toBe(false);
+  fixture.metadata.set(
+    key("/home/alice/notes.ts"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  await screen.rerender(
+    <AppAtomRegistryProvider>
+      <Drawer threadRef={threadRef} cwd="/home/alice/project" onCloseTerminal={() => {}} />
+    </AppAtomRegistryProvider>,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  expect(await validate("~/notes.ts:5:2")).toBe(true);
+  await hover("~/notes.ts:5:2");
+  expect(canActivate("~/notes.ts:5:2")).toBe(true);
 });

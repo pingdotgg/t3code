@@ -546,6 +546,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     { scenario: "dragged", exists: true },
     { scenario: "keyboard-selected", exists: false },
     { scenario: "selection-cleared", exists: true },
+    { scenario: "output-cleaned", exists: true },
   ])(
     "validates a quick click without waiting for hover: $scenario",
     async ({ scenario, exists }) => {
@@ -584,9 +585,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       if (scenario === "keyboard-selected")
         key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
       if (scenario === "selection-cleared") surface.clearSelection();
+      if (scenario === "output-cleaned") surface.clearSelection({ source: "output" });
       resolveValidation(exists);
       await validation;
-      expect(onLinkActivate).toHaveBeenCalledTimes(scenario === "file" ? 1 : 0);
+      expect(onLinkActivate).toHaveBeenCalledTimes(
+        scenario === "file" || scenario === "output-cleaned" ? 1 : 0,
+      );
       if (scenario === "missing" || scenario === "selection-cleared")
         expect(surface.getSelection()).toBe("");
       if (

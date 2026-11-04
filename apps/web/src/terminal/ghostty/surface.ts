@@ -1044,8 +1044,8 @@ export class GhosttyTerminalSurface {
     };
   }
 
-  clearSelection(): void {
-    this.linkActivationRequestId += 1;
+  clearSelection({ source = "user" }: { source?: "user" | "output" } = {}): void {
+    if (source === "user") this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
