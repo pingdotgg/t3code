@@ -298,7 +298,16 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
+    const nextRank = readRank(next.limits);
+    const previousRank = readRank(previous.limits);
+    const winner =
+      nextRank === previousRank
+        ? fresher
+          ? next
+          : previous
+        : nextRank > previousRank
+          ? next
+          : previous;
     const creditSource = creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
@@ -624,8 +633,10 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
-function isCleanRead(limits: ServerProviderUsageLimits): boolean {
-  return !limits.unavailable && limitsNotice(limits) === null;
+/** Clean read (2) beats a failed probe that still holds streamed windows (1) beats no windows (0). */
+function readRank(limits: ServerProviderUsageLimits): number {
+  if (limitsNotice(limits) !== null) return 0;
+  return limits.unavailable ? 1 : 2;
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
@@ -776,12 +787,11 @@ export function collectProviderUsageLimits(
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
-    const previousUsable = previous ? isCleanRead(previous.usage.limits) : false;
-    const usable = isCleanRead(snapshot.limits);
+    const rank = readRank(snapshot.limits);
     const providerWins =
       !previous ||
-      (usable && !previousUsable) ||
-      (usable === previousUsable &&
+      rank > readRank(previous.usage.limits) ||
+      (rank === readRank(previous.usage.limits) &&
         Date.parse(snapshot.limits.checkedAt) > Date.parse(previous.usage.limits.checkedAt));
     const previousCredit = previous?.credits;
     const credits =
