@@ -123,6 +123,7 @@ function endpointRowClassName(isAvailable: boolean) {
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   credential: string | undefined;
+  defaultShareOpen: boolean;
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
@@ -134,6 +135,7 @@ type PairingLinkListRowProps = {
 const PairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
   credential,
+  defaultShareOpen,
   endpointUrl,
   endpoints,
   defaultEndpointKey,
@@ -144,7 +146,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const nowMs = useNowSecond();
   const expiresAtMs = new Date(pairingLink.expiresAt).getTime();
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
-  const [isQrPanelOpen, setIsQrPanelOpen] = useState(false);
+  const [isQrPanelOpen, setIsQrPanelOpen] = useState(defaultShareOpen);
   const [qrEndpointId, setQrEndpointId] = useState<string | null>(null);
   const qrPanelId = useId();
 
@@ -791,6 +793,7 @@ type PairingClientsListProps = {
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
   createdPairingCredentials: ReadonlyMap<string, string>;
+  sharedPairingLinkId: string | null;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -806,6 +809,7 @@ export const PairingClientsList = memo(function PairingClientsList({
   isLoading,
   pairingLinks,
   createdPairingCredentials,
+  sharedPairingLinkId,
   clientSessions,
   revokingPairingLinkId,
   revokingClientSessionId,
@@ -820,6 +824,7 @@ export const PairingClientsList = memo(function PairingClientsList({
           key={pairingLink.id}
           pairingLink={pairingLink}
           credential={createdPairingCredentials.get(pairingLink.id)}
+          defaultShareOpen={pairingLink.id === sharedPairingLinkId}
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
