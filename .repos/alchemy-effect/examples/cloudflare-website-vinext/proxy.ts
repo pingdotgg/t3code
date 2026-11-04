@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  timezoneFromRequest,
-  visitorTimezoneHeader,
-} from "./src/VisitorTimezone.ts";
+import { timezoneFromRequest, visitorTimezoneHeader } from "./src/VisitorTimezone.ts";
 
 /**
  * Next.js 16 / vinext `proxy.ts` (the `middleware.ts` file convention
