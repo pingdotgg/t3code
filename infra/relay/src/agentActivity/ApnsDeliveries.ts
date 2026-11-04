@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Mac from "effect/crypto/Mac";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -31,7 +32,6 @@ import {
   type ApnsLiveActivityAlert,
   type ApnsNotificationPayload,
   SignedApnsDeliveryJob,
-  isApnsDeliveryJobVerificationError,
   verifySignedApnsDeliveryJob,
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
@@ -514,6 +514,7 @@ const make = Effect.gen(function* () {
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const mac = yield* Mac.Mac;
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
 
@@ -938,14 +939,11 @@ const make = Effect.gen(function* () {
       ),
     );
     const now = yield* DateTime.now;
-    const payload = verifySignedApnsDeliveryJob({
+    const payload = yield* verifySignedApnsDeliveryJob({
       secret: config.apnsDeliveryJobSigningSecret,
       job: signedJob,
       nowMs: now.epochMilliseconds,
-    });
-    if (isApnsDeliveryJobVerificationError(payload)) {
-      return yield* payload;
-    }
+    }).pipe(Effect.provideService(Mac.Mac, mac));
     // APNs accepts whole seconds; rounding down cannot extend the signed job's lifetime.
     const expiresAtEpochSeconds = Math.floor(
       DateTime.toEpochMillis(DateTime.makeUnsafe(payload.expiresAt)) / 1_000,
