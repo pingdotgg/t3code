@@ -683,8 +683,7 @@ export default function DiffPanel({
     filePath: resolveFileDiffPath(fileDiff),
     fileKey,
     fileVersion,
-    collapsed:
-      isDiffFileCollapsed(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
+    collapsed: isDiffFileCollapsed(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
   }));
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
@@ -764,9 +763,12 @@ export default function DiffPanel({
     if (lazySource && file) requestFile(resolveFileDiffPath(file.fileDiff));
     const pending = file?.fileDiff.cacheKey?.endsWith(":pending") === true;
     updateDiffFoldState((current) => {
-      const effective = resolveDiffFileFoldOverride(current.foldOverride, settings.diffFilesCollapsed);
+      const effective = resolveDiffFileFoldOverride(
+        current.foldOverride,
+        settings.diffFilesCollapsed,
+      );
       if (pending && !isDiffFileFoldCollapsed(fileKey, effective, current.toggledFileKeys)) {
-        return current;
+        return { ...current };
       }
       return {
         ...current,

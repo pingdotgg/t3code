@@ -262,6 +262,15 @@ it.each([false, true])(
     const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    state.diffFilesCollapsed = !collapsed;
+    await screen.rerender(
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </div>
+      </RegistryContext.Provider>,
+    );
+    await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(loadedToggle);
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
