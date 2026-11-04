@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -117,7 +118,52 @@ const layerConcurrentCreateSecretStore = () =>
     Layer.provideMerge(layerConcurrentReadMissFileSystem),
   );
 
+// The watch never fires, so every read after the first comes from memory or a local write.
+const layerCountingSecretStore = (reads: Ref.Ref<number>) =>
+  ServerSecretStore.layer.pipe(
+    Layer.provide(layerServerConfig()),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...fileSystem,
+            watch: () => Stream.never,
+            readFile: (path) =>
+              Ref.update(reads, (count) => count + 1).pipe(
+                Effect.andThen(fileSystem.readFile(path)),
+              ),
+          } satisfies FileSystem.FileSystem;
+        }),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
+
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
+  it.effect("serves repeat reads from memory and still sees its own writes", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const read = secretStore
+          .get("relay-url")
+          .pipe(Effect.map(Option.map((bytes) => Array.from(bytes))));
+
+        assert.deepEqual(yield* read, Option.none());
+        yield* secretStore.set("relay-url", Uint8Array.from([1]));
+        assert.deepEqual(yield* read, Option.some([1]));
+        assert.deepEqual(yield* read, Option.some([1]));
+        assert.equal(yield* Ref.get(reads), 2);
+
+        yield* secretStore.remove("relay-url");
+        assert.deepEqual(yield* read, Option.none());
+        assert.equal(yield* Ref.get(reads), 3);
+      }).pipe(Effect.provide(layerCountingSecretStore(reads)));
+    }),
+  );
+
   it.effect("reuses an existing secret instead of regenerating it", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;

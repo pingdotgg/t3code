@@ -12,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -21,6 +22,10 @@ const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_SUCCESS_TTL = Duration.minutes(1);
 // Frequent shell reads scan ~20 files per project; icons change rarely, so cache longer than identities.
 const DEFAULT_FAVICON_TTL = Duration.minutes(15);
+// Short enough that a folder filled by a clone outside T3 shows its icon soon.
+const DEFAULT_FAVICON_MISS_TTL = Duration.minutes(1);
+// Roots deleted from disk to save space stay missing for days; don't re-probe them every few seconds.
+const DEFAULT_MISSING_ROOT_TTL = Duration.seconds(30);
 const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
@@ -87,6 +92,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 ) {
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
   const cacheCapacity = Math.max(1, options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY);
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
@@ -107,7 +113,17 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       capacity: cacheCapacity,
       timeToLive: Exit.match({
         onFailure: () => DEFAULT_FAILURE_TTL,
-        onSuccess: (result) => (Exit.isSuccess(result) ? DEFAULT_FAVICON_TTL : DEFAULT_FAILURE_TTL),
+        onSuccess: (result) =>
+          Exit.isSuccess(result)
+            ? result.value === null
+              ? DEFAULT_FAVICON_MISS_TTL
+              : DEFAULT_FAVICON_TTL
+            : Option.exists(
+                  Exit.findErrorOption(result),
+                  ProjectFaviconResolver.isMissingWorkspaceRoot,
+                )
+              ? DEFAULT_MISSING_ROOT_TTL
+              : DEFAULT_FAILURE_TTL,
       }),
     },
   );
@@ -286,6 +302,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
             Cache.invalidate(faviconCache, workspaceRoot),
             // The resolver keeps its own misses, which would outlive a clone filling the folder.
             faviconResolver.invalidate(workspaceRoot),
+            ioGate.forget(workspaceRoot),
           ],
           { concurrency: "unbounded", discard: true },
         ),

@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -11,6 +10,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
@@ -149,6 +149,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
+  const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
@@ -180,7 +181,13 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(candidate)) {
         continue;
       }
-      const stats = yield* optionOnNotFound(fileSystem.stat(candidate.value.absolutePath)).pipe(
+      const stats = yield* optionOnNotFound(
+        ioGate.run(
+          projectCwd,
+          candidate.value.absolutePath,
+          fileSystem.stat(candidate.value.absolutePath),
+        ),
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new ProjectFaviconResolutionError({
@@ -212,18 +219,21 @@ export const make = Effect.gen(function* () {
         absolutePath: appsDirectory,
         cause,
       });
-    const appsStats = yield* optionOnNotFound(fileSystem.stat(appsDirectory)).pipe(
-      Effect.mapError(toError),
-    );
+    const appsStats = yield* optionOnNotFound(
+      ioGate.run(projectCwd, appsDirectory, fileSystem.stat(appsDirectory)),
+    ).pipe(Effect.mapError(toError));
     if (Option.isNone(appsStats) || appsStats.value.type !== "Directory") {
       return [];
     }
-    const entries = yield* fileSystem.readDirectory(appsDirectory).pipe(Effect.mapError(toError));
+    const entries = yield* ioGate
+      .run(projectCwd, appsDirectory, fileSystem.readDirectory(appsDirectory))
+      .pipe(Effect.mapError(toError));
     const apps: Array<string> = [];
     for (const entry of entries.filter((name) => !name.startsWith(".")).toSorted()) {
       if (apps.length === MAX_MONOREPO_APPS) break;
+      const entryPath = path.join(appsDirectory, entry);
       const entryStats = yield* optionOnNotFound(
-        fileSystem.stat(path.join(appsDirectory, entry)),
+        ioGate.run(projectCwd, entryPath, fileSystem.stat(entryPath)),
       ).pipe(Effect.mapError(toError));
       if (Option.isSome(entryStats) && entryStats.value.type === "Directory") {
         apps.push(entry);
@@ -252,7 +262,13 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
+    const source = yield* optionOnNotFound(
+      ioGate.run(
+        projectCwd,
+        sourcePath.absolutePath,
+        fileSystem.readFileString(sourcePath.absolutePath),
+      ),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -274,27 +290,26 @@ export const make = Effect.gen(function* () {
     return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
   });
 
-  // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
-  // A failure surfaces only if no earlier probe found a file; scope exit interrupts remaining probes.
+  // In order, stopping at the first hit: WorkspaceIoGate runs one call per root anyway, and a
+  // probe that never starts cannot hang on a folder that stopped answering.
   const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
     items: ReadonlyArray<A>,
     probe: (item: A) => Effect.Effect<string | null, ProjectFaviconResolutionError>,
   ) {
-    const fibers = yield* Effect.forEach(items, (item) => Effect.forkScoped(probe(item)));
-    for (const fiber of fibers) {
-      const found = yield* Fiber.join(fiber);
+    for (const item of items) {
+      const found = yield* probe(item);
       if (found) {
         return found;
       }
     }
     return null;
-  }, Effect.scoped);
+  });
 
   const resolvePathUncached = Effect.fn("ProjectFaviconResolver.resolvePathUncached")(function* (
     cwd: string,
     faviconPath?: string,
   ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
-    const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
+    const projectCwd = yield* ioGate.run(cwd, cwd, workspacePaths.normalizeWorkspaceRoot(cwd)).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -370,7 +385,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
+    const stats = yield* optionOnNotFound(ioGate.run(cwd, cached, fileSystem.stat(cached))).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({

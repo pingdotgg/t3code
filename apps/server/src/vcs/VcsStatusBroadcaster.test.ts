@@ -27,6 +27,7 @@ import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -81,6 +82,14 @@ function layerTestFor(state: {
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
 }) {
   return VcsStatusBroadcaster.layer.pipe(
+    // These tests pin down refresh coalescing, which needs callers to reach the lock in order.
+    Layer.provideMerge(
+      Layer.succeed(WorkspaceIoGate.WorkspaceIoGate, {
+        run: (_root, _path, effect) => effect,
+        forget: () => Effect.void,
+        trackedRoots: () => 0,
+      }),
+    ),
     Layer.provideMerge(
       state.fileSystem
         ? Layer.succeed(FileSystem.FileSystem, state.fileSystem)

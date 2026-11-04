@@ -2,11 +2,15 @@
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
@@ -193,6 +197,78 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         expect(yield* resolver.resolve(gitDir)).toBeNull();
       }).pipe(Effect.provide(ProcessRunner.layer)),
+  );
+
+  it.effect("resolves a worktree re-created at a reclaimed path instead of a cached miss", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repo = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-worktree-",
+      });
+      const worktree = path.join(repo, "worktrees", "feature");
+      yield* git(repo, ["init"]);
+      yield* git(repo, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      yield* git(repo, [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+
+      yield* git(repo, ["worktree", "add", "-b", "first", worktree]);
+      expect((yield* resolver.resolve(worktree))?.canonicalKey).toBe("github.com/t3tools/t3code");
+
+      yield* git(repo, ["worktree", "remove", worktree]);
+      expect(yield* resolver.resolve(worktree)).toBeNull();
+
+      yield* git(repo, ["worktree", "add", "-b", "second", worktree]);
+      expect((yield* resolver.resolve(worktree))?.canonicalKey).toBe("github.com/t3tools/t3code");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keeps resolving other folders while one stops answering", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const hungRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-hung-",
+      });
+      const healthyRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-healthy-",
+      });
+      yield* git(healthyRoot, ["init"]);
+      yield* git(healthyRoot, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      const hungStatStarted = yield* Deferred.make<void>();
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) =>
+              filePath === hungRoot
+                ? Deferred.succeed(hungStatStarted, undefined).pipe(Effect.andThen(Effect.never))
+                : fileSystem.stat(filePath),
+          }),
+        ),
+        Effect.provideService(
+          WorkspaceIoGate.WorkspaceIoGate,
+          WorkspaceIoGate.makeWorkspaceIoGate({ maxInFlight: 2, timeout: "10 seconds" }),
+        ),
+      );
+
+      const hung = yield* resolver.resolve(hungRoot).pipe(Effect.forkChild);
+      yield* Deferred.await(hungStatStarted);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(hung)).toBeNull();
+      expect((yield* resolver.resolve(healthyRoot))?.canonicalKey).toBe(
+        "github.com/t3tools/t3code",
+      );
+    }).pipe(Effect.provide([ProcessRunner.layer, TestClock.layer()])),
   );
 
   it.effect("ignores local-path remotes such as GitButler's gb-local", () =>
