@@ -5,18 +5,12 @@ describe("utils", () => {
   describe("sanitizePath", () => {
     it("strips query strings", () => {
       expect(sanitizePath("/tmp/example.wasm?init")).toBe("/tmp/example.wasm");
-      expect(sanitizePath("/tmp/example.wasm?module")).toBe(
-        "/tmp/example.wasm",
-      );
+      expect(sanitizePath("/tmp/example.wasm?module")).toBe("/tmp/example.wasm");
     });
 
     it("strips hashes", () => {
-      expect(sanitizePath("/tmp/example.wasm#fragment")).toBe(
-        "/tmp/example.wasm",
-      );
-      expect(sanitizePath("/tmp/example.wasm?init#fragment")).toBe(
-        "/tmp/example.wasm",
-      );
+      expect(sanitizePath("/tmp/example.wasm#fragment")).toBe("/tmp/example.wasm");
+      expect(sanitizePath("/tmp/example.wasm?init#fragment")).toBe("/tmp/example.wasm");
     });
   });
 

@@ -10,9 +10,5 @@ export interface RemoteWorkerResult {
   readonly headers: Record<string, string>;
 }
 
-type Metadata = NonNullable<
-  NonNullable<workers.CreateScriptEdgePreviewRequest["metadata"]>
->;
-export type RemoteBinding = NonNullable<
-  NonNullable<Metadata["bindings"]>
->[number];
+type Metadata = NonNullable<NonNullable<workers.CreateScriptEdgePreviewRequest["metadata"]>>;
+export type RemoteBinding = NonNullable<NonNullable<Metadata["bindings"]>>[number];
