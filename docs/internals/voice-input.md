@@ -18,3 +18,16 @@ fires would race that work. The [transcription contract](../../packages/client-r
 therefore requires implementations to settle only after their work has stopped;
 the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
 cancellation between native calls and discards late results.
+
+## Live transcription on iOS
+
+When the [live module](../../apps/mobile/modules/t3-voice-transcription/ios/T3VoiceInputModule.swift)
+is available, it owns the microphone and streams complete hypotheses into the
+captured selection, each replacing the last. Any other change to the draft stops
+dictation and keeps what was written. Cancel restores the earlier draft.
+
+One `SpeechAnalyzer` feeds the same audio to `DictationTranscriber`, which gives
+fast provisional words, and the newer `SpeechTranscriber`, which corrects them.
+The corrected text replaces the matching prefix and the fast tail follows it.
+Finish keeps only the newer model's transcript. If live capture can't start
+before producing text, the controller falls back to record-then-transcribe.

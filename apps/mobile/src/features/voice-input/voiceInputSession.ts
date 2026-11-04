@@ -27,6 +27,8 @@ export type VoiceInputSnapshot = {
   readonly ownerKey: string | null;
   readonly label: string | null;
   readonly elapsedSeconds: number;
+  /** Words recognized so far by live capture, which may still be corrected. */
+  readonly liveTranscript: string | null;
   readonly focusedOwners: ReadonlySet<string>;
 };
 
@@ -90,6 +92,7 @@ export class VoiceInputSession {
     ownerKey: null,
     label: null,
     elapsedSeconds: 0,
+    liveTranscript: null,
     focusedOwners: new Set(),
   };
   private readonly listeners = new Set<() => void>();
@@ -104,6 +107,12 @@ export class VoiceInputSession {
       onStateChange: (state) => this.handleStateChange(state),
       readDraft: () => this.target?.readDraft() ?? null,
       commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
+      onLiveTranscript: (transcript) => {
+        const liveTranscript = transcript.trim() || null;
+        if (liveTranscript !== this.snapshot.liveTranscript) {
+          this.publish({ ...this.snapshot, liveTranscript });
+        }
+      },
     });
   }
 
@@ -160,6 +169,7 @@ export class VoiceInputSession {
     }
     const previousPhase = this.snapshot.state.phase;
     let elapsedSeconds = this.snapshot.elapsedSeconds;
+    const liveTranscript = voiceInputBlocksSubmission(state) ? this.snapshot.liveTranscript : null;
     if (state.phase !== previousPhase) {
       if (previousPhase === "recording") this.stopRecordingActivity();
       if (capturesAudio(state.phase)) {
@@ -173,6 +183,7 @@ export class VoiceInputSession {
       ownerKey: this.ownerKey,
       label: this.label,
       elapsedSeconds,
+      liveTranscript: state.phase === "preparing" ? null : liveTranscript,
     });
     if (state.phase === "recording" && previousPhase !== "recording") {
       this.startRecordingActivity();
@@ -194,7 +205,7 @@ export class VoiceInputSession {
 
   private sampleRecording(): void {
     if (this.controller.currentState.phase !== "recording") return;
-    const sample = this.dependencies.sampleRecording();
+    const sample = this.controller.streamingStatus ?? this.dependencies.sampleRecording();
     if (!sample) return;
 
     const level = normalizeVoiceInputDecibels(sample.metering);

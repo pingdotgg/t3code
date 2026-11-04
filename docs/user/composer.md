@@ -184,6 +184,12 @@ later, use the composer's microphone to record, then confirm to transcribe. Text
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
+On iPhone, your words appear while you speak and may be corrected as recognition
+continues. Confirm applies the final corrections. Cancel restores the draft you
+had before dictating; an interruption keeps the words already shown. If live
+dictation can't start, the iPhone records and transcribes after you confirm, as
+on Android.
+
 Voice input uses on-device speech transcription: Apple's on iOS, and compatible
 Google speech services on Android. When it is unavailable for the device or its
 language, the composer has no microphone button and **Settings → Microphone** says
@@ -208,8 +214,9 @@ microphone on iOS. Swipe a device left to forget it. Android may use another inp
 when the preferred microphone cannot be routed. Devices with the same name may share
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+Transcription runs on your device. Live dictation on iPhone saves no audio. When
+voice input records audio instead, T3 Code deletes it after transcription or
+cancellation. Only the message text is sent when you submit.
 
 ## Queued messages
 
