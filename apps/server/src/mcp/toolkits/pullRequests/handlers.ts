@@ -76,7 +76,23 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   if (input.url !== undefined) {
     const parsed = sourceControlDefinitions.parseChangeRequestUrl(input.url)?.link;
     if (parsed === undefined) {
-      return yield* new PullRequestUrlInvalidError({});
+      const url = URL.parse(input.url);
+      if (
+        url === null ||
+        (url.protocol !== "https:" && url.protocol !== "http:") ||
+        input.repository === undefined ||
+        input.number === undefined
+      ) {
+        return yield* new PullRequestUrlInvalidError({});
+      }
+      return {
+        ...normalizeThreadPullRequestKey({
+          host: url.host,
+          repository: input.repository,
+          number: input.number,
+        }),
+        url: input.url,
+      } satisfies ResolvedTarget;
     }
     return {
       ...normalizeThreadPullRequestKey(parsed),
