@@ -1,5 +1,6 @@
 package expo.modules.t3composereditor
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -16,6 +17,7 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -39,7 +41,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   // React Native ignores the editor's requestLayout(), which makes TextView defer caret scrolls.
   override val shouldUseAndroidLayout = true
 
-  private val editor = SelectionAwareEditText(context)
+  private val editor = SelectionAwareEditText(context) { appContext.currentActivity }
   private val defaultHighlightColor = editor.highlightColor
   private val defaultSelectionColor = context.resolveThemeColor(
     android.R.attr.colorAccent,
@@ -574,7 +576,10 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
   emptyList()
 }
 
-internal class SelectionAwareEditText(context: Context) : EditText(context) {
+internal class SelectionAwareEditText(
+  context: Context,
+  private val currentActivity: () -> Activity? = { context as? Activity }
+) : EditText(context) {
   var readOnly = false
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
@@ -669,6 +674,39 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     selectionListener?.invoke(selStart, selEnd)
   }
 
+  override fun onDragEvent(event: DragEvent): Boolean = when {
+    readOnly || !isEnabled -> false
+    event.action == DragEvent.ACTION_DROP && event.clipDescription?.hasMimeType(
+      "image/*"
+    ) == true ->
+      dropImages(event)
+    else -> super.onDragEvent(event)
+  }
+
+  private fun dropImages(event: DragEvent): Boolean {
+    val clip = event.clipData
+    val activity = currentActivity()
+    val listener = pasteImagesListener
+    if (clip == null || activity == null || listener == null) return false
+    val imageUris = try {
+      // Keep the activity-scoped grant while JavaScript asynchronously reads the dropped images.
+      activity.requestDragAndDropPermissions(event)
+      (0 until clip.itemCount).mapNotNull { index ->
+        clip.getItemAt(index).uri?.takeIf { uri ->
+          context.contentResolver.getType(uri)?.startsWith("image/") == true
+        }?.toString()
+      }
+    } catch (_: SecurityException) {
+      emptyList()
+    }
+    return if (imageUris.size == clip.itemCount) {
+      listener(imageUris)
+      true
+    } else {
+      false
+    }
+  }
+
   override fun onTextContextMenuItem(id: Int): Boolean {
     val pasting = id == android.R.id.paste || id == android.R.id.pasteAsPlainText
     if (readOnly && (id == android.R.id.cut || pasting)) {
@@ -697,11 +735,24 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
 
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
-    if (payload["html"]?.contains("data-t3-context-fragment=") == true) {
-      pasteContextListener?.invoke(payload)
-      return true
+    return when {
+      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      pasteImagesOrInterceptedText() -> true
+      isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
+        pasteContext(payload)
+      else -> false
     }
-    return pasteImagesOrInterceptedText()
+  }
+
+  // read() sees only the first item; native paste keeps every item of a longer clip.
+  private fun isSingleItemClip(): Boolean {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    return clipboard?.primaryClip?.itemCount == 1
+  }
+
+  private fun pasteContext(payload: Map<String, String>): Boolean {
+    pasteContextListener?.invoke(payload)
+    return true
   }
 
   private fun pasteImagesOrInterceptedText(): Boolean {

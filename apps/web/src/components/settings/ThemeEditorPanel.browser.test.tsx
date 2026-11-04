@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -30,6 +30,19 @@ function dragResizeHandle(panel: HTMLElement, byX: number) {
     }),
   );
   handle.dispatchEvent(new PointerEvent("pointerup", init));
+}
+
+function pointerAt(target: HTMLElement, type: string, xFraction: number) {
+  const rect = target.getBoundingClientRect();
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      button: 0,
+      pointerId: 3,
+      clientX: rect.left + rect.width * xFraction,
+      clientY: rect.top + rect.height / 2,
+    }),
+  );
 }
 
 async function renderPanel() {
@@ -109,5 +122,30 @@ describe("ThemeEditorPanel", () => {
 
     await page.viewport(1280, 900);
     await expect.poll(() => (panel.element() as HTMLElement).style.left).toBe("700px");
+  });
+
+  it("restores the colors from before the picker opened when Escape closes it", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Accent hex value" });
+    const original = (hex.element() as HTMLInputElement).value;
+    await userEvent.click(page.getByRole("button", { name: "Choose Accent color" }));
+    const hue = page.getByRole("slider", { name: "Accent hue" });
+    await expect.element(hue).toBeInTheDocument();
+    const hueSlider = hue.element() as HTMLElement;
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.5);
+      pointerAt(hueSlider, "pointerup", 0.5);
+    });
+    await expect.element(hex).not.toHaveValue(original);
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.25);
+      hueSlider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      // The drag keeps going while the picker animates out.
+      pointerAt(hueSlider, "pointermove", 0.75);
+      pointerAt(hueSlider, "pointerup", 0.75);
+    });
+    expect((hex.element() as HTMLInputElement).value).toBe(original);
   });
 });
