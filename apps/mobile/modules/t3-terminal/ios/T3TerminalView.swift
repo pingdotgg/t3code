@@ -133,8 +133,9 @@ private final class TerminalInputField: UITextField {
     action: #selector(handleHardwareKeyCommand(_:))
   )
 
+  // While an IME composes, arrows, Tab and Escape pick or cancel candidates instead.
   override var keyCommands: [UIKeyCommand]? {
-    Self.hardwareKeyCommands
+    markedTextRange == nil ? Self.hardwareKeyCommands : nil
   }
 
   override func deleteBackward() {
@@ -491,6 +492,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   @objc
   private func handleInputEditingDidBegin() {
+    // A composition abandoned by losing focus must not reach the PTY with the next keystroke.
+    inputField.text = ""
     textInputModeDidChange()
   }
 
