@@ -47,7 +47,13 @@ export function GitActionProgressOverlay(props: {
               : "default"
         }
         busy={progress.phase === "running"}
-        action={progress.prUrl ? { label: "View", onPress: handlePress } : undefined}
+        action={
+          progress.onCancel
+            ? { label: "Cancel", onPress: progress.onCancel }
+            : progress.prUrl
+              ? { label: "View", onPress: handlePress }
+              : undefined
+        }
       />
     </Animated.View>
   );

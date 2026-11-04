@@ -1,4 +1,4 @@
-import { CommandId, type GitStartCommitWorkflowInput } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { gitEnvironment } from "../../../state/git";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -7,7 +7,7 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -17,7 +17,7 @@ import {
 } from "@t3tools/client-runtime/commit-file-tree";
 import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
-import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -77,32 +77,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const [workflowScope, setWorkflowScope] = useState<"working_tree" | "branch">("working_tree");
   const [baseRef, setBaseRef] = useState("");
-  const [startingWorkflow, setStartingWorkflow] = useState(false);
-  const [workflowError, setWorkflowError] = useState<string | null>(null);
-  const [workflowResult, setWorkflowResult] = useState<string | null>(null);
-  const [cancellingWorkflow, setCancellingWorkflow] = useState(false);
-  const workflowRequest = useRef<{ key: string; input: GitStartCommitWorkflowInput } | null>(null);
+  const submittedWorkflow = useRef(false);
   const startWorkflow = useAtomCommand(gitEnvironment.startCommitWorkflow, {
     reportFailure: false,
   });
-  const cancelWorkflow = useAtomCommand(gitEnvironment.cancelCommitWorkflow, {
-    reportFailure: false,
-  });
-  const inFlight = useRef<Parameters<typeof startWorkflow>[0] | null>(null);
-  useEffect(
-    () => () => {
-      const active = inFlight.current;
-      if (active)
-        void cancelWorkflow({
-          environmentId: active.environmentId,
-          input: {
-            commandId: active.input.commandId,
-            cwd: active.input.cwd,
-          },
-        });
-    },
-    [cancelWorkflow],
-  );
   const canStartWorkflow = useAtomValue(
     gitEnvironment.startCommitWorkflow.permissionAtom(selectedThread?.environmentId ?? null),
   );
@@ -125,7 +103,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       !selectedThread ||
       !selectedThreadCwd ||
       !canStartWorkflow ||
-      startingWorkflow ||
+      submittedWorkflow.current ||
       workflowUnavailable ||
       !gitStatus.data?.refName
     )
@@ -143,50 +121,22 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             },
       ...(dialogCommitMessage.trim() ? { instructions: dialogCommitMessage.trim() } : {}),
     };
-    const key = JSON.stringify(payload);
-    if (workflowRequest.current?.key !== key)
-      workflowRequest.current = {
-        key,
-        input: {
-          ...payload,
-          commandId: CommandId.make(uuidv4()),
-        },
-      };
-    setStartingWorkflow(true);
-    setWorkflowError(null);
-    const target = {
+    submittedWorkflow.current = true;
+    const completion = startWorkflow({
       environmentId: selectedThread.environmentId,
-      input: workflowRequest.current.input,
-    };
-    inFlight.current = target;
-    const result = await startWorkflow(target);
-    inFlight.current = null;
-    setStartingWorkflow(false);
+      input: { ...payload, commandId: CommandId.make(uuidv4()) },
+    });
+    navigation.goBack();
+    const result = await completion;
     if (result._tag === "Failure") {
       const cause = squashAtomCommandFailure(result);
-      setWorkflowError(cause instanceof Error ? cause.message : "Could not split commits.");
+      Alert.alert(
+        "Commit splitting failed",
+        cause instanceof Error ? cause.message : "Could not split commits.",
+      );
       return;
     }
-    setWorkflowResult(result.value.summary);
-  };
-
-  const cancelPendingWorkflow = async () => {
-    if (!selectedThread || !workflowRequest.current || cancellingWorkflow) return;
-    setCancellingWorkflow(true);
-    const result = await cancelWorkflow({
-      environmentId: selectedThread.environmentId,
-      input: {
-        commandId: workflowRequest.current.input.commandId,
-        cwd: workflowRequest.current.input.cwd,
-      },
-    });
-    setCancellingWorkflow(false);
-    if (result._tag === "Failure") {
-      const cause = squashAtomCommandFailure(result);
-      setWorkflowError(
-        cause instanceof Error ? cause.message : "Could not cancel commit splitting.",
-      );
-    } else workflowRequest.current = null;
+    Alert.alert("Commit splitting finished", result.value.summary);
   };
 
   const runCommitAction = async (featureBranch: boolean) => {
@@ -242,7 +192,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   key={scope}
                   accessibilityRole="radio"
                   accessibilityState={{ checked: workflowScope === scope }}
-                  disabled={startingWorkflow}
                   onPress={() => setWorkflowScope(scope)}
                   className="min-h-12 flex-row items-center gap-2"
                 >
@@ -263,7 +212,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     autoCapitalize="none"
                     autoCorrect={false}
                     className="min-h-12 rounded-xl bg-subtle px-4"
-                    editable={!startingWorkflow}
                   />
                   {workflowUnavailable && (
                     <Text className="text-warning-foreground text-sm">
@@ -501,30 +449,14 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             )}
           </View>
           {isWorkflow ? (
-            <View className="gap-2">
-              {workflowError && <Text className="text-destructive">{workflowError}</Text>}
-              {workflowResult && <Text>{workflowResult}</Text>}
-              {startingWorkflow && (
-                <Button
-                  label="Cancel splitting"
-                  disabled={cancellingWorkflow}
-                  onPress={() => void cancelPendingWorkflow()}
-                />
-              )}
-              <Button
-                label={
-                  workflowResult
-                    ? "Done"
-                    : startingWorkflow
-                      ? "Splitting…"
-                      : "Split into logical commits"
-                }
-                tone="primary"
-                fullWidth
-                disabled={!canStartWorkflow || workflowUnavailable || startingWorkflow}
-                onPress={() => (workflowResult ? navigation.goBack() : void runWorkflow())}
-              />
-            </View>
+            <Button
+              label="Split into logical commits"
+              icon="arrow.branch"
+              tone="primary"
+              fullWidth
+              disabled={!canStartWorkflow || workflowUnavailable || busy}
+              onPress={() => void runWorkflow()}
+            />
           ) : (
             <View className="gap-2">
               <Button

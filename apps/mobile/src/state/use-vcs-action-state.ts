@@ -7,6 +7,9 @@ import { useSyncExternalStore } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { vcsActionManager } from "./vcs";
+import { gitEnvironment } from "./git";
+import { useAtomCommand } from "./use-atom-command";
+import { CommandId } from "@t3tools/contracts";
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
   return useAtomValue(vcsActionManager.stateAtom(target));
@@ -67,6 +70,7 @@ export interface GitActionProgress {
   readonly label: string | null;
   readonly description: string | null;
   readonly prUrl?: string;
+  readonly onCancel?: () => void;
 }
 
 const subscribeNever = () => () => {};
@@ -85,6 +89,7 @@ function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
 }
 
 export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
+  const cancelSplit = useAtomCommand(gitEnvironment.cancelCommitWorkflow, { reportFailure: true });
   const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
 
@@ -102,6 +107,20 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
       phase: "running",
       label: actionState.currentLabel,
       description,
+      ...(actionState.operation === "split_commits" &&
+      actionState.actionId &&
+      target.environmentId &&
+      target.cwd
+        ? {
+            onCancel: () => {
+              if (!actionState.actionId || !target.environmentId || !target.cwd) return;
+              void cancelSplit({
+                environmentId: target.environmentId,
+                input: { commandId: CommandId.make(actionState.actionId), cwd: target.cwd },
+              });
+            },
+          }
+        : {}),
     };
   }
 
