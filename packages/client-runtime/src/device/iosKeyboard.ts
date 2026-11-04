@@ -85,10 +85,6 @@ export function usKeyStrokes(character: string): UsKeyStroke[] | null {
   ];
 }
 
-function isMac() {
-  return isMacPlatform(globalThis.navigator?.platform ?? "");
-}
-
 export function typedCharacter(event: KeyboardEvent): string | null {
   if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
   return [...event.key].length === 1 ? event.key : null;
@@ -96,7 +92,7 @@ export function typedCharacter(event: KeyboardEvent): string | null {
 
 // Windows and Linux shortcuts such as Ctrl+A use Ctrl where iOS uses Command.
 export function iosModifierKeys() {
-  const mac = isMac();
+  const mac = isMacPlatform(navigator.platform);
   return [
     ["shiftKey", "ShiftLeft"],
     ["ctrlKey", mac ? "ControlLeft" : "MetaLeft"],
