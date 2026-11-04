@@ -5,7 +5,7 @@ sidebar:
   order: 10
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
 
@@ -19,12 +19,7 @@ assets, and prerendered pages are uploaded as `tar.gz` and run on
 Install the build integration in your project; the resource loads its
 `/nuxt` and `/nuxt/node` exports:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure Nuxt
 
@@ -45,7 +40,7 @@ rejects foreign presets. That build target still runs on Bun on Prisma.
 
 ```typescript
 // alchemy.run.ts
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 
 export const Website = Prisma.Website.Nuxt("Website");
 ```
@@ -131,8 +126,7 @@ export const Website = Prisma.Website.Nuxt("Website", {
 });
 ```
 
-`Prisma.CustomDomain` requires the project's current default branch.
-Configure its returned DNS records yourself and check provisioning
+Configure the returned DNS records yourself and check provisioning
 status before cutover. See
 [Custom domains](/prisma/frontend/websites#custom-domains).
 
