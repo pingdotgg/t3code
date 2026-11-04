@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Hex from "effect/encoding/Hex";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -20,6 +21,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_API_SERVER_URL = "https://server.codeium.com";
 const USER_STATUS_PATH = "/exa.seat_management_pb.SeatManagementService/GetUserStatus";
+
+/** The API key in the request body must never follow a redirect off the API server. */
+const NO_REDIRECT: RequestInit = { redirect: "error" };
 
 const tomlString = (contents: string, key: string): string | undefined =>
   new RegExp(`^\\s*${key}\\s*=\\s*"([^"\\n]*)"`, "m").exec(contents)?.[1];
@@ -99,24 +103,26 @@ export const readDevinUsageLimits = Effect.fn("readDevinUsageLimits")(function* 
     if (!apiUrl || apiUrl.protocol !== "https:") return unsupported;
 
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${apiUrl.origin}${USER_STATUS_PATH}`).pipe(
-        HttpClientRequest.setHeaders({
-          "content-type": "application/json",
-          "connect-protocol-version": "1",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({
-          metadata: {
-            apiKey,
-            ideName: "t3code",
-            ideVersion: "0.0.0",
-            extensionName: "t3code",
-            extensionVersion: "0.0.0",
-            locale: "en",
-          },
-        }),
-      ),
-    );
+    const response = yield* client
+      .execute(
+        HttpClientRequest.post(`${apiUrl.origin}${USER_STATUS_PATH}`).pipe(
+          HttpClientRequest.setHeaders({
+            "content-type": "application/json",
+            "connect-protocol-version": "1",
+          }),
+          HttpClientRequest.bodyJsonUnsafe({
+            metadata: {
+              apiKey,
+              ideName: "t3code",
+              ideVersion: "0.0.0",
+              extensionName: "t3code",
+              extensionVersion: "0.0.0",
+              locale: "en",
+            },
+          }),
+        ),
+      )
+      .pipe(Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT));
     if (response.status === 401 || response.status === 403) return unsupported;
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(GetUserStatusResponse)),

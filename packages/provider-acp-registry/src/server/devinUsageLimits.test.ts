@@ -1,10 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -32,12 +34,17 @@ const quotaResponse = (planStatus: Record<string, unknown>) =>
 interface CapturedRequest {
   readonly url: string;
   readonly apiKey: string | undefined;
+  readonly redirect: RequestInit["redirect"];
 }
 
 const recordingClient = (captured: CapturedRequest[], response: Response) =>
-  HttpClient.make((request) =>
+  HttpClient.make((request, _url, _signal, fiber) =>
     Effect.sync(() => {
-      captured.push({ url: request.url, apiKey: requestApiKey(request) });
+      captured.push({
+        url: request.url,
+        apiKey: requestApiKey(request),
+        redirect: Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit)?.redirect,
+      });
       return HttpClientResponse.fromWeb(request, response);
     }),
   );
@@ -158,6 +165,7 @@ describe("readDevinUsageLimits", () => {
         "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
       );
       expect(captured[0]?.apiKey).toBe("stored-key");
+      expect(captured[0]?.redirect).toBe("error");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
