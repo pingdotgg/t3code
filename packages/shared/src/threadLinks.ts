@@ -1,6 +1,9 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Root } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
@@ -10,69 +13,58 @@ const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
-// Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
 // Labels and destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
-// Maps each backtick run to the start of its closer: the next run of the same length on its line.
-// A run without one is literal Markdown text.
-function backtickClosers(markdown: string): ReadonlyMap<number, number> {
-  const closers = new Map<number, number>();
-  const next = new Map<number, number>();
-  const runs = [...markdown.matchAll(/`+|\n/g)];
-  for (let index = runs.length - 1; index >= 0; index--) {
-    const run = runs[index]!;
-    if (run[0] === "\n") next.clear();
-    else {
-      const closer = next.get(run[0].length);
-      if (closer !== undefined) closers.set(run.index, closer);
-      next.set(run[0].length, run.index);
-    }
-  }
-  return closers;
+const codeParser = unified().use(remarkParse).freeze();
+
+// Let CommonMark own block precedence and complete backtick runs. Only offsets are used:
+// links still follow the bounded policy above, and untouched source is never serialized.
+function codeRanges(markdown: string) {
+  const ranges: Array<{ start: number; end: number; inline: boolean }> = [];
+  const visit = (node: Root | Root["children"][number]) => {
+    if (node.type === "code" || node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) {
+        ranges.push({ start, end, inline: node.type === "inlineCode" });
+      }
+    } else if ("children" in node) node.children.forEach(visit);
+  };
+  visit(codeParser.parse(markdown));
+  return ranges;
 }
 
-// The opener of a code span that starts in the label but closes past it. Spans closing inside
-// the label are skipped whole, so each label is scanned once.
-function spanLeavingLabel(
-  markdown: string,
-  start: number,
-  end: number,
-  closers: ReadonlyMap<number, number>,
-): number | undefined {
-  const run = /`+/g;
-  run.lastIndex = start;
-  for (let found = run.exec(markdown); found && found.index < end; found = run.exec(markdown)) {
-    const closer = closers.get(found.index);
-    if (closer === undefined) continue;
-    if (closer >= end) return found.index;
-    run.lastIndex = closer + found[0].length;
-  }
-  return undefined;
-}
-
-// Such a span wins over the link, as in Markdown: scanning resumes at its opener, where the
-// span alternative shields its contents.
 function* threadLinkMatches(markdown: string) {
+  if (!hasThreadLinks(markdown)) return;
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  let closers: ReadonlyMap<number, number> | undefined;
+  let ranges: ReturnType<typeof codeRanges> | undefined;
+  let rangeIndex = 0;
+  const mayContainCode = /[`~\t]| {4}/.test(markdown);
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
-    const label = match.groups?.label;
-    const start = match.index + 1;
-    const opener = label?.includes("`")
-      ? spanLeavingLabel(
-          markdown,
-          start,
-          start + label.length,
-          (closers ??= backtickClosers(markdown)),
-        )
-      : undefined;
-    if (opener === undefined) yield match;
-    else pattern.lastIndex = opener;
+    // Most messages need no Markdown parse; defer it until a candidate and code syntax coexist.
+    if (!mayContainCode) {
+      yield match;
+      continue;
+    }
+    ranges ??= codeRanges(markdown);
+    while (ranges[rangeIndex] && ranges[rangeIndex]!.end <= match.index) rangeIndex++;
+    const end = match.index + match[0].length;
+    const labelEnd = match.index + 1 + (match.groups?.label?.length ?? 0);
+    let protectedEnd: number | undefined;
+    for (let index = rangeIndex; ranges[index] && ranges[index]!.start < end; index++) {
+      const range = ranges[index]!;
+      // Balanced code inside a link label belongs to that whole link.
+      if (range.inline && range.start > match.index && range.end <= labelEnd) continue;
+      protectedEnd = range.end;
+      break;
+    }
+    if (protectedEnd === undefined) yield match;
+    else pattern.lastIndex = Math.max(pattern.lastIndex, protectedEnd);
   }
 }
 

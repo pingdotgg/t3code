@@ -18,6 +18,35 @@ const ref = (environmentId: string, threadId = "chat-1") => ({
 });
 const v1 = (threadId: string) => ({ environmentId: null, threadId: ThreadId.make(threadId) });
 const local = EnvironmentId.make("local");
+
+describe("Markdown code boundaries", () => {
+  const link = "[x](https://app.t3.codes/threads/env/thread)";
+  it.each([
+    "`a\nLINK\nb`",
+    "``a\nLINK\nb``",
+    "`a`` LINK b`",
+    "``a` LINK b``",
+    "before ```a LINK b``` after",
+    "`unclosed\n\n~~~\nLINK\n~~~",
+    "> ~~~\n> LINK\n> ~~~",
+    "~~~~\n~~~\nLINK\n~~~~",
+  ])("preserves code source and collects no references: %s", (source) => {
+    const markdown = source.replace("LINK", link);
+    expect(threadLinkRefs(markdown, local)).toEqual([]);
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+  });
+
+  it.each(["`a`` LINK", "before ~~~inline LINK", "`unclosed\n\nLINK"])(
+    "keeps links live outside actual code: %s",
+    (source) => {
+      const markdown = source.replace("LINK", link);
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("env", "thread")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        markdown.replace(link, "[Title](t3-thread://v2/env/thread)"),
+      );
+    },
+  );
+});
 const titlesIn =
   (titles: Record<string, Record<string, string>>) =>
   ({ environmentId, threadId }: ScopedThreadRef) =>
