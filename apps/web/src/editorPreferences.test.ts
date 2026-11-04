@@ -110,3 +110,12 @@ it.each([
     });
   },
 );
+
+it("keeps the existing fallback when Sublime Text becomes available", async () => {
+  state.allowed.add(primary);
+  const open = useOpenInPreferredEditor(primary, ["sublime-text", "file-manager"]);
+  expect(await open("/work/readme.md:12:4")).toMatchObject({
+    _tag: "Success",
+    value: "file-manager",
+  });
+});
