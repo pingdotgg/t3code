@@ -1,6 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useMemo } from "react";
 
 import { useProject, useQuietThreadShell } from "./entities";
 import { useEnvironmentThread } from "./threads";
@@ -12,14 +11,10 @@ export function useSelectedThreadWorktree() {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const detailWorktreePath = useSelectedThreadWorktreePath();
 
-  const selectedThreadWorktreePath = useMemo(
-    () =>
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: selectedThread?.worktreePath ?? null,
-        threadDetailWorktreePath: detailWorktreePath,
-      }),
-    [detailWorktreePath, selectedThread?.worktreePath],
-  );
+  const selectedThreadWorktreePath = resolvePreferredThreadWorktreePath({
+    threadShellWorktreePath: selectedThread?.worktreePath ?? null,
+    threadDetailWorktreePath: detailWorktreePath,
+  });
 
   return {
     selectedThreadWorktreePath,

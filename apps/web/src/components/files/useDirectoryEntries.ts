@@ -16,6 +16,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     () => new Set([""]),
   );
   const requests = useRef(new Map<string, Promise<void>>());
+  const followUpRefreshes = useRef(new Map<string, Promise<void>>());
   const loaded = useRef(new Set<string>());
   const requested = useRef(new Set<string>());
   const active = useRef(true);
@@ -86,14 +87,25 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   const load = function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
     const existing = requests.current.get(directoryPath);
-    if (existing)
-      return refresh ? existing.then(() => loadDirectory(directoryPath, true)) : existing;
+    if (existing) {
+      if (!refresh) return existing;
+      let followUp = followUpRefreshes.current.get(directoryPath);
+      if (!followUp) {
+        followUp = existing.then(() => {
+          followUpRefreshes.current.delete(directoryPath);
+          if (active.current) return loadDirectory(directoryPath, true);
+        });
+        followUpRefreshes.current.set(directoryPath, followUp);
+      }
+      return followUp;
+    }
     if (!refresh && loaded.current.has(directoryPath)) return Promise.resolve();
     setPending((count) => count + 1);
     if (!refresh) setLoadingDirectories((previous) => new Set(previous).add(directoryPath));
     return startRequest(directoryPath, refresh);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the root directory read on mount and marks the hook inactive so late reads are ignored
   useEffect(() => {
     active.current = true;
     if (!requests.current.has("") && !loaded.current.has("")) void startRequest("", false);
@@ -127,15 +139,10 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   const refresh = () => {
     const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
-    const workerCount = Math.min(4, paths.length);
-    const worker = async () => {
-      while (active.current) {
-        const path = paths.shift();
-        if (path === undefined) return;
-        await load(path, true);
-      }
-    };
-    for (let index = 0; index < workerCount; index++) void worker();
+    for (const path of paths) {
+      if (!active.current) break;
+      void load(path, true);
+    }
   };
 
   return {

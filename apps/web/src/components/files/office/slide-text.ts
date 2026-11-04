@@ -1,4 +1,5 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { inspectPresentation, type DeckSnapshot } from "@betteroffice/pptx";
@@ -131,50 +132,58 @@ const scriptRanges: readonly (readonly [FallbackScript, RegExp])[] = [
  * engine's inspection does not decode, the slides' own runs stand in, without theme fonts or hidden flags.
  */
 export function deckText(bytes: Uint8Array, snapshot: DeckSnapshot): DeckText {
-  return Option.match(decodeInspected(inspectPresentation(withoutMedia(bytes))), {
-    onNone: () => fromSnapshot(snapshot),
-    onSome: (inspected) => {
-      const schemes =
-        inspected.themes?.flatMap((theme) =>
-          theme.theme?.fontScheme ? [theme.theme.fontScheme] : [],
-        ) ?? [];
-      const minor = schemes[0]?.minorFont.latin ?? "";
+  return pipe(
+    withoutMedia(bytes),
+    inspectPresentation,
+    decodeInspected,
+    Option.match({
+      onNone: () => fromSnapshot(snapshot),
+      onSome: (inspected) => {
+        const schemes =
+          inspected.themes?.flatMap((theme) =>
+            theme.theme?.fontScheme ? [theme.theme.fontScheme] : [],
+          ) ?? [];
+        const minor = schemes[0]?.minorFont.latin ?? "";
 
-      const drawings = [
-        ...inspected.slides.flatMap((slide) => slide.drawings),
-        ...(inspected.layouts ?? []).flatMap((layout) => layout.drawings),
-        ...(inspected.masters ?? []).flatMap((master) => master.drawings),
-      ];
+        const drawings = [
+          ...inspected.slides.flatMap((slide) => slide.drawings),
+          ...(inspected.layouts ?? []).flatMap((layout) => layout.drawings),
+          ...(inspected.masters ?? []).flatMap((master) => master.drawings),
+        ];
 
-      const defaults = (inspected.masters ?? []).flatMap((master) =>
-        Object.values(master.textStyles ?? {}).flatMap((levels) =>
-          levels.flatMap((level) =>
-            level.defaultRun ? [{ text: "", style: level.defaultRun }] : [],
+        const defaults = (inspected.masters ?? []).flatMap((master) =>
+          Object.values(master.textStyles ?? {}).flatMap((levels) =>
+            levels.flatMap((level) =>
+              level.defaultRun ? [{ text: "", style: level.defaultRun }] : [],
+            ),
           ),
-        ),
-      );
+        );
 
-      return summarize(
-        [...drawings.flatMap(drawingRuns), ...defaults].flatMap((run) => {
-          const family = run.style?.fontFamily;
-          if (!schemes.length || (family && !family.startsWith("+mn") && !family.startsWith("+mj")))
-            return [run];
-          return schemes.map((scheme) => ({
-            ...run,
-            style: {
-              ...run.style,
-              fontFamily: family?.startsWith("+mj")
-                ? scheme.majorFont.latin
-                : scheme.minorFont.latin,
-            },
-          }));
-        }),
-        (family) => (family?.startsWith("+") ? "" : (family ?? "")),
-        minor,
-        inspected.slides.map((slide) => slide.hidden ?? false),
-      );
-    },
-  });
+        return summarize(
+          [...drawings.flatMap(drawingRuns), ...defaults].flatMap((run) => {
+            const family = run.style?.fontFamily;
+            if (
+              !schemes.length ||
+              (family && !family.startsWith("+mn") && !family.startsWith("+mj"))
+            )
+              return [run];
+            return schemes.map((scheme) => ({
+              ...run,
+              style: {
+                ...run.style,
+                fontFamily: family?.startsWith("+mj")
+                  ? scheme.majorFont.latin
+                  : scheme.minorFont.latin,
+              },
+            }));
+          }),
+          (family) => (family?.startsWith("+") ? "" : (family ?? "")),
+          minor,
+          inspected.slides.map((slide) => slide.hidden ?? false),
+        );
+      },
+    }),
+  );
 }
 
 /** A file in the deck's zip package: where its central directory record and its local data sit. */

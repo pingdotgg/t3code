@@ -5,7 +5,7 @@ import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
-type DesktopCliCommandBridge = NonNullable<DesktopBridge["cliCommand"]>;
+type DesktopCliCommandBridge = DesktopBridge["cliCommand"];
 
 class DesktopCliCommandUnavailableError extends Schema.TaggedError<DesktopCliCommandUnavailableError>()(
   "DesktopCliCommandUnavailableError",

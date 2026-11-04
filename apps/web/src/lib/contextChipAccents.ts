@@ -1,5 +1,5 @@
 export const CONTEXT_CHIP_ACCENTS = {
-  image: "oklch(0.62 0.16 16)",
+  image: "oklch(0.62 0.136 237)",
   video: "oklch(0.62 0.16 48)",
   file: "oklch(0.62 0.136 237)",
   mention: "oklch(0.62 0.11 215)",
@@ -14,6 +14,7 @@ export const CONTEXT_CHIP_ACCENTS = {
   "pr-closed": "oklch(0.62 0.16 16)",
   skill: "oklch(0.62 0.16 322)",
   thread: "oklch(0.62 0.12 190)",
+  environment: "oklch(0.62 0.11 145)",
   citation: "oklch(0.62 0.16 259)",
   "doc-pdf": "oklch(0.62 0.16 24)",
   "doc-word": "oklch(0.62 0.136 248)",

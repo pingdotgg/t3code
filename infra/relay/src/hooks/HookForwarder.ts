@@ -1,6 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -28,13 +28,13 @@ import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import { sendUpstream, TUNNEL_OFFLINE_STATUS } from "./upstream.ts";
 
-export const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
+const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
 export const RELAY_HOOK_MAX_BODY_BYTES = 1_048_576;
 export const RELAY_HOOK_RATE_LIMIT = { limit: 60, periodSeconds: 60 } as const;
 /** URL budgets alone are bypassable by minting URLs; cap each endpoint too. */
 export const RELAY_HOOK_ENDPOINT_RATE_LIMIT = { limit: 600, periodSeconds: 60 } as const;
 /** No tunnel origin (530) or local server unavailable (502/503/504) means the environment did not take the request. */
-export const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
+const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
   502,
   503,
   504,
@@ -219,7 +219,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const rateLimiter = yield* HookRateLimiter;
   const inbox = yield* HookInbox.HookInbox;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const signDeliveryProof = Effect.fn("HookForwarder.signDeliveryProof")(
     function* (input: {
@@ -318,14 +318,14 @@ const make = Effect.gen(function* () {
 
     // Reuse one delivery ID so inbox retries cannot rerun requests that reached the environment before timeout.
     yield* Effect.annotateCurrentSpan({ "relay.hook.body_bytes": body.success.byteLength });
-    const deliveryId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const deliveryId = yield* random.uuidV4();
     // Sign once before storing held requests so the inbox needs no signing key.
     const proof = yield* signDeliveryProof({
       environmentId: endpoint.environmentId,
       deliveryId,
       receivedAt,
       hookId: parsed.hookId,
-      jti: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+      jti: yield* random.uuidV4(),
     });
     const hook = {
       id: deliveryId,

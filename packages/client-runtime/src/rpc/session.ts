@@ -49,7 +49,7 @@ export interface RpcSession {
   readonly client: WsRpcProtocolClient;
   readonly initialConfig: Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly subscribeServerConfig: (
-    input: ServerConfigSubscriptionInput,
+    input?: ServerConfigSubscriptionInput,
   ) => ServerConfigSubscription;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
@@ -288,17 +288,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               themesEvent:
                 event.type === "environmentThemesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.environmentThemes !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.themesEvent,
+                  : Option.getOrUndefined(current)?.themesEvent,
               sourcesEvent:
                 event.type === "usageLimitSourcesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.usageLimitSources !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.sourcesEvent,
+                  : Option.getOrUndefined(current)?.sourcesEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
@@ -400,7 +394,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }),
       ),
     );
-    const subscribeServerConfig = (input: ServerConfigSubscriptionInput) =>
+    const subscribeServerConfig = (input: ServerConfigSubscriptionInput = serverConfigInput) =>
       Stream.unwrap(
         validatedInitialConfig.pipe(
           Effect.as(
@@ -411,11 +405,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? protocolClient[WS_METHODS.serverProbe]({})
-          : protocolClient[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapRpcError)),
+      Effect.flatMap(() =>
+        protocolClient[WS_METHODS.serverProbe]({}).pipe(Effect.mapError(mapRpcError)),
       ),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),

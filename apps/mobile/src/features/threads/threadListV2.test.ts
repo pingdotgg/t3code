@@ -3,7 +3,7 @@ import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-i
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
   createThreadMovePlanner,
@@ -59,19 +59,21 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
-  it("recomputes presets that remain available instead of using old timestamps", () => {
-    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10));
+  it("recomputes the environment's presets instead of using old timestamps", () => {
+    const presets = [{ kind: "after", minutes: 360 }] as const;
+    const displayedPresets = resolveSnoozePresets(new Date(2026, 4, 8, 10), { presets });
     const selectedAt = new Date(2026, 4, 8, 10, 30);
     const selection = resolveThreadListV2SnoozeMenuSelection({
-      event: "snooze:hour",
+      event: "snooze:after:360",
       displayedPresets,
       now: selectedAt,
+      presets,
     });
 
     expect(selection._tag).toBe("selected");
     if (selection._tag === "selected") {
       expect(selection.preset.snoozedUntil).toBe(
-        new Date(selectedAt.getTime() + 60 * 60 * 1_000).toISOString(),
+        new Date(selectedAt.getTime() + 6 * 60 * 60 * 1_000).toISOString(),
       );
     }
   });
@@ -83,13 +85,17 @@ describe("resolveThreadListV2SnoozePresets", () => {
     vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
     const laterMinute = new Date(2026, 4, 8, 19, 15).toISOString();
 
-    const presets = resolveThreadListV2SnoozePresets({ secondary: "snooze", now: laterMinute });
+    const presets = resolveThreadListV2SnoozePresets({
+      secondary: "snooze",
+      now: laterMinute,
+      presets: undefined,
+    });
 
-    expect(presets.find((preset) => preset.id === "hour")?.snoozedUntil).toBe(
+    expect(presets.find((preset) => preset.id === "after:60")?.snoozedUntil).toBe(
       new Date(2026, 4, 8, 20, 15).toISOString(),
     );
     // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
-    expect(presets.map((preset) => preset.id)).not.toContain("evening");
+    expect(presets.map((preset) => preset.id)).not.toContain("at:today:18:00");
   });
 });
 
@@ -839,11 +845,10 @@ describe("pending mobile thread moves", () => {
     const ordered = getThreadListV2OrderedSection({ threads: rows, section, now: NOW });
     const orderedIds = ordered.map((row) => `${row.environmentId}:${row.id}`);
     const movedId = orderedIds[2]!;
-    const assignments = planPinnedMove({
-      orderedIds,
+    const assignments = planPinnedReorder({
+      orderedIds: orderedIds.toSpliced(2, 1).toSpliced(1, 0, movedId),
       keysById: new Map(orderedIds.map((id) => [id, null])),
       movedId,
-      direction: "up",
     })!;
     const pending = createPendingThreadOrder({
       section,

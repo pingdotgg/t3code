@@ -80,6 +80,7 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+          T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
 
       - name: Publish relay deploy commit status
         uses: actions/github-script@v8

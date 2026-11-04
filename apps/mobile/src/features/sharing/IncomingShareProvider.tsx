@@ -229,6 +229,11 @@ function getIncomingShareSnapshot() {
 }
 
 function reportRefreshFailure(cause: unknown) {
+  console.warn(
+    "[incoming-share] refresh failed",
+    cause,
+    cause instanceof Error ? cause.cause : null,
+  );
   const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
   Dialog.alert("Could not import shared content", error.message, [
     { text: "Dismiss", style: "cancel" },

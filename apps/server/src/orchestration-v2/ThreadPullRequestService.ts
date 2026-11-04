@@ -7,13 +7,13 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -100,8 +100,9 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
 
@@ -118,19 +119,9 @@ export const make = Effect.gen(function* () {
   };
 
   const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
-    threadId === null
-      ? orchestrator
-          .getShellSnapshot({
-            location: "active",
-            unsettledOnly: !(backfill || pendingBackfill.size > 0),
-          })
-          .pipe(NodeSqliteClient.readOnly)
-      : Effect.gen(function* () {
-          // Read sequence first so guarded sync rejects intervening changes.
-          const snapshotSequence = yield* orchestrator.getThreadEventSequence(threadId);
-          const thread = yield* orchestrator.getThreadShell(threadId);
-          return { snapshotSequence, threads: thread === null ? [] : [thread] };
-        });
+    orchestrator.getPullRequestSnapshot(
+      threadId === null ? { unsettledOnly: !(backfill || pendingBackfill.size > 0) } : { threadId },
+    );
 
   const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,
@@ -139,9 +130,16 @@ export const make = Effect.gen(function* () {
       readThreadSnapshot(request),
       projectStore.listShells(),
     ]);
+    // Subagent children refresh after their own runs; sweeping them costs a lookup each per minute.
+    const snapshotThreads =
+      request.threadId === null
+        ? threadSnapshot.threads.filter(
+            (thread) => thread.lineage.relationshipToParent !== "subagent",
+          )
+        : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
-      for (const thread of threadSnapshot.threads) {
+      for (const thread of snapshotThreads) {
         if (
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
           thread.branchPullRequest == null
@@ -151,13 +149,13 @@ export const make = Effect.gen(function* () {
       }
     }
     const visibleThreadIds = new Set(
-      threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+      snapshotThreads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
     );
     const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
-    const threads = threadSnapshot.threads.filter(
+    const threads = snapshotThreads.filter(
       (thread) =>
         thread.archivedAt === null &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
@@ -181,10 +179,13 @@ export const make = Effect.gen(function* () {
               refresh: request.refresh,
             });
           if (first.branch !== null && repository === null) return finishBackfill(group);
-          const worktreeExists =
-            first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
+          // A worktree folder can outlive its .git, and git there fails with not_a_repository.
+          // An unreadable .git keeps the worktree rather than failing the whole group.
           const cwd =
-            worktreeExists && first.worktreePath !== null
+            first.worktreePath !== null &&
+            (yield* fileSystem
+              .exists(path.join(first.worktreePath, ".git"))
+              .pipe(Effect.orElseSucceed(() => true)))
               ? first.worktreePath
               : project.workspaceRoot;
           const detected =
@@ -299,7 +300,7 @@ export const make = Effect.gen(function* () {
                 if (!projectWorkspaceMatchesSnapshot(currentProject, project.workspaceRoot)) {
                   return failBackfill([thread]);
                 }
-                const uuid = yield* crypto.randomUUIDv4();
+                const uuid = yield* random.uuidV4();
                 yield* orchestrator.dispatch({
                   type: "thread.pull-request.sync",
                   commandId: CommandId.make(`server:thread-pull-request:${thread.id}:${uuid}`),
