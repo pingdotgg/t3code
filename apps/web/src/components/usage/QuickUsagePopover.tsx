@@ -25,6 +25,7 @@ import { useUsage } from "../../state/usage";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { LimitWindows } from "./UsageLimits";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -300,27 +301,22 @@ export function QuickUsagePopover({
             <p className="text-sm text-muted-foreground">No usage limits reported yet.</p>
           ) : (
             <>
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Providers">
-                {providers.map((provider) => {
-                  const isSelected = selected?.kind === provider.kind;
-                  return (
-                    <button
-                      key={provider.kind}
-                      type="button"
-                      aria-pressed={isSelected}
-                      onClick={() => {
-                        setSelectedProvider(provider.kind);
-                      }}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
-                        isSelected
-                          ? "border-primary/40 bg-primary/12 text-primary"
-                          : "border-input bg-foreground/5 text-foreground hover:bg-foreground/10"
-                      }`}
-                    >
+              <div className="min-w-0 max-w-full overflow-x-auto">
+                <ToggleGroup
+                  aria-label="Usage provider"
+                  variant="segmented"
+                  value={selected ? [selected.kind] : []}
+                  onValueChange={(next) => {
+                    const provider = providers.find(({ kind }) => kind === next[0]);
+                    if (provider) setSelectedProvider(provider.kind);
+                  }}
+                >
+                  {providers.map((provider) => (
+                    <Toggle key={provider.kind} value={provider.kind}>
                       {PROVIDER_PRESENTATION[provider.kind].label}
-                    </button>
-                  );
-                })}
+                    </Toggle>
+                  ))}
+                </ToggleGroup>
               </div>
 
               <div aria-label="Usage windows" className="flex flex-col gap-3">
