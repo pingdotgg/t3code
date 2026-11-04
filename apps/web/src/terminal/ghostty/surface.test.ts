@@ -537,9 +537,19 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkActivate).not.toHaveBeenCalled();
   });
 
-  it.each(["missing", "file", "replaced", "superseded", "hidden", "dragged"])(
-    "validates a quick click without waiting for hover: %s",
-    async (scenario) => {
+  it.each([
+    { scenario: "missing", exists: false },
+    { scenario: "file", exists: true },
+    { scenario: "replaced", exists: true },
+    { scenario: "superseded", exists: false },
+    { scenario: "hidden", exists: false },
+    { scenario: "dragged", exists: true },
+    { scenario: "keyboard-selected", exists: false },
+    { scenario: "selection-cleared", exists: true },
+  ])(
+    "validates a quick click without waiting for hover: $scenario",
+    async ({ scenario, exists }) => {
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
       const harness = createHarness();
       let resolveValidation!: (exists: boolean) => void;
       const validation = new Promise<boolean>((resolve) => {
@@ -548,6 +558,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       const validateLink = vi.fn(() => validation);
       const onLinkActivate = vi.fn();
       const surface = await harness.create({
+        beforeKey: () => true,
         canActivateLink: () => false,
         validateLink,
         onLinkActivate,
@@ -570,13 +581,20 @@ describe("GhosttyTerminalSurface visibility", () => {
         surface.setVisible(false);
         surface.setVisible(true);
       }
-      resolveValidation(
-        scenario !== "missing" && scenario !== "hidden" && scenario !== "superseded",
-      );
+      if (scenario === "keyboard-selected")
+        key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
+      if (scenario === "selection-cleared") surface.clearSelection();
+      resolveValidation(exists);
       await validation;
       expect(onLinkActivate).toHaveBeenCalledTimes(scenario === "file" ? 1 : 0);
-      if (scenario === "missing") expect(surface.getSelection()).toBe("");
-      if (scenario === "file" || scenario === "hidden" || scenario === "superseded") {
+      if (scenario === "missing" || scenario === "selection-cleared")
+        expect(surface.getSelection()).toBe("");
+      if (
+        scenario === "file" ||
+        scenario === "hidden" ||
+        scenario === "superseded" ||
+        scenario === "keyboard-selected"
+      ) {
         expect(surface.getSelection()).not.toBe("");
       }
     },

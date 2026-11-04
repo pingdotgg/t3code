@@ -1001,6 +1001,7 @@ export class GhosttyTerminalSurface {
   }
 
   selectAll(): void {
+    this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
     const range = this.core.selectAll();
     this.selectionAnchorScreen = range?.start ?? null;
@@ -1044,6 +1045,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
