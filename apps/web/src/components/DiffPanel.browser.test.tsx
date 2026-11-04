@@ -280,7 +280,7 @@ it.each([
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
     if (reveal) {
-      act(() => useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} }));
+      await act(() => useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} }));
       await userEvent.click(screen.getByRole("button", { name: "Show file tree", exact: true }));
       await userEvent.click(screen.getByRole("button", { name: `Reveal ${path}`, exact: true }));
       await userEvent.click(screen.getByRole("button", { name: "Hide file tree", exact: true }));
