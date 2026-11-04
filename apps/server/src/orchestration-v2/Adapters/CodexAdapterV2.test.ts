@@ -5665,13 +5665,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           terminalMessage: "Connection lost.",
           expectedClass: "provider_error",
         },
+        {
+          name: "generic-truncated-replacement",
+          status: null,
+          details: `${"Connection lost. ".repeat(300)}Network cause.`,
+          terminalMessage: `${"Connection lost. ".repeat(300)}Different cause.`,
+          expectedClass: "provider_error",
+        },
       ] as const
     ).map((scenario) => ({
       ...scenario,
       code: "responseStreamDisconnected" as const,
       errorInfo: { responseStreamDisconnected: { httpStatusCode: scenario.status } },
       notification: true,
-      details: "Connection lost.",
+      details: "details" in scenario ? scenario.details : "Connection lost.",
     })),
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(

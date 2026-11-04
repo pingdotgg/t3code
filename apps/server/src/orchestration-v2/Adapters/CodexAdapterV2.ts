@@ -1217,6 +1217,7 @@ interface ActiveCodexProviderRetry {
   readonly context?: ActiveCodexTurnContext;
   readonly nativeMessage: string;
   readonly nativeCode: string | null;
+  readonly nativeDetails?: string;
   readonly errorInfo?: CodexErrorInfo | null;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
@@ -4759,6 +4760,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
+              nativeDetails: payload.error.additionalDetails || payload.error.message,
               ...(payload.error.codexErrorInfo === undefined
                 ? {}
                 : { errorInfo: payload.error.codexErrorInfo }),
@@ -5844,7 +5846,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 failure.code === "other" &&
                 failure.class === "provider_error" &&
                 retry !== undefined &&
-                failure.message === retry.failure.message &&
+                input.failureMessage !== undefined &&
+                input.failureMessage === retry.nativeDetails &&
                 codexTerminalFailureClass(retry.errorInfo, retry.nativeCode) === "transport_error"
               ) {
                 failure = { ...failure, class: "transport_error" };
