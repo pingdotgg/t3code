@@ -294,7 +294,6 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
-        <SessionWorkspaceDetails thread={thread} workspaceRoot={project?.workspaceRoot ?? null} />
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
@@ -321,6 +320,7 @@ function SidebarThreadTooltip({
             <span className="text-foreground/75">{modelLabel}</span>
           </div>
         ) : null}
+        <SessionWorkspaceDetails thread={thread} workspaceRoot={project?.workspaceRoot ?? null} />
         {previousProviderNames.length > 0 ? (
           <div className="flex min-w-0 items-center gap-2">
             <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
@@ -686,7 +686,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd, includeRemote: false },
+          input: { cwd: gitCwd, includeRemote: false, includeCheckoutDetails: true },
         })
       : null,
   );
@@ -1131,7 +1131,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const workspaceIndicators = (
     <span className="inline-flex shrink-0 items-center gap-1">
-      <SessionWorkspaceBadge thread={thread} workspaceRoot={props.project?.workspaceRoot ?? null} />
+      <SessionWorkspaceBadge thread={thread} />
       <SessionContextMeter
         thread={thread}
         driverKind={providerEntry?.driverKind ?? null}

@@ -115,27 +115,28 @@ export function ContextWindowMeter(props: {
         side="top"
         align="end"
         padding="none"
-        width="sm"
-        className="text-left whitespace-normal"
+        width="auto"
+        className="max-w-52 text-left whitespace-normal"
       >
-        <div className="flex flex-col gap-2 p-(--floating-content-inset)">
-          <div className="flex items-center justify-between gap-3">
-            <div className="font-medium text-muted-foreground text-xs">Context Window</div>
-            {missing ? null : usage.maxTokens !== null && usedPercentage ? (
-              <div className="text-secondary-label text-2xs tabular-nums">
-                <span>{usedPercentage}</span>
-                <span className="mx-1">·</span>
-                <span>
-                  {formatContextWindowTokens(usage.usedTokens)}/
-                  {formatContextWindowTokens(usage.maxTokens ?? null)}
-                </span>
-              </div>
-            ) : (
-              <div className="text-secondary-label text-2xs tabular-nums">
-                {formatContextWindowTokens(usage.usedTokens)}
-              </div>
-            )}
-          </div>
+        <div className="flex min-w-0 flex-col gap-1 px-2 py-1.5">
+          {missing ? null : (
+            <div className="flex items-center justify-between gap-2">
+              {usage.maxTokens !== null && usedPercentage ? (
+                <div className="text-secondary-label text-2xs tabular-nums">
+                  <span>{usedPercentage}</span>
+                  <span className="mx-1">·</span>
+                  <span>
+                    {formatContextWindowTokens(usage.usedTokens)}/
+                    {formatContextWindowTokens(usage.maxTokens ?? null)}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-secondary-label text-2xs tabular-nums">
+                  {formatContextWindowTokens(usage.usedTokens)}
+                </div>
+              )}
+            </div>
+          )}
           {usage.maxTokens !== null ? (
             <div
               className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
@@ -188,20 +189,20 @@ export function ContextWindowMeter(props: {
           {onCompact ? (
             <>
               <Button
-                size="xs"
-                variant="outline"
-                className="mt-1 w-full justify-center"
+                size="micro"
+                variant="ghost-muted"
+                className="self-start"
                 disabled={compactDisabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCompact();
                 }}
               >
-                <Minimize2Icon aria-hidden="true" />
-                Compact context
+                <Minimize2Icon aria-hidden="true" className="size-3" />
+                Compact
               </Button>
               {compactDisabled && compactDisabledReason ? (
-                <div className="text-pretty text-secondary-label text-2xs">
+                <div className="text-secondary-label text-2xs leading-tight">
                   {compactDisabledReason}
                 </div>
               ) : null}

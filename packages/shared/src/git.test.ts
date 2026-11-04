@@ -225,6 +225,13 @@ describe("applyGitStatusStreamEvent", () => {
 
   it("preserves local-only fields when applying a remote update", () => {
     const current: VcsStatusResult = {
+      checkoutDetails: {
+        commit: "0123456789abcdef",
+        committedAt: "2026-11-04T09:10:28+01:00",
+        headUpdatedAt: "2026-11-04T09:15:00+01:00",
+        behindOriginMain: 15,
+        originMainCommit: "abcdef0123456789",
+      },
       isRepo: true,
       sourceControlProvider: {
         kind: SourceControlProviderKind.make("github"),

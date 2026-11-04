@@ -1,10 +1,8 @@
-import { useState } from "react";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { GitBranchIcon } from "lucide-react";
 import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
 import { useEnvironmentQuery } from "../../state/query";
 import { vcsEnvironment } from "../../state/vcs";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { SidebarThreadSummary } from "../../types";
 
 function CheckoutDetails({
@@ -26,34 +24,40 @@ function CheckoutDetails({
   const details = status?.checkoutDetails;
   const date = (value: string | null) => (value ? new Date(value).toLocaleString() : "Unavailable");
   return (
-    <div className="grid min-w-0 gap-1 text-xs">
+    <div className="grid min-w-0 grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+      <GitBranchIcon aria-hidden className="mt-0.5 size-3 shrink-0" />
       <div className="font-medium text-foreground">{heading}</div>
-      <div className="break-all text-muted-foreground">{cwd}</div>
-      {status?.isRepo === false ? (
-        <div>No Git repository</div>
-      ) : (
-        <>
-          <div>Branch: {status?.refName ?? "Loading…"}</div>
-          <div>
-            Version:{" "}
-            <span className="font-mono">{details?.commit.slice(0, 10) ?? "Unavailable"}</span>
-          </div>
-          <div>Version committed: {date(details?.committedAt ?? null)}</div>
-          <div>Checkout last updated: {date(details?.headUpdatedAt ?? null)}</div>
-          <div>
-            {details?.behindOriginMain == null
-              ? "origin/main comparison unavailable"
-              : details.behindOriginMain === 0
-                ? "Up to date with origin/main"
-                : `${details.behindOriginMain} commits behind origin/main`}
-          </div>
-          {status?.hasWorkingTreeChanges ? <div>Uncommitted changes</div> : null}
-          <div className="text-muted-foreground">
-            Compared with the locally fetched origin/main.
-          </div>
-        </>
-      )}
-      {query.error ? <div>{query.error}</div> : null}
+      <div className="col-start-2 grid min-w-0 gap-1">
+        <div className="break-all text-muted-foreground">{cwd}</div>
+        {query.error ? (
+          <div role="status">{query.error}</div>
+        ) : status === null ? (
+          <div role="status">Loading checkout details…</div>
+        ) : status.isRepo === false ? (
+          <div>No Git repository</div>
+        ) : (
+          <>
+            <div>Branch: {status?.refName ?? "Loading…"}</div>
+            <div>
+              Version:{" "}
+              <span className="font-mono">{details?.commit.slice(0, 10) ?? "Unavailable"}</span>
+            </div>
+            <div>Version committed: {date(details?.committedAt ?? null)}</div>
+            <div>Checkout last updated: {date(details?.headUpdatedAt ?? null)}</div>
+            <div>
+              {details?.behindOriginMain == null
+                ? "origin/main comparison unavailable"
+                : details.behindOriginMain === 0
+                  ? "Up to date with origin/main"
+                  : `${details.behindOriginMain} commits behind origin/main`}
+            </div>
+            {status?.hasWorkingTreeChanges ? <div>Uncommitted changes</div> : null}
+            <div className="text-muted-foreground">
+              Compared with the locally fetched origin/main.
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -92,39 +96,18 @@ export function SessionWorkspaceDetails({
   );
 }
 
-export function SessionWorkspaceBadge({
-  thread,
-  workspaceRoot,
-}: {
-  thread: SidebarThreadSummary;
-  workspaceRoot: string | null;
-}) {
-  const [open, setOpen] = useState(false);
+export function SessionWorkspaceBadge({ thread }: { thread: SidebarThreadSummary }) {
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        openOnHover
-        delay={150}
-        closeDelay={150}
-        render={
-          <button
-            type="button"
-            onClick={(event) => event.stopPropagation()}
-            className="inline-flex shrink-0 items-center gap-0"
-            aria-label={thread.worktreePath ? "Worktree details" : "Main checkout details"}
-          />
-        }
-      >
-        {thread.worktreePath ? (
-          <ThreadWorktreeIndicator thread={thread} />
-        ) : (
-          <GitBranchIcon aria-hidden className="size-3" />
-        )}
-        {thread.worktreePath ? "w" : "m"}
-      </PopoverTrigger>
-      <PopoverPopup tooltipStyle side="top" width="sm">
-        <SessionWorkspaceDetails thread={thread} workspaceRoot={workspaceRoot} />
-      </PopoverPopup>
-    </Popover>
+    <span
+      className="inline-flex shrink-0 items-center gap-0"
+      aria-label={thread.worktreePath ? "Worktree" : "Main checkout"}
+    >
+      {thread.worktreePath ? (
+        <ThreadWorktreeIndicator thread={thread} showTooltip={false} />
+      ) : (
+        <GitBranchIcon aria-hidden className="size-3" />
+      )}
+      {thread.worktreePath ? "w" : "m"}
+    </span>
   );
 }

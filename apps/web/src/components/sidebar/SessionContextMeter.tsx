@@ -102,10 +102,12 @@ export function SessionContextMeter({
       compactDisabled={!canOperate || busy || pending || !supported}
       compactDisabledReason={
         !canOperate
-          ? "This connection cannot change threads."
+          ? "Read-only connection"
           : !supported
-            ? "Compaction is unavailable for this provider."
-            : "Wait for the current turn to finish."
+            ? "Model cannot compact"
+            : pending
+              ? "Compacting…"
+              : "Finish current turn first"
       }
     />
   );
