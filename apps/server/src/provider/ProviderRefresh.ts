@@ -52,7 +52,9 @@ const make = Effect.gen(function* () {
     if (input.reloadSecrets === true && input.instanceId === undefined) {
       yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
     }
-    if (input.usage === undefined && !sourcesOnly) {
+    const reloadsSecretsBeforeRefresh =
+      input.reloadSecrets === true && !(input.cwd !== undefined && input.instanceId !== undefined);
+    if (input.usage === undefined && !sourcesOnly && !reloadsSecretsBeforeRefresh) {
       yield* (
         input.instanceId !== undefined
           ? providerRegistry.refreshInstance(input.instanceId)
@@ -80,7 +82,13 @@ const make = Effect.gen(function* () {
               fresh: input.fresh === true,
             })
           : input.reloadSecrets === true
-            ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
+            ? providerRegistry.reloadSecretsAndRefresh(input.instanceId).pipe(
+                Effect.provideService(UsagePolling, false),
+                Effect.filterOrElse(
+                  () => !usage,
+                  () => providerRegistry.refreshUsage(input.instanceId, input.usageProviders),
+                ),
+              )
             : usage
               ? providerRegistry.refreshUsage(input.instanceId, input.usageProviders)
               : input.instanceId !== undefined

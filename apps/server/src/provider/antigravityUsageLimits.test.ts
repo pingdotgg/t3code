@@ -154,15 +154,15 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
 });
 
 describe("Antigravity subscription limits", () => {
-  it.effect.each([true, false])(
-    "retains account cooldowns through OAuth renewal (userinfo available: %s)",
-    (userInfoAvailable) =>
+  it.effect.each(["available", "fails", "recovers"] as const)(
+    "retains account cooldowns through OAuth renewal (userinfo: %s)",
+    (discovery) =>
       Effect.gen(function* () {
         const options = {
           rotateAccessToken: true,
           usageRetryAfter: "600",
           summaryStatus: 200,
-          userId: "google-account" as string | undefined,
+          userId: (discovery === "recovers" ? undefined : "google-account") as string | undefined,
         };
         const { probe, requests, writeToken } = yield* fixture(options);
         const first = yield* probe;
@@ -177,7 +177,7 @@ describe("Antigravity subscription limits", () => {
         yield* probe;
         expect(quotaCalls()).toBe(4);
         yield* TestClock.adjust("5 minutes");
-        if (!userInfoAvailable) options.userId = undefined;
+        options.userId = discovery === "fails" ? undefined : "google-account";
         yield* probe;
         expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
         expect(quotaCalls()).toBe(4);

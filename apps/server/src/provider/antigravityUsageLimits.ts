@@ -200,6 +200,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
+  const throttleIdentities = new Map<string, string>();
 
   const sha256 = (text: string) =>
     crypto
@@ -279,6 +280,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
+    const throttleIdentity = throttleIdentities.get(fingerprint) ?? account;
+    throttleIdentities.set(fingerprint, throttleIdentity);
     const sampleTimes: string[] = [];
     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
@@ -309,7 +312,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                 sampleTimes.push(sampleAt || DateTime.formatIso(DateTime.makeUnsafe(requestedAt)));
               },
             ).pipe(
-              Effect.provideService(UsageAccountIdentity, `antigravity:${account}`),
+              Effect.provideService(UsageAccountIdentity, `antigravity:${throttleIdentity}`),
               Effect.flatMap((response) => parse(response, requestedAt)),
               Effect.orElseSucceed(() => []),
             );

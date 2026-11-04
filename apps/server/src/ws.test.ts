@@ -1008,6 +1008,8 @@ it.effect.each([
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
   Effect.gen(function* () {
     const refreshModes: boolean[] = [];
+    const reloaded: Array<ProviderInstanceId | undefined> = [];
+    const reloadModes: boolean[] = [];
     let sourceRefreshes = 0;
     const instanceId = ProviderInstanceId.make("claudeAgent");
     const snapshotFor = (cwd: string, checkedAt: string) => ({
@@ -1052,6 +1054,17 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         refresh: () =>
           Effect.map(UsagePolling, (usage) => {
             refreshModes.push(usage);
+            return [provider];
+          }),
+        refreshInstance: () =>
+          Effect.map(UsagePolling, (usage) => {
+            refreshModes.push(usage);
+            return [provider];
+          }),
+        reloadSecretsAndRefresh: (id) =>
+          Effect.map(UsagePolling, (usage) => {
+            reloaded.push(id);
+            reloadModes.push(usage);
             return [provider];
           }),
         refreshUsage: () =>
@@ -1193,6 +1206,24 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.isUndefined(sourceOnly.providers[0]?.workspaceSnapshots);
     assert.equal(sourceRefreshes, 3);
     assert.deepEqual(refreshModes, [false, true, false, true]);
+    for (const [index, cwd] of [undefined, "/b"].entries()) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(`secret-refresh-${index}`),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: { instanceId, reloadSecrets: true, ...(cwd === undefined ? {} : { cwd }) },
+        headers: Headers.empty,
+      });
+      yield* Queue.take(responses);
+      assert.deepEqual(reloaded, [instanceId]);
+      assert.deepEqual(reloadModes, [false]);
+      assert.deepEqual(
+        refreshModes,
+        cwd === undefined
+          ? [false, true, false, true, true]
+          : [false, true, false, true, true, false],
+      );
+    }
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
