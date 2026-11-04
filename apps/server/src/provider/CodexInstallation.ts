@@ -829,9 +829,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
 
-  const managedState = Effect.fn("CodexInstallation.managedState")(function* (
-    current: ProviderInstallState,
-  ) {
+  // These projections run for every download-progress emission; avoid a span per update.
+  const managedState = Effect.fnUntraced(function* (current: ProviderInstallState) {
     if (current.source !== "local") return current;
     const executable = yield* resolveManaged().pipe(Effect.option);
     return {
@@ -858,9 +857,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     changes: SubscriptionRef.changes(state).pipe(Stream.mapEffect(managedState)),
     remove,
   };
-  const automaticState = Effect.fn("CodexInstallation.automaticState")(function* (
-    current: ProviderInstallState,
-  ) {
+  const automaticState = Effect.fnUntraced(function* (current: ProviderInstallState) {
     if (current.source !== "managed") return current;
     const local = yield* resolveLocal();
     return local

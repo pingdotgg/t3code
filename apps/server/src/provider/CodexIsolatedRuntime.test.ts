@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
@@ -114,6 +116,49 @@ it.effect(
           yield* fs.readFileString(path.join(userHome, "sessions", "normal.jsonl")),
           "normal history",
         );
+        const installationFailure = new CodexInstallation.CodexInstallationError({
+          operation: "resolve",
+          detail: "Install the separate runtime first.",
+        });
+        const homeFailure = new PlatformError.PlatformError(
+          new PlatformError.SystemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "makeDirectory",
+          }),
+        );
+        for (const acquireFails of [true, false]) {
+          const result = yield* makeCodexIsolatedRuntime({
+            instanceId: ProviderInstanceId.make("codex-failure"),
+            config,
+            environment: {},
+          }).pipe(
+            Effect.flatMap((runtime) => runtime.resolve),
+            Effect.provide(
+              Layer.mock(CodexInstallation.CodexInstallation)({
+                managedDirectory: managed.managedDirectory,
+                managed: Effect.succeed({
+                  ...managed,
+                  acquire: acquireFails ? () => Effect.fail(installationFailure) : managed.acquire,
+                }),
+              }),
+            ),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              makeDirectory: () => Effect.fail(homeFailure),
+            }),
+            Effect.result,
+            Effect.scoped,
+          );
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.strictEqual(
+              result.failure.cause,
+              acquireFails ? installationFailure : homeFailure,
+            );
+          }
+          assert.equal(leases, 0);
+        }
       }).pipe(
         Effect.provide(
           Layer.mock(CodexInstallation.CodexInstallation)({
