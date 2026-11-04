@@ -2,6 +2,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -80,13 +81,16 @@ vi.mock("./model.ts", () => ({
   effectiveSpeechLanguage: (model: { languages: string[] }, intent: string) =>
     intent !== "auto" && model.languages.includes(intent) ? intent : "en",
 }));
+const download = vi.fn<SpeechModelStore.SpeechModelStore["Service"]["download"]>(() =>
+  Effect.succeed("test.gguf"),
+);
 const store = Layer.succeed(
   SpeechModelStore.SpeechModelStore,
   SpeechModelStore.SpeechModelStore.of({
     isReady: (model) => Effect.sync(() => readyModels.has(model.id)),
     installedPath: (model) =>
       Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
-    download: () => Effect.succeed("test.gguf"),
+    download,
     remove: (model) =>
       Effect.sync(() => {
         readyModels.delete(model.id);
@@ -139,6 +143,51 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     expect(loadNative).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps a detached download exclusive until the transfer finishes", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const started = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    download.mockImplementationOnce(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(finish)),
+        Effect.as("test.gguf"),
+      ),
+    );
+    const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* Fiber.interrupt(request);
+    const removed = yield* Effect.result(speech.removeModel("test-model"));
+    expect(Result.isFailure(removed) && removed.failure).toMatchObject({ _tag: "SpeechBusyError" });
+    const join = yield* speech
+      .downloadModel("test-model")
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(finish, undefined);
+    yield* Fiber.join(join);
+    expect(download).toHaveBeenCalledTimes(1);
+    yield* speech.removeModel("test-model");
+    expect(readyModels.has("test-model")).toBe(false);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("honors an exact alias before a similar preferred term in batch and streamed text", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const options = {
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      speechCustomWords: [
+        { term: "Bob", aliases: ["Robert"] },
+        { term: "Roberts", aliases: [] },
+      ],
+    };
+    native.transcribe.mockResolvedValueOnce({ text: "Robert, Roberts." });
+    native.finish.mockResolvedValueOnce("Robert, Roberts.");
+    expect(yield* speech.transcribe(pcm(), options)).toBe("Bob, Roberts.");
+    const stream = yield* speech.startStream(options);
+    expect(yield* stream.finish).toBe("Bob, Roberts.");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("unloads after the chosen idle period and reloads on the next recording", () =>
