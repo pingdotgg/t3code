@@ -91,5 +91,12 @@ export const layer = Layer.effect(
 
 export const layerEmpty = Layer.succeed(
   McpAppModelContext,
-  McpAppModelContext.of({ set: () => Effect.void, forThread: () => Effect.succeed([]) }),
+  McpAppModelContext.of({
+    set: Effect.fn("McpAppModelContext.set")(function () {
+      return Effect.void;
+    }),
+    forThread: Effect.fn("McpAppModelContext.forThread")(function () {
+      return Effect.succeed([]);
+    }),
+  }),
 );

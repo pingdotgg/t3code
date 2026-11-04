@@ -79,8 +79,11 @@ const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] 
 export const make = ElectronPowerMonitor.of({
   isOnBatteryPower: Effect.sync(() => Electron.powerMonitor.isOnBatteryPower()),
   getSystemIdleTime: Effect.sync(() => Electron.powerMonitor.getSystemIdleTime()),
-  getSystemIdleState: (idleThresholdSeconds) =>
-    Effect.sync(() => Electron.powerMonitor.getSystemIdleState(idleThresholdSeconds)),
+  getSystemIdleState: Effect.fn("ElectronPowerMonitor.getSystemIdleState")(
+    function (idleThresholdSeconds) {
+      return Effect.sync(() => Electron.powerMonitor.getSystemIdleState(idleThresholdSeconds));
+    },
+  ),
   getCurrentThermalState: Effect.sync(() => Electron.powerMonitor.getCurrentThermalState()),
   onSimpleEvent,
   onThermalStateChange,

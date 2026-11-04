@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentServerConfigsAtom } from "./server";
@@ -14,12 +13,9 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
 
 export const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
-    const supported =
-      get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-        .projectCloneTracking === true;
-    if (!supported) return EMPTY_CLONES;
+    if (!get(environmentServerConfigsAtom).has(environmentId)) return EMPTY_CLONES;
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
-    return Option.getOrElse(AsyncResult.value(result), () => EMPTY_CLONES);
+    return AsyncResult.getOrElse(result, () => EMPTY_CLONES);
   }).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),
 );
 
