@@ -215,6 +215,7 @@ export function HtmlRenderDocument({
 }: {
   readonly ref?: Ref<HtmlRenderDocumentHandle>;
   readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
+  readonly onBridgeReady?: () => void;
   readonly src: string;
   readonly title: string;
   readonly className?: string;
@@ -347,8 +348,9 @@ export function HtmlRenderDocument({
       );
       return;
     }
-    if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     const selected = readHtmlRenderSelection(event.data);
+    if (selected !== undefined) props.onBridgeReady?.();
+    if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     if (selected !== undefined) {
       if (!props.onAskInSideChat || selected.text === "") {
         setSelection(undefined);

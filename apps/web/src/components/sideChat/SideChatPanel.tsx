@@ -419,7 +419,13 @@ export function SideChatPanel(props: {
   };
 
   const reveal = () => {
-    if (citation === null || revealCitation(citation)) return;
+    if (
+      citation === null ||
+      shell?.sideChat?.anchor.embedTitle !== undefined ||
+      citation.end <= citation.start ||
+      revealCitation(citation)
+    )
+      return;
     // A maximized panel or a sheet would hide the highlight the lesson scrolls to.
     showLesson(lessonRef, window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches);
     // Only the hash changes, so the lesson stays mounted and scrolls to the highlight.

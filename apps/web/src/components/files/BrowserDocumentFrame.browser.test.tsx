@@ -1,5 +1,5 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -157,15 +157,19 @@ function AskableEmbed({
   onAskInSideChat: (text: string) => void;
 }) {
   const documentRef = useRef<HtmlRenderDocumentHandle>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
   return (
     <>
       <HtmlRenderDocument
         ref={documentRef}
+        onBridgeReady={() => setBridgeReady(true)}
         src={src}
         title="State diagram"
         onAskInSideChat={onAskInSideChat}
       />
-      <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+      {bridgeReady ? (
+        <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+      ) : null}
     </>
   );
 }
@@ -300,4 +304,41 @@ it("asks about the title and visible embed text from its corner button", async (
     .getByRole("button", { name: "Ask in side chat" })
     .click();
   expect(onAskInSideChat).toHaveBeenLastCalledWith("observation space");
+});
+
+it("hides the corner action for an older embed without the selection bridge", async () => {
+  const html = `<p>Older diagram</p><script>parent.postMessage(${JSON.stringify(sizeChanged(321))}, "*");</script>`;
+  const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+  const messages = new AbortController();
+  using _messages = { [Symbol.dispose]: () => messages.abort() };
+  const loaded = new Promise<void>((resolve) => {
+    window.addEventListener(
+      "message",
+      (event) => {
+        const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Older diagram"]');
+        if (
+          event.source === frame?.contentWindow &&
+          event.data?.method === "ui/notifications/size-changed"
+        )
+          resolve();
+      },
+      { signal: messages.signal },
+    );
+  });
+  const onAskInSideChat = vi.fn();
+  await using screen = await render(
+    <HtmlRenderDialog
+      src={src}
+      title="Older diagram"
+      onAskInSideChat={onAskInSideChat}
+      onClose={() => undefined}
+    />,
+  );
+  await act(async () => {
+    await loaded;
+  });
+  await expect
+    .element(screen.getByRole("button", { name: "Ask in side chat" }))
+    .not.toBeInTheDocument();
 });

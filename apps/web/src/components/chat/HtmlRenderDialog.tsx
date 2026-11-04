@@ -18,6 +18,7 @@ export function HtmlRenderDialog(props: {
   readonly onClose: () => void;
 }) {
   const documentRef = useRef<HtmlRenderDocumentHandle>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
   const [zoom, setZoom] = useState(1);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   return (
@@ -31,7 +32,7 @@ export function HtmlRenderDialog(props: {
       >
         <DialogTitle className="sr-only">Expanded {props.title} preview</DialogTitle>
         <div className="relative w-[92vw]">
-          {props.onAskInSideChat ? (
+          {props.onAskInSideChat && bridgeReady ? (
             <div className="absolute right-8 -top-10 z-20">
               <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
             </div>
@@ -50,6 +51,7 @@ export function HtmlRenderDialog(props: {
             <div className="h-[100cqh] w-[100cqw]" style={{ zoom }}>
               <HtmlRenderDocument
                 ref={documentRef}
+                onBridgeReady={() => setBridgeReady(true)}
                 onAskInSideChat={props.onAskInSideChat}
                 src={props.src}
                 title={props.title}

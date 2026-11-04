@@ -32,6 +32,7 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const documentRef = useRef<HtmlRenderDocumentHandle>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
   const { attachmentId, title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
@@ -78,6 +79,7 @@ export function HtmlRenderFrame(props: {
         <>
           <HtmlRenderDocument
             ref={documentRef}
+            onBridgeReady={() => setBridgeReady(true)}
             onAskInSideChat={props.onAskInSideChat}
             src={src}
             title={title}
@@ -87,7 +89,7 @@ export function HtmlRenderFrame(props: {
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
-            {props.onAskInSideChat ? (
+            {props.onAskInSideChat && bridgeReady ? (
               <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
             ) : null}
             <Tooltip>

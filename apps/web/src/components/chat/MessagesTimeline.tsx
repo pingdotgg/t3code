@@ -70,7 +70,6 @@ import {
   type RememberedTimelinePosition,
   rememberTimelinePosition,
 } from "./timelineScrollAnchoring";
-import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
@@ -1091,42 +1090,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenTurnDiff,
     onOpenThread,
     onOpenSideChat,
-    renderHtmlRender:
-      renderHtmlRender ??
-      (onAskInSideChat && citationThreadRef
-        ? (row) => {
-            const messageId = embedAnchors.get(row.id);
-            return (
-              <HtmlRenderFrame
-                key={row.htmlRender.attachmentId}
-                environmentId={activeThreadEnvironmentId}
-                htmlRender={row.htmlRender}
-                threadRef={citationThreadRef}
-                onFullscreenChange={(fullscreen) => onAppFullscreenChange(row.id, fullscreen)}
-                onAskInSideChat={
-                  messageId === undefined || askInSideChatPending
-                    ? undefined
-                    : (excerpt) => {
-                        onAskInSideChat(
-                          {
-                            version: 1,
-                            ...citationThreadRef,
-                            messageId,
-                            text: excerpt,
-                            start: 0,
-                            end: 0,
-                            prefix: "",
-                            suffix: "",
-                          },
-                          undefined,
-                          row.htmlRender.title,
-                        );
-                      }
-                }
-              />
+    renderHtmlRender,
+    embedAnchorMessageIds: embedAnchors,
+    onAskInSideChatFromEmbed:
+      onAskInSideChat && citationThreadRef && !askInSideChatPending
+        ? (messageId, title, excerpt) => {
+            onAskInSideChat(
+              {
+                version: 1,
+                ...citationThreadRef,
+                messageId,
+                text: excerpt,
+                start: 0,
+                end: 0,
+                prefix: "",
+                suffix: "",
+              },
+              undefined,
+              title,
             );
           }
-        : undefined),
+        : undefined,
     turnItemSource,
     workflowOpening,
     onForkFromRun,
