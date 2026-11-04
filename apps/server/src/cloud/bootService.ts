@@ -1,5 +1,9 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { T3_LEARN_APP_ID, T3_LEARN_EXECUTABLE_NAME } from "@t3tools/shared/t3LearnIdentity";
+import {
+  T3_LEARN_APP_ID,
+  T3_LEARN_EXECUTABLE_NAME,
+  T3_LEARN_PRODUCT_NAME,
+} from "@t3tools/shared/t3LearnIdentity";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -96,7 +100,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    `Description=${T3_LEARN_PRODUCT_NAME} server`,
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",
