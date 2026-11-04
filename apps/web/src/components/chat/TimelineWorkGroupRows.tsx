@@ -71,6 +71,8 @@ import {
   ShieldQuestionMarkIcon,
   ArrowDownIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
+import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
 import {

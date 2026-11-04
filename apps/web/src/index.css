@@ -5114,6 +5114,10 @@ body {
   height: 1lh;
 }
 
+.composer-prompt-placeholder {
+  padding-inline-end: calc(var(--composer-actions-width, 100px) + 6px);
+}
+
 .composer-prompt-body[data-composer-multiline] {
   grid-template-areas: "attachments" "prompt" "actions";
 }
