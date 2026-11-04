@@ -23,6 +23,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -2075,6 +2076,71 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         });
       }
     }),
+  );
+
+  it.effect(
+    "claims a runtime request answer while the same thread's provider turn start runs",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const commandId = CommandId.make("command:foundation-respond-during-start");
+        const threadId = ThreadId.make("thread:foundation-respond-during-start");
+        const startEffectId = "effect:foundation-respond-during-start:a-start";
+        const respondEffectId = "effect:foundation-respond-during-start:b-respond";
+        const nextStartEffectId = "effect:foundation-respond-during-start:c-start";
+        yield* outbox.enqueue([
+          {
+            id: startEffectId,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-respond-during-start:a"),
+            },
+          },
+          {
+            id: respondEffectId,
+            commandId,
+            threadId,
+            request: {
+              type: "runtime-request.respond",
+              providerSessionId: ProviderSessionId.make("session:foundation-respond-during-start"),
+              requestId: RuntimeRequestId.make("request:foundation-respond-during-start"),
+              decision: "accept",
+            },
+          },
+          {
+            id: nextStartEffectId,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-respond-during-start:b"),
+            },
+          },
+        ]);
+
+        const start = yield* outbox.claimNext({ workerId: "start-worker" });
+        assert.isTrue(Option.isSome(start));
+        if (Option.isNone(start)) return;
+        assert.equal(start.value.id, startEffectId);
+
+        // The running start may be blocked on this answer (Pi withholds switch_session until a
+        // session_start confirm is answered), so the answer must not queue behind it.
+        const respond = yield* outbox.claimNext({ workerId: "respond-worker" });
+        assert.equal(
+          Option.getOrUndefined(respond)?.id,
+          respondEffectId,
+          "runtime-request.respond stays pending behind the running provider-turn.start",
+        );
+        yield* outbox.succeed({ effectId: respondEffectId, workerId: "respond-worker" });
+        assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "blocked-worker" })));
+
+        yield* outbox.succeed({ effectId: startEffectId, workerId: "start-worker" });
+        const nextStart = yield* outbox.claimNext({ workerId: "start-worker" });
+        assert.equal(Option.getOrUndefined(nextStart)?.id, nextStartEffectId);
+        yield* outbox.succeed({ effectId: nextStartEffectId, workerId: "start-worker" });
+      }),
   );
 
   it.effect("ignores deadlines blocked by a running effect on the same thread", () =>

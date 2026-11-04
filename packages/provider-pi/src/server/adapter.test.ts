@@ -1139,6 +1139,96 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("holds native work an extension starts while a resume switch is pending", () =>
+    Effect.gen(function* () {
+      const previous = yield* makeFakePi;
+      const { runtime: previousRuntime } = yield* openRuntime(previous);
+      const providerThread = yield* previousRuntime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const offers =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        { offer: (request) => Queue.offer(offers, request).pipe(Effect.asVoid) },
+      );
+      fake.deferNextLifecycle("switch_session");
+      const resuming = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: providerThread,
+        })
+        .pipe(Effect.forkScoped);
+      const switchRequest = yield* fake.takeRequest("switch_session");
+      // Pi withholds the switch response until a session_start(resume) dialog is answered.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "resume-goal",
+        method: "confirm",
+        title: "Resume paused goal?",
+      });
+      const pending = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.isTrue(pending.type === "runtime_request.updated");
+      if (pending.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "response",
+        id: switchRequest["id"],
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      const resumed = yield* Fiber.await(resuming);
+      assert.isFalse(
+        runtime.providerSession.lastError?.includes("outside an active T3 turn") === true,
+        "Pi treated work started during the resume switch as unsolicited and was terminated",
+      );
+      assert.isTrue(Exit.isSuccess(resumed));
+      if (!Exit.isSuccess(resumed)) return;
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Goal resumed" },
+      });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* startTurn(
+        runtime,
+        resumed.value,
+        "default",
+        [],
+        "Synthetic wake",
+        undefined,
+        2,
+        THREAD_ID,
+        true,
+      );
+      const message = yield* takeEvent((event) => event.type === "message.updated");
+      assert.equal(message.type === "message.updated" && message.message.text, "Goal resumed");
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.equal(fake.allRequests().filter((request) => request["type"] === "prompt").length, 0);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "a user prompt takes the wake without premature settlement, native wake settled=%s",
     (settled) =>
