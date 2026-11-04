@@ -402,19 +402,29 @@ it("cleans the transcript only after cleanup is separately enabled", async () =>
 });
 
 // The settings model test must show what the model heard, not what a provider rewrote.
-it("keeps a cleanup-free recording off the provider even when cleanup is on", async () => {
-  setup({ destination: "env-a" });
-  chooseTranscriptCleanup(true);
-  mocks.settings.speechCorrectionWord = "sorry";
-  mocks.projectWords = { "proj-1": [{ term: "Acme", aliases: ["ack me"] }] };
-  await using _screen = await render(<Probe cleanup={false} projectId="proj-1" />);
-  await act(() => mocks.voice.start());
-  await act(() => mocks.voice.stop());
-  expect(mocks.cleanupCalls).toEqual([]);
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
-  expect(mocks.transcribeCalls).toEqual(["env-a"]);
-  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
-});
+it.each([
+  { cleanup: false, authorized: true },
+  { cleanup: undefined, authorized: false },
+])(
+  "keeps a recording without authorized cleanup off the provider: $cleanup / $authorized",
+  async ({ cleanup, authorized }) => {
+    setup({ destination: "env-a" });
+    chooseTranscriptCleanup(true);
+    mocks.settings.speechCorrectionWord = "sorry";
+    if (!authorized) mocks.canDictate.delete(THREAD_ENV);
+    mocks.projectWords = { "proj-1": [{ term: "Acme", aliases: ["ack me"] }] };
+    await using _screen = await render(
+      <Probe {...(cleanup === undefined ? {} : { cleanup })} projectId="proj-1" />,
+    );
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.stop());
+    expect(mocks.cleanupCalls).toEqual([]);
+    expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
+    expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
+    expect(mocks.transcribeCalls).toEqual(["env-a"]);
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+  },
+);
 
 it("sends the project's vocabulary and name as hints, and the cue only with cleanup on", async () => {
   setup({ destination: "env-a" });
@@ -441,6 +451,14 @@ it("sends the project's vocabulary and name as hints, and the cue only with clea
     "effect",
   ]);
   expect(mocks.cleanupOptions.at(-1)).toMatchObject({ speechCorrectionWord: "scratch that" });
+  expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBe("scratch that");
+  chooseTranscriptCleanup(false);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
+  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).not.toContain(
+    "scratch that",
+  );
 });
 
 it("shares one status probe per destination across every mounted editor", async () => {

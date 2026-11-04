@@ -215,6 +215,46 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect.each([
+  { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
+  {
+    cue: " UM ",
+    remove: true,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Make it red, um, blue.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Make it red, blue.",
+  },
+  {
+    cue: "um",
+    remove: false,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Uh, Make it red, um, blue.",
+  },
+])(
+  "preserves only an explicit correction cue during batch and stream filler removal: $cue / $remove",
+  ({ cue, remove, text, expected }) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const options = {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "en",
+        speechRemoveFillerWords: remove,
+        speechCustomWords: [{ term: "um", aliases: [] }],
+        ...(cue === undefined ? {} : { speechCorrectionWord: cue }),
+      };
+      native.transcribe.mockResolvedValueOnce({ text });
+      native.finish.mockResolvedValueOnce(text);
+      expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
+      const stream = yield* speech.startStream(options);
+      expect(yield* stream.finish).toBe(expected);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("holds model ownership until the stream scope closes and preserves silence", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
