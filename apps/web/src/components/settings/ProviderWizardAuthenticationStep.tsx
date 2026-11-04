@@ -8,6 +8,7 @@ import { WizardFooter, WizardPanel } from "../ui/wizard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
+import { CodexInstallationSection } from "./CodexInstallationSection";
 
 export function ProviderWizardAuthenticationStep({
   environmentId,
@@ -32,13 +33,20 @@ export function ProviderWizardAuthenticationStep({
   const signedIn =
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
-  const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
+  const nativeCodex =
+    provider?.driver === "codex" &&
+    provider.setup?.canInstall &&
+    !provider.auth.subscriptionSharing;
+  const isDiscovering = !nativeCodex && !signedIn && !query.error && auth?.methods === undefined;
   const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
 
   return (
     <>
       <WizardPanel className="min-h-72">
         <SettingsGroup variant="plain">
+          {nativeCodex ? (
+            <CodexInstallationSection environmentId={environmentId} instanceId={instanceId} />
+          ) : null}
           {provider && (canAuthenticate || signedIn) ? (
             <ProviderAuthenticationSection
               environmentId={environmentId}
@@ -58,11 +66,13 @@ export function ProviderWizardAuthenticationStep({
             <SettingsRow
               title="Account"
               description={
-                isDiscovering
-                  ? "Discovering sign-in methods…"
-                  : (query.error ??
-                    auth?.message ??
-                    "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                nativeCodex
+                  ? "On this environment, sign in using the paths above, or configure the separate home for your proxy. Then refresh provider status."
+                  : isDiscovering
+                    ? "Discovering sign-in methods…"
+                    : (query.error ??
+                      auth?.message ??
+                      "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
               }
               control={
                 isDiscovering ? (

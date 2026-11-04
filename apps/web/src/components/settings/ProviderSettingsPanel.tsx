@@ -1,5 +1,6 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { CodexInstallationSection } from "./CodexInstallationSection";
 import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
@@ -1296,6 +1297,12 @@ function ProviderInstanceRow({
       }
     : undefined;
   const codexSetupMode = driver === "codex" ? readCodexSetupMode(instance.config) : null;
+  const codexIsolated =
+    driver === "codex" &&
+    instance.config !== null &&
+    typeof instance.config === "object" &&
+    "isolateRuntime" in instance.config &&
+    instance.config.isolateRuntime === true;
   const recommendedVersion = liveProvider?.compatibilityAdvisory?.recommendedVersion;
   const canInstallRecommended =
     !readOnly &&
@@ -1327,6 +1334,19 @@ function ProviderInstanceRow({
             environmentId={environmentId}
             instanceId={instanceId}
             provider={liveProvider}
+            isolated={codexIsolated}
+            readOnly={readOnly}
+            onIsolationChange={(isolateRuntime) =>
+              actions.enableInstance(instanceId, {
+                ...instance,
+                config: {
+                  ...(typeof instance.config === "object" && instance.config !== null
+                    ? instance.config
+                    : {}),
+                  isolateRuntime,
+                },
+              })
+            }
           />
         ) : undefined
       }
@@ -1343,6 +1363,12 @@ function ProviderInstanceRow({
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
             onEnable={() => actions.enableInstance(instanceId, { ...instance, enabled: true })}
+          />
+        ) : mode === "editor" && codexIsolated && codexSetupMode !== "managed" ? (
+          <CodexInstallationSection
+            environmentId={environmentId}
+            instanceId={instanceId}
+            readOnly={readOnly}
           />
         ) : mode === "editor" && codexSetupMode === "managed" ? (
           <CodexSetupSection

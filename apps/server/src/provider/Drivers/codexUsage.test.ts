@@ -1,12 +1,23 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as ServerConfig from "../../config.ts";
+import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { totalTokens } from "@t3tools/provider-core/server/usage";
 
 import {
+  codexUsageReader,
   type CodexScanState,
   codexUsageFormat,
   initialCodexScanState,
   parseCodexLine as parseCodexRecords,
 } from "./codexUsage.ts";
+
+const decodeSettings = Schema.decodeEffect(CodexSettings);
 
 function parseCodexLine(line: string, state: CodexScanState) {
   const records = parseCodexRecords(line, state);
@@ -811,3 +822,38 @@ describe("parseCodexLine", () => {
     });
   });
 });
+
+it.effect.each(["existing", "managed"] as const)(
+  "reads only this provider's separate transcripts for %s setup",
+  (setupMode) =>
+    Effect.gen(function* () {
+      const server = yield* ServerConfig.ServerConfig;
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("codex-personal");
+      const config = yield* decodeSettings({
+        isolateRuntime: true,
+        setupMode,
+        homePath: "/ignored/home",
+        shadowHomePath: "/ignored/shadow",
+      });
+      if (codexUsageReader.kind !== "transcripts")
+        return yield* Effect.die("Expected a transcript usage reader");
+      const directories = yield* codexUsageReader.directories({
+        instanceId,
+        configured: true,
+        config,
+        environment: { CODEX_HOME: "/ambient/home" },
+      });
+      expect(directories).toEqual([
+        { dir: path.join(server.stateDir, "providers/codex", instanceId, "home/sessions") },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-isolated-usage-" }),
+          Layer.mock(CodexUsageHistory.CodexUsageHistory)({}),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    ),
+);

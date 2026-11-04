@@ -42,6 +42,7 @@ import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
 import { ChatGptAccountPicker } from "./ChatGptAccountPicker";
 import { Input } from "../ui/input";
+import { CodexInstallationSection, CodexIsolationSetting } from "./CodexInstallationSection";
 import { OpenAI } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
@@ -96,6 +97,8 @@ interface CodexSetupSectionProps {
   readonly readOnly?: boolean;
   readonly presentation?: "settings" | "onboarding";
   readonly onModeChange: (mode: "managed" | "existing") => void;
+  readonly isolated?: boolean;
+  readonly onIsolationChange?: (isolated: boolean) => void;
   readonly autoStart?: boolean;
   readonly displayName?: string | undefined;
   readonly onAutoStartConsumed?: () => void;
@@ -207,7 +210,20 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
         }}
       />
     );
-  return content;
+  return (
+    <>
+      {props.presentation === "onboarding" && props.onIsolationChange ? (
+        <CodexIsolationSetting
+          environmentId={props.environmentId}
+          isolated={props.isolated === true}
+          readOnly={props.readOnly === true}
+          restartRequired={props.provider?.installed === true}
+          onChange={props.onIsolationChange}
+        />
+      ) : null}
+      {content}
+    </>
+  );
 }
 
 export function AddManagedCodexAccountDialog({
@@ -1053,10 +1069,16 @@ export function CodexManagedRuntimeFields({
   environmentId,
   instanceId,
   provider,
+  isolated = false,
+  readOnly = false,
+  onIsolationChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
+  readonly isolated?: boolean;
+  readonly readOnly?: boolean;
+  readonly onIsolationChange?: (isolated: boolean) => void;
 }) {
   const installation = useEnvironmentQuery(
     serverEnvironment.providerInstallState({
@@ -1067,55 +1089,74 @@ export function CodexManagedRuntimeFields({
   const executablePath = installation.data?.executablePath ?? "";
   return (
     <>
-      <SettingsRow
-        title="Binary path"
-        description="Selected by T3 Code."
-        control={
-          <div className="w-full sm:w-80">
-            <Input
-              aria-label="Codex binary path"
-              value={executablePath}
-              title={executablePath}
-              placeholder={installation.error ? "Could not read runtime path" : "Not installed"}
-              disabled
-            />
-          </div>
-        }
-      />
-      <SettingsRow
-        title="CODEX_HOME path"
-        description="Shared Codex config, sessions, and state."
-        control={
-          <div className="w-full sm:w-80">
-            <Input
-              aria-label="Codex home path"
-              value={provider?.runtimePaths?.homePath ?? ""}
-              title={provider?.runtimePaths?.homePath}
-              placeholder="Unavailable"
-              disabled
-            />
-          </div>
-        }
-      />
-      <SettingsRow
-        title="Shadow home path"
-        description={
-          provider?.runtimePaths?.shadowHomePath
-            ? "Account-specific home sharing the Codex state above."
-            : "This instance uses the shared Codex home directly."
-        }
-        control={
-          <div className="w-full sm:w-80">
-            <Input
-              aria-label="Codex shadow home path"
-              value={provider?.runtimePaths?.shadowHomePath ?? ""}
-              title={provider?.runtimePaths?.shadowHomePath ?? undefined}
-              placeholder={provider?.runtimePaths ? "Not used" : "Unavailable"}
-              disabled
-            />
-          </div>
-        }
-      />
+      {onIsolationChange ? (
+        <CodexIsolationSetting
+          environmentId={environmentId}
+          isolated={isolated}
+          readOnly={readOnly}
+          restartRequired
+          onChange={onIsolationChange}
+        />
+      ) : null}
+      {isolated ? (
+        <CodexInstallationSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          readOnly={readOnly}
+        />
+      ) : (
+        <>
+          <SettingsRow
+            title="Binary path"
+            description="Selected by T3 Code."
+            control={
+              <div className="w-full sm:w-80">
+                <Input
+                  aria-label="Codex binary path"
+                  value={executablePath}
+                  title={executablePath}
+                  placeholder={installation.error ? "Could not read runtime path" : "Not installed"}
+                  disabled
+                />
+              </div>
+            }
+          />
+          <SettingsRow
+            title="CODEX_HOME path"
+            description="Shared Codex config, sessions, and state."
+            control={
+              <div className="w-full sm:w-80">
+                <Input
+                  aria-label="Codex home path"
+                  value={provider?.runtimePaths?.homePath ?? ""}
+                  title={provider?.runtimePaths?.homePath}
+                  placeholder="Unavailable"
+                  disabled
+                />
+              </div>
+            }
+          />
+          <SettingsRow
+            title="Shadow home path"
+            description={
+              provider?.runtimePaths?.shadowHomePath
+                ? "Account-specific home sharing the Codex state above."
+                : "This instance uses the shared Codex home directly."
+            }
+            control={
+              <div className="w-full sm:w-80">
+                <Input
+                  aria-label="Codex shadow home path"
+                  value={provider?.runtimePaths?.shadowHomePath ?? ""}
+                  title={provider?.runtimePaths?.shadowHomePath ?? undefined}
+                  placeholder={provider?.runtimePaths ? "Not used" : "Unavailable"}
+                  disabled
+                />
+              </div>
+            }
+          />
+        </>
+      )}
     </>
   );
 }

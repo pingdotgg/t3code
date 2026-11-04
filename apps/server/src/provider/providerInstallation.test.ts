@@ -62,6 +62,25 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const calls: string[] = [];
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
+  const codexRuntime = {
+    managedDirectory: "/unused-managed-codex",
+    resolve: () => Effect.die("unused"),
+    acquire: () => Effect.die("unused"),
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - No compatibility advisory is undefined, not void.
+    compatibility: () => Effect.succeed(undefined),
+    start: Effect.sync(() => {
+      calls.push("isolated-codex-start");
+      return { ...state, driver: ProviderDriverKind.make("codex") };
+    }),
+    cancel: () => Effect.die("unused"),
+    state: Effect.succeed({ ...state, driver: ProviderDriverKind.make("codex") }),
+    changes: Stream.empty,
+    remove: (paths?: ReadonlyArray<string>) =>
+      Effect.sync(() => {
+        protectedPaths = paths ?? [];
+        calls.push("isolated-codex-remove");
+      }),
+  };
   const router = yield* makeProviderInstallation().pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -80,6 +99,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
         }),
         Layer.mock(CodexInstallation.CodexInstallation)({
           managedDirectory: "/unused-managed-codex",
+          managed: Effect.succeed(codexRuntime),
           start: Effect.sync(() => {
             calls.push("codex-start");
             return { ...state, driver: ProviderDriverKind.make("codex") };
@@ -123,6 +143,34 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
 });
 
 describe("provider installation routing", () => {
+  it.effect.each(["existing", "managed"] as const)(
+    "routes separate Codex %s setup to the dedicated installer despite unused path overrides",
+    (setupMode) =>
+      Effect.gen(function* () {
+        const codex = ProviderInstanceId.make("codex-personal");
+        const kind = ProviderDriverKind.make("codex");
+        const harness = yield* makeHarness({
+          instance: instance(kind, codex),
+          settings: {
+            providerInstances: {
+              [codex]: {
+                driver: kind,
+                config: { setupMode, isolateRuntime: true, binaryPath: "/ignored/codex" },
+              },
+            },
+          },
+        });
+        yield* harness.router.start({ instanceId: codex });
+        yield* harness.router.remove({ instanceId: codex });
+        assert.deepEqual(harness.protectedPaths(), []);
+        assert.deepEqual(harness.calls, [
+          "isolated-codex-start",
+          "isolated-codex-remove",
+          "refresh",
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
