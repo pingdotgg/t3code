@@ -58,6 +58,9 @@ const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
+// UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
+// would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
+const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
 
 /**
  * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
@@ -221,6 +224,8 @@ export function deriveWorkspacePaneLayout(input: {
   readonly primarySidebarPreferredVisible: boolean;
   readonly auxiliaryPanePreferredVisible: boolean;
   readonly auxiliaryPanePreferredWidth?: number;
+  /** The native inspector column's width; UIKit lays it out, not this layout. */
+  readonly nativeInspectorWidth?: number;
 }): WorkspacePaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
   const floats = input.primarySidebarFloats ?? input.layout.variant === "medium";
@@ -237,18 +242,17 @@ export function deriveWorkspacePaneLayout(input: {
     reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
+  const inspectorWidth = input.nativeWorkspace
+    ? (input.nativeInspectorWidth ?? null)
+    : fileInspector.width;
   const primarySidebarSuppressedByAuxiliary =
-    !input.nativeWorkspace &&
     preferredPrimarySidebarVisible &&
     !floats &&
     auxiliaryPaneVisible &&
-    fileInspector.width !== null &&
+    inspectorWidth !== null &&
     input.layout.listPaneWidth !== null &&
-    viewportWidth -
-      input.layout.listPaneWidth -
-      (input.layout.listPaneGap ?? 0) -
-      fileInspector.width <
-      FILE_INSPECTOR_MIN_MAIN_WIDTH;
+    viewportWidth - input.layout.listPaneWidth - (input.layout.listPaneGap ?? 0) - inspectorWidth <
+      (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
@@ -262,6 +266,10 @@ export function deriveWorkspacePaneLayout(input: {
     auxiliaryPaneVisible,
     auxiliaryPaneWidth: fileInspector.width,
   };
+}
+
+export function nativeInspectorColumnWidth(viewportWidth: number, fraction: number) {
+  return Math.max(260, Math.min(viewportWidth * 0.6, viewportWidth * fraction));
 }
 
 export function deriveFileInspectorPaneLayout(input: {

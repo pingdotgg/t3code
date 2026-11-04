@@ -7,6 +7,7 @@ import {
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  nativeInspectorColumnWidth,
   isPrimarySidebarPinned,
 } from "./layout";
 
@@ -153,24 +154,31 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
-  it("lets UIKit keep the sidebar independent of the inspector in landscape", () => {
-    const layout = deriveLayout({ width: 1_194, height: 834 });
-    for (const primarySidebarPreferredVisible of [true, false]) {
-      expect(
-        deriveWorkspacePaneLayout({
-          layout,
-          viewportWidth: 1_194,
-          nativeWorkspace: true,
-          primarySidebarPreferredVisible,
-          auxiliaryPanePreferredVisible: true,
-        }),
-      ).toMatchObject({
-        primarySidebarVisible: primarySidebarPreferredVisible,
-        primarySidebarSuppressedByAuxiliary: false,
-        auxiliaryPaneVisible: true,
-      });
-    }
-  });
+  it.each([
+    { width: 1_194, height: 834, suppressed: false },
+    { width: 1_032, height: 1_376, suppressed: true },
+  ])(
+    "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
+    ({ width, height, suppressed }) => {
+      const layout = deriveLayout({ width, height });
+      for (const primarySidebarPreferredVisible of [true, false]) {
+        expect(
+          deriveWorkspacePaneLayout({
+            layout,
+            viewportWidth: width,
+            nativeWorkspace: true,
+            primarySidebarPreferredVisible,
+            auxiliaryPanePreferredVisible: true,
+            nativeInspectorWidth: nativeInspectorColumnWidth(width, 0.4),
+          }),
+        ).toMatchObject({
+          primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
+          primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
+          auxiliaryPaneVisible: true,
+        });
+      }
+    },
+  );
 
   it("keeps an explicitly hidden thread sidebar hidden when the file inspector is visible", () => {
     const layout = deriveLayout({ width: 1_024, height: 1_366 });
