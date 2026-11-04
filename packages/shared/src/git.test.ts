@@ -7,6 +7,7 @@ import {
   formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
+  isBareGitConfig,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseOriginUrlFromGitConfig,
@@ -61,6 +62,15 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
+  });
+});
+
+describe("isBareGitConfig", () => {
+  it("reads continued bare values after comments and at end of input", () => {
+    const config = ["[core] bare = false # ignored backslash \\", 'bare = "tr\\', 'ue"'].join("\n");
+
+    expect(isBareGitConfig(config)).toBe(true);
+    expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
   });
 });
 

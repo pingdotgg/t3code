@@ -1,0 +1,5 @@
+/contact
+	X-Header: exact-header
+
+/*.svg
+	X-Header: splat-header

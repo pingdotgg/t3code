@@ -4,12 +4,14 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { PLUGIN_VIEW_SCRIPT_MAX_BYTES, type PluginViewsSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Fiber from "effect/Fiber";
@@ -146,7 +148,7 @@ const install = Effect.fn("install")(function* (
 const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistence.layerMemory));
 
-it.layer(NodeServices.layer)("PluginViews", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))("PluginViews", (it) => {
   describe("bundles", () => {
     it.effect("revokes cached bundles immediately when the disabled record cannot be saved", () =>
       withDatabase(

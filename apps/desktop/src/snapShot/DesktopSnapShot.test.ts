@@ -6,7 +6,7 @@ import {
   type ClientSettings,
   type DesktopSnapShotEvent,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -519,11 +519,8 @@ const layerTest = (
         FileSystem.layerNoop(fileSystemOverrides),
         Path.layer,
         Layer.succeed(
-          Crypto.Crypto,
-          Crypto.make({
-            randomBytes: (size) => new Uint8Array(size),
-            digest: (_algorithm, data) => Effect.succeed(data),
-          }),
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size)),
         ),
       ),
     ),
@@ -675,11 +672,8 @@ function concurrentCaptureFixture(platform: NodeJS.Platform, animations: boolean
       readFileString: (path) => Effect.sync(() => metadata.get(path)!),
     }),
     Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size).fill(++randomByte),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      }),
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(++randomByte)),
     ),
     Layer.succeed(
       DesktopWindow.DesktopWindow,
