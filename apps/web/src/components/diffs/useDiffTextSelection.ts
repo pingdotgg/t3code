@@ -188,6 +188,32 @@ function readDomSelection(root: ShadowRoot): { anchor: DomPoint; focus: DomPoint
     : { anchor: start, focus: end };
 }
 
+// Select All from a menu runs no keydown. With the caret in a file it selects
+// that file's mounted rows, otherwise the whole document.
+function selectsWholeFile(host: HTMLElement): boolean {
+  const root = host.shadowRoot;
+  const code = root?.querySelector("pre");
+  const current = root ? readDomSelection(root) : null;
+  if (!root || !code || !current) return false;
+  const inAnchor = root.contains(current.anchor.node);
+  const inFocus = root.contains(current.focus.node);
+  if (!inAnchor && !inFocus) return document.getSelection()?.containsNode(host) ?? false;
+  if (!inAnchor || !inFocus) return false;
+  const selected = document.createRange();
+  selected.setStart(current.anchor.node, current.anchor.offset);
+  selected.setEnd(current.focus.node, current.focus.offset);
+  if (selected.collapsed) {
+    selected.setStart(current.focus.node, current.focus.offset);
+    selected.setEnd(current.anchor.node, current.anchor.offset);
+  }
+  const all = document.createRange();
+  all.selectNodeContents(code);
+  return (
+    selected.compareBoundaryPoints(Range.START_TO_START, all) <= 0 &&
+    selected.compareBoundaryPoints(Range.END_TO_END, all) >= 0
+  );
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
@@ -291,16 +317,32 @@ class DiffTextSelectionTracker {
     );
   }
 
+  selectFile(instance: DiffInstance): boolean {
+    const selection = this.begin(instance);
+    if (!selection) return false;
+    selection.anchor = FILE_START;
+    selection.focus = FILE_END;
+    this.selection = selection;
+    this.redraw();
+    return true;
+  }
+
   onSelectionChange = () => {
-    const instance = this.selection?.instance ?? this.engaged;
+    const { engaged } = this;
+    const engagedHost = engaged && !this.dragging ? this.hostOf(engaged) : null;
+    if (engaged && engagedHost && selectsWholeFile(engagedHost) && this.selectFile(engaged)) {
+      return;
+    }
+    const instance = this.selection?.instance ?? engaged;
     const host = instance ? this.hostOf(instance) : null;
     if (!instance || !host?.shadowRoot) return;
     const current = readDomSelection(host.shadowRoot);
     if (!current) return;
     const root = host.shadowRoot;
     if (!root.contains(current.anchor.node) || !root.contains(current.focus.node)) {
-      // The selection left this file while it is still mounted.
-      if (!this.dragging) this.selection = null;
+      // The selection left this file while it is still mounted, so the
+      // browser's own selection and copy apply, even mid-gesture.
+      this.selection = null;
       return;
     }
     const seenAnchor = domToRowPoint(current.anchor);
@@ -375,13 +417,7 @@ class DiffTextSelectionTracker {
       ) {
         return;
       }
-      const selection = this.begin(this.engaged);
-      if (!selection) return;
-      event.preventDefault();
-      selection.anchor = FILE_START;
-      selection.focus = FILE_END;
-      this.selection = selection;
-      this.redraw();
+      if (this.selectFile(this.engaged)) event.preventDefault();
     };
     const onCopy = (event: ClipboardEvent) => {
       const { selection } = this;

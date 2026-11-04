@@ -16,7 +16,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../test/render";
@@ -273,11 +273,22 @@ const longFileLines = Array.from(
     `SELECT ${index + 1} AS value, 'row ${index + 1}' AS label; -- fixture line ${index + 1}`,
 );
 
-async function renderLongFileDiff(context: ReturnType<typeof setup>, path: string) {
+async function renderLongFileDiff(
+  context: ReturnType<typeof setup>,
+  path: string,
+  others: ReadonlyArray<{ path: string; lines: readonly string[] }> = [],
+  lines: readonly string[] = longFileLines,
+) {
+  const files = [{ path, lines }, ...others];
   const metadata = preview();
   const source = {
     ...metadata.sources[0]!,
-    files: [{ path, previousPath: null, additions: longFileLines.length, deletions: 0 }],
+    files: files.map((file) => ({
+      path: file.path,
+      previousPath: null,
+      additions: file.lines.length,
+      deletions: 0,
+    })),
   };
   state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
   useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
@@ -292,37 +303,82 @@ async function renderLongFileDiff(context: ReturnType<typeof setup>, path: strin
       </RegistryContext.Provider>,
     ),
   );
-  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
+  for (const file of files) {
+    await userEvent.click(screen.getByRole("button", { name: `Expand ${file.path}`, exact: true }));
+  }
   act(() =>
     context.registry.set(
       context.patch,
       AsyncResult.success({
         ...source,
-        diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${longFileLines.length} @@\n${longFileLines.map((line) => `+${line}\n`).join("")}`,
+        diff: files
+          .map(
+            (file) =>
+              `diff --git a/${file.path} b/${file.path}\nnew file mode 100644\n--- /dev/null\n+++ b/${file.path}\n@@ -0,0 +1,${file.lines.length} @@\n${file.lines.map((line) => `+${line}\n`).join("")}`,
+          )
+          .join(""),
       }),
     ),
   );
   await expect.element(screen.getByText(longFileLines[0]!, { exact: true })).toBeVisible();
-  const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+  const roots = () =>
+    [...screen.container.querySelectorAll("diffs-container")].map((host) => host.shadowRoot!);
   const pasteTarget = screen.getByRole("textbox", { name: "Paste target" });
   // A copy that writes nothing must not pass with an earlier copy's text.
   await userEvent.fill(pasteTarget, "nothing was copied");
   (pasteTarget.element() as HTMLTextAreaElement).select();
   await userEvent.copy();
   await userEvent.clear(pasteTarget);
+  const copied = async () => {
+    await userEvent.copy();
+    const textarea = pasteTarget.element() as HTMLTextAreaElement;
+    // Playwright's click on the textarea stalls once the viewer has scrolled; paste needs focus only.
+    textarea.focus();
+    await userEvent.paste();
+    return textarea.value;
+  };
   return {
     screen: stack.move(),
-    row: (line: number) => root.querySelector<HTMLElement>(`[data-line="${line}"]`),
+    row: (line: number, file = 0) =>
+      roots()[file]?.querySelector<HTMLElement>(`[data-line="${line}"]`) ?? null,
     scroller: screen.container.querySelector<HTMLElement>(".diff-render-surface")!,
-    copiedRows: async () => {
-      await userEvent.copy();
-      const textarea = pasteTarget.element() as HTMLTextAreaElement;
-      // Playwright's click on the textarea stalls once the viewer has scrolled; paste needs focus only.
-      textarea.focus();
-      await userEvent.paste();
-      return textarea.value.trimEnd().split("\n");
-    },
+    copied,
+    copiedRows: async () => (await copied()).trimEnd().split("\n"),
   };
+}
+
+// A point on one of a row's characters, relative to the row: the left edge puts
+// the caret before it, the right edge after it.
+function charEdge(row: HTMLElement, index: number, edge: "left" | "right") {
+  const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  let text = walker.nextNode() as Text;
+  while (index >= text.length) {
+    index -= text.length;
+    text = walker.nextNode() as Text;
+  }
+  const char = document.createRange();
+  char.setStart(text, index);
+  char.setEnd(text, index + 1);
+  const glyph = char.getBoundingClientRect();
+  const box = row.getBoundingClientRect();
+  return {
+    x: (edge === "left" ? glyph.left + 1 : glyph.right - 1) - box.left,
+    y: glyph.top + glyph.height / 2 - box.top,
+  };
+}
+
+// The start of a row's code sits under the gutter's comment button, so the
+// press lands mid-row; later hovers extend the selection from it.
+const PRESS_OFFSET = 10;
+
+async function pressRow(row: HTMLElement) {
+  await userEvent.hover(row, { position: charEdge(row, PRESS_OFFSET, "left") });
+  await commands.mouseDown();
+}
+
+async function dragToRowEnd(row: HTMLElement) {
+  const last = row.textContent!.trimEnd().length - 1;
+  await userEvent.hover(row, { position: charEdge(row, last, "right") });
 }
 
 it("copies every row of a long file after select-all inside its diff", async () => {
@@ -353,4 +409,66 @@ it("copies a selection whose first row has scrolled out of the mounted rows", as
     expect(diff.row(1)).toBeNull();
   });
   expect(await diff.copiedRows()).toEqual(longFileLines.slice(0, 20));
+});
+
+it("copies every row of a drag whose first row scrolls out of the mounted rows", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "dragged-selection.sql");
+  await using _screen = diff.screen;
+  await pressRow(diff.row(1)!);
+  await dragToRowEnd(diff.row(5)!);
+  diff.scroller.scrollTop = 4000;
+  await vi.waitFor(() => {
+    expect(diff.row(160)).not.toBeNull();
+    expect(diff.row(1)).toBeNull();
+  });
+  // The row in the middle of the viewport, once the scrolled rows are laid out.
+  const viewport = diff.scroller.getBoundingClientRect();
+  const [x, y] = [viewport.left + viewport.width / 2, viewport.top + viewport.height / 2];
+  const last = await vi.waitFor(() => {
+    const row = document.elementFromPoint(x, y)?.shadowRoot?.elementFromPoint(x, y);
+    const line = row?.closest<HTMLElement>("[data-line]");
+    expect(line).toBeTruthy();
+    return line!;
+  });
+  await dragToRowEnd(last);
+  await commands.mouseUp();
+  expect(await diff.copied()).toBe(
+    longFileLines.slice(0, Number(last.dataset.line)).join("\n").slice(PRESS_OFFSET),
+  );
+});
+
+it("copies the browser's selection of a drag that continues into another file", async () => {
+  using context = setup("origin/orphan");
+  const lines = longFileLines.slice(0, 3);
+  const otherLines = ["other file first", "other file second", "other file third"];
+  const diff = await renderLongFileDiff(
+    context,
+    "a.sql",
+    [{ path: "b.sql", lines: otherLines }],
+    lines,
+  );
+  await using _screen = diff.screen;
+  await vi.waitFor(() => expect(diff.row(2, 1)).not.toBeNull());
+  await pressRow(diff.row(1)!);
+  await dragToRowEnd(diff.row(3)!);
+  await dragToRowEnd(diff.row(2, 1)!);
+  await commands.mouseUp();
+  const copied = await diff.copied();
+  expect(copied).toContain(lines.join("\n").slice(PRESS_OFFSET));
+  expect(copied).toContain(otherLines[1]);
+});
+
+it("copies every row of a file after select all without a keydown", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "menu-select-all.sql");
+  await using _screen = diff.screen;
+  await userEvent.click(diff.row(2)!);
+  const selected = new Promise((resolve) =>
+    document.addEventListener("selectionchange", resolve, { once: true }),
+  );
+  // What the Edit and context menus' Select All run.
+  document.execCommand("selectAll");
+  await selected;
+  expect(await diff.copiedRows()).toEqual(longFileLines);
 });
