@@ -2745,7 +2745,10 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
-const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Int, Schema.Literal("auto")]);
+const ClaudeAutoCompactWindowSetting = Schema.Union([
+  Schema.Int.check(Schema.isBetween({ minimum: 100_000, maximum: 1_000_000 })),
+  Schema.Literal("auto"),
+]);
 // Values are checked one at a time, so a bad entry for another model can't hide this one.
 const decodeClaudeAutoCompactSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
@@ -4801,14 +4804,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.flatMap(decodeClaudeAutoCompactSettings),
         Effect.orElseSucceed(() => undefined),
       );
+      for (const [key, entry] of Object.entries(settings?.modelSettings ?? {})) {
+        const entryModel = compileClaudeModelSelection({
+          ...modelSelection,
+          model: key,
+        }).apiModelId.replace(/\[1m\]$/i, "");
+        if (entryModel !== model) continue;
+        const window = Option.getOrUndefined(decodeClaudeModelAutoCompactSettings(entry));
+        if (window !== undefined) {
+          return window.autoCompactWindow === "auto" ? undefined : window.autoCompactWindow;
+        }
+      }
       const value = Option.getOrUndefined(
-        Option.orElse(
-          Option.map(
-            decodeClaudeModelAutoCompactSettings(settings?.modelSettings?.[model]),
-            (entry) => entry.autoCompactWindow,
-          ),
-          () => decodeClaudeAutoCompactWindow(settings?.autoCompactWindow),
-        ),
+        decodeClaudeAutoCompactWindow(settings?.autoCompactWindow),
       );
       if (value !== undefined) return value === "auto" ? undefined : value;
     }
