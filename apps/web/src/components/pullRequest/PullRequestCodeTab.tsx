@@ -19,6 +19,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
+  EyeOffIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
@@ -138,6 +139,7 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+const PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestHideViewedFiles";
 
 interface DiffSlice {
   readonly source: PullRequestDiffResult;
@@ -382,6 +384,11 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [hideViewedFiles, setHideViewedFiles] = useLocalStorage(
+    PULL_REQUEST_HIDE_VIEWED_FILES_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -569,15 +576,24 @@ function PullRequestCodeTab({
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
+  // A requested file stays visible so a jump to a hidden file still lands.
+  const isRevealTarget = (path: string) => path === revealRequest?.path;
+  const reviewFiles = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
+        return isRevealTarget(path) || !isTestChangedFile(path);
       })
     : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
-  const filePaths = files.map((file) => resolveFileDiffPath(file));
+  const hiddenTestFileCount = loadedFiles.length - reviewFiles.length;
+  const viewedFileCount = reviewFiles.filter((file) =>
+    isFileViewed(resolveFileDiffPath(file)),
+  ).length;
+  const files = hideViewedFiles
+    ? reviewFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return isRevealTarget(path) || !isFileViewed(path);
+      })
+    : reviewFiles;
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
@@ -1136,10 +1152,10 @@ function PullRequestCodeTab({
               {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
             </Button>
           ) : null}
-          {filesViewed.enabled && files.length > 0 ? (
+          {filesViewed.enabled && reviewFiles.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
+                {viewedFileCount} / {reviewFiles.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
@@ -1368,6 +1384,26 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {viewedFileCount > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label="Hide viewed files"
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideViewedFiles}
+                  onPressedChange={(pressed) => setHideViewedFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <EyeOffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideViewedFiles ? "Show viewed files" : "Hide viewed files"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1438,9 +1474,11 @@ function PullRequestCodeTab({
   }
 
   if (items.length === 0 && nextCursor === null) {
+    const noFilesMessage =
+      commit === null ? `This ${term} has no file changes.` : "This commit has no file changes.";
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
+        {loadedFiles.length > 0 ? "All files are hidden." : noFilesMessage}
       </p>,
     );
   }

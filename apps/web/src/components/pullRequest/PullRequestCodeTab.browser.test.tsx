@@ -4,12 +4,13 @@ import {
   SourceControlProviderKind,
   type PullRequestDetailView,
   type PullRequestDiffResult,
+  type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,6 +48,15 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
+    filesViewedAtom: Atom.make(() =>
+      AsyncResult.success<PullRequestFilesViewedResult>({
+        files: [
+          { path: "early-0.ts", state: "viewed" },
+          { path: "early-1.ts", state: "dismissed" },
+        ],
+        truncated: false,
+      }),
+    ),
   };
 });
 
@@ -66,6 +76,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
+      filesViewed: (() => filesViewedAtom) as never,
     },
   };
 });
@@ -128,17 +139,19 @@ const detail: PullRequestDetailView = {
 function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.diffCommits = [];
+  localStorage.clear();
 }
 
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
+  tabDetail: PullRequestDetailView = detail,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
-    reference={detail}
-    detail={detail}
+    reference={tabDetail}
+    detail={tabDetail}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -201,6 +214,24 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await screen.rerender(tab(0, { path: "late.ts", nonce: 1 }));
 
   await expectFileHeaderShown(screen, container, "late.ts");
+});
+
+it("hides viewed files but keeps one pushed to since it was viewed", async () => {
+  setup({ paged: true });
+  const viewedDetail = {
+    ...detail,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+  };
+  await using screen = await render(tab(0, null, viewedDetail), { container: pagedContainer() });
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  const hideViewed = screen.getByRole("button", { name: "Hide viewed files" });
+
+  await hideViewed.click();
+
+  await expect.element(screen.getByText("early-0.ts", { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("early-1.ts", { exact: true }).first()).toBeVisible();
+  await hideViewed.click();
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
