@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -242,6 +243,86 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       ]) {
         yield* fileSystem.writeFileString(project, invalid);
         expect(yield* entrypoint(subscription)).toBe("t3-code");
+      }
+    }),
+  );
+
+  it.effect("ignores settings sources the process does not load", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+      yield* fileSystem.makeDirectory(path.join(workspace, ".claude"));
+      const write = (file: string, key: string) =>
+        fileSystem.writeFileString(file, JSON.stringify({ env: { ANTHROPIC_API_KEY: key } }));
+      const entrypoint = (
+        environment: NodeJS.ProcessEnv,
+        sources: ReadonlyArray<"user" | "project" | "local">,
+        launchArgEnv?: Readonly<Record<string, unknown>>,
+      ) =>
+        resolveClaudeSessionEnvironment(
+          { homePath },
+          environment,
+          workspace,
+          launchArgEnv,
+          new Set(sources),
+        ).pipe(Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT));
+      const apiKey = { ANTHROPIC_API_KEY: "key" };
+
+      yield* write(path.join(workspace, ".claude", "settings.json"), "");
+      expect(yield* entrypoint(apiKey, ["user"])).toBeUndefined();
+      expect(yield* entrypoint(apiKey, ["project"])).toBe("t3-code");
+      yield* fileSystem.remove(path.join(workspace, ".claude", "settings.json"));
+      yield* write(path.join(workspace, ".claude", "settings.local.json"), "");
+      expect(yield* entrypoint(apiKey, ["user", "project"])).toBeUndefined();
+      expect(yield* entrypoint(apiKey, ["local"])).toBe("t3-code");
+      yield* fileSystem.remove(path.join(workspace, ".claude", "settings.local.json"));
+      yield* write(path.join(homePath, "settings.json"), "key");
+      expect(yield* entrypoint({}, ["project", "local"])).toBe("t3-code");
+      expect(yield* entrypoint({}, ["user"])).toBeUndefined();
+      // --settings always applies.
+      expect(yield* entrypoint({}, [], apiKey)).toBeUndefined();
+    }),
+  );
+
+  it.effect("uses root local settings only from a checkout the user owns", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+      const cwd = path.join(root, "packages", "app");
+      yield* fileSystem.makeDirectory(cwd, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(root, ".git"));
+      yield* fileSystem.makeDirectory(path.join(root, ".claude"));
+      yield* fileSystem.writeFileString(
+        path.join(root, ".claude", "settings.local.json"),
+        JSON.stringify({ env: { ANTHROPIC_API_KEY: "key" } }),
+      );
+      const entrypoint = (foreignPath?: string) =>
+        resolveClaudeSessionEnvironment({ homePath }, {}, cwd).pipe(
+          Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              ...fileSystem,
+              stat: (file) =>
+                fileSystem
+                  .stat(file)
+                  .pipe(
+                    Effect.map((info) =>
+                      file === foreignPath ? { ...info, uid: Option.some(-1) } : info,
+                    ),
+                  ),
+            }),
+          ),
+        );
+
+      expect(yield* entrypoint()).toBeUndefined();
+      for (const foreignPath of [root, path.join(root, ".git"), path.join(root, ".claude")]) {
+        expect(yield* entrypoint(foreignPath)).toBe("t3-code");
       }
     }),
   );

@@ -4401,6 +4401,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           '{"env":{"ANTHROPIC_API_KEY":"key"}}',
         );
         assert.isUndefined(yield* openedEntrypoint());
+        // Claude ignores that file when --setting-sources leaves out local settings.
+        assert.equal(yield* openedEntrypoint("--setting-sources user"), "t3-code");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
