@@ -6,7 +6,13 @@ import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { workspaceDetailRouter } from "../workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  SourceControlProviderKind,
+  SourceControlRepositoryError,
+  type ProjectCloneExistingDestination,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, createElement, isValidElement, type ReactNode } from "react";
@@ -26,6 +32,11 @@ const state = vi.hoisted(() => ({
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
+  cloneInputs: [] as {
+    destinationPath: string;
+    existingDestination?: ProjectCloneExistingDestination;
+  }[],
+  canResolveCloneConflicts: false,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
@@ -112,7 +123,10 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: {
+            platform: { os: "linux" },
+            capabilities: { projectCloneExistingDestination: state.canResolveCloneConflicts },
+          },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -143,7 +157,12 @@ vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
-    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+    startProjectClone: async ({
+      input,
+    }: {
+      input: { destinationPath: string; existingDestination?: ProjectCloneExistingDestination };
+    }) => {
+      state.cloneInputs.push(input);
       if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
@@ -206,6 +225,32 @@ function findAction(
     return node.props.disabled && !includeDisabled ? null : (node.props.onPress ?? null);
   }
   return findAction(node.props.children, label, includeDisabled);
+}
+
+function findPathInput(
+  node: ReactNode,
+): { value: string; onChangeText: (value: string) => void; onSubmit: () => void } | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const input = findPathInput(child);
+      if (input) return input;
+    }
+    return null;
+  }
+  if (
+    !isValidElement<{
+      value?: string;
+      onChangeText?: (value: string) => void;
+      onSubmit?: () => void;
+      children?: ReactNode;
+    }>(node)
+  ) {
+    return null;
+  }
+  const { value, onChangeText, onSubmit } = node.props;
+  if (typeof value === "string" && onChangeText && onSubmit)
+    return { value, onChangeText, onSubmit };
+  return findPathInput(node.props.children);
 }
 
 const mountedRoots: ReturnType<typeof createRoot>[] = [];
@@ -658,31 +703,6 @@ describe("local project navigation", () => {
 });
 
 describe("local folder path", () => {
-  function findPathInput(
-    node: ReactNode,
-  ): { value: string; onChangeText: (value: string) => void } | null {
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        const input = findPathInput(child);
-        if (input) return input;
-      }
-      return null;
-    }
-    if (
-      !isValidElement<{
-        value?: string;
-        onChangeText?: (value: string) => void;
-        onSubmit?: () => void;
-        children?: ReactNode;
-      }>(node)
-    ) {
-      return null;
-    }
-    const { value, onChangeText, onSubmit } = node.props;
-    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
-    return findPathInput(node.props.children);
-  }
-
   function mountLocalFolder() {
     state.scopes = new Set([AuthOrchestrationOperateScope]);
     state.baseDirectory = "/work";
@@ -754,5 +774,160 @@ describe("local folder path", () => {
     state.connectionStates = {};
     await screen.render();
     expect(screen.path).toBe("~/code/app");
+  });
+});
+
+describe("clone destination conflicts", () => {
+  beforeEach(async () => {
+    state.baseDirectory = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-mobile-conflict-"),
+    );
+    await NodeFSP.mkdir(NodePath.join(state.baseDirectory, "repo"));
+    await NodeFSP.writeFile(NodePath.join(state.baseDirectory, "repo", "local.txt"), "keep");
+    state.scopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
+    state.canResolveCloneConflicts = true;
+    state.cloneInputs = [];
+    state.startCloneResult = Promise.resolve(
+      AsyncResult.failure(
+        Cause.fail(
+          new SourceControlRepositoryError({
+            provider: SourceControlProviderKind.make("unknown"),
+            operation: "cloneRepository",
+            detail: "Destination path already exists and is not empty.",
+            reason: "destination_exists",
+          }),
+        ),
+      ),
+    );
+    state.dispatch.mockReset();
+    state.navigationState = undefined;
+    state.waitForProject.mockResolvedValue({ environmentId: "environment", id: "project" });
+    state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+  });
+
+  afterEach(async () => {
+    state.canResolveCloneConflicts = false;
+    state.startCloneResult = null;
+    await NodeFSP.rm(state.baseDirectory, { recursive: true, force: true });
+  });
+
+  it.each(["Cancel", "Combine", "Replace"])(
+    "requires an explicit %s choice after the occupied destination fails",
+    async (choice) => {
+      let screen: ReactNode;
+      renderScreen(
+        () =>
+          (screen = AddProjectDestinationScreen({
+            environmentId: "environment",
+            remoteUrl: "https://example.com/repo.git",
+            repositoryName: "repo",
+            prompt: "keep my prompt",
+          })),
+      );
+      await act(async () => {
+        await findAction(screen, "Clone project")!();
+      });
+      await act(async () => {
+        await findPathInput(screen)!.onSubmit();
+      });
+      expect(state.cloneInputs).toHaveLength(1);
+      const resolve = findAction(screen, choice);
+      expect(resolve).not.toBeNull();
+      state.startCloneResult = Promise.resolve(AsyncResult.success(undefined));
+      await act(async () => {
+        await resolve!();
+      });
+      expect(
+        await NodeFSP.readFile(NodePath.join(state.baseDirectory, "repo", "local.txt"), "utf8"),
+      ).toBe("keep");
+      if (choice === "Cancel") {
+        expect(state.cloneInputs).toHaveLength(1);
+        expect(state.dispatch).not.toHaveBeenCalled();
+        expect(findAction(screen, "Clone project")).not.toBeNull();
+      } else {
+        expect(state.cloneInputs).toHaveLength(2);
+        expect(state.cloneInputs[1]).toMatchObject({
+          destinationPath: NodePath.join(state.baseDirectory, "repo"),
+          existingDestination: choice.toLowerCase(),
+        });
+        expect(state.dispatch).toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(["older server", "unrelated failure"])(
+    "keeps resolution choices unavailable for an %s",
+    async (failure) => {
+      state.canResolveCloneConflicts = failure !== "older server";
+      if (failure === "unrelated failure")
+        state.startCloneResult = Promise.resolve(
+          AsyncResult.failure(Cause.fail(new Error("Access denied"))),
+        );
+      let screen: ReactNode;
+      renderScreen(
+        () =>
+          (screen = AddProjectDestinationScreen({
+            environmentId: "environment",
+            remoteUrl: "https://example.com/repo.git",
+            repositoryName: "repo",
+          })),
+      );
+      await act(async () => {
+        await findAction(screen, "Clone project")!();
+      });
+      expect(findAction(screen, "Replace")).toBeNull();
+      expect(findAction(screen, "Combine")).toBeNull();
+      expect(state.cloneInputs).toHaveLength(1);
+    },
+  );
+
+  it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
+    "rechecks %s when a retained resolution action is pressed",
+    async (scope) => {
+      let screen: ReactNode;
+      renderScreen(
+        () =>
+          (screen = AddProjectDestinationScreen({
+            environmentId: "environment",
+            remoteUrl: "https://example.com/repo.git",
+            repositoryName: "repo",
+          })),
+      );
+      await act(async () => {
+        await findAction(screen, "Clone project")!();
+      });
+      const replace = findAction(screen, "Replace");
+      expect(replace).not.toBeNull();
+      state.scopes.delete(scope);
+      state.startCloneResult = Promise.resolve(AsyncResult.success(undefined));
+      await act(async () => {
+        await replace!();
+      });
+      expect(state.cloneInputs).toHaveLength(1);
+      expect(state.dispatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("clears the conflict choices when the destination path changes", async () => {
+    let screen: ReactNode;
+    renderScreen(
+      () =>
+        (screen = AddProjectDestinationScreen({
+          environmentId: "environment",
+          remoteUrl: "https://example.com/repo.git",
+          repositoryName: "repo",
+        })),
+    );
+    await act(async () => {
+      await findAction(screen, "Clone project")!();
+    });
+    expect(findAction(screen, "Replace")).not.toBeNull();
+    await act(() =>
+      findPathInput(screen)!.onChangeText(NodePath.join(state.baseDirectory, "other")),
+    );
+    expect(findAction(screen, "Replace")).toBeNull();
+    expect(findAction(screen, "Combine")).toBeNull();
+    expect(findAction(screen, "Clone project")).not.toBeNull();
+    expect(state.cloneInputs).toHaveLength(1);
   });
 });

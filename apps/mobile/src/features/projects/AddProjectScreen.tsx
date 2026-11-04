@@ -58,6 +58,8 @@ import {
   ProjectId,
   resolveEnvironmentMachineKind,
   SourceControlProviderKind,
+  SourceControlRepositoryError,
+  type ProjectCloneExistingDestination,
 } from "@t3tools/contracts";
 import {
   StackActions,
@@ -72,6 +74,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
@@ -102,6 +105,8 @@ import {
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
+
+const isRepositoryError = Schema.is(SourceControlRepositoryError);
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -1363,6 +1368,11 @@ export function AddProjectDestinationScreen(props: {
     AuthOrchestrationOperateScope,
   );
   const canCloneProject = canWriteSourceControl && canCreateProject;
+  const serverConfigs = useServerConfigs();
+  const canResolveConflict =
+    environment !== null &&
+    serverConfigs.get(environment.environmentId)?.environment.capabilities
+      .projectCloneExistingDestination === true;
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
@@ -1373,15 +1383,28 @@ export function AddProjectDestinationScreen(props: {
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly pathInput: string;
+    readonly remoteUrl: string;
+  } | null>(null);
+  const hasConflict =
+    conflict !== null &&
+    environment !== null &&
+    conflict.environmentId === environment.environmentId &&
+    conflict.pathInput === pathInput &&
+    conflict.remoteUrl === remoteUrl &&
+    canResolveConflict;
 
-  const submitPath = async () => {
+  const submitPath = async (existingDestination?: ProjectCloneExistingDestination) => {
     if (
       !environment ||
       !readEnvironmentScope(environment.environmentId, AuthSourceControlWriteScope) ||
       !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope) ||
       !remoteUrl ||
       isBrowseNavigating ||
-      isSubmitting
+      isSubmitting ||
+      (existingDestination ? !hasConflict : hasConflict)
     ) {
       return;
     }
@@ -1408,10 +1431,20 @@ export function AddProjectDestinationScreen(props: {
         createdAt: new Date().toISOString(),
         remoteUrl,
         destinationPath: resolved.path,
+        existingDestination,
       },
     });
     if (AsyncResult.isFailure(startResult)) {
-      setError(errorMessage(Cause.squash(startResult.cause)));
+      const failure = Cause.squash(startResult.cause);
+      if (
+        canResolveConflict &&
+        isRepositoryError(failure) &&
+        failure.reason === "destination_exists"
+      ) {
+        setConflict({ environmentId: environment.environmentId, pathInput, remoteUrl });
+      } else {
+        setError(errorMessage(failure));
+      }
     } else {
       void suggestAppAccessForRemote(checkAppAccess, environment.environmentId, remoteUrl);
       // Wait for the create event; the client store otherwise falls back to the project picker and loses clone controls.
@@ -1457,13 +1490,51 @@ export function AddProjectDestinationScreen(props: {
       ) : null}
       {environment ? (
         <>
-          <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
-          <PrimaryActionButton
-            label="Clone project"
-            disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
-            onPress={submitPath}
-            loading={isSubmitting}
+          <ProjectPathInput
+            value={pathInput}
+            onChangeText={setPathInput}
+            onSubmit={() => submitPath()}
           />
+          {hasConflict ? (
+            <View className="gap-3 rounded-[24px] bg-grouped-card p-4">
+              <Text className="text-base font-t3-bold">This folder already contains files.</Text>
+              <Text className="text-sm text-foreground-muted">
+                Combine keeps existing files, including conflicts, and adds missing files. An
+                existing checkout keeps its branch and local changes. Replace removes the folder's
+                contents after the new clone succeeds.
+              </Text>
+              <Button
+                label="Combine"
+                fullWidth
+                tone="primary"
+                disabled={!canCloneProject || isBrowseNavigating || isSubmitting}
+                onPress={() => submitPath("combine")}
+              />
+              <Button
+                label="Replace"
+                fullWidth
+                tone="danger"
+                disabled={!canCloneProject || isBrowseNavigating || isSubmitting}
+                onPress={() => submitPath("replace")}
+              />
+              <Button
+                label="Cancel"
+                fullWidth
+                disabled={isSubmitting}
+                onPress={() => {
+                  setConflict(null);
+                  setError(null);
+                }}
+              />
+            </View>
+          ) : (
+            <PrimaryActionButton
+              label="Clone project"
+              disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
+              onPress={() => submitPath()}
+              loading={isSubmitting}
+            />
+          )}
           {!canCloneProject ? (
             <Text className="text-sm text-foreground-muted">
               This connection cannot clone projects.

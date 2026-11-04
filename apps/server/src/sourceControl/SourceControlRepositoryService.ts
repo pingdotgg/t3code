@@ -277,20 +277,49 @@ export const make = Effect.gen(function* () {
           const info = yield* fileSystem.lstat(normalizedDestination);
           const realDestination = yield* fileSystem.realPath(normalizedDestination);
           const home = yield* HostProcess.HomeDirectory;
-          const protectedPaths = yield* Effect.forEach(
-            [home, config.cwd, config.baseDir],
+          const resolveProtectedPath = (protectedPath: string) =>
+            fileSystem.realPath(protectedPath).pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                () => Effect.succeed(protectedPath),
+              ),
+            );
+          const protectedPathGroups = yield* Effect.forEach(
+            [
+              { path: home, protectContents: false },
+              { path: config.cwd, protectContents: false },
+              { path: config.baseDir, protectContents: true },
+            ],
             (protectedPath) =>
-              fileSystem
-                .realPath(path.resolve(protectedPath))
-                .pipe(Effect.orElseSucceed(() => path.resolve(protectedPath))),
+              Effect.gen(function* () {
+                const resolved = path.resolve(protectedPath.path);
+                const paths = [{ ...protectedPath, path: yield* resolveProtectedPath(resolved) }];
+                // Protect symlink components too: removing one breaks the configured server path.
+                for (let current = resolved; path.dirname(current) !== current;) {
+                  const parent = path.dirname(current);
+                  paths.push({
+                    path: path.join(yield* resolveProtectedPath(parent), path.basename(current)),
+                    protectContents: false,
+                  });
+                  current = parent;
+                }
+                return paths;
+              }),
           );
+          const protectedPaths = protectedPathGroups.flat();
+          // Project folders below home remain valid; the T3 data directory also protects its contents.
           const containsProtectedPath = protectedPaths.some((protectedPath) => {
-            const relative = path.relative(realDestination, protectedPath);
+            const relative = path.relative(realDestination, protectedPath.path);
+            const fromProtected = path.relative(protectedPath.path, realDestination);
             return (
               relative === "" ||
               (!relative.startsWith(`..${path.sep}`) &&
                 relative !== ".." &&
-                !path.isAbsolute(relative))
+                !path.isAbsolute(relative)) ||
+              (protectedPath.protectContents &&
+                !fromProtected.startsWith(`..${path.sep}`) &&
+                fromProtected !== ".." &&
+                !path.isAbsolute(fromProtected))
             );
           });
           if (

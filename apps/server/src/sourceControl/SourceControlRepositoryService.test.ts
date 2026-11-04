@@ -19,6 +19,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -66,6 +68,8 @@ function layer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly cwd?: string;
+  readonly baseDir?: string;
 }) {
   const layerService = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
@@ -90,8 +94,11 @@ function layer(input: {
     ),
     Layer.provide(
       ServerConfig.layerTest(
-        process.cwd(),
-        input.fileSystem ? "/tmp/t3-source-control-repos" : { prefix: "t3-source-control-repos-" },
+        input.cwd ?? process.cwd(),
+        input.baseDir ??
+          (input.fileSystem
+            ? "/tmp/t3-source-control-repos"
+            : { prefix: "t3-source-control-repos-" }),
       ),
     ),
   );
@@ -241,6 +248,77 @@ it.effect.each(["--bare", "source.git"])(
         ),
       ),
     ),
+);
+
+it.effect.each(["replace", "combine"] as const)(
+  "%s protects server data through canonical and symlinked configuration paths",
+  (existingDestination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-protected-" });
+      const home = path.join(parent, "home");
+      const server = path.join(home, "server");
+      const data = path.join(home, "t3-data");
+      const userdata = path.join(data, "userdata");
+      const allowed = path.join(home, "projects", "existing");
+      for (const directory of [server, userdata, allowed]) {
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(path.join(directory, "keep.txt"), "original");
+      }
+      const alias = path.join(parent, "home-alias");
+      if (symlinksSupported) {
+        yield* fs.symlink(home, alias);
+        yield* fs.symlink(server, path.join(allowed, "work-link"));
+      }
+      for (const configuredHome of symlinksSupported ? [home, alias] : [home]) {
+        yield* Effect.gen(function* () {
+          const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+          for (const destinationPath of [home, server, data, userdata, parent]) {
+            const error = yield* service
+              .prepareClone({ remoteUrl: CLONE_URLS.url, destinationPath }, { existingDestination })
+              .pipe(Effect.flip);
+            assert.include(error.detail, "Choose a project folder");
+          }
+          assert.strictEqual(
+            (yield* service.prepareClone(
+              { remoteUrl: CLONE_URLS.url, destinationPath: allowed },
+              { existingDestination },
+            )).destinationPath,
+            allowed,
+          );
+        }).pipe(
+          Effect.provide(
+            layer({
+              cwd: path.join(configuredHome, "server"),
+              baseDir: path.join(configuredHome, "t3-data"),
+            }),
+          ),
+          Effect.provideService(HostProcess.HomeDirectory, configuredHome),
+        );
+        if (symlinksSupported) {
+          const error = yield* Effect.gen(function* () {
+            const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+            return yield* service
+              .prepareClone(
+                { remoteUrl: CLONE_URLS.url, destinationPath: allowed },
+                { existingDestination },
+              )
+              .pipe(Effect.flip);
+          }).pipe(
+            Effect.provide(
+              layer({
+                cwd: path.join(configuredHome, "projects", "existing", "work-link"),
+                baseDir: data,
+              }),
+            ),
+            Effect.provideService(HostProcess.HomeDirectory, configuredHome),
+          );
+          assert.include(error.detail, "Choose a project folder");
+        }
+      }
+      assert.strictEqual(yield* fs.readFileString(path.join(userdata, "keep.txt")), "original");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["replace", "combine"] as const)(
