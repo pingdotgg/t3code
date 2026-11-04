@@ -131,6 +131,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  pasteAtEnd: (clipboardData: DataTransfer) => boolean;
   readSelectionRange: () => { start: number; end: number };
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
@@ -1679,6 +1680,16 @@ function ComposerPromptEditorTiptapInner(
                 snapshotRef.current.value.length,
               ),
         );
+      },
+      pasteAtEnd: (clipboardData) => {
+        if (!editor?.isEditable) return false;
+        editor.commands.setTextSelection(TextSelection.atEnd(editor.state.doc).from);
+        const pasted = editor.view.pasteText(
+          clipboardData.getData("text/plain"),
+          new ClipboardEvent("paste", { clipboardData }),
+        );
+        editor.commands.focus();
+        return pasted;
       },
       readSelectionRange: () => {
         readSnapshot();

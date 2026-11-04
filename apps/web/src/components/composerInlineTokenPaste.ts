@@ -24,7 +24,7 @@ export function readPastedComposerLink(
   clipboardData: Pick<DataTransfer, "getData">,
 ): string | null {
   const text = clipboardData.getData("text/plain").trim();
-  if (!text || /^[a-z][a-z\d+.-]*:\/\//i.test(text)) return null;
+  if (!text || /^[a-z][a-z\d+.-]*:\S+$/i.test(text)) return null;
   if (clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) return null;
   const html = clipboardData.getData("text/html");
   if (!html || !/<a[\s>]/i.test(html)) return null;

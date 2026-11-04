@@ -245,6 +245,13 @@ it.each([
     richText: true,
   },
   {
+    name: "an explicit mailto URL",
+    plain: "mailto:user@example.com",
+    html: '<a href="https://example.com/other">mailto:user@example.com</a>',
+    expected: "mailto:user@example.com",
+    richText: true,
+  },
+  {
     name: "a title containing a colon",
     plain: "Review: update",
     html: '<a href="https://example.com/review">Review: update</a>',
@@ -305,6 +312,40 @@ it.each([
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(fixture.expected);
   expect(editor.state.doc.textContent).toBe(fixture.expected);
+});
+
+it.each([
+  { value: "", disabled: false },
+  { value: "```text\nexisting\n```", disabled: false },
+  { value: "", disabled: true },
+])("preserves pasted link text when redirected to the end of %j", async ({ value, disabled }) => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(
+    <ComposerPromptEditor
+      editorRef={editorRef}
+      value={value}
+      cursor={0}
+      richTextEnabled
+      contextRecords={new Map()}
+      skills={[]}
+      disabled={disabled}
+      placeholder=""
+      onChange={() => {}}
+      onPaste={() => {}}
+    />,
+  );
+  const url = "https://example.com/_report_/$HOME?q=**value**";
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Example report");
+    clipboardData.setData("text/html", `<a href="${url}">Example report</a>`);
+    expect(editorRef.current?.pasteAtEnd(clipboardData)).toBe(!disabled);
+  });
+  const editor = editorIn(screen.container);
+  expect(editor.state.doc.textContent).toBe(disabled ? "" : value ? "existingExample report" : url);
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    disabled ? "" : value ? "```text\nexistingExample report\n```" : url,
+  );
 });
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
