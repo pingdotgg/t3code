@@ -261,13 +261,9 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         sources: ReadonlyArray<"user" | "project" | "local">,
         launchArgEnv?: Readonly<Record<string, unknown>>,
       ) =>
-        resolveClaudeSessionEnvironment(
-          { homePath },
-          environment,
-          workspace,
-          launchArgEnv,
-          new Set(sources),
-        ).pipe(Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT));
+        resolveClaudeSessionEnvironment({ homePath }, environment, workspace, launchArgEnv, {
+          settingSources: new Set(sources),
+        }).pipe(Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT));
       const apiKey = { ANTHROPIC_API_KEY: "key" };
 
       yield* write(path.join(workspace, ".claude", "settings.json"), "");
@@ -283,6 +279,38 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(yield* entrypoint({}, ["user"])).toBeUndefined();
       // --settings always applies.
       expect(yield* entrypoint({}, [], apiKey)).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads project and local settings from --project-config-root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+      const projectConfigRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-config-",
+      });
+      yield* fileSystem.makeDirectory(path.join(workspace, ".claude"));
+      yield* fileSystem.makeDirectory(path.join(projectConfigRoot, ".claude"));
+      const entrypoint = (root = projectConfigRoot, cwd = workspace) =>
+        resolveClaudeSessionEnvironment({ homePath }, {}, cwd, undefined, {
+          projectConfigRoot: root,
+        }).pipe(Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT));
+      const withKey = JSON.stringify({ env: { ANTHROPIC_API_KEY: "key" } });
+
+      for (const name of ["settings.json", "settings.local.json"]) {
+        const file = path.join(projectConfigRoot, ".claude", name);
+        yield* fileSystem.writeFileString(file, withKey);
+        expect(yield* entrypoint()).toBeUndefined();
+        // A relative root resolves from the working directory.
+        expect(yield* entrypoint(path.relative(workspace, projectConfigRoot))).toBeUndefined();
+        yield* fileSystem.remove(file);
+      }
+
+      // The working directory's own settings do not load with a configured root.
+      yield* fileSystem.writeFileString(path.join(workspace, ".claude", "settings.json"), withKey);
+      expect(yield* entrypoint()).toBe("t3-code");
     }),
   );
 

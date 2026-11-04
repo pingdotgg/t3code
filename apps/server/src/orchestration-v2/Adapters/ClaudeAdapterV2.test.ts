@@ -4403,6 +4403,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isUndefined(yield* openedEntrypoint());
         // Claude ignores that file when --setting-sources leaves out local settings.
         assert.equal(yield* openedEntrypoint("--setting-sources user"), "t3-code");
+        // Claude reads project settings from --project-config-root instead of the working directory.
+        const configRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-config-",
+        });
+        assert.equal(yield* openedEntrypoint(`--project-config-root ${configRoot}`), "t3-code");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
