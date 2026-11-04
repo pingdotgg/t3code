@@ -3759,6 +3759,151 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("wakes a pull request snooze for the user on news, not on what it already knew", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-snooze");
+      const projectId = ProjectId.make("pr-snooze-project");
+      yield* seedProject({
+        projectId,
+        title: "Snooze on PR",
+        workspaceRoot: "/workspace/snooze-pr",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-snooze-create"),
+        threadId,
+        projectId,
+        title: "Snooze on PR",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+      const snoozedUntil = "2030-01-01T00:00:00.000Z";
+      const snooze = (id: string, wakeOnPullRequest: boolean) =>
+        orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`pr-snooze-${id}`),
+          threadId,
+          snoozedUntil,
+          ...(wakeOnPullRequest ? { wakeOnPullRequest } : {}),
+        });
+
+      const unlinked = yield* snooze("no-pr", true).pipe(Effect.flip);
+      assert.include(String(unlinked.cause), "no open linked pull request");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-snooze-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/15",
+        source: "agent",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-snooze-link-sync"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Snoozed PR",
+          headBranch: "feature/pr",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-13T12:00:00.000Z",
+        },
+        stack: null,
+      });
+
+      let status: "success" | "failure" = "success";
+      let mergeability: PullRequestDetail["mergeability"] = "conflicting";
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.sync(() => ({
+              ...watchedPullRequestDetail({ projectId, number: 15, at: snoozedUntil }),
+              headSha: "abc1234def",
+              mergeability,
+              checks: [{ name: "lint", status, description: null, url: null, required: true }],
+            })),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      const shell = orchestrator.getThreadShell(threadId);
+      const snoozeWatch = Effect.map(shell, (thread) => thread?.pullRequests?.[0]?.snoozeWatch);
+
+      // Passed checks and a conflict from before the snooze are what the user already saw.
+      yield* snooze("start", true);
+      yield* reactor.sweep;
+      assert.equal((yield* snoozeWatch)?.passed, true);
+      assert.isUndefined((yield* snoozeWatch)?.unread);
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      assert.equal(
+        DateTime.formatIso((yield* shell)?.snoozedUntil ?? DateTime.makeUnsafe(0)),
+        snoozedUntil,
+      );
+
+      mergeability = "mergeable";
+      status = "failure";
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      const woken = yield* shell;
+      assert.isUndefined(woken?.pullRequests?.[0]?.snoozeWatch);
+      assert.isUndefined(woken?.pullRequests?.[0]?.watch);
+      assert.equal(
+        DateTime.formatIso(woken?.snoozedUntil ?? DateTime.makeUnsafe(0)),
+        DateTime.formatIso(yield* DateTime.now),
+      );
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.isEmpty(messages);
+
+      // Each way out ends the watch: waking, a timed re-snooze, and settling via the sweep.
+      yield* snooze("wake", true);
+      assert.isDefined(yield* snoozeWatch);
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("pr-snooze-wake-now"),
+        threadId,
+        reason: "user",
+      });
+      assert.isUndefined(yield* snoozeWatch);
+      assert.isNull((yield* shell)?.snoozedUntil);
+
+      yield* snooze("retime", true);
+      yield* snooze("retimed", false);
+      assert.isUndefined(yield* snoozeWatch);
+
+      yield* snooze("settle", true);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("pr-snooze-settled"),
+        threadId,
+      });
+      yield* reactor.sweep;
+      assert.isUndefined(yield* snoozeWatch);
+    }),
+  );
+
   // regression: #23701 a head no check runs on never woke the watch
   it.effect("wakes once when no checks report on the head, without saying they passed", () =>
     Effect.gen(function* () {

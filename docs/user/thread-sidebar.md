@@ -337,3 +337,11 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+To park a thread while its pull request is busy, such as while checks run, choose
+**Snooze → Until PR needs attention**. The option appears when the thread has an open linked
+pull request. The thread returns when checks finish, the branch starts to conflict, someone
+else comments or reviews, or the pull request merges or closes. Checks that had already
+finished when you snoozed do not wake it. It returns after 7 days if nothing happens, or sooner
+if T3 Code cannot read the pull request. This does not start an agent turn; to have the agent
+respond too, ask it to watch the pull request as well.

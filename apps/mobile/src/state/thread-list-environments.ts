@@ -61,6 +61,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   // Every protocol-2 server supports these thread actions; they only wait for its config.
   const loadedEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
+  const pullRequestSnoozeEnvironmentIds = new Set<EnvironmentId>();
   const reorderableEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
   for (const [
@@ -72,6 +73,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
+    if (capabilities.threadPullRequestSnooze === true) pullRequestSnoozeEnvironmentIds.add(id);
     if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
@@ -79,6 +81,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     machineByEnvironmentId,
     settlementEnvironmentIds: loadedEnvironmentIds,
     snoozeEnvironmentIds: loadedEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     pinningEnvironmentIds: loadedEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds: reorderableEnvironmentIds,

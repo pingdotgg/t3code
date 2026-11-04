@@ -1,13 +1,16 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
+  resolvePullRequestSnoozePreset,
   resolveSnoozePresets as resolveSharedSnoozePresets,
   snoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readEnvironmentSupportsPullRequestSnooze } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
 import { toastManager } from "./ui/toast";
@@ -21,6 +24,19 @@ export function resolveSnoozePresets(
   environmentId: EnvironmentId,
 ): ReadonlyArray<SnoozePreset> {
   return resolveSharedSnoozePresets(now, snoozeOptions(timestampFormat, environmentId));
+}
+
+/** The snooze menu for one thread, which can also wait on its pull requests. */
+export function resolveThreadSnoozePresets(
+  now: Date,
+  timestampFormat: TimestampFormat,
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "pullRequests">,
+): ReadonlyArray<SnoozePreset> {
+  const presets = resolveSnoozePresets(now, timestampFormat, thread.environmentId);
+  const pullRequest = readEnvironmentSupportsPullRequestSnooze(thread.environmentId)
+    ? resolvePullRequestSnoozePreset(thread, now)
+    : null;
+  return pullRequest === null ? presets : [pullRequest, ...presets];
 }
 
 /** A shown menu choice as picked; see the shared `pickSnoozePreset`. */

@@ -18,6 +18,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestNeedsAttention,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -73,6 +75,8 @@ interface WatchTarget {
   readonly thread: ProjectionStore.ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
   readonly watch: ThreadPullRequestWatch;
+  /** Wakes the snoozed thread for the user instead of messaging the agent. */
+  readonly snooze: boolean;
 }
 
 interface WatchGroup {
@@ -96,7 +100,8 @@ interface ReadPlan {
   readonly activity: boolean;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+const watchKey = ({ thread, watch, snooze }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${snooze}`;
 
 type WatchEndReason =
   | "merged"
@@ -105,7 +110,8 @@ type WatchEndReason =
   | "comment-limit"
   | "settled"
   | "subagent"
-  | "stopped";
+  | "stopped"
+  | "needs-attention";
 
 interface WatchLife {
   readonly threadId: string;
@@ -118,8 +124,8 @@ interface WatchLife {
   readonly reads: number;
 }
 
-const lifeKey = ({ thread, link, watch }: WatchTarget) =>
-  `${thread.id} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+const lifeKey = ({ thread, link, watch, snooze }: WatchTarget) =>
+  `${thread.id} ${threadPullRequestKeyOf(link)} ${watch.startedAt} ${snooze}`;
 
 const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
 
@@ -182,7 +188,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    left.unread === right.unread
   );
 }
 
@@ -287,6 +294,7 @@ export const make = Effect.gen(function* () {
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
       watch: next,
+      ...(target.snooze ? { snooze: true as const } : {}),
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
@@ -294,19 +302,39 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const wakeSnoozedThread = Effect.fn("PullRequestWatchReactor.wakeSnoozedThread")(function* (
+    target: WatchTarget,
+    reason: WatchEndReason,
+  ) {
+    const uuid = yield* random.uuidV4();
+    yield* engine.dispatch({
+      type: "thread.pull-request-watch.sync",
+      commandId: CommandId.make(`server:pr-snooze:${target.thread.id}:${uuid}`),
+      threadId: target.thread.id,
+      ...identityOf(target.link),
+      startedAt: target.watch.startedAt,
+      watch: null,
+      snooze: true,
+      wakeThread: true,
+    });
+    yield* ended(target, reason);
+  });
+
   const giveUp = (target: WatchTarget) =>
-    record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
-      notification: {
-        source: { kind: "monitor" },
-        outcome: "failed",
-        summary: `#${target.link.number}: stopped watching, could not read it`,
-      },
-    }).pipe(
-      Effect.tap(() => woke(target)),
-      Effect.catch(() => record(target, null)),
-      Effect.tap(() => ended(target, "unreadable")),
-    );
+    target.snooze
+      ? wakeSnoozedThread(target, "unreadable")
+      : record(target, null, {
+          text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "failed",
+            summary: `#${target.link.number}: stopped watching, could not read it`,
+          },
+        }).pipe(
+          Effect.tap(() => woke(target)),
+          Effect.catch(() => record(target, null)),
+          Effect.tap(() => ended(target, "unreadable")),
+        );
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
     function* (
@@ -412,14 +440,23 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => ended(target, "closed")),
     );
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
+  const endsWithoutRead = (
+    { thread, link, snooze }: WatchTarget,
+    now: number,
+  ): WatchEndReason | undefined => {
+    // Anything that ends the snooze ends its watch. A merge wakes it, so that one needs the read.
+    if (snooze) {
+      const wakeAt = thread.snoozedUntil;
+      return wakeAt == null || DateTime.toEpochMillis(wakeAt) <= now ? "stopped" : undefined;
+    }
+    return link.snapshot?.state === "merged"
       ? "merged"
       : thread.settledOverride === "settled" || thread.settledAt !== null
         ? "settled"
         : thread.lineage.relationshipToParent === "subagent"
           ? "subagent"
           : undefined;
+  };
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -529,9 +566,11 @@ export const make = Effect.gen(function* () {
     if (detail.state !== "open") {
       lastReads.delete(group.key);
       return yield* eachTarget(group, (target) =>
-        detail.state === "closed"
-          ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
+        target.snooze
+          ? wakeSnoozedThread(target, detail.state === "closed" ? "closed" : "merged")
+          : detail.state === "closed"
+            ? closed(target)
+            : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
 
@@ -561,6 +600,12 @@ export const make = Effect.gen(function* () {
     });
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      if (target.snooze) {
+        if (pullRequestNeedsAttention(target.watch, report)) {
+          return wakeSnoozedThread(target, "needs-attention");
+        }
+        return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
+      }
       if (report.changes.length > 0) {
         const wake = pullRequestWatchMessage({
           number: target.link.number,
@@ -585,10 +630,14 @@ export const make = Effect.gen(function* () {
 
   const sweep = Effect.gen(function* () {
     const threads = yield* projections.getThreadsWithPullRequests();
+    const now = yield* Clock.currentTimeMillis;
     const targets = threads.flatMap((thread) =>
-      visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) =>
-        link.watch === undefined ? [] : [{ thread, link, watch: link.watch }],
-      ),
+      visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) => [
+        ...(link.watch === undefined ? [] : [{ thread, link, watch: link.watch, snooze: false }]),
+        ...(link.snoozeWatch === undefined
+          ? []
+          : [{ thread, link, watch: link.snoozeWatch, snooze: true }]),
+      ]),
     );
     const present = new Set(targets.map(lifeKey));
     yield* Effect.forEach(
@@ -600,7 +649,7 @@ export const make = Effect.gen(function* () {
     const byPullRequest = new Map<string, Array<WatchTarget>>();
     const ending: Array<readonly [WatchTarget, WatchEndReason]> = [];
     for (const target of targets) {
-      const reason = endsWithoutRead(target);
+      const reason = endsWithoutRead(target, now);
       if (reason !== undefined) {
         ending.push([target, reason]);
         continue;

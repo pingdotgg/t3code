@@ -8,7 +8,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestNeedsAttention,
   pullRequestWatchMessage,
+  type PullRequestWatchReport,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -434,5 +436,38 @@ describe("evaluatePullRequestWatch", () => {
   it("never reports missing checks on a host where an empty list says nothing", () => {
     const silent = detail({ capabilities: capabilities(false), checks: [] });
     assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
+  });
+});
+
+describe("pullRequestNeedsAttention", () => {
+  const remark = PullRequestComment.make({
+    id: "remark",
+    kind: "issue-comment",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    body: "Please look.",
+    createdAt: STARTED,
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+  const report = (...changes: PullRequestWatchReport["changes"]): PullRequestWatchReport => ({
+    changes,
+    next: watch(),
+    exhausted: false,
+  });
+
+  it("counts checks and conflicts only once the watch has read the pull request", () => {
+    const conflict = report({ kind: "conflicting" });
+    const passed = report({ kind: "checks-passed", count: 1, required: true });
+    assert.isFalse(pullRequestNeedsAttention(watch({ unread: true }), conflict));
+    assert.isFalse(pullRequestNeedsAttention(watch({ unread: true }), passed));
+    assert.isTrue(pullRequestNeedsAttention(watch(), conflict));
+    assert.isTrue(pullRequestNeedsAttention(watch(), passed));
+  });
+
+  it("counts a comment from the first read, and never a repository with no checks", () => {
+    const comment = report({ kind: "remarks", remarks: [remark] });
+    assert.isTrue(pullRequestNeedsAttention(watch({ unread: true }), comment));
+    assert.isFalse(pullRequestNeedsAttention(watch(), report({ kind: "no-checks", minutes: 15 })));
   });
 });

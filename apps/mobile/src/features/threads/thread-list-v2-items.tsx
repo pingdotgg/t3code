@@ -668,7 +668,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly onSnoozeThread: (
+    thread: EnvironmentThreadShell,
+    snoozedUntil: string,
+    wakeOnPullRequest?: boolean,
+  ) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
@@ -677,6 +681,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
+  readonly pullRequestSnoozeSupported: boolean;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
@@ -801,7 +806,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     setCustomSnoozeOpen(false);
   }
   const handleSnooze = useCallback(
-    (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
+    (snoozedUntil: string, wakeOnPullRequest?: boolean) =>
+      onSnoozeThread(thread, snoozedUntil, wakeOnPullRequest),
     [onSnoozeThread, thread],
   );
   const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
@@ -837,6 +843,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     secondary: swipeActions.secondary,
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
+    pullRequestThread: props.pullRequestSnoozeSupported ? thread : null,
   });
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -1052,7 +1059,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         presets: props.snoozePresets,
       });
       if (snoozeSelection._tag === "selected") {
-        handleSnooze(snoozeSelection.preset.snoozedUntil);
+        handleSnooze(snoozeSelection.preset.snoozedUntil, snoozeSelection.preset.wakeOnPullRequest);
       } else if (snoozeSelection._tag === "expired") {
         Dialog.alert(
           "Could not snooze thread",

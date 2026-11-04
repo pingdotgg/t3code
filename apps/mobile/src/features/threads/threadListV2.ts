@@ -5,6 +5,8 @@ import {
   pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
+  resolvePullRequestSnoozePreset,
+  snoozeWaitsOnPullRequest,
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -83,10 +85,17 @@ export function resolveThreadListV2SnoozePresets(input: {
   readonly secondary: "snooze" | null;
   readonly now: string;
   readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+  /** The thread, when its server can wake a snooze on pull request news. */
+  readonly pullRequestThread: Pick<EnvironmentThreadShell, "pullRequests"> | null;
 }): ReadonlyArray<SnoozePreset> {
-  return input.secondary === "snooze"
-    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
-    : [];
+  if (input.secondary !== "snooze") return [];
+  const now = new Date(input.now);
+  const presets = resolveSnoozePresets(now, presetOptions(input.presets));
+  const pullRequest =
+    input.pullRequestThread === null
+      ? null
+      : resolvePullRequestSnoozePreset(input.pullRequestThread, now);
+  return pullRequest === null ? presets : [pullRequest, ...presets];
 }
 
 function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {
@@ -539,9 +548,11 @@ export function buildThreadListV2ListItems(input: {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
-        : undefined;
+      !item.snoozed || item.thread.snoozedUntil == null || input.snoozeLabelNow === undefined
+        ? undefined
+        : snoozeWaitsOnPullRequest(item.thread)
+          ? "PR"
+          : snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow });
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
       !item.snoozed &&
