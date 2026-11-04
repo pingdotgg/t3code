@@ -132,11 +132,11 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
   directories: Effect.fn("piUsageReader.directories")(function* ({ config, environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
+    const platform = yield* HostProcess.Platform;
+    const launchHome = (platform === "win32" ? environment.USERPROFILE : environment.HOME) || home;
     const sessionDirArg = config === undefined ? undefined : piLaunchSessionDir(config.launchArgs);
     const launchDir =
-      sessionDirArg === undefined
-        ? undefined
-        : expandHomePath(sessionDirArg, environment.HOME || home);
+      sessionDirArg === undefined ? undefined : expandHomePath(sessionDirArg, launchHome);
     // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.
     return [
       ...(launchDir !== undefined && path.isAbsolute(launchDir)
