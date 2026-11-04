@@ -593,12 +593,17 @@ const make = Effect.gen(function* () {
                   // Interruption kills the isolated process; the next request reloads the model.
                   signal.addEventListener("abort", () => dropModel(inference), { once: true });
                   return inference.transcribe(
-                    pcm, {
+                    pcm,
+                    {
                       timestamps: "none",
                       ...(language === "auto" ? {} : { language }),
-                      ...(translateToEnglish ? { task: "translate" as const, targetLanguage: "en" as const } : {}),
+                      ...(translateToEnglish
+                        ? { task: "translate" as const, targetLanguage: "en" as const }
+                        : {}),
                       ...(vocabularyFor(inference).length > 0 ? { vocabulary: customWords } : {}),
-                    }, options.speechSilenceFiltering, vadPath,
+                    },
+                    options.speechSilenceFiltering,
+                    vadPath,
                   );
                 },
                 catch: (cause) => {
@@ -706,14 +711,25 @@ const make = Effect.gen(function* () {
     const vadPath = yield* silenceModelPath(streamModel, options);
     let translateToEnglish = false;
     const beginStream = async () => {
-      translateToEnglish = options.speechTranslateToEnglish && !streamModel.supportsStreaming && streamModel.supportsTranslation && language !== "en";
-      const vocabulary = streamModel.supportsVocabulary && !translateToEnglish && customWords.length ? customWords : undefined;
-      await streamModel.begin({
-        timestamps: "none",
-        ...(language === "auto" ? {} : { language }),
-        ...(translateToEnglish ? { task: "translate", targetLanguage: "en" } : {}),
-        ...(vocabulary ? { vocabulary } : {}),
-      }, options.speechSilenceFiltering, vadPath);
+      translateToEnglish =
+        options.speechTranslateToEnglish &&
+        !streamModel.supportsStreaming &&
+        streamModel.supportsTranslation &&
+        language !== "en";
+      const vocabulary =
+        streamModel.supportsVocabulary && !translateToEnglish && customWords.length
+          ? customWords
+          : undefined;
+      await streamModel.begin(
+        {
+          timestamps: "none",
+          ...(language === "auto" ? {} : { language }),
+          ...(translateToEnglish ? { task: "translate", targetLanguage: "en" } : {}),
+          ...(vocabulary ? { vocabulary } : {}),
+        },
+        options.speechSilenceFiltering,
+        vadPath,
+      );
       correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
       started = true;
     };

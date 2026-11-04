@@ -363,7 +363,9 @@ it.effect("uses vocabulary only for supported transcription and always applies a
           });
           expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
           expect(native.begin.mock.lastCall).toEqual([
-            { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) }, true, "test.gguf",
+            { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
+            true,
+            "test.gguf",
           ]);
         }).pipe(Effect.scoped, Effect.provide(layer));
       }
@@ -608,7 +610,11 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
         expect(native.begin.mock.calls.slice(-2).map(([options]) => options)).toEqual([
           { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
-          { timestamps: "none", language: "en", ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}) },
+          {
+            timestamps: "none",
+            language: "en",
+            ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}),
+          },
         ]);
         expect(native.feed).toHaveBeenCalledTimes(feedCalls + 4);
         expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text: recovered });
@@ -657,7 +663,11 @@ it.effect.each([false, true])(
         expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
           chunks.map((chunk) => [...chunk]),
         );
-        expect(cpu.begin).toHaveBeenCalledWith({ timestamps: "none", language: "fr" }, true, "test.gguf");
+        expect(cpu.begin).toHaveBeenCalledWith(
+          { timestamps: "none", language: "fr" },
+          true,
+          "test.gguf",
+        );
         expect(gpu.dispose).toHaveBeenCalledOnce();
         expect(cpu.dispose).not.toHaveBeenCalled();
         const busy = yield* Effect.result(speech.selectModel("fallback-model"));
