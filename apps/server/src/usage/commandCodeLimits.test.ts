@@ -58,15 +58,21 @@ describe("Command Code rolling quota windows", () => {
       currentPeriodStart: "2026-11-01T00:00:00.000Z",
       currentPeriodEnd: "2026-12-01T00:00:00.000Z",
     };
+    const currentCycle = {
+      periodBasis: "billing-period",
+      periodStart: "2026-11-01T00:00:00.000Z",
+      totalMonthlyCredits: 10,
+    };
     for (const data of [
       { ...active, status: "cancelled" },
       { ...active, currentPeriodEnd: null },
     ])
-      assert.isNull(commandCodeMonthlyWindow(credits, { data }));
+      assert.isNull(commandCodeMonthlyWindow(credits, { data }, currentCycle));
     assert.isNull(
       commandCodeMonthlyWindow(
         { credits: { monthlyCredits: 31, monthlyCreditsTotal: 30 } },
         { data: active },
+        currentCycle,
       ),
     );
     // Plan IDs and published advertised values cannot substitute for an API-reported allowance.
@@ -75,15 +81,11 @@ describe("Command Code rolling quota windows", () => {
       commandCodeMonthlyWindow(
         { credits: { monthlyCredits: 20, monthlyCreditsTotal: 0 } },
         { data: active },
+        currentCycle,
       ),
     );
     assert.isNull(commandCodeMonthlyWindow({}, { data: active }));
     const noTotal = { credits: { monthlyCredits: 20 } };
-    const currentCycle = {
-      periodBasis: "billing-period",
-      periodStart: "2026-11-01T00:00:00.000Z",
-      totalMonthlyCredits: 10,
-    };
     // A reported allowance does not prove that its remaining credits belong
     // to the active billing cycle without a matching monthly usage summary.
     assert.isNull(commandCodeMonthlyWindow(credits, { data: active }));
