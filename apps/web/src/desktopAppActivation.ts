@@ -45,6 +45,7 @@ export function openedProjectDraft(
 
 export interface DesktopAppActivationDependencies {
   readonly getTarget: (request: DesktopAppActivationRequest) => DesktopAppActivationTarget | null;
+  readonly waitForSnapshot: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly findProject: (
     environmentId: EnvironmentId,
     workspaceRoot: string,
@@ -121,6 +122,14 @@ export async function handleDesktopAppActivationRequest(
       request.requestId,
       "platform-mismatch",
       `The command path is for ${requestPlatform}, but the desktop app's primary environment uses ${target.platform}. Cross-platform path mapping is not supported.`,
+    );
+  }
+
+  if (!(await dependencies.waitForSnapshot(target.environmentId))) {
+    return failure(
+      request.requestId,
+      "environment-unavailable",
+      "The target environment is not ready. Try again.",
     );
   }
 

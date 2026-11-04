@@ -25,6 +25,7 @@ function dependencies(
 ): DesktopAppActivationDependencies {
   return {
     getTarget: () => ({ environmentId, platform: "linux" }),
+    waitForSnapshot: async () => true,
     findProject: () => ({
       id: existingProjectId,
       environmentId,
@@ -38,6 +39,30 @@ function dependencies(
 }
 
 describe("desktop app activation", () => {
+  it("waits for the target environment snapshot before looking up a project", async () => {
+    let releaseSnapshot!: (ready: boolean) => void;
+    const snapshot = new Promise<boolean>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    const findProject = vi.fn(() => ({
+      id: existingProjectId,
+      environmentId,
+      workspaceRoot: request.workspaceRoot,
+    }));
+    const deps = dependencies({ waitForSnapshot: () => snapshot, findProject });
+    const activation = handleDesktopAppActivationRequest(request, deps);
+    expect(findProject).not.toHaveBeenCalled();
+    releaseSnapshot(true);
+    expect(await activation).toMatchObject({ ok: true, projectId: existingProjectId });
+    expect(findProject).toHaveBeenCalledOnce();
+    const unavailable = dependencies({ waitForSnapshot: async () => false, findProject });
+    findProject.mockClear();
+    expect(await handleDesktopAppActivationRequest(request, unavailable)).toMatchObject({
+      ok: false,
+      code: "environment-unavailable",
+    });
+    expect(findProject).not.toHaveBeenCalled();
+  });
   it("accepts a concurrently opened draft only for the requested project and environment", () => {
     const project = { environmentId, projectId: createdProjectId };
     const draft = { ...project, threadId };

@@ -20,7 +20,8 @@ import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
-import { useEnvironmentShellHasSnapshot } from "../../state/shell";
+import { environmentShell, useEnvironmentShellHasSnapshot } from "../../state/shell";
+import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
@@ -86,6 +87,13 @@ export function DesktopAppActivationCoordinator() {
           platform: primaryEnvironment.serverConfig.environment.platform.os,
         };
       },
+      waitForSnapshot: (environmentId) =>
+        waitForAtomValue({
+          registry: appAtomRegistry,
+          atom: environmentShell.statusAtom(environmentId),
+          predicate: (status) => status === "live",
+          timeoutMs: 5_000,
+        }),
       findProject: (environmentId, workspaceRoot) =>
         findProjectByPath(
           readProjects().filter((project) => project.environmentId === environmentId),

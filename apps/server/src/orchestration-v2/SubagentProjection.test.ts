@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   type ModelSelection,
   NodeId,
   RunId,
@@ -82,7 +83,10 @@ function makeParentThread(): OrchestrationV2AppThread {
 }
 
 it("keeps a subagent child awake when its parent thread is snoozed", () => {
-  const parentThread = makeParentThread();
+  const parentThread: OrchestrationV2AppThread = {
+    ...makeParentThread(),
+    titleRegeneration: { requestId: CommandId.make("command:parent-title"), startedAt: snoozedAt },
+  };
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
   const parentNodeId = NodeId.make("node:subagent-parent");
   const childThread = makeSubagentChildThread({
@@ -100,6 +104,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
 
   assert.isNull(childThread.snoozedUntil);
   assert.isNull(childThread.snoozedAt);
+  assert.isNull(childThread.titleRegeneration);
   assert.equal(childThread.projectId, parentThread.projectId);
   assert.equal(childThread.runtimeMode, parentThread.runtimeMode);
   assert.equal(childThread.interactionMode, parentThread.interactionMode);
@@ -269,15 +274,25 @@ it("waits for nested work and retains the report across monitor acknowledgements
       "result_available",
     );
   }
-  assert.equal(
-    delegatedTaskProgress({
-      ...projection,
-      providerThreads: [
-        { pendingBackgroundTasks: [{ taskId: "background-audit", kind: "command" }] },
-      ],
-    }).state,
-    "waiting_for_children",
-  );
+  for (const [awaited, state] of [
+    [true, "waiting_for_children"],
+    [false, "result_available"],
+  ] as const) {
+    assert.equal(
+      delegatedTaskProgress({
+        ...projection,
+        providerThreads: [
+          {
+            pendingBackgroundTasks: [
+              { taskId: "background-audit", kind: "command", ...(awaited ? { awaited } : {}) },
+              { taskId: "log-watcher", kind: "monitor" },
+            ],
+          },
+        ],
+      }).state,
+      state,
+    );
+  }
   const pending = {
     ...run,
     id: RunId.make("followup"),
