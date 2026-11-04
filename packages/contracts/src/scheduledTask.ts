@@ -43,9 +43,7 @@ function clockMinutes(value: string): number {
   return Number(hour) * 60 + Number(minute);
 }
 
-const WindowClock = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
-);
+const WindowClock = TrimmedNonEmptyString.check(Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/));
 
 const ScheduledTaskIntervalWindow = Schema.Struct({
   start: WindowClock,
