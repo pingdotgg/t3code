@@ -23,13 +23,9 @@ export const writeFileAtomic = (
   mode?: number,
 ): Effect.Effect<void, PlatformError> =>
   Effect.suspend(() => {
-    const tmp = `${filePath}.${process.pid}.${Math.random()
-      .toString(36)
-      .slice(2)}.tmp`;
+    const tmp = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     return fs.writeFileString(tmp, contents).pipe(
-      Effect.flatMap(() =>
-        mode === undefined ? Effect.void : fs.chmod(tmp, mode),
-      ),
+      Effect.flatMap(() => (mode === undefined ? Effect.void : fs.chmod(tmp, mode))),
       Effect.flatMap(() => fs.rename(tmp, filePath)),
       Effect.tapError(() => fs.remove(tmp).pipe(Effect.ignore)),
     );
