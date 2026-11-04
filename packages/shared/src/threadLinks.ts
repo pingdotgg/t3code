@@ -1,6 +1,9 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Root } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
@@ -10,13 +13,60 @@ const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
-// Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
-// Neither part may hold `[`, which keeps the scan linear: no match attempt runs past the next `[`.
+// Labels and destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
+
+const codeParser = unified().use(remarkParse).freeze();
+
+// Let CommonMark own block precedence and complete backtick runs. Only offsets are used:
+// links still follow the bounded policy above, and untouched source is never serialized.
+function codeRanges(markdown: string) {
+  const ranges: Array<{ start: number; end: number; inline: boolean }> = [];
+  const visit = (node: Root | Root["children"][number]) => {
+    if (node.type === "code" || node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) {
+        ranges.push({ start, end, inline: node.type === "inlineCode" });
+      }
+    } else if ("children" in node) node.children.forEach(visit);
+  };
+  visit(codeParser.parse(markdown));
+  return ranges;
+}
+
+function* threadLinkMatches(markdown: string) {
+  if (!hasThreadLinks(markdown)) return;
+  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  let ranges: ReturnType<typeof codeRanges> | undefined;
+  let rangeIndex = 0;
+  const mayContainCode = /[`~\t]| {4}/.test(markdown);
+  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+    // Most messages need no Markdown parse; defer it until a candidate and code syntax coexist.
+    if (!mayContainCode) {
+      yield match;
+      continue;
+    }
+    ranges ??= codeRanges(markdown);
+    while (ranges[rangeIndex] && ranges[rangeIndex]!.end <= match.index) rangeIndex++;
+    const end = match.index + match[0].length;
+    const labelEnd = match.index + 1 + (match.groups?.label?.length ?? 0);
+    let protectedEnd: number | undefined;
+    for (let index = rangeIndex; ranges[index] && ranges[index]!.start < end; index++) {
+      const range = ranges[index]!;
+      // Balanced code inside a link label belongs to that whole link.
+      if (range.inline && range.start > match.index && range.end <= labelEnd) continue;
+      protectedEnd = range.end;
+      break;
+    }
+    if (protectedEnd === undefined) yield match;
+    else pattern.lastIndex = Math.max(pattern.lastIndex, protectedEnd);
+  }
+}
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
@@ -145,18 +195,37 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`${THREAD_LINK_PROTOCOL}://v`) || markdown.includes(HOSTED_PREFIX);
 }
 
+/** Source and accepted links only; preparation retains no Markdown AST or resolved titles. */
+export function prepareThreadLinks(markdown: string) {
+  const matches = [];
+  // Hermes' matchAll yields matches without `groups`; exec keeps them.
+  for (const match of threadLinkMatches(markdown)) {
+    const groups = match.groups!;
+    if (groups.title !== undefined) continue;
+    const href = groups.href ?? groups.autolink ?? groups.bare;
+    const link = href === undefined ? null : parseThreadLinkHref(href);
+    if (link !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        link,
+        label: groups.label,
+      });
+    }
+  }
+  return { markdown, matches };
+}
+
+type PreparedThreadLinks = ReturnType<typeof prepareThreadLinks>;
+
 /** Every thread the markdown's links can name, so their titles are keyed reads. */
 export function threadLinkRefs(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
-  // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
-    const href = match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    if (link === null) continue;
+  const prepared = typeof source === "string" ? prepareThreadLinks(source) : source;
+  for (const { link } of prepared.matches) {
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
       refs.set(`${ref.environmentId}/${ref.threadId}`, ref);
     }
@@ -175,16 +244,19 @@ export function unknownThreadLinkLabel(
 
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
-  if (!hasThreadLinks(markdown)) return markdown;
-  return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as Partial<Record<"href" | "autolink" | "bare" | "label", string>>;
-    const href = groups.href ?? groups.autolink ?? groups.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
-  });
+  const { markdown, matches } = typeof source === "string" ? prepareThreadLinks(source) : source;
+  let result = "";
+  let cursor = 0;
+  for (const match of matches) {
+    const replacement = replace(match.link, match.label);
+    if (replacement === undefined) continue;
+    result += markdown.slice(cursor, match.start) + replacement;
+    cursor = match.end;
+  }
+  return result + markdown.slice(cursor);
 }
 
 /**
@@ -193,11 +265,11 @@ export function replaceThreadLinks(
  * link, which may open elsewhere.
  */
 export function relabelThreadLinks(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   messageEnvironmentId: EnvironmentId,
   title: (ref: ScopedThreadRef) => string | undefined,
 ): string {
-  return replaceThreadLinks(markdown, (written, label) => {
+  return replaceThreadLinks(source, (written, label) => {
     const environmentId = written.environmentId ?? messageEnvironmentId;
     const decoded = percentDecodedThreadLinkId(written.threadId);
     const threadId =

@@ -7,6 +7,7 @@ import {
   guessThreadLinkRef,
   hostedThreadLink,
   parseThreadLinkHref,
+  prepareThreadLinks,
   relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
@@ -18,6 +19,35 @@ const ref = (environmentId: string, threadId = "chat-1") => ({
 });
 const v1 = (threadId: string) => ({ environmentId: null, threadId: ThreadId.make(threadId) });
 const local = EnvironmentId.make("local");
+
+describe("Markdown code boundaries", () => {
+  const link = "[x](https://app.t3.codes/threads/env/thread)";
+  it.each([
+    "`a\nLINK\nb`",
+    "``a\nLINK\nb``",
+    "`a`` LINK b`",
+    "``a` LINK b``",
+    "before ```a LINK b``` after",
+    "`unclosed\n\n~~~\nLINK\n~~~",
+    "> ~~~\n> LINK\n> ~~~",
+    "~~~~\n~~~\nLINK\n~~~~",
+  ])("preserves code source and collects no references: %s", (source) => {
+    const markdown = source.replace("LINK", link);
+    expect(threadLinkRefs(markdown, local)).toEqual([]);
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+  });
+
+  it.each(["`a`` LINK", "before ~~~inline LINK", "`unclosed\n\nLINK"])(
+    "keeps links live outside actual code: %s",
+    (source) => {
+      const markdown = source.replace("LINK", link);
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("env", "thread")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        markdown.replace(link, "[Title](t3-thread://v2/env/thread)"),
+      );
+    },
+  );
+});
 const titlesIn =
   (titles: Record<string, Record<string, string>>) =>
   ({ environmentId, threadId }: ScopedThreadRef) =>
@@ -178,6 +208,57 @@ describe("thread links", () => {
 });
 
 describe("hosted thread links", () => {
+  it.each(["Fix `ci`", "`foo`", "Use ``a ` b``", "`a` and ``b``", "Fix `typo"])(
+    "relabels a copied hosted link with backticks in label %s as one link",
+    (label) => {
+      const markdown = formatHostedThreadLink(ref("one", "same"), label);
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "same")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        "[Title](t3-thread://v2/one/same)",
+      );
+      expect(relabelThreadLinks(markdown, local, () => undefined)).toBe(label);
+    },
+  );
+
+  it.each(["before ``", "before ` and ``"])(
+    "shields a cross-boundary span after label %s and processes the following live link",
+    (label) => {
+      const shielded = `[${label}](https://example.com) https://app.t3.codes/threads/one/hidden\`\``;
+      const markdown = `${shielded} https://app.t3.codes/threads/one/live`;
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "live")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        `${shielded} [Title](t3-thread://v2/one/live)`,
+      );
+    },
+  );
+
+  it("does not consume a code span's opening backtick as an ordinary link label", () => {
+    const markdown = "[before `](https://example.com) https://app.t3.codes/threads/one/same`";
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+    expect(threadLinkRefs(markdown, local)).toEqual([]);
+  });
+
+  it.each([
+    '"title"',
+    "'title'",
+    "(title)",
+    '"see [notes]"',
+    "'see [notes]'",
+    "(see [notes])",
+    String.raw`"say \"hi\""`,
+    String.raw`'say \'hi\''`,
+    String.raw`(say \(hi\))`,
+    '"title" ',
+    "'title'\t",
+    "(title)  ",
+  ])("leaves a link with Markdown title %s intact", (title) => {
+    for (const label of ["label", "label `code`"]) {
+      const markdown = `[${label}](https://app.t3.codes/threads/one/same ${title})`;
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+      expect(threadLinkRefs(markdown, local)).toEqual([]);
+    }
+  });
+
   it("escapes every id character a sentence or path could claim, and reads it back", () => {
     const thread = ref("env.1", "thread:delegated/mcp%3A1.");
     const link = hostedThreadLink(thread);
@@ -245,5 +326,32 @@ describe("hosted thread links", () => {
     ].join("\n");
     expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
     expect(threadLinkRefs(nested, local)).toEqual([]);
+  });
+});
+
+describe("prepared thread links", () => {
+  it("reuses protected source while resolving current titles and environments", () => {
+    const markdown = "`<t3-thread://v1/code>`\n\n[old](t3-thread://v1/chat-1)";
+    const prepared = prepareThreadLinks(markdown);
+    expect(threadLinkRefs(prepared, local)).toEqual([ref("local")]);
+    expect(threadLinkRefs(prepared, EnvironmentId.make("remote"))).toEqual([ref("remote")]);
+    expect(relabelThreadLinks(prepared, local, titlesIn({ local: { "chat-1": "First" } }))).toBe(
+      markdown.replace("[old]", "[First]"),
+    );
+    expect(relabelThreadLinks(prepared, local, titlesIn({ local: { "chat-1": "Renamed" } }))).toBe(
+      markdown.replace("[old]", "[Renamed]"),
+    );
+    expect(
+      relabelThreadLinks(
+        prepared,
+        EnvironmentId.make("remote"),
+        titlesIn({ remote: { "chat-1": "Remote" } }),
+      ),
+    ).toBe(markdown.replace("[old]", "[Remote]"));
+    const changed = prepareThreadLinks(markdown.replace("chat-1", "chat-2"));
+    expect(threadLinkRefs(changed, local)).toEqual([ref("local", "chat-2")]);
+    expect(
+      relabelThreadLinks(changed, local, titlesIn({ local: { "chat-2": "New source" } })),
+    ).toBe(markdown.replace("chat-1", "chat-2").replace("[old]", "[New source]"));
   });
 });
