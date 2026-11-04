@@ -430,6 +430,28 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
+/** Matches `policyInstruction` in textGenerationPrompts; keep configured preferences inside that budget. */
+const CHANGE_REQUEST_INSTRUCTION_LIMIT = 20_000;
+
+function combineChangeRequestInstructions(
+  styleInstructions: string | undefined,
+  extraInstructions: string,
+): string | undefined {
+  const extra = extraInstructions.trim();
+  const style = styleInstructions?.trim() ?? "";
+  if (!extra) return style || undefined;
+  if (!style) return extra;
+
+  const separator = "\n\n";
+  const styleBudget = CHANGE_REQUEST_INSTRUCTION_LIMIT - extra.length - separator.length;
+  if (styleBudget <= 0) return extra;
+  if (style.length <= styleBudget) return `${style}${separator}${extra}`;
+
+  const truncationMarker = "\n\n[truncated]";
+  const keep = Math.max(0, styleBudget - truncationMarker.length);
+  return `${style.slice(0, keep)}${truncationMarker}${separator}${extra}`;
+}
+
 // Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
 function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "command_execution" || item.output === undefined) return item;
@@ -2318,16 +2340,14 @@ export const make = Effect.gen(function* () {
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const stylePolicy = yield* resolveStylePolicy(cwd, settings);
-    const extraChangeRequestInstructions = settings.changeRequestInstructions.trim();
+    const changeRequestInstructions = combineChangeRequestInstructions(
+      stylePolicy.changeRequestInstructions,
+      settings.changeRequestInstructions,
+    );
     const policy =
-      extraChangeRequestInstructions.length === 0
+      changeRequestInstructions === stylePolicy.changeRequestInstructions
         ? stylePolicy
-        : {
-            ...stylePolicy,
-            changeRequestInstructions: stylePolicy.changeRequestInstructions
-              ? `${stylePolicy.changeRequestInstructions}\n\n${extraChangeRequestInstructions}`
-              : extraChangeRequestInstructions,
-          };
+        : { ...stylePolicy, changeRequestInstructions };
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(

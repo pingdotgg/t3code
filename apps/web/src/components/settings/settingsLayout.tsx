@@ -534,7 +534,7 @@ export function SettingsRow({
           </div>
         ) : null}
       </div>
-      {unavailable && children ? (
+      {(unavailable || managedBy !== undefined || managed !== undefined) && children ? (
         <div inert className="opacity-50">
           {children}
         </div>
