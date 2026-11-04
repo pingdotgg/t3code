@@ -158,7 +158,11 @@ export const CodexDriver: ProviderDriver<
       yield* HostProcess.Environment,
     );
     const isolated = config.isolateRuntime
-      ? yield* makeCodexIsolatedRuntime({ instanceId, config, environment: originalEnvironment })
+      ? yield* makeCodexIsolatedRuntime({
+          instanceId,
+          config: { ...config, enabled },
+          environment: originalEnvironment,
+        })
       : undefined;
     const processEnv = isolated?.environment ?? originalEnvironment;
     const environmentHome = processEnv.CODEX_HOME;
@@ -250,7 +254,7 @@ export const CodexDriver: ProviderDriver<
     const checkProvider = modelCatalog.refreshInBackground.pipe(
       Effect.andThen(
         Effect.zipWith(
-          isolated
+          isolated && enabled
             ? isolated.resolve.pipe(
                 Effect.flatMap((runtime) =>
                   checkCodexProviderStatus(runtime.config, undefined, runtime.environment),

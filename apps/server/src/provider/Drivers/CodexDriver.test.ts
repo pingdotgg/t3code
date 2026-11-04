@@ -497,6 +497,42 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
+  it.effect("keeps disabled isolated instances disabled without acquiring Codex", () =>
+    Effect.gen(function* () {
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("disabled-isolated"),
+        displayName: "Disabled isolated Codex",
+        enabled: false,
+        environment: [],
+        config: { ...CodexDriver.defaultConfig(), isolateRuntime: true },
+      });
+      yield* instance.snapshot.refresh;
+      expect(yield* instance.snapshot.getSnapshot).toMatchObject({
+        enabled: false,
+        status: "disabled",
+      });
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      Effect.provide(
+        Layer.mock(CodexInstallation.CodexInstallation)({
+          managedDirectory: "unused-managed-installation",
+          managed: Effect.succeed({
+            managedDirectory: "unused-managed-installation",
+            acquire: () => Effect.die("Disabled Codex must not acquire an installation"),
+            resolve: () => Effect.die("Disabled Codex must not resolve an installation"),
+            compatibility: () => Effect.die("Disabled Codex must not check compatibility"),
+            start: Effect.die("Disabled Codex must not install"),
+            cancel: () => Effect.die("unused"),
+            state: Effect.die("unused"),
+            changes: Stream.empty,
+            remove: () => Effect.die("unused"),
+          }),
+        }),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",

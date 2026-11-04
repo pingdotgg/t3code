@@ -20,6 +20,7 @@ import { act, render } from "../../../test/render";
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
   providerAuthQuery: null as unknown,
+  authSubscriptions: [] as unknown[],
   providerAuth: null as ProviderAuthState | null,
   settings: null as unknown as UnifiedSettings,
   canManageProviders: true,
@@ -66,7 +67,10 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       ...labelled,
       configValueAtom: (() => config) as never,
-      providerAuthState: (() => providerAuth) as never,
+      providerAuthState: ((input: unknown) => {
+        state.authSubscriptions.push(input);
+        return providerAuth;
+      }) as never,
       providersValueAtom: (() => providers) as never,
     } as never,
   };
@@ -171,6 +175,7 @@ vi.mock(import("../ProviderUpdatesAction"), async (original) => ({
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthenticationStep";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
@@ -233,6 +238,7 @@ async function setup() {
   state.canWriteSettings = true;
   state.searchTargetId = null;
   state.providerAuth = null;
+  state.authSubscriptions = [];
   state.readEnvironmentIds = [];
   state.updateEnvironmentIds = [];
   state.mutationEnvironmentIds = [];
@@ -249,6 +255,90 @@ async function setup() {
 }
 
 describe("EnvironmentProviderSettings routing", () => {
+  it("waits for Codex auth support before subscribing in the isolated provider wizard", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { isolateRuntime: true, setupMode: "existing" },
+        },
+      },
+    };
+    const snapshot: ServerProvider = {
+      ...provider(),
+      instanceId: customId,
+      auth: { status: "unauthenticated" },
+      setup: { canInstall: true, canAuthenticate: false },
+    };
+    await setProviders([snapshot]);
+    const wizard = () => (
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <ProviderWizardAuthenticationStep
+          environmentId={environmentId}
+          environmentLabel="Remote device"
+          instanceId={customId}
+          onFinish={() => {}}
+        />
+      </RegistryContext.Provider>
+    );
+    await using screen = await render(wizard());
+    expect(state.authSubscriptions).toEqual([]);
+
+    state.settings = {
+      ...state.settings,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { isolateRuntime: true, setupMode: "managed" },
+        },
+      },
+    };
+    await screen.rerender(wizard());
+    expect(state.authSubscriptions).toEqual([]);
+    await setProviders([{ ...snapshot, setup: { canInstall: true, canAuthenticate: true } }]);
+    expect(state.authSubscriptions).toContainEqual({
+      environmentId,
+      input: { instanceId: customId },
+    });
+  });
+
+  it("keeps the selected remote provider isolated when connecting ChatGPT", async () => {
+    await setup();
+    const config = { isolateRuntime: true, setupMode: "existing", launchArgs: "--fixture" };
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), displayName: "Work", config },
+      },
+    };
+    await setProviders([
+      {
+        ...provider(),
+        instanceId: customId,
+        auth: { status: "unauthenticated" },
+        setup: { canInstall: true, canAuthenticate: false },
+      },
+    ]);
+    await using screen = await render(panel({ targetInstanceId: customId }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
+    expect(state.mutateProviderInstance).toHaveBeenCalledWith(
+      {
+        operation: "upsert",
+        instanceId: customId,
+        instance: {
+          driver: ProviderDriverKind.make("codex"),
+          displayName: "Work",
+          enabled: true,
+          config: { ...config, setupMode: "managed", enabled: true },
+        },
+      },
+      {},
+    );
+    expect(state.mutationEnvironmentIds.every((id) => id === environmentId)).toBe(true);
+  });
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

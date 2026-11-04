@@ -24,19 +24,23 @@ import { Switch } from "../ui/switch";
 import { ManagedControl } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { SettingsRow } from "./settingsLayout";
+import { isolatedCodexLoginCommand } from "./CodexSetupSection.logic";
 
 export function CodexInstallationSection({
   environmentId,
   instanceId,
   readOnly = false,
+  showLogin = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly readOnly?: boolean;
+  readonly showLogin?: boolean;
 }) {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const query = useEnvironmentQuery(
     serverEnvironment.providerInstallState({ environmentId, input: { instanceId } }),
   );
@@ -45,10 +49,19 @@ export function CodexInstallationSection({
   const start = useAtomCommand(serverEnvironment.startProviderInstall, options);
   const cancel = useAtomCommand(serverEnvironment.cancelProviderInstall, options);
   const remove = useAtomCommand(serverEnvironment.removeProviderInstallation, options);
+  const refresh = useAtomCommand(serverEnvironment.refreshProviders, options);
   const pendingRef = useRef(false);
-  const [pending, setPending] = useState<"install" | "cancel" | "remove" | null>(null);
+  const [pending, setPending] = useState<"install" | "cancel" | "remove" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const installation = query.data;
+  const loginCommand =
+    installation?.executablePath && provider?.runtimePaths?.homePath
+      ? isolatedCodexLoginCommand(
+          installation.executablePath,
+          provider.runtimePaths.homePath,
+          config?.environment.platform.os ?? "unknown",
+        )
+      : null;
   const running =
     installation !== null &&
     ["downloading", "extracting", "verifying"].includes(installation.phase);
@@ -76,25 +89,32 @@ export function CodexInstallationSection({
                   : "Not installed";
   const failure =
     error ?? query.error ?? (installation?.phase === "failed" ? installation.message : null);
-  const perform = async (operation: "install" | "cancel" | "remove") => {
+  const perform = async (operation: "install" | "cancel" | "remove" | "refresh") => {
     if (disabled || pendingRef.current) return;
     if (operation === "cancel" && !installation?.operationId) return;
     pendingRef.current = true;
     setPending(operation);
     setError(null);
     const target = { environmentId, input: { instanceId } };
-    const settled = await settlePromise(() =>
-      operation === "cancel" && installation?.operationId
-        ? cancel({
-            environmentId,
-            input: { instanceId, operationId: installation.operationId },
-          })
-        : operation === "remove"
-          ? remove(target)
-          : start(target),
+    const settled = await settlePromise(
+      async () =>
+        await (operation === "refresh"
+          ? refresh(target)
+          : operation === "cancel" && installation?.operationId
+            ? cancel({
+                environmentId,
+                input: { instanceId, operationId: installation.operationId },
+              })
+            : operation === "remove"
+              ? remove(target)
+              : start(target)),
     );
     if (settled._tag === "Failure") {
-      setError("Could not manage the Codex installation. Reconnect and try again.");
+      setError(
+        operation === "refresh"
+          ? "Could not refresh the account status. Reconnect and try again."
+          : "Could not manage the Codex installation. Reconnect and try again.",
+      );
     } else if (settled.value._tag === "Failure" && !isAtomCommandInterrupted(settled.value)) {
       const failure = squashAtomCommandFailure(settled.value);
       setError(
@@ -190,6 +210,29 @@ export function CodexInstallationSection({
       ) : null}
       {installation?.executablePath ? (
         <CodexRuntimePath label="Binary path" value={installation.executablePath} />
+      ) : null}
+      {showLogin ? (
+        <>
+          <SettingsRow
+            title="CLI or proxy account"
+            description={
+              loginCommand
+                ? "Run this command in a terminal on this environment. Open the URL it prints on any device and enter the code. Enable device code authentication in your ChatGPT security settings if prompted. For a proxy, configure the separate home above instead."
+                : "Install Codex to get a login command for this environment. For a proxy, configure the separate home above."
+            }
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={disabled || running || !provider?.enabled}
+                onClick={() => void perform("refresh")}
+              >
+                {pending === "refresh" ? "Refreshing…" : "Refresh account status"}
+              </Button>
+            }
+          />
+          {loginCommand ? <CodexRuntimePath label="Login command" value={loginCommand} /> : null}
+        </>
       ) : null}
     </>
   );

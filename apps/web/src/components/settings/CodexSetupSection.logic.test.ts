@@ -5,7 +5,25 @@ import {
   settleAuthorizationPage,
   settleHandoffAuthorizationPage,
   settleProviderInstall,
+  isolatedCodexLoginCommand,
 } from "./CodexSetupSection.logic";
+
+describe("isolatedCodexLoginCommand", () => {
+  it("scopes POSIX device sign-in to the separate home and quotes shell metacharacters", () => {
+    expect(isolatedCodexLoginCommand("/opt/Codex $tools/codex", "/home/it's mine", "linux")).toBe(
+      `env CODEX_HOME='/home/it'"'"'s mine' CODEX_SQLITE_HOME='/home/it'"'"'s mine/sqlite' '/opt/Codex $tools/codex' login --device-auth`,
+    );
+  });
+
+  it("uses a child PowerShell so the current terminal keeps its environment", () => {
+    expect(
+      isolatedCodexLoginCommand("C:\\Tools & Apps\\codex.exe", "C:\\O'Brien\\home", "windows"),
+    ).toBe(
+      "powershell -NoProfile -Command '$env:CODEX_HOME=''C:\\O''''Brien\\home''; $env:CODEX_SQLITE_HOME=''C:\\O''''Brien\\home\\sqlite''; & ''C:\\Tools & Apps\\codex.exe'' login --device-auth'",
+    );
+    expect(isolatedCodexLoginCommand("/codex", "/home", "unknown")).toBeNull();
+  });
+});
 
 const install = (overrides: Partial<ProviderInstallState>) =>
   ({

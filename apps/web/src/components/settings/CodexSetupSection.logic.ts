@@ -2,7 +2,23 @@ import type {
   ChatGptHandoffState,
   ProviderAuthState,
   ProviderInstallState,
+  ExecutionEnvironmentPlatformOs,
 } from "@t3tools/contracts";
+
+export function isolatedCodexLoginCommand(
+  executablePath: string,
+  homePath: string,
+  platform: ExecutionEnvironmentPlatformOs,
+): string | null {
+  if (platform === "unknown") return null;
+  if (platform === "windows") {
+    const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const script = `$env:CODEX_HOME=${quote(homePath)}; $env:CODEX_SQLITE_HOME=${quote(`${homePath}\\sqlite`)}; & ${quote(executablePath)} login --device-auth`;
+    return `powershell -NoProfile -Command ${quote(script)}`;
+  }
+  const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+  return `env CODEX_HOME=${quote(homePath)} CODEX_SQLITE_HOME=${quote(`${homePath}/sqlite`)} ${quote(executablePath)} login --device-auth`;
+}
 
 export function readCodexSetupMode(config: unknown): "managed" | "existing" {
   return config !== null &&
