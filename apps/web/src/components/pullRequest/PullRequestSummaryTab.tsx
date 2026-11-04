@@ -255,7 +255,8 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
-            {resolveButton}
+            {/* Collapsed, the status label already says "Resolved". */}
+            {open ? resolveButton : null}
             {reactionBar}
           </div>
           <CommentLocation comment={comment} thread={thread} />

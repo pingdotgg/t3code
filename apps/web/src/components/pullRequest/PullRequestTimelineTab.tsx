@@ -442,13 +442,15 @@ function ReviewThreadEvent({
             )}
           />
         </button>
-        <PullRequestResolveThreadButton
-          environmentId={reactions.environmentId}
-          reference={reactions.reference}
-          detail={detail}
-          thread={thread}
-          onRefresh={reactions.onRefresh}
-        />
+        {expanded ? (
+          <PullRequestResolveThreadButton
+            environmentId={reactions.environmentId}
+            reference={reactions.reference}
+            detail={detail}
+            thread={thread}
+            onRefresh={reactions.onRefresh}
+          />
+        ) : null}
       </div>
       {expanded ? (
         <>
