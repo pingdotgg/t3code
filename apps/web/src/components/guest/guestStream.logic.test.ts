@@ -98,8 +98,10 @@ const itemEvent = (sequence: number, item: OrchestrationV2TurnItem): GuestStream
   },
 });
 
-const apply = (events: ReadonlyArray<GuestStreamEvent>, state = initialGuestStreamState) =>
-  events.reduce<GuestStreamState>(applyGuestStreamEvent, state);
+const apply = (
+  events: ReadonlyArray<Parameters<typeof applyGuestStreamEvent>[1]>,
+  state = initialGuestStreamState,
+) => events.reduce<GuestStreamState>(applyGuestStreamEvent, state);
 
 const itemIds = (state: GuestStreamState) =>
   state.projection?.visibleTurnItems.map((row) => row.item.id) ?? [];
@@ -166,7 +168,7 @@ describe("applyGuestStreamEvent", () => {
     expect(state.view?.shareId).toBe(view.shareId);
   });
 
-  it("remembers a waiting message across a reconnect until its row arrives", () => {
+  it("remembers a waiting message across a reconnect until its row arrives or the guest clears it", () => {
     const waiting = {
       id: GuestMessageId.make("m1"),
       text: "Why?",
@@ -184,6 +186,23 @@ describe("applyGuestStreamEvent", () => {
     // Once placed, a later snapshot whose window no longer holds the row must not resurrect it.
     const placed = apply([itemEvent(2, guestMessageRow("u1", waiting.id)), snapshot(3)], queued);
     expect(placed.awaitingRowIds.size).toBe(0);
+
+    // regression: #27719 a dismissed message never gets a row, so only the guest can clear it.
+    const dismissed = apply([
+      { type: "view", view: { ...view, messages: [waiting] } },
+      snapshot(1),
+      { type: "view", view: { ...view, messages: [{ ...waiting, status: "dismissed" }] } },
+      snapshot(2),
+    ]);
+    expect([...dismissed.awaitingRowIds]).toEqual([waiting.id]);
+    const cleared = apply(
+      [
+        { type: "message-cleared", id: waiting.id },
+        { type: "view", view: { ...view, messages: [{ ...waiting, status: "dismissed" }] } },
+      ],
+      dismissed,
+    );
+    expect(cleared.awaitingRowIds.size).toBe(0);
   });
 });
 
