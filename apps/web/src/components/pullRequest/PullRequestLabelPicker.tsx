@@ -40,7 +40,12 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+  const send = async (
+    labels: ReadonlyArray<PullRequestLabelCandidate>,
+    applied: boolean,
+    // Removals that wait on this add and are dropped when it fails.
+    skipped: ReadonlyArray<PullRequestLabelCandidate> = [],
+  ) => {
     if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
     const result = await setLabels({
@@ -50,7 +55,7 @@ export function PullRequestLabelPicker({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: `Could not ${applied ? "add" : "remove"} ${names.join(", ")}`,
+        title: `Could not ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have triage access on this repository.",
@@ -86,7 +91,7 @@ export function PullRequestLabelPicker({
       candidateKey={(candidate) => candidate.name}
       onCommit={async ({ add, remove }) => {
         // Adds first, so the row never shows empty between the two writes, or after a failed add.
-        if (await send(add, true)) await send(remove, false);
+        if (await send(add, true, remove)) await send(remove, false);
       }}
     >
       {(candidate, selected) => {

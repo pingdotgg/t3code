@@ -48,7 +48,12 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
-  const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+  const send = async (
+    labels: ReadonlyArray<PullRequestLabelCandidate>,
+    applied: boolean,
+    // Removals that wait on this add and are dropped when it fails.
+    skipped: ReadonlyArray<PullRequestLabelCandidate> = [],
+  ) => {
     if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
     const response = await setLabels({
@@ -58,7 +63,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        `Couldn't ${applied ? "add" : "remove"} ${names.join(", ")}`,
+        `Couldn't ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
         cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
       );
       return false;
@@ -72,7 +77,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     single: false,
     commit: async ({ add, remove }) => {
       // Adds first, so the row never shows empty between the two writes, or after a failed add.
-      if (await send(add, true)) await send(remove, false);
+      if (await send(add, true, remove)) await send(remove, false);
     },
   });
   // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.
