@@ -200,6 +200,7 @@ describe("Linux device scale persistence failures", () => {
 
   describe("shouldDisableGpuOnNvidiaWayland", () => {
     const base = {
+      ozonePlatform: null,
       homeDirectory: "/home/user",
       joinPath: NodePath.posix.join,
       existsSync: (path: string) => path === "/dev/nvidiactl",
@@ -216,6 +217,22 @@ describe("Linux device scale persistence failures", () => {
     it("is false on X11", () => {
       assert.isFalse(
         shouldDisableGpuOnNvidiaWayland({ ...base, env: { XDG_SESSION_TYPE: "x11" } }),
+      );
+    });
+
+    it("respects an explicit --ozone-platform=x11 override in a Wayland session", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: { XDG_SESSION_TYPE: "wayland" },
+          ozonePlatform: "x11",
+        }),
+      );
+    });
+
+    it("respects an explicit --ozone-platform=wayland when the session variable is absent", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({ ...base, env: {}, ozonePlatform: "wayland" }),
       );
     });
 

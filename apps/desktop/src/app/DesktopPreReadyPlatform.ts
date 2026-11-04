@@ -124,6 +124,7 @@ export const make = Effect.gen(function* () {
       if (
         DesktopEarlyElectronStartup.shouldDisableGpuOnNvidiaWayland({
           env: process.env,
+          ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
           homeDirectory,
           joinPath: NodePath.posix.join,
           existsSync: (path) => NodeFS.existsSync(path),

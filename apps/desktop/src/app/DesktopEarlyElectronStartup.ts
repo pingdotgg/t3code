@@ -81,21 +81,22 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
-const isWaylandSession = (env: NodeJS.ProcessEnv): boolean =>
-  (trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland";
+const isWaylandPlatform = (env: NodeJS.ProcessEnv, ozonePlatform: string | null): boolean =>
+  (ozonePlatform ?? trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland";
 
 const isNvidiaPresent = (existsSync: (path: string) => boolean): boolean =>
   existsSync("/dev/nvidiactl") || existsSync("/dev/nvidia0");
 
 export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly env: NodeJS.ProcessEnv;
+  readonly ozonePlatform: string | null;
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly existsSync: (path: string) => boolean;
   readonly readFileString: (path: string) => string;
   readonly hasSwitch: (name: string) => boolean;
 }): boolean {
-  if (!isWaylandSession(input.env)) return false;
+  if (!isWaylandPlatform(input.env, input.ozonePlatform)) return false;
   if (input.hasSwitch("disable-gpu") || input.hasSwitch("enable-gpu")) return false;
   const settingsPath = resolveEarlyDesktopSettingsPath({
     env: input.env,
