@@ -77,6 +77,28 @@ describe("HTML in native Markdown", () => {
     );
   });
 
+  it("keeps alt text that looks like block Markdown literal", () => {
+    const icon = (alt: string) =>
+      markdownHtmlContent(`<img src="https://example.com/a.png" width="16" alt="${alt}">`);
+    expect(icon("---")).toBe("\\---");
+    expect(icon("# Title")).toBe("\\# Title");
+    expect(icon("1. Step")).toBe("1\\. Step");
+    expect(icon("first&#10;---")).toBe("first ---");
+  });
+
+  it("turns reference-style SVG images in tables into their alt text", () => {
+    const markdown = [
+      "| Check |",
+      "| --- |",
+      "| ![Passed][badge] |",
+      "",
+      "[badge]: https://example.com/status.svg",
+    ].join("\n");
+    const result = markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+    expect(result).toContain("| Passed |");
+    expect(result).not.toContain("![Passed]");
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';

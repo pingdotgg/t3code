@@ -228,8 +228,15 @@ function iconSized(tag: string): boolean {
   });
 }
 
+// Alt text can land at the start of a line, so a leading block marker must stay literal.
 function markdownText(text: string): string {
-  return text.replace(/[\\`*_[\]<>&|~]/g, "\\$&");
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[\\`*_[\]<>&|~]/g, "\\$&")
+    .replace(/^(?:([#+=-])|(\d+)([.)]))/, (_, marker, digits, delimiter) =>
+      marker ? `\\${marker}` : `${digits}\\${delimiter}`,
+    );
 }
 
 function htmlTagMarkdown(
@@ -480,22 +487,32 @@ const SVG_URL = /\.svg(?:$|[?#])/i;
 function markdownWithInlineSvgAsText(markdown: string): string {
   if (!/\.svg/i.test(markdown)) return markdown;
   const edits: MarkdownEdit[] = [];
+  const root = parser.parse(markdown);
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition" && !definitions.has(node.identifier.toUpperCase()))
+      definitions.set(node.identifier.toUpperCase(), node.url);
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
   const visit = (node: MarkdownNode, inSlotContainer: boolean) => {
     if (!("children" in node)) return;
     const standalone = inSlotContainer && node.type === "paragraph" && node.children.length === 1;
     const hostsSlots = node.type === "root" || (node.type === "blockquote" && inSlotContainer);
     for (const child of node.children) {
-      if (child.type !== "image") {
+      if (child.type !== "image" && child.type !== "imageReference") {
         visit(child, hostsSlots);
         continue;
       }
+      const url =
+        child.type === "image" ? child.url : definitions.get(child.identifier.toUpperCase());
       const start = child.position?.start.offset;
       const end = child.position?.end.offset;
-      if (!standalone && SVG_URL.test(child.url) && start !== undefined && end !== undefined)
+      if (!standalone && url && SVG_URL.test(url) && start !== undefined && end !== undefined)
         edits.push({ start, end, content: markdownText(child.alt ?? "") });
     }
   };
-  visit(parser.parse(markdown), true);
+  visit(root, true);
   return applyMarkdownEdits(markdown, edits);
 }
 
