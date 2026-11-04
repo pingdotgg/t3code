@@ -5288,11 +5288,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: true,
     },
     {
-      case: "rules for other tools and servers",
+      case: "a server-wide deny rule for an alias containing __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule for this tool on an alias containing __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "an ask rule naming another tool, which may be a server-wide alias rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "rules that cannot cover an MCP tool",
       rules: [
-        { behavior: "deny", rule: "mcp__probe_server__refresh" },
-        { behavior: "deny", rule: "mcp__*__show_weather" },
         { behavior: "ask", rule: "Bash" },
+        { behavior: "deny", rule: "Read(./secrets/**)" },
         { behavior: "allow", rule: "mcp__probe_server__refresh_weather" },
       ],
       called: true,

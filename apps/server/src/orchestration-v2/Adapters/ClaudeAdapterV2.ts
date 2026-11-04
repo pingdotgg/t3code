@@ -746,6 +746,7 @@ const ClaudePermissionRules = Schema.Struct({
         notInEffect: Schema.optional(Schema.Boolean),
       }),
     ),
+    errors: Schema.optional(Schema.Array(Schema.Unknown)),
   }),
 });
 export type ClaudePermissionRule = (typeof ClaudePermissionRules.Type)["state"]["rules"][number];
@@ -816,27 +817,13 @@ function claudeMcpGlobMatches(pattern: string, value: string): boolean {
 }
 
 /**
- * Deliberately broader than Claude's matcher, which also accepts server aliases T3 can't list:
- * the server part of a tool rule is ignored. A false match only refuses a card's call, or asks first.
+ * Deliberately broader than Claude's matcher: Claude also matches server aliases T3 can't list, and
+ * an alias may contain `__`, so any `mcp__` rule may be server-wide for this server. A false match
+ * only refuses a card's call, or asks first.
  */
-function claudeRuleMayCover(rule: string, qualifiedTool: string, toolPart: string): boolean {
+function claudeRuleMayCover(rule: string, qualifiedTool: string): boolean {
   const name = rule.split("(", 1)[0] ?? rule;
-  // The `__*` form covers server-wide rules for server names containing `__`.
-  if ([name, `${name}__*`].some((glob) => claudeMcpGlobMatches(glob, qualifiedTool))) return true;
-  if (!name.startsWith("mcp__")) return false;
-  const rest = name.slice("mcp__".length);
-  // Claude's rule parser ends the server part at the first `__`; a server-wide rule may name an alias.
-  const serverEnd = rest.indexOf("__");
-  if (serverEnd === -1) return true;
-  const serverRule = rest.slice(0, serverEnd);
-  const toolRule = rest.slice(serverEnd + 2);
-  // Claude can match a rule against a `__` prefix of a tool name, and a server `*` can absorb one.
-  const serverTail = serverRule.includes("*")
-    ? [`*${serverRule.slice(serverRule.lastIndexOf("*") + 1)}__${toolRule}`]
-    : [];
-  return [toolRule, `${toolRule}__*`, ...serverTail].some((glob) =>
-    claudeMcpGlobMatches(glob, toolPart),
-  );
+  return name.startsWith("mcp__") || claudeMcpGlobMatches(name, qualifiedTool);
 }
 
 function claudeMcpToolRuled(
@@ -846,12 +833,11 @@ function claudeMcpToolRuled(
   tool: string,
 ): boolean {
   const qualifiedTool = claudeMcpToolName(server, tool);
-  const toolPart = claudeMcpToolNamePart(tool);
   return rules.some(
     (entry) =>
       behaviors.includes(entry.behavior) &&
       entry.notInEffect !== true &&
-      claudeRuleMayCover(entry.rule, qualifiedTool, toolPart),
+      claudeRuleMayCover(entry.rule, qualifiedTool),
   );
 }
 
@@ -1537,6 +1523,11 @@ export const layerQueryRunner: Layer.Layer<
               catch: (cause) => queryRunnerError(cause, "listPermissionRules"),
             }).pipe(
               Effect.flatMap(decodeClaudePermissionRules),
+              // A settings file Claude couldn't parse was skipped, so its rules are missing from the list.
+              Effect.filterOrFail(
+                ({ state }) => (state.errors ?? []).length === 0,
+                ({ state }) => new Error(`Claude skipped ${state.errors?.length} settings file(s)`),
+              ),
               Effect.map(({ state }) => state.rules),
               Effect.mapError((cause) => queryRunnerError(cause, "listPermissionRules")),
             ),
@@ -11895,7 +11886,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (claudeMcpToolRuled(rules, ["deny"], call.server, call.tool)) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
-                  detail: `A Claude permission rule denies ${tool}.`,
+                  detail: `A Claude deny rule may cover ${tool}, so it was not called.`,
                 });
               }
               return claudeMcpCallToolResult(
