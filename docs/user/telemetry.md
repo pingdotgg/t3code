@@ -26,12 +26,9 @@ relay tracing stops after the server restarts, and the desktop app's own relay t
 restarts. If the settings file cannot be read, T3 Code treats the setting as off until it is fixed.
 
 `T3CODE_TELEMETRY_ENABLED` in the server's environment overrides that setting: `false` disables both
-whatever the setting says, and `true` enables them. Settings shows when the variable decides. Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or
+whatever the setting says, and `true` enables them. In the desktop app, a value that comes from your
+login shell can only turn telemetry off. Settings shows when the variable decides. Relay tracing also stops when `T3CODE_OTEL_SDK_DISABLED` or
 `OTEL_SDK_DISABLED` turns OpenTelemetry export off.
-
-To disable product events and relay tracing from the server, set
-`T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
-when `T3CODE_OTEL_SDK_DISABLED` or `OTEL_SDK_DISABLED` turns OpenTelemetry export off.
 
 An administrator can turn product events and relay tracing off in the server and desktop app with
 a [managed policy](./managed-policy.md#other-capabilities). This does not control traces sent by
