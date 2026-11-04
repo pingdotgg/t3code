@@ -10,6 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -183,7 +184,9 @@ const make = Effect.gen(function* () {
   let loadedAcceleration: string | undefined;
   let autoCpuModel: string | undefined;
   let loading: Promise<LoadedModel> | undefined;
-  let gpuDevices: Promise<{ id: string; name: string }[]> | undefined;
+  const discoverGpuDevices = yield* Effect.tryPromise(() => listNativeSpeechGpuDevices()).pipe(
+    Effect.cachedWithTTL((exit) => (Exit.isSuccess(exit) ? Duration.infinity : "1 minute")),
+  );
   let downloading:
     | {
         modelId: string;
@@ -438,9 +441,7 @@ const make = Effect.gen(function* () {
       supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: yield* Effect.promise(
-        () => (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
-      ),
+      gpuDevices: yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => [])),
     };
   });
 
