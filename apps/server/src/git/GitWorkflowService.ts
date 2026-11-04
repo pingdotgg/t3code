@@ -459,26 +459,19 @@ export const make = Effect.gen(function* () {
     ),
     inspectCheckout: Effect.fn("GitWorkflowService.inspectCheckout")(function* (cwd) {
       yield* ensureGitCommand("GitWorkflowService.inspectCheckout", cwd);
-      const refs = yield* git.execute({
+      const identities = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",
         cwd,
-        args: ["rev-parse", "--verify", "HEAD"],
-      });
-      const tree = yield* git.execute({
-        operation: "GitWorkflowService.inspectCheckout",
-        cwd,
-        args: ["rev-parse", "--verify", `${refs.stdout.trim()}^{tree}`],
+        args: ["rev-parse", "HEAD", "HEAD^{tree}"],
       });
       const status = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",
         cwd,
         args: ["status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none"],
       });
-      const commitSha = refs.stdout.trim();
-      const treeSha = tree.stdout.trim();
+      const [commitSha = "", treeSha = ""] = identities.stdout.trim().split("\n");
       if (
-        refs.stdoutTruncated ||
-        tree.stdoutTruncated ||
+        identities.stdoutTruncated ||
         !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commitSha) ||
         !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(treeSha)
       )
