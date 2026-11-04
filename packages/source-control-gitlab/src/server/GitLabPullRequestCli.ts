@@ -1173,6 +1173,19 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A read GitLab could not answer (an older host, a field it rejects) is not worth failing the
+  // surrounding operation for. An unusable CLI or account still reaches the caller.
+  const isOptionalReadFailure = (cause: GitLabPullRequestCliError) =>
+    cause._tag !== "GitLabCliUnavailableError" &&
+    cause._tag !== "GitLabCliAuthenticationError" &&
+    cause._tag !== "GitLabCliRateLimitError";
+
+  const orWhenUnanswered = <A>(
+    read: Effect.Effect<A, GitLabPullRequestCliError>,
+    fallback: A,
+  ): Effect.Effect<A, GitLabPullRequestCliError> =>
+    read.pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(fallback)));
+
   const mergeRequestStats = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1217,18 +1230,12 @@ export const make = Effect.gen(function* () {
               return stat === undefined ? [] : [{ repository: read.repository, number, ...stat }];
             }),
           ),
-          // One read GitLab could not answer costs its own rows their counts, not every other
-          // read's on the same page. An unusable CLI or account still reaches the caller.
-          Effect.catchIf(
-            (cause) =>
-              cause._tag !== "GitLabCliUnavailableError" &&
-              cause._tag !== "GitLabCliAuthenticationError" &&
-              cause._tag !== "GitLabCliRateLimitError",
-            (cause) =>
-              Effect.logWarning("GitLab merge request line count read failed", {
-                repository: read.repository,
-                reason: cause._tag,
-              }).pipe(Effect.as([])),
+          // One failed read costs its own rows their counts, not every other read's on the page.
+          Effect.catchIf(isOptionalReadFailure, (cause) =>
+            Effect.logWarning("GitLab merge request line count read failed", {
+              repository: read.repository,
+              reason: cause._tag,
+            }).pipe(Effect.as([])),
           ),
         ),
       { concurrency: STAT_REQUEST_CONCURRENCY },
@@ -1367,14 +1374,17 @@ export const make = Effect.gen(function* () {
             ? read
             : {
                 ...read,
-                viewerCanEditMaintainerEdits: yield* graphqlRead({
-                  cwd: input.cwd,
-                  host: input.host,
-                  operation: "getMaintainerEditsPermission",
-                  query: MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
-                  variables: { fullPath: input.repository, iid: String(input.number) },
-                  decode: decodeMaintainerEditsPermissionJson,
-                }),
+                viewerCanEditMaintainerEdits: yield* orWhenUnanswered(
+                  graphqlRead({
+                    cwd: input.cwd,
+                    host: input.host,
+                    operation: "getMaintainerEditsPermission",
+                    query: MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
+                    variables: { fullPath: input.repository, iid: String(input.number) },
+                    decode: decodeMaintainerEditsPermissionJson,
+                  }),
+                  false,
+                ),
               };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({

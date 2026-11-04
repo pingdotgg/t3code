@@ -1136,33 +1136,39 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect.each([
-    ["the author who can push to the fork", "bilal", true, true],
-    ["a target maintainer the fork lets push", "octocat", true, false],
-    ["the author without push access", "bilal", false, false],
+    ["the author who can push to the fork", "bilal", true, true, true],
+    ["the author who turned them off", "bilal", true, false, true],
+    ["a target maintainer the fork lets push", "octocat", true, true, false],
+    ["the author without push access", "bilal", false, true, false],
+    ["a viewer on a host that rejects the permission read", "bilal", null, true, false],
   ] as const)(
     "reads a fork's maintainer edits and lets %s change them",
-    ([, viewer, pushToSourceBranch, allowed]) =>
+    ([, viewer, pushToSourceBranch, allowCollaboration, allowed]) =>
       Effect.gen(function* () {
         mockedExecute.mockImplementation(({ args }) =>
           Effect.succeed(
             output(
               args[1] === "graphql"
-                ? JSON.stringify({
-                    data: {
-                      currentUser: { username: viewer },
-                      project: {
-                        mergeRequest: {
-                          author: { username: "bilal" },
-                          userPermissions: { pushToSourceBranch },
+                ? JSON.stringify(
+                    pushToSourceBranch === null
+                      ? { errors: [{ message: "Field 'pushToSourceBranch' doesn't exist" }] }
+                      : {
+                          data: {
+                            currentUser: { username: viewer },
+                            project: {
+                              mergeRequest: {
+                                author: { username: "bilal" },
+                                userPermissions: { pushToSourceBranch },
+                              },
+                            },
+                          },
                         },
-                      },
-                    },
-                  })
+                  )
                 : mergeRequestJson({
                     author,
                     source_project_id: 40,
                     target_project_id: 12,
-                    allow_collaboration: true,
+                    allow_collaboration: allowCollaboration,
                   }),
             ),
           ),
@@ -1176,7 +1182,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           downstreamChecks: false,
         });
 
-        expect(detail.maintainerCanModify).toBe(true);
+        expect(detail.maintainerCanModify).toBe(allowCollaboration);
         expect(detail.viewerCanEditMaintainerEdits).toBe(allowed);
       }),
   );
