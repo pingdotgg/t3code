@@ -184,46 +184,55 @@ describe("Cursor usage limits", () => {
     }),
   );
 
-  it.effect("keeps API-key cooldowns across token exchanges and isolates other keys", () =>
-    withNodeServices(
-      Effect.gen(function* () {
-        let exchanges = 0;
-        let quotaCalls = 0;
-        const client = yield* makeUsageHttpClient(
-          HttpClient.make((request) =>
-            Effect.sync(() => {
-              if (request.url.endsWith("/auth/exchange_user_api_key")) {
+  it.effect.each([200, 429])(
+    "shares API-key readings and cooldowns across token exchanges (%s)",
+    (status) =>
+      withNodeServices(
+        Effect.gen(function* () {
+          let exchanges = 0;
+          let quotaCalls = 0;
+          const client = yield* makeUsageHttpClient(
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                if (request.url.endsWith("/auth/exchange_user_api_key")) {
+                  return HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ accessToken: `token-${++exchanges}` }),
+                  );
+                }
+                quotaCalls++;
                 return HttpClientResponse.fromWeb(
                   request,
-                  Response.json({ accessToken: `token-${++exchanges}` }),
+                  Response.json(
+                    { planUsage: { totalPercentUsed: 37 } },
+                    { status, headers: { "retry-after": "600" } },
+                  ),
                 );
-              }
-              quotaCalls++;
-              return HttpClientResponse.fromWeb(
-                request,
-                Response.json({}, { status: 429, headers: { "retry-after": "600" } }),
-              );
-            }),
-          ),
-        );
-        const read = (key: string) =>
-          readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: key }).pipe(
-            Effect.provideService(HostProcess.Platform, "linux"),
-            Effect.provideService(HttpClient.HttpClient, client),
+              }),
+            ),
           );
-        yield* read("key-a");
-        expect(quotaCalls).toBe(1);
-        yield* TestClock.adjust("5 minutes");
-        yield* read("key-a");
-        expect(exchanges).toBe(2);
-        expect(quotaCalls).toBe(1);
-        yield* read("key-b");
-        expect(quotaCalls).toBe(2);
-        yield* TestClock.adjust("5 minutes");
-        yield* read("key-a");
-        expect(quotaCalls).toBe(3);
-      }),
-    ),
+          const read = (key: string) =>
+            readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: key }).pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(HttpClient.HttpClient, client),
+            );
+          const first = yield* read("key-a");
+          expect(quotaCalls).toBe(1);
+          yield* TestClock.adjust("4 minutes");
+          const cached = yield* read("key-a");
+          expect(exchanges).toBe(2);
+          expect(quotaCalls).toBe(1);
+          if (status === 200) expect(cached.checkedAt).toBe(first.checkedAt);
+          yield* TestClock.adjust("1 minute");
+          yield* read("key-a");
+          expect(quotaCalls).toBe(status === 200 ? 2 : 1);
+          yield* read("key-b");
+          expect(quotaCalls).toBe(status === 200 ? 3 : 2);
+          yield* TestClock.adjust("5 minutes");
+          yield* read("key-a");
+          expect(quotaCalls).toBe(status === 200 ? 4 : 3);
+        }),
+      ),
   );
 
   it.effect("reads an API key's own account instead of a stored login", () =>

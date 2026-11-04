@@ -6,7 +6,11 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { makeUsageHttpClient, usageResponseCheckedAt } from "./usageHttpClient.ts";
+import {
+  makeUsageHttpClient,
+  usageResponseCheckedAt,
+  UsageAccountIdentity,
+} from "./usageHttpClient.ts";
 
 const url = "https://api.anthropic.com/api/oauth/usage";
 const request = (account: string, suffix = "") =>
@@ -122,5 +126,31 @@ it.effect.each([200, 503, 429])(
       const expected = status < 400 ? 2 : 1;
       assert.deepStrictEqual(yield* refreshed.json, { reading: expected });
       assert.strictEqual(calls, expected);
+    }),
+);
+
+it.effect.each([401, 403])(
+  "does not share token authentication failures across a stable account (%s)",
+  (status) =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const client = yield* makeUsageHttpClient(
+        HttpClient.make((input) =>
+          Effect.sync(() => {
+            calls++;
+            return HttpClientResponse.fromWeb(input, Response.json({}, { status }));
+          }),
+        ),
+      );
+      yield* client
+        .execute(request("old-token"))
+        .pipe(Effect.provideService(UsageAccountIdentity, "account-a"));
+      yield* client
+        .execute(request("new-token"))
+        .pipe(Effect.provideService(UsageAccountIdentity, "account-a"));
+      yield* client
+        .execute(request("new-token"))
+        .pipe(Effect.provideService(UsageAccountIdentity, "account-a"));
+      assert.strictEqual(calls, 2);
     }),
 );

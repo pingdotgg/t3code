@@ -92,18 +92,18 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
         const state = account;
         const key = encodeKey([
           accountKey,
-          request.headers.authorization ?? "",
           request.method,
           request.url,
           request.urlParams,
           request.body,
         ]);
+        const tokenKey = encodeKey([key, request.headers.authorization ?? ""]);
         return yield* state.lock.withPermits(1)(
           Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
             for (const [cachedKey, saved] of cached)
               if (saved.expiresAt <= now) cached.delete(cachedKey);
-            const previous = cached.get(key);
+            const previous = cached.get(tokenKey) ?? cached.get(key);
             if (previous && now < previous.expiresAt) {
               const saved = yield* previous.result;
               const response = HttpClientResponse.fromWeb(
@@ -153,11 +153,14 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               Exit.isFailure(result) ||
               result.value.status >= 400
             )
-              cached.set(key, {
-                accountKey,
-                result,
-                expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
-              });
+              cached.set(
+                Exit.isSuccess(result) && [401, 403].includes(result.value.status) ? tokenKey : key,
+                {
+                  accountKey,
+                  result,
+                  expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
+                },
+              );
             const saved = yield* result;
             const response = HttpClientResponse.fromWeb(
               request,

@@ -1158,7 +1158,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       _tag: "Request",
       id: RpcMessage.RequestId("refresh"),
       tag: WS_METHODS.serverRefreshProviders,
-      payload: { instanceId, cwd: "/b", workspaceSnapshotsOnDemand: true },
+      payload: { instanceId, cwd: "/b", usage: false, workspaceSnapshotsOnDemand: true },
       headers: Headers.empty,
     });
     const refreshed = (yield* Queue.take(responses)) as {
@@ -1178,8 +1178,21 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       });
       yield* Queue.take(responses);
     }
-    assert.deepEqual(refreshModes, [true, false, true]);
+    assert.deepEqual(refreshModes, [false, true, false, true]);
     assert.equal(sourceRefreshes, 2);
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("source-only-refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { usage: false, usageSources: true, workspaceSnapshotsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const sourceOnly = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.isUndefined(sourceOnly.providers[0]?.workspaceSnapshots);
+    assert.equal(sourceRefreshes, 3);
+    assert.deepEqual(refreshModes, [false, true, false, true]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
