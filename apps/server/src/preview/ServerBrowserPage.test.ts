@@ -5,9 +5,162 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+
+describe("snapshot deadline diagnostics", () => {
+  const never = () => new Promise<never>(() => {});
+  const stalledSnapshot = async (options: {
+    readonly stalled?: "metrics" | "screenshot";
+    readonly page?: Partial<Record<keyof Page, unknown>>;
+    readonly advanceMs: number;
+  }) => {
+    vi.useFakeTimers();
+    try {
+      const frame = {};
+      const page = {
+        viewportSize: () => ({ width: 1280, height: 800 }),
+        mainFrame: () => frame,
+        frames: () => [frame],
+        on: () => {},
+        evaluate: async () => ({
+          url: "about:blank",
+          title: "",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+        }),
+        ariaSnapshot: async () => "",
+        ...options.page,
+      } as unknown as Page;
+      const cdp = {
+        send: async (method: string) => {
+          if (options.stalled === "metrics" || method === "Page.captureScreenshot") return never();
+          if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+          if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+          if (method === "Runtime.evaluate") return { result: { value: [] } };
+          throw new Error(`Unexpected command: ${method}`);
+        },
+      } as unknown as CDPSession;
+      const captured = ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: options.stalled === "metrics" ? "display" : 1,
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(options.advanceMs);
+      return await captured;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it.each(["metrics", "screenshot"] as const)(
+    "identifies a stalled %s operation",
+    async (stage) => {
+      expect(await stalledSnapshot({ stalled: stage, advanceMs: 10_000 })).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 10_000, pendingStages: [stage] },
+      });
+    },
+  );
+
+  it("keeps an accessibility tree that hit its own timeout", async () => {
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    const captured = await stalledSnapshot({
+      page: { ariaSnapshot: () => Promise.reject(timedOut) },
+      advanceMs: 0,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 10_000 },
+    });
+    expect((captured as ServerBrowserPage.ServerBrowserOperationError).detail).toMatchObject({
+      pendingStages: expect.arrayContaining(["accessibility tree"]),
+    });
+  });
+
+  it("omits a timed-out stage after it succeeds on retry", async () => {
+    let attempts = 0;
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    expect(
+      await stalledSnapshot({
+        page: {
+          ariaSnapshot: async () => {
+            if (attempts++ === 0) throw timedOut;
+            return "";
+          },
+        },
+        advanceMs: 10_000,
+      }),
+    ).toMatchObject({ detail: { timeoutMs: 10_000, pendingStages: ["screenshot"] } });
+  });
+
+  it.each(["elementHandle", "contentFrame"] as const)(
+    "identifies stalled iframe %s lookup",
+    async (stage) => {
+      const main = {};
+      const child = { evaluate: never, parentFrame: () => main };
+      const captured = await stalledSnapshot({
+        page: {
+          mainFrame: () => main,
+          frames: () => [main, child],
+          context: () => ({
+            newCDPSession: () =>
+              Promise.reject(new Error("Only this preview tab's page can be attached")),
+          }),
+          ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+          locator: () => ({
+            elementHandle:
+              stage === "elementHandle" ? never : async () => ({ contentFrame: never }),
+          }),
+        },
+        advanceMs: 10_000,
+      });
+      expect(captured).toMatchObject({
+        detail: { timeoutMs: 10_000, pendingStages: expect.arrayContaining(["frames"]) },
+      });
+    },
+  );
+
+  it("reports a frame that didn't answer as the frame's own timeout", async () => {
+    const main = {};
+    // A desktop tab refuses frame sessions, so the frame is read in its own world.
+    const child = { evaluate: never, parentFrame: () => main };
+    const captured = await stalledSnapshot({
+      page: {
+        mainFrame: () => main,
+        frames: () => [main, child],
+        context: () => ({
+          newCDPSession: () =>
+            Promise.reject(new Error("Only this preview tab's page can be attached")),
+        }),
+        ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+        locator: () => ({
+          elementHandle: async () => ({ contentFrame: async () => child, dispose: async () => {} }),
+        }),
+      },
+      // Both attempts wait out the frame; neither reaches the capture deadline.
+      advanceMs: 2_000,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 1_000, pendingStages: ["frames"] },
+    });
+  });
+});
 
 describe("server browser element refs", () => {
   let browser: Browser;
