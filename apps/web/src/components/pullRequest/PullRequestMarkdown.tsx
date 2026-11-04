@@ -92,6 +92,7 @@ export function PullRequestMarkdown({
               {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
+              workspaceFileLinksOnly
             />
           );
         }
