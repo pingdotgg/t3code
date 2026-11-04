@@ -23,7 +23,7 @@ import {
 } from "../threads/thread-settings-options";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
@@ -177,6 +177,7 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+  const environmentMenu = useSettingsEnvironmentMenu();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
@@ -285,10 +286,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen
-        title={PAGE_TITLES[props.page]}
-        trailing={<AndroidSettingsEnvironmentFilter />}
-      >
+      <SettingsScreen title={PAGE_TITLES[props.page]} menus={[environmentMenu]}>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
