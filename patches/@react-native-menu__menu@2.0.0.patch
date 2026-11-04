@@ -178,10 +178,10 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..f4c55b4bf20b667396722aaab65ce9b1fcfecb5b 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..39d67c891cd91bca0a8822745b4b40a48b67262f 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,17 +60,66 @@ public class MenuViewImplementation: UIButton {
+@@ -60,17 +60,86 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -226,22 +226,42 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..f4c55b4bf20b667396722aaab65ce9b1
 +
 +    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
 +        return contentPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
-     }
- 
-+    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-+        return contentPreview() ?? super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
 +    }
 +
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return contentPreview() ?? super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
+     }
+ 
 +    // The button is a transparent overlay: morph from the React content so UIKit hides and restores it.
++    // iOS 26 only, and only for content with its own corner radius; otherwise keep UIButton's default.
 +    private func contentPreview() -> UITargetedPreview? {
-+        guard !shouldOpenOnLongPress, let content = self.superview?.subviews.first(where: { $0 !== self }), content.window != nil else {
++        guard #available(iOS 26.0, *) else {
++            return nil
++        }
++        guard !shouldOpenOnLongPress, let siblings = self.superview?.subviews.filter({ $0 !== self }), siblings.count == 1, let content = siblings.first, content.window != nil, let radius = contentCornerRadius(content) else {
 +            return nil
 +        }
 +        let bounds = content.bounds
 +        let parameters = UIPreviewParameters()
 +        parameters.backgroundColor = .clear
-+        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(bounds.height / 2, 22))
++        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(radius, bounds.height / 2, bounds.width / 2))
 +        return UITargetedPreview(view: content, parameters: parameters)
++    }
++
++    private func contentCornerRadius(_ content: UIView) -> CGFloat? {
++        var view = content
++        for depth in 0...4 {
++            if view.layer.cornerRadius > 0 {
++                return view.layer.cornerRadius
++            }
++            guard depth < 4, view.subviews.count == 1, let child = view.subviews.first,
++                  abs(child.frame.size.width - view.bounds.size.width) <= 0.5,
++                  abs(child.frame.size.height - view.bounds.size.height) <= 0.5 else {
++                return nil
++            }
++            view = child
++        }
++        return nil
 +    }
 +
 +    private var isMenuPresented = false
@@ -250,7 +270,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..f4c55b4bf20b667396722aaab65ce9b1
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +135,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +155,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -353,7 +373,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..f4c55b4bf20b667396722aaab65ce9b1
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +267,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +287,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
