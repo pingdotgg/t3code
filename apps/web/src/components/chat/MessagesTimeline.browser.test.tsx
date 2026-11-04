@@ -311,6 +311,19 @@ describe("MessagesTimeline work rows", () => {
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
+    const fadedRowIds: string[] = [];
+    const listening = new AbortController();
+    onTestFinished(() => listening.abort());
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        if (event.animationName !== "timeline-fold-reveal" || !(event.target instanceof Element))
+          return;
+        const row = event.target.querySelector("[data-timeline-row-id]");
+        fadedRowIds.push(row?.getAttribute("data-timeline-row-id") ?? "");
+      },
+      { signal: listening.signal },
+    );
     await heading.click();
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
@@ -318,6 +331,10 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
         500,
       );
+    });
+    await vi.waitFor(() => {
+      expect(fadedRowIds).toEqual(["entry-progress"]);
+      expect(viewport.querySelector("[data-fold-reveal]")).toBeNull();
     });
   });
 

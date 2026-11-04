@@ -455,6 +455,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
   );
   const [openHistoryRunId, setOpenHistoryRunId] = useState<RunId | null>(null);
+  const [foldRevealBaseIds, setFoldRevealBaseIds] = useState<ReadonlySet<string> | null>(null);
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => listState.rememberedPosition?.disclosures?.workGroups ?? new Set(),
   );
@@ -494,6 +495,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // nor when that thread comes back.
     setFullscreenAppRowId(null);
     setOpenHistoryRunId(null);
+    setFoldRevealBaseIds(null);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -541,8 +543,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
+  const revealFoldRows = (opening: boolean) =>
+    setFoldRevealBaseIds(
+      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
+    );
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    revealFoldRows(
+      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
+    );
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -555,6 +564,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     suspendEndScrollMaintenanceForDisclosure(anchorKey);
+    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
+    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -1338,6 +1349,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     <TimelineRowCtx value={sharedState}>
       <div
         className="messages-timeline-row-frame"
+        data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
+        }}
         onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
