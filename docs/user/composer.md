@@ -192,20 +192,22 @@ sent until you choose one. See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 
-On supported iPhones with iOS 26 or later and Android devices with Android 12 or
-later, use the composer's microphone to record, then confirm to transcribe. Text is
+Use the composer's microphone to record, then confirm to transcribe. Text is
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
-Voice input uses on-device speech transcription: Apple's on iOS, and compatible
-Google speech services on Android. When it is unavailable for the device or its
-language, the composer has no microphone button and **Settings → Microphone** says
-voice input isn't available. On Android, keep T3 Code open while recording and
-transcribing.
+By default, audio stays on the phone. Local transcription needs a supported iPhone
+with iOS 26 or later, or Android 12 or later with compatible Google speech services.
+To use a paired environment instead, open **Settings → Microphone → Transcribe on**,
+choose the environment, and confirm. Finished recordings go only to that environment,
+even when a draft belongs to another one. This also works on phones without local
+speech recognition. If the chosen environment disconnects, dictation stops; it never
+switches hosts. Choose **This device** to revoke access and discard pending audio.
+On Android, keep T3 Code open while recording and transcribing.
 
-The first use may download a speech model and needs a network connection.
-Later transcription works offline for that language. Android processes audio while
-you record, then finishes the transcript after you stop. Recordings can be up to five
+On-device dictation may need a network connection to download a speech model the
+first time. After that it works offline for that language. Android transcribes on
+the device while you record and finishes after you stop. Recordings can be up to five
 minutes long. Canceling or an audio interruption discards the recording and
 preserves your existing draft. Navigating to another screen keeps dictation active;
 use the floating controls to finish or cancel. While recording, the screen stays

@@ -29,6 +29,17 @@ class T3VoiceTranscriptionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3VoiceTranscription")
 
+    AsyncFunction("decodeRecording").Coroutine { uri: String ->
+      val context = requireNotNull(appContext.reactContext)
+      withContext(Dispatchers.IO) {
+        require(android.net.Uri.parse(uri).scheme == "file") { "Expected a local recording." }
+        withRecordedPcm(context, uri) { pcm ->
+          requireCompleteAudio(pcm.length() <= 16000L * 2 * 300) { "Recording exceeds five minutes." }
+          pcm.readBytes()
+        }
+      }
+    }
+
     AsyncFunction("checkAvailability").Coroutine<Boolean> {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
         false

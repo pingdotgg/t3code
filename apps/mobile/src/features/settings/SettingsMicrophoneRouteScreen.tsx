@@ -19,10 +19,19 @@ import {
 } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import * as Dialog from "../../components/ui/Dialog";
+import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import {
+  chooseVoiceDestination,
+  voiceConnectionAtom,
+  voiceGrantAtom,
+  hasEnvironmentVoiceCapture,
+} from "../voice-input/voiceDestination";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
-import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import {
   deviceMicrophoneOrder,
@@ -97,37 +106,58 @@ const KINDS: Record<
 
 const UNAVAILABLE_EXPLANATION =
   Platform.OS === "android"
-    ? "T3 Code's voice input uses Google's on-device speech recognition, which needs Android 12 or later with compatible Google speech services for the device language. Without it, the composer has no microphone button, and allowing microphone access won't add one. Keyboard voice typing is separate and isn't affected."
-    : "T3 Code's voice input uses Apple's on-device speech transcription, which needs iOS 26 or later on a device that supports it. Without it, the composer has no microphone button, and allowing microphone access won't add one. Apple keyboard dictation is separate and isn't affected.";
+    ? "On-device dictation needs Android 12 or later and compatible Google speech services for this language. Keyboard voice typing is separate."
+    : "On-device dictation needs iOS 26 or later and a supported device and language. Keyboard dictation is separate.";
 
-export function SettingsMicrophoneRouteScreen() {
-  const transcriber = useAtomValue(localVoiceTranscriberAtom);
-  // Android's probe is asynchronous; an empty sheet avoids flashing "unavailable" first.
-  if (transcriber === "checking") return <SettingsScreen title="Microphone">{null}</SettingsScreen>;
-  return transcriber === null ? <VoiceInputUnavailable /> : <MicrophoneSettings />;
+function saveDestination(id: EnvironmentId | null) {
+  try {
+    chooseVoiceDestination(id);
+  } catch {
+    Dialog.alert(
+      "Could not save transcription choice",
+      "Remote dictation is off for this session. Try saving your choice again before closing the app.",
+    );
+  }
 }
 
-function VoiceInputUnavailable() {
-  const insets = useSafeAreaInsets();
+function EnvironmentChoice({
+  environment,
+  selected,
+}: {
+  environment: EnvironmentPresentation;
+  selected: boolean;
+}) {
+  const usable = useAtomValue(voiceConnectionAtom(environment.environmentId)) !== null;
   return (
-    <SettingsScreen title="Microphone">
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-3 px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-      >
-        <SettingsSection title="Voice input">
-          <ListRowLayout icon="mic" label="Not available on this device" />
-        </SettingsSection>
-        <Text className="px-2 text-sm text-foreground-muted">{UNAVAILABLE_EXPLANATION}</Text>
-      </ScrollView>
-    </SettingsScreen>
+    <ListChoiceRow
+      label={environment.label}
+      selected={selected}
+      disabled={!usable}
+      description={
+        usable
+          ? (environment.displayUrl ?? "Send finished recordings to this environment.")
+          : environment.connection.phase !== "connected"
+            ? "Not connected"
+            : "Transcription unavailable"
+      }
+      separated
+      onPress={() => {
+        if (!selected)
+          Dialog.confirm({
+            title: `Send microphone audio to ${environment.label}?`,
+            message: `When you finish a recording, this phone will send it to ${environment.displayUrl ?? environment.label} for transcription. You can switch back to this device at any time.`,
+            confirmText: "Use environment",
+            onConfirm: () => saveDestination(environment.environmentId),
+          });
+      }}
+    />
   );
 }
 
-function MicrophoneSettings() {
+export function SettingsMicrophoneRouteScreen() {
+  const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const grant = useAtomValue(voiceGrantAtom);
+  const { environments, isReady } = useEnvironments();
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -175,7 +205,7 @@ function MicrophoneSettings() {
   const dragTo = drag === null ? -1 : dragFrom + dropSteps(dragFrom, drag.translation);
 
   return (
-    <SettingsScreen title="Microphone">
+    <View collapsable={false} className="flex-1 bg-sheet">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -183,6 +213,39 @@ function MicrophoneSettings() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <SettingsSection title="Transcribe on">
+          <ListChoiceRow
+            label="This device"
+            description="Keep recordings on this phone. No audio is sent."
+            selected={!grant}
+            onPress={() => saveDestination(null)}
+          />
+          {hasEnvironmentVoiceCapture &&
+            environments.map((environment) => (
+              <EnvironmentChoice
+                key={environment.environmentId}
+                environment={environment}
+                selected={grant?.destination.environmentId === environment.environmentId}
+              />
+            ))}
+          {isReady &&
+          grant &&
+          !environments.some(
+            (environment) => environment.environmentId === grant.destination.environmentId,
+          ) ? (
+            <ListChoiceRow
+              label="Previously selected environment"
+              description="No longer paired"
+              separated
+              selected
+              disabled
+              onPress={() => {}}
+            />
+          ) : null}
+        </SettingsSection>
+        {!grant && transcriber === null ? (
+          <Text className="px-2 text-sm text-foreground-muted">{UNAVAILABLE_EXPLANATION}</Text>
+        ) : null}
         {permission === "ask" || permission === "denied" ? (
           <>
             <SettingsSection title="Microphone access">
@@ -244,7 +307,7 @@ function MicrophoneSettings() {
             : null}
         </Text>
       </ScrollView>
-    </SettingsScreen>
+    </View>
   );
 }
 
