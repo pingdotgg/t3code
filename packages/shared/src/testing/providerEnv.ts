@@ -10,6 +10,8 @@ const KEPT_ENV = new Set([
   "T3CODE_TRANSFER_BUDGET_RESULT_PATH",
   // Opt-in: points the HtmlRender tests at a headless browser, which they skip without.
   "T3CODE_TEST_HEADLESS_SHELL",
+  // Opt-in native managed-auth integration uses synthetic credentials and an isolated home.
+  "T3CODE_TEST_CODEX_BINARY",
 ]);
 
 if (process.env.T3CODE_TEST_KEEP_PROVIDER_ENV !== "1") {
