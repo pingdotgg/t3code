@@ -70,19 +70,30 @@ export function azureDevOpsPullRequestWebUrl(input: {
   return trimOptionalString(input.restApiUrl) ?? "";
 }
 
+// `az` prints every model attribute the response left unset, as null.
 const decodeCreatedPullRequest = decodeJsonResult(
   Schema.Struct({
     pullRequestId: PositiveInt,
-    url: Schema.optional(Schema.String),
+    url: Schema.optional(Schema.NullOr(Schema.String)),
     repository: Schema.optional(
-      Schema.Struct({
-        name: Schema.optional(Schema.String),
-        webUrl: Schema.optional(Schema.String),
-        project: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String) })),
-      }),
+      Schema.NullOr(
+        Schema.Struct({
+          name: Schema.optional(Schema.NullOr(Schema.String)),
+          webUrl: Schema.optional(Schema.NullOr(Schema.String)),
+          project: Schema.optional(
+            Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+          ),
+        }),
+      ),
     ),
     _links: Schema.optional(
-      Schema.Struct({ web: Schema.optional(Schema.Struct({ href: Schema.String })) }),
+      Schema.NullOr(
+        Schema.Struct({
+          web: Schema.optional(
+            Schema.NullOr(Schema.Struct({ href: Schema.optional(Schema.NullOr(Schema.String)) })),
+          ),
+        }),
+      ),
     ),
   }),
 );

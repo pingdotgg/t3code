@@ -474,11 +474,14 @@ const requestAndApply = Effect.fn("requestPullRequestSyncHarness")(function* (
   yield* applyRecordedSyncs(fixture);
 });
 
-// What `az repos pr create` prints: the REST GitPullRequest, whose `url` is an API URL.
+// What `az repos pr create` prints: the REST GitPullRequest, whose `url` is an API URL, with
+// every model attribute the response left unset printed as null.
 const AZURE_PULL_REQUEST_CREATED = JSON.stringify(
   {
     artifactId:
       "vstfs:///Git/PullRequestId/a7573007-bbb3-4341-b726-0c4148a07853%2f3411ebc1-d5aa-464f-9615-0b527bc66719%2f42",
+    autoCompleteSetBy: null,
+    closedDate: null,
     codeReviewId: 42,
     createdBy: { displayName: "Sam Example", uniqueName: "sam@example.com" },
     creationDate: "2026-11-04T21:00:00.000000+00:00",
@@ -493,8 +496,12 @@ const AZURE_PULL_REQUEST_CREATED = JSON.stringify(
         id: "a7573007-bbb3-4341-b726-0c4148a07853",
         name: "project",
         state: "wellFormed",
+        url: null,
       },
+      remoteUrl: null,
+      sshUrl: null,
       url: "https://dev.azure.com/organization/a7573007-bbb3-4341-b726-0c4148a07853/_apis/git/repositories/3411ebc1-d5aa-464f-9615-0b527bc66719",
+      webUrl: null,
     },
     sourceRefName: "refs/heads/feature",
     status: "active",
