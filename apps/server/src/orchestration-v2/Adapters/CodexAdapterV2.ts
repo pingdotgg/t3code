@@ -7569,8 +7569,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         inLineage(context) &&
                         !trackedInterruptNativeTurnIds.has(context.nativeTurnId),
                     );
-                    for (const context of lineage) {
+                    // Descendants that already settled need no interrupt, only containment.
+                    const settledLineage = Array.from(
+                      (yield* Ref.get(settledTurns)).values(),
+                    ).filter(
+                      (context) =>
+                        inLineage(context) &&
+                        !trackedInterruptNativeTurnIds.has(context.nativeTurnId),
+                    );
+                    for (const context of [...lineage, ...settledLineage]) {
                       const completion = yield* Deferred.make<void>();
+                      if (settledLineage.includes(context)) {
+                        yield* Deferred.succeed(completion, undefined);
+                      }
                       interruptTargets.push({ context, completion });
                       trackedInterruptNativeTurnIds.add(context.nativeTurnId);
                       yield* addTurnWaiter(context.nativeTurnId, completion);
