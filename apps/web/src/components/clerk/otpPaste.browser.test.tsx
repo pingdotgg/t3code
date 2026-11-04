@@ -42,7 +42,41 @@ describe("useOtpPasteNormalizer", () => {
     });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(input.value).toBe("123456");
+    // Rerendering makes React restore the DOM from state, so this checks onChange took the code.
+    await screen.rerender(<CodeField />);
+    await expect.element(input).toHaveValue("123456");
+  });
+
+  it("replaces existing digits when a full code is pasted", async () => {
+    await using screen = await render(<CodeField />);
+    const input = screen.container.querySelector<HTMLInputElement>("input[data-input-otp]")!;
+    input.focus();
+    await act(async () => {
+      paste(input, "1 2");
+    });
+    await act(async () => {
+      paste(input, " 345678");
+    });
+
+    await screen.rerender(<CodeField />);
+    await expect.element(input).toHaveValue("345678");
+  });
+
+  it("keeps the caret after a fragment pasted into an earlier slot", async () => {
+    await using screen = await render(<CodeField />);
+    const input = screen.container.querySelector<HTMLInputElement>("input[data-input-otp]")!;
+    input.focus();
+    await act(async () => {
+      paste(input, "1 2345");
+    });
+    input.setSelectionRange(1, 2);
+    await act(async () => {
+      paste(input, "9 ");
+    });
+
+    await expect.element(input).toHaveValue("19345");
+    expect(input.selectionStart).toBe(2);
+    expect(input.selectionEnd).toBe(2);
   });
 
   it("leaves clean codes to the field's own paste handling", async () => {
