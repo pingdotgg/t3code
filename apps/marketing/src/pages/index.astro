@@ -706,7 +706,7 @@ const mobileEndorsementRows = [
   .hf-codex    { --x: min(560px, 38vw); --y: 128px; --s: 96px; --rot: 7deg; --depth: 1.2; --d: 460ms; --fx: 160px; --fy: -40px; }
   .hf-grok     { --x: max(-440px, -30vw); --y: 440px; --s: 80px; --rot: 4deg; --depth: 0.9; --d: 540ms; --fx: -120px; --fy: 80px; }
   .hf-cursor   { --x: min(440px, 30vw); --y: 440px; --s: 80px; --rot: -5deg; --depth: 0.9; --d: 700ms; --fx: 120px; --fy: 80px; }
-  .hf-kiro     { --x: max(-380px, -25vw); --y: 280px; --s: 72px; --rot: -6deg; --depth: 0.8; --d: 500ms; --fx: -100px; --fy: 20px; }
+  .hf-kiro     { --x: max(-600px, -42vw); --y: 300px; --s: 72px; --rot: -6deg; --depth: 0.8; --d: 500ms; --fx: -120px; --fy: 20px; }
 
   @media (prefers-reduced-motion: reduce) {
     .hero-float-card { animation: none; transform: rotate(var(--rot)); }
@@ -716,7 +716,7 @@ const mobileEndorsementRows = [
   @media (max-width: 1180px) {
     .hf-claude, .hf-codex { --s: 80px; }
     .hf-grok, .hf-cursor { --s: 68px; --y: 420px; }
-    .hf-kiro { --s: 64px; --y: 270px; }
+    .hf-kiro { --s: 60px; --y: 290px; }
   }
 
   @media (max-width: 820px) {
@@ -734,20 +734,19 @@ const mobileEndorsementRows = [
       margin-bottom: 40px;
     }
 
-    /* Four above the headline, two beside the CTA. Keeps the copy clear. */
-    .hf-claude      { --x: -37vw; --y: 44px; --s: 64px; --rot: -10deg; }
-    .hf-opencode    { --x: -12vw; --y: 52px; --s: 56px; --rot: -4deg; }
-    .hf-antigravity { --x: 12vw; --y: 52px; --s: 56px; --rot: 5deg; }
-    .hf-codex       { --x: 37vw; --y: 44px; --s: 64px; --rot: 8deg; }
+    /* Five above the headline, two beside the CTA. Keeps the copy clear. */
+    .hf-claude      { --x: -38vw; --y: 44px; --s: 60px; --rot: -10deg; }
+    .hf-opencode    { --x: -19vw; --y: 52px; --s: 52px; --rot: -4deg; }
+    .hf-kiro        { --x: 0vw; --y: 40px; --s: 52px; --rot: -3deg; }
+    .hf-antigravity { --x: 19vw; --y: 52px; --s: 52px; --rot: 5deg; }
+    .hf-codex       { --x: 38vw; --y: 44px; --s: 60px; --rot: 8deg; }
     .hf-grok     { --x: -36vw; --y: 474px; --s: 64px; --rot: -6deg; }
     .hf-cursor   { --x: 36vw; --y: 474px; --s: 64px; --rot: 7deg; }
-    .hf-kiro     { --x: -36vw; --y: 260px; --s: 56px; --rot: -5deg; }
   }
 
   @media (max-width: 340px) {
     .hf-opencode, .hf-antigravity, .hf-grok, .hf-cursor, .hf-kiro { --s: 48px; }
     .hf-grok, .hf-cursor { --y: 580px; }
-    .hf-kiro { --y: 310px; }
   }
 
   .hero-preview {
@@ -781,7 +780,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    grid-template-columns: repeat(7, 1fr);
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -1223,6 +1222,7 @@ const mobileEndorsementRows = [
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
     .harness:nth-child(even) { border-right: 0; }
+    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
