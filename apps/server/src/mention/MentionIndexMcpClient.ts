@@ -19,6 +19,14 @@ import * as ServerSettings from "../serverSettings.ts";
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const MCP_REQUEST_TIMEOUT = Duration.seconds(30);
 
+function parseJsonOrNull(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export class MentionIndexMcpError extends Error {
   readonly _tag = "MentionIndexMcpError";
   constructor(message: string, options?: { readonly cause?: unknown }) {
@@ -238,13 +246,9 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
       const argsRaw = fields.args;
       let args: string[] = [];
       if (argsRaw) {
-        try {
-          const parsed = JSON.parse(argsRaw.replace(/'/g, '"'));
-          if (Array.isArray(parsed)) {
-            args = parsed.filter((entry): entry is string => typeof entry === "string");
-          }
-        } catch {
-          args = [];
+        const parsed = parseJsonOrNull(argsRaw.replace(/'/g, '"'));
+        if (Array.isArray(parsed)) {
+          args = parsed.filter((entry): entry is string => typeof entry === "string");
         }
       }
       entries.push({
@@ -284,11 +288,8 @@ function parseMcpSsePayload(text: string, requestId?: number): unknown {
     const payload = dataLines.join("\n").trim();
     dataLines = [];
     if (payload.length === 0 || payload === "[DONE]") return;
-    try {
-      events.push(JSON.parse(payload));
-    } catch {
-      // ignore non-JSON SSE frames
-    }
+    const parsed = parseJsonOrNull(payload);
+    if (parsed !== null) events.push(parsed);
   };
   for (const line of text.split(/\r?\n/u)) {
     if (line.length === 0) {
@@ -320,7 +321,7 @@ export function parseMcpHttpResponseBody(input: {
   const isSse = contentType.includes("text/event-stream");
   if (isSse) return parseMcpSsePayload(input.text, input.requestId);
   if (input.text.trim().length === 0) return null;
-  return JSON.parse(input.text) as unknown;
+  return parseJsonOrNull(input.text);
 }
 
 type StdioPending = {
@@ -351,12 +352,8 @@ const make = Effect.gen(function* () {
     if (!exists) return [] as MentionMcpServerConfig[];
     const raw = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     if (raw.trim().length === 0) return [];
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return [];
-    }
+    const parsed = parseJsonOrNull(raw);
+    if (parsed === null) return [];
     const decoded = decodeCursorMcp(parsed);
     const servers = Option.isSome(decoded) ? (decoded.value.mcpServers ?? {}) : asRecord(parsed);
     if (servers === null) return [];
@@ -472,12 +469,12 @@ const make = Effect.gen(function* () {
         let nextId = 1;
 
         const onLine = (line: string) => {
-          let envelope: { id?: unknown; result?: unknown; error?: { message?: string } };
-          try {
-            envelope = JSON.parse(line) as typeof envelope;
-          } catch {
-            return;
-          }
+          const envelope = parseJsonOrNull(line) as {
+            id?: unknown;
+            result?: unknown;
+            error?: { message?: string };
+          } | null;
+          if (envelope === null) return;
           if (typeof envelope.id !== "number") return;
           const waiter = pending.get(envelope.id);
           if (!waiter) return;
