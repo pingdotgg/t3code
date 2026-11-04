@@ -2054,6 +2054,26 @@ it("keeps the earlier script when a Write or Edit fails", () => {
   assert.deepEqual(sources.at(-1), [`cat ${F}\n`]);
 });
 
+it("passes a child shell only the variables it inherits", () => {
+  const verdicts = (cmd: string, scripts?: Map<string, string>) =>
+    classifyFileUse(cmd, [F], scripts).map((use) => use.verdict);
+  const consumes = (cmd: string, scripts?: Map<string, string>) =>
+    verdicts(cmd, scripts).some((verdict) => verdict.startsWith("consume"));
+  const read = `TOKEN="$(cat ${F})"`;
+  assert.isFalse(consumes(`${read}; bash -c 'adb pair 10.0.0.2:4242 "$TOKEN"'`));
+  assert.notInclude(verdicts(`${read}; bash -c 'echo "$TOKEN"'`), "print");
+  assert.isFalse(
+    consumes(
+      `${read}; bash /tmp/pair.sh`,
+      new Map([["/tmp/pair.sh", `adb pair 10.0.0.2:4242 "$TOKEN"\n# ${F}\n`]]),
+    ),
+  );
+  assert.isTrue(consumes(`export ${read}; bash -c 'adb pair 10.0.0.2:4242 "$TOKEN"'`));
+  assert.isTrue(consumes(`${read}; bash -c "adb pair 10.0.0.2:4242 $TOKEN"`));
+  assert.isTrue(consumes(`${read}; bash -c 'adb pair 10.0.0.2:4242 "$1"' _ "$TOKEN"`));
+  assert.isTrue(consumes(`${read}; TOKEN="$TOKEN" bash -c 'adb pair 10.0.0.2:4242 "$TOKEN"'`));
+});
+
 it("keeps a child shell's variables out of the parent", () => {
   const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
   assert.isFalse(

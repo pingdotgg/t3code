@@ -1503,11 +1503,16 @@ export const classifyFileUse = (
   const ids = [...new Set(files.map(fileId))].join("|");
   const secretVars = new Set<string>();
   const exportedVars = new Set<string>();
-  // A child shell sees the parent's variables, but what it assigns stays in the child.
+  // A child shell sees the parent's exported variables, and those the parent expands into its
+  // text (`parentText`); what it assigns stays in the child.
   let xtrace = false;
-  const inChild = (run: () => void) => {
+  const inChild = (run: () => void, parentText = "") => {
     const saved = [fileVars, dirVars, secretVars, exportedVars].map((vars) => new Set(vars));
     const traced = xtrace;
+    for (const vars of [fileVars, dirVars, secretVars])
+      for (const name of vars)
+        if (!exportedVars.has(name) && !new RegExp(`\\$\\{?${name}\\b`).test(parentText))
+          vars.delete(name);
     run();
     xtrace = traced;
     [fileVars, dirVars, secretVars, exportedVars].forEach((vars, i) => {
@@ -1770,15 +1775,24 @@ export const classifyFileUse = (
       // bash -c '<script>' [$0 $1 …]: classify the script with its positional arguments.
       const shell = SHELL_C.exec(bare);
       if (shell) {
-        const [source = "", ...args] = words(bare.slice(shell[0].length)).map(decodeShell);
+        const raw = words(bare.slice(shell[0].length));
+        const [source = "", ...args] = raw.map(decodeShell);
         const traced = xtrace;
         if (/x/.test(shell[1]! + shell[2]!)) xtrace = true;
-        inChild(() =>
-          visit(
-            source.replace(/"?\$\{?(\d)\}?"?/g, (whole, n: string) =>
-              args[Number(n)] === undefined ? whole : `"${args[Number(n)]}"`,
+        // The parent expands a script that isn't single-quoted, the arguments and the env prefix.
+        const expanded = [
+          part.slice(0, part.length - bare.length),
+          ...(raw[0]?.startsWith("'") ? [] : [source]),
+          ...args,
+        ].join(" ");
+        inChild(
+          () =>
+            visit(
+              source.replace(/"?\$\{?(\d)\}?"?/g, (whole, n: string) =>
+                args[Number(n)] === undefined ? whole : `"${args[Number(n)]}"`,
+              ),
             ),
-          ),
+          expanded,
         );
         xtrace = traced;
         continue;
