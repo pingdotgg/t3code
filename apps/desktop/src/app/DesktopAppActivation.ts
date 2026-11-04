@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -289,6 +290,7 @@ export class DesktopAppActivation extends Context.Service<
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
+    readonly openWorkspace: (workspaceRoot: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
 
@@ -298,6 +300,7 @@ const { logWarning } = makeComponentLogger("desktop-app-activation");
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
   const userId = yield* HostProcess.UserId;
@@ -388,6 +391,26 @@ export const make = Effect.gen(function* () {
     // The IPC handler owns the activation-completion span.
     complete: Effect.fnUntraced(function* (response) {
       return yield* Effect.sync(() => broker.complete(response));
+    }),
+    openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
+      const response = yield* Effect.promise(() =>
+        broker.request(
+          {
+            version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+            requestId: NodeCrypto.randomUUID(),
+            type: "open-workspace",
+            workspaceRoot,
+            // Only macOS delivers open-file.
+            platform: "darwin",
+          },
+          { waitForRenderer: true },
+        ),
+      );
+      if (response.ok) return;
+      yield* logWarning("failed to open a workspace", { code: response.code, workspaceRoot });
+      // Quitting settles queued requests this way, and an error box would block shutdown.
+      if (response.code === "renderer-unavailable") return;
+      yield* electronDialog.showErrorBox("Could not open folder", response.message);
     }),
   });
 });
