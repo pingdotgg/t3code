@@ -1572,6 +1572,7 @@ it.effect(
           manager.releaseUnlessBusy({
             providerSessionId,
             ownProviderThreadIds: [providerThreadOf(own).id],
+            throughRunOrdinal: 1,
             reason: "manual_shutdown",
           });
 
