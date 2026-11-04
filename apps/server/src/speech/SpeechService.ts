@@ -20,12 +20,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
-import {
-  applySpeechAliases,
-  applySpeechCustomWords,
-  makeSpeechTextCorrector,
-  normalizeSpeechCustomWords,
-} from "./customWords.ts";
+import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
@@ -200,6 +195,7 @@ const make = Effect.gen(function* () {
   let activeTranscriptions = 0;
   // One native request at a time; the slot is a promise so unload waits for it.
   let activeOperation: Promise<unknown> | undefined;
+  const operationBusy = () => Boolean(activeOperation || downloading);
   let closing = false;
   // @effect-diagnostics-next-line abortControllerInEffect:off - Native model work outlives cancelled requests and aborts on service shutdown.
   const lifetime = new AbortController();
@@ -260,7 +256,7 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               yield* Effect.sleep(Math.max(0, request.deadline - now()));
               if (closing) return;
-              if (activeOperation || activeTranscriptions || loading) {
+              if (operationBusy() || activeTranscriptions || loading) {
                 scheduleUnload(1000);
                 return;
               }
@@ -286,7 +282,7 @@ const make = Effect.gen(function* () {
   const download = Effect.fn("SpeechService.download")(function* (modelId: string) {
     const definition = getSpeechModel(modelId);
     if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
-    if (downloading && downloading.modelId !== modelId)
+    if (closing || activeOperation || (downloading && downloading.modelId !== modelId))
       return yield* new SpeechBusyError({ operation: "model download" });
     if (!downloading) {
       const fiber = yield* store
@@ -305,7 +301,10 @@ const make = Effect.gen(function* () {
           Effect.mapError((cause) => speechError("model download", cause)),
           Effect.ensuring(
             Effect.sync(() => {
-              if (downloading?.modelId === modelId) downloading = undefined;
+              if (downloading?.modelId === modelId) {
+                downloading = undefined;
+                scheduleUnload();
+              }
             }),
           ),
           Effect.forkIn(scope),
@@ -376,7 +375,7 @@ const make = Effect.gen(function* () {
   const exclusive = <A, E, R>(operation: string, effect: Effect.Effect<A, E, R>) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.suspend<A, E | SpeechBusyError, R>(() => {
-        if (closing || activeOperation) return Effect.fail(new SpeechBusyError({ operation }));
+        if (closing || operationBusy()) return Effect.fail(new SpeechBusyError({ operation }));
         const gate = Promise.withResolvers<void>();
         activeOperation = gate.promise;
         return restore(effect).pipe(
@@ -494,12 +493,8 @@ const make = Effect.gen(function* () {
     options: SpeechTranscriptionOptions,
     language: string | undefined,
   ) => {
-    const corrected = applySpeechAliases(
-      text,
-      normalizeSpeechCustomWords(options.speechCustomWords),
-    );
     return (
-      options.speechRemoveFillerWords ? removeSpeechFillerWords(corrected, language) : corrected
+      options.speechRemoveFillerWords ? removeSpeechFillerWords(text, language) : text
     ).trim();
   };
 
@@ -560,9 +555,8 @@ const make = Effect.gen(function* () {
                 ),
               catch: (cause) => speechError("model preparation", cause),
             });
-            const customWords = normalizeSpeechCustomWords(options.speechCustomWords).map(
-              ({ term }) => term,
-            );
+            const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+            const customWords = dictionary.map(({ term }) => term);
             const transcribeWith = (inference: LoadedModel) =>
               Effect.tryPromise({
                 try: (signal) => {
@@ -611,11 +605,12 @@ const make = Effect.gen(function* () {
                 );
               }),
             );
-            const text = inference.supportsInitialPrompt
-              ? result.text
-              : applySpeechCustomWords(result.text, customWords);
+            const correct = makeSpeechTextCorrector(
+              inference.supportsInitialPrompt ? [] : customWords,
+              dictionary,
+            );
             return finalizeTranscript(
-              text,
+              correct(result.text),
               options,
               translateToEnglish ? "en" : language === "auto" ? undefined : language,
             );
@@ -635,7 +630,7 @@ const make = Effect.gen(function* () {
     "SpeechService.startStream",
   )(function* (options) {
     const operation = "streaming transcription";
-    if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
+    if (closing || operationBusy()) return yield* new SpeechBusyError({ operation });
     yield* requireSupported;
     const released = Promise.withResolvers<void>();
     activeOperation = released.promise;
@@ -790,7 +785,8 @@ const make = Effect.gen(function* () {
     transcribe,
     startStream,
     downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
-      exclusive("model download", requireSupported.pipe(Effect.andThen(download(modelId)))).pipe(
+      requireSupported.pipe(
+        Effect.andThen(download(modelId)),
         Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
         Effect.andThen(modelsEffect),
       ),

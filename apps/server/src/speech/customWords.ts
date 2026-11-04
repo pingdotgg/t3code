@@ -155,29 +155,28 @@ export function makeSpeechTextCorrector(
   const keys = customWordKeys(words);
   const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const makeAliases = () => {
-    const spellings = dictionary
-      .flatMap(({ term, aliases }) => [term, ...aliases].map((spelling) => ({ spelling, term })))
-      .sort((left, right) => right.spelling.length - left.spelling.length);
-    if (spellings.length === 0) return (text: string) => text;
-    const lookup = new Map(
-      spellings.map(({ spelling, term }) => [spelling.toLocaleLowerCase(), term]),
-    );
-    const word = "[\\p{L}\\p{M}\\p{N}\\p{Pc}]";
-    const pattern = new RegExp(
-      `(?<!${word})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${word})`,
-      "giu",
-    );
-    return (text: string) =>
-      text.replace(pattern, (match) => lookup.get(match.toLocaleLowerCase()) ?? match);
+  const spellings = dictionary
+    .flatMap(({ term, aliases }) => [term, ...aliases].map((spelling) => ({ spelling, term })))
+    .sort((left, right) => right.spelling.length - left.spelling.length);
+  if (spellings.length === 0) return apply;
+  const lookup = new Map(
+    spellings.map(({ spelling, term }) => [spelling.toLocaleLowerCase(), term]),
+  );
+  const word = "[\\p{L}\\p{M}\\p{N}\\p{Pc}]";
+  const pattern = new RegExp(
+    `(?<!${word})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${word})`,
+    "giu",
+  );
+  return (text: string) => {
+    let output = "";
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      output += apply(text.slice(cursor, match.index));
+      output += lookup.get(match[0].toLocaleLowerCase()) ?? match[0];
+      cursor = match.index + match[0].length;
+    }
+    return output + apply(text.slice(cursor));
   };
-
-  const aliases = makeAliases();
-  return (text: string) => aliases(apply(text));
-}
-
-export function applySpeechCustomWords(text: string, words: readonly string[]): string {
-  return makeSpeechTextCorrector(words)(text);
 }
 
 export function applySpeechAliases(text: string, words: SpeechCustomWords): string {
