@@ -13,7 +13,7 @@ import packageJson from "../../package.json" with { type: "json" };
 export type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
 /** Detection is best-effort; callers must fail closed to a plain `t3` command. */
-function detectCliRunner(entryPath: string): CliRunner | null {
+export function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
   if (path.includes("/_npx/")) {
     return "npx";
@@ -156,7 +156,8 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
   const onPath = yield* resolveCommandPath("t3");
-  if (onPath !== null) {
+  // A runner puts its own cache's `.bin` on PATH; that `t3` is gone in the user's next shell.
+  if (onPath !== null && detectCliRunner(onPath) === null) {
     const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;
     const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));

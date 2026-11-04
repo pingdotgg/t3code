@@ -25,6 +25,7 @@ const environmentFor = (
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
     serverRoot: "/opt/T3 Code/resources/app.asar",
+    appVersion: "1.2.3",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -48,14 +49,15 @@ const commandIn = (
       : make;
   });
 
-const fakePowerShell = (initial: string) => {
+/** `inherited` stands in for the app's own environment, which `extendEnv` passes on. */
+const fakePowerShell = (initial: string, inherited: Record<string, string> = {}) => {
   const registry = { path: initial, failReads: false, writes: 0 };
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       const { options } = command as unknown as {
-        readonly options: { readonly env?: Record<string, string> };
+        readonly options: { readonly env?: Record<string, string>; readonly extendEnv?: boolean };
       };
-      const env = options.env ?? {};
+      const env = { ...(options.extendEnv ? inherited : {}), ...options.env };
       let exitCode = 0;
       let stdout = "";
       if (env.T3_SET === "1") {
@@ -85,11 +87,15 @@ const fakePowerShell = (initial: string) => {
 };
 
 const machinePath = process.env.PATH;
+const machineShell = process.env.SHELL;
 beforeEach(() => {
   process.env.PATH = "";
+  process.env.SHELL = "/bin/zsh";
 });
 afterEach(() => {
   process.env.PATH = machinePath;
+  if (machineShell === undefined) delete process.env.SHELL;
+  else process.env.SHELL = machineShell;
 });
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
@@ -107,15 +113,43 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         onPath: false,
         launcherPath: null,
       });
+      yield* command.installOnFirstLaunch;
+      expect((yield* command.state).installedPath).toBe(link);
       const installed = yield* command.install;
       expect(installed.installedPath).toBe(link);
       expect(installed.launcherPath).toBe(path.join(home, ".t3", "bin", "t3"));
+      expect(installed.pathSetup).toEqual({ file: "~/.zshrc", added: false });
       expect(yield* fs.readLink(link)).toBe(path.join(home, ".t3", "bin", "t3"));
       expect((yield* command.install).installedPath).toBe(link);
+
+      // Add to PATH appends one line, once, and keeps a final line with no newline intact.
+      const zshrc = path.join(home, ".zshrc");
+      yield* fs.writeFileString(zshrc, "# mine");
+      // A folder already on PATH needs nothing.
+      process.env.PATH = path.join(home, ".local", "bin");
+      yield* command.addToPath;
+      expect(yield* fs.readFileString(zshrc)).toBe("# mine");
+      process.env.PATH = "";
+      yield* Effect.all([command.addToPath, command.addToPath], { concurrency: "unbounded" });
+      expect((yield* command.addToPath).pathSetup).toEqual({ file: "~/.zshrc", added: true });
+      expect(yield* fs.readFileString(zshrc)).toBe(
+        '# mine\n# Added by T3 Code\nexport PATH="$PATH:$HOME/.local/bin"\n',
+      );
 
       expect((yield* command.uninstall).installedPath).toBeNull();
       expect(yield* fs.exists(link)).toBe(false);
       expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3"))).toBe(true);
+      // Removed stays removed: first launch never installs again.
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(link)).toBe(false);
+
+      // Also when first launch was put off (no shell PATH yet) and the user removed it meanwhile.
+      const laterHome = yield* fs.makeTempDirectoryScoped();
+      const later = yield* commandIn({ home: laterHome });
+      yield* later.install;
+      yield* later.uninstall;
+      yield* later.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(laterHome, ".local", "bin", "t3"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 
@@ -132,7 +166,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "t3"));
 
       const error = yield* Effect.flip(command.install);
-      expect(error.message).toContain("Another t3 command is already installed");
+      expect(error.message).toContain("Another t3 command is already in");
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
@@ -156,12 +190,50 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const link = (yield* before.install).installedPath;
 
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
-      expect((yield* after.state).installedPath).toBe(link);
+      // A first launch leaves another home's command alone; only Install takes it over.
+      yield* after.installOnFirstLaunch;
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
+      // On PATH, it runs the other home's launcher. Settings offers Install (not Remove, and not
+      // "another t3 runs first"), which updates that link in place.
+      process.env.PATH = path.dirname(link!);
+      expect(yield* after.state).toMatchObject({ installedPath: null, onPath: false });
+      expect((yield* after.state).shadowedBy).toBeUndefined();
+      process.env.PATH = "";
+      // Off PATH, Add to PATH would expose the other home's command, not this one.
+      expect((yield* after.state).pathSetup).toBeUndefined();
+      yield* Effect.flip(after.addToPath);
+      expect(yield* fs.exists(path.join(home, ".zshrc"))).toBe(false);
+      // Behind another t3 the install fails, and the old link still works.
+      const shadow = path.join(home, "shadow");
+      yield* fs.makeDirectory(shadow);
+      yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+      process.env.PATH = shadow;
+      yield* Effect.flip(after.install);
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
+      // Install takes it over, also with its folder first on PATH.
+      process.env.PATH = path.dirname(link!);
       expect((yield* after.install).installedPath).toBe(link);
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "t3"));
+      process.env.PATH = "";
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);
+
+      // A folder already on PATH wins, even written with a trailing slash.
+      process.env.PATH = `${path.join(home, "bin")}/`;
+      expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
+
+      // An old link of ours is updated where it is, not moved to a folder that may be off PATH.
+      yield* fs.writeFileString(path.join(home, "bin", "t3.staging"), "mine");
+      yield* fs.remove(path.join(home, "bin", "t3"));
+      yield* fs.symlink(path.join(home, "old-t3", "bin", "t3"), path.join(home, "bin", "t3"));
+      process.env.PATH = "";
+      expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
+      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(
+        path.join(home, "new-t3", "bin", "t3"),
+      );
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(home, "bin", "t3.staging"))).toBe("mine");
     }).pipe(Effect.scoped),
   );
 
@@ -173,16 +245,38 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
       yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
-      process.env.PATH = [shadow, path.join(home, ".local", "bin")].join(":");
+      process.env.PATH = [shadow, `${path.join(home, ".local", "bin")}/`].join(":");
 
       const command = yield* commandIn({ home });
       const theirs = path.join(shadow, "t3");
       expect((yield* command.state).shadowedBy).toBe(theirs);
       const error = yield* Effect.flip(command.install);
       expect(error.message).toContain(theirs);
+      yield* command.installOnFirstLaunch;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+      expect(yield* fs.readFileString(theirs)).toBe("#!/bin/sh\n");
 
+      // Its folder is already on PATH behind theirs; adding it again would change which t3 runs.
+      yield* fs.makeDirectory(path.join(home, ".local", "bin"), { recursive: true });
+      yield* fs.symlink(
+        path.join(home, ".t3", "bin", "t3"),
+        path.join(home, ".local", "bin", "t3"),
+      );
+      const behind = yield* command.state;
+      expect(behind.installedPath).toBe(path.join(home, ".local", "bin", "t3"));
+      expect(behind.pathSetup).toBeUndefined();
+      // Off PATH behind theirs, adding the folder would still put ours first.
+      process.env.PATH = shadow;
+      expect((yield* command.state).pathSetup).toBeUndefined();
+      yield* Effect.flip(command.addToPath);
+      expect(yield* fs.exists(path.join(home, ".zshrc"))).toBe(false);
+      process.env.PATH = [shadow, `${path.join(home, ".local", "bin")}/`].join(":");
+      yield* fs.remove(path.join(home, ".local", "bin", "t3"));
+
+      // A first-launch install that failed is not retried behind the user's back.
       yield* fs.remove(theirs);
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       const installed = yield* command.install;
       expect(installed).toMatchObject({
         onPath: true,
@@ -274,6 +368,21 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(registry.path).toBe(`${userPath};${launcherDir}`);
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
+
+      // A `;` in the folder would split it into two PATH entries, so nothing is written.
+      const split = fakePowerShell(userPath);
+      const semicolon = yield* commandIn(
+        { home, baseDir: `${home}\\T3;Home`, platform: "win32" },
+        split.spawner,
+      );
+      expect((yield* Effect.flip(semicolon.install)).message).toContain('has a ";"');
+      expect(split.registry).toMatchObject({ path: userPath, writes: 0 });
+
+      // An inherited T3_SET=1 never turns a read into a write of the whole PATH.
+      const inherited = fakePowerShell(userPath, { T3_SET: "1", T3_PATH: "C:\\other" });
+      const reader = yield* commandIn({ home, platform: "win32" }, inherited.spawner);
+      yield* reader.install;
+      expect(inherited.registry).toMatchObject({ path: `${userPath};${launcherDir}`, writes: 1 });
     }).pipe(Effect.scoped),
   );
 
