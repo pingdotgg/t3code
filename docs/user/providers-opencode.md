@@ -43,6 +43,11 @@ settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
+If **Server URL** points at this machine's OpenCode background service, updating
+OpenCode from T3 Code restarts that service on the new version. Running turns are
+interrupted, and the service runs with T3 Code's environment. Set any variables it
+needs with `opencode service set env <name> <value>`.
+
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
 

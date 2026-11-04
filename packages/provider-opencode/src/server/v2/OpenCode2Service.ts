@@ -1,4 +1,5 @@
 import { Service } from "@opencode/client/effect/service";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -35,8 +36,8 @@ function isRegisteredService(registeredUrl: string, serverUrl: string): boolean 
 }
 
 /**
- * Replaces the way the TUI does on a version mismatch, which hands persistent terminals to the new
- * process. `opencode service restart` shuts them down instead.
+ * Replaces the way the TUI's restart does, which hands persistent terminals to the new process.
+ * `opencode service restart` shuts them down instead.
  */
 export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdatedService")(
   function* (input: {
@@ -63,7 +64,16 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     // Configured variables below can change PATH, which a bare name would then resolve against.
     const executable = yield* resolveCommandPath(input.binaryPath, { env: input.environment });
     if (executable === null) return;
-    const command = yield* resolveSpawnCommand(executable, ["serve", "--service"], {
+    // A scope of its own keeps the service alive when T3 Code's systemd unit stops.
+    const launch = yield* (yield* AgentScope).wrap({
+      command: executable,
+      args: ["serve", "--service"],
+      name: "opencode-service",
+      env: input.environment,
+      shared: true,
+      survivesRestart: true,
+    });
+    const command = yield* resolveSpawnCommand(launch.command, launch.args, {
       env: input.environment,
       extendEnv: true,
       bypassNpmShim: true,
@@ -89,11 +99,20 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
       if (value !== undefined) env[name] = value;
     }
 
-    yield* Service.ensure({
-      file,
-      version,
-      command: [command.command, ...command.args],
-      env,
-    });
+    if ((yield* Service.discover({ file, version })) !== undefined) return;
+
+    // `ensure` with a version would kill every new service whose version never matches the probe,
+    // and being interrupted between the stop and the start would leave no service running.
+    yield* Service.stop({ file, pty: "handoff" }).pipe(
+      Effect.andThen(
+        Service.ensure({
+          file,
+          command: [command.command, ...command.args],
+          // T3 Desktop's backend sets this; undefined overrides the inherited value at spawn.
+          env: { ...env, ELECTRON_RUN_AS_NODE: undefined } as unknown as Record<string, string>,
+        }),
+      ),
+      Effect.uninterruptible,
+    );
   },
 );

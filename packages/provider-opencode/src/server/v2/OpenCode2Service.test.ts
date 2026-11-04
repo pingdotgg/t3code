@@ -9,7 +9,7 @@ import { expect, vi } from "vite-plus/test";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { replaceOutdatedService } from "./OpenCode2Service.ts";
 
-const service = vi.hoisted(() => ({ discover: vi.fn(), ensure: vi.fn() }));
+const service = vi.hoisted(() => ({ discover: vi.fn(), stop: vi.fn(), ensure: vi.fn() }));
 vi.mock("@opencode/client/effect/service", () => ({ Service: service }));
 
 const runtimeWithBinaryVersion = (stdout: string) =>
@@ -29,7 +29,12 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
         yield* fileSystem.makeDirectory(binDirectory);
         yield* fileSystem.writeFileString(path.join(binDirectory, "opencode"), "");
         yield* fileSystem.chmod(path.join(binDirectory, "opencode"), 0o755);
-        const environment = { HOME: home, PATH: binDirectory, OPENCODE_CONFIG_DIR: home };
+        const environment = {
+          HOME: home,
+          PATH: binDirectory,
+          OPENCODE_CONFIG_DIR: home,
+          ELECTRON_RUN_AS_NODE: "1",
+        };
         yield* fileSystem.writeFileString(
           path.join(home, "service.json"),
           JSON.stringify({ env: { PATH: "/nowhere", XDG_STATE_HOME: "/elsewhere" } }),
@@ -46,9 +51,14 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
               runtimeWithBinaryVersion(binary),
             ),
           );
+        service.stop.mockReturnValue(Effect.void);
         service.ensure.mockReturnValue(Effect.void);
+        const outdated = (options: { readonly version?: string }) =>
+          Effect.succeed(
+            options.version === undefined ? { url: "http://0.0.0.0:49374" } : undefined,
+          );
 
-        service.discover.mockReturnValue(Effect.succeed({ url: "http://0.0.0.0:49374" }));
+        service.discover.mockImplementation(outdated);
         yield* run("opencode v1.18.32");
         expect(service.discover).not.toHaveBeenCalled();
 
@@ -71,11 +81,15 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
 
         service.discover.mockReturnValue(Effect.succeed({ url: "http://0.0.0.0:49374" }));
         yield* run("opencode v2.2.5");
+        expect(service.stop).not.toHaveBeenCalled();
+
+        service.discover.mockImplementation(outdated);
+        yield* run("opencode v2.2.5");
+        expect(service.stop).toHaveBeenCalledWith({ file, pty: "handoff" });
         expect(service.ensure).toHaveBeenCalledWith({
           file,
-          version: "2.2.5",
           command: [path.join(binDirectory, "opencode"), "serve", "--service"],
-          env: { ...environment, PATH: "/nowhere" },
+          env: { ...environment, PATH: "/nowhere", ELECTRON_RUN_AS_NODE: undefined },
         });
       }).pipe(Effect.scoped),
   );
