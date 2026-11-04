@@ -910,8 +910,10 @@ interface ActiveCursorSubagent {
   readonly turnItemOrdinal: number;
   nextChildOrdinal: number;
   resultProjected: boolean;
-  /** Mid-flight taskUpdate deltas already filled the child; skip the completion dump. */
+  /** Mid-flight taskUpdate deltas already filled the child; skip the conversationSteps tool dump. */
   liveProjected: boolean;
+  /** Live assistant text was projected; skip dumping task.result at completion. */
+  liveAssistantProjected: boolean;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly assistant: ActiveCursorTextStream;
   readonly reasoning: ActiveCursorTextStream;
@@ -1724,6 +1726,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nextChildOrdinal: existing?.nextChildOrdinal ?? 100,
             resultProjected: existing?.resultProjected ?? false,
             liveProjected: existing?.liveProjected ?? false,
+            liveAssistantProjected: existing?.liveAssistantProjected ?? false,
             tools: existing?.tools ?? new Map(),
             assistant: existing?.assistant ?? { current: null, nextSegment: 0 },
             reasoning: existing?.reasoning ?? { current: null, nextSegment: 0 },
@@ -1868,11 +1871,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (input.completed && !subagent.resultProjected) {
             yield* completeSubagentReasoning(subagent);
             yield* completeSubagentAssistant(subagent);
+            // No completion event means the nested tool outcome is unknown.
+            const unfinishedStatus =
+              status === "interrupted" || status === "failed" || status === "cancelled"
+                ? status
+                : "interrupted";
             for (const tool of subagent.tools.values()) {
-              yield* emitToolArtifacts({ active: tool, completed: true });
+              yield* emitToolArtifacts({
+                active: tool,
+                completed: true,
+                unfinishedStatus,
+              });
             }
             subagent.tools.clear();
-            // Live taskUpdate already filled the child; only dump conversationSteps when it did not.
+            // Live taskUpdate already filled tools; only dump conversationSteps when it did not.
             if (!subagent.liveProjected) {
               for (const [index, nestedTool] of toolCallsFromConversationSteps(
                 result?.conversationSteps ?? [],
@@ -1896,42 +1908,47 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 };
                 yield* emitToolArtifacts({ active, completed: true });
               }
-              if (task.result !== null && task.result.length > 0) {
-                const resultNativeId = `${nativeItemId}:result`;
-                const resultArtifacts = makeSubagentConversationArtifacts({
-                  messageId: idAllocator.derive.messageFromProviderItem({
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    nativeItemId: resultNativeId,
-                  }),
-                  turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    nativeItemId: resultNativeId,
-                  }),
-                  threadId: childThreadId,
-                  rootNodeId: childRootNodeId,
-                  providerThreadId: null,
-                  providerTurnId: null,
-                  nativeItemRef: {
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    nativeId: resultNativeId,
-                    strength: "weak",
-                  },
-                  role: "assistant",
-                  text: task.result,
-                  ordinal: ++subagent.nextChildOrdinal,
-                  now,
-                });
-                yield* emitProviderEvent({
-                  type: "message.updated",
+            }
+            // Live assistant text already filled the child; keep resultSuffix / dump when it did not.
+            if (
+              !subagent.liveAssistantProjected &&
+              task.result !== null &&
+              task.result.length > 0
+            ) {
+              const resultNativeId = `${nativeItemId}:result`;
+              const resultArtifacts = makeSubagentConversationArtifacts({
+                messageId: idAllocator.derive.messageFromProviderItem({
                   driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  message: resultArtifacts.message,
-                });
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
+                  nativeItemId: resultNativeId,
+                }),
+                turnItemId: idAllocator.derive.turnItemFromProviderItem({
                   driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  turnItem: resultArtifacts.turnItem,
-                });
-              }
+                  nativeItemId: resultNativeId,
+                }),
+                threadId: childThreadId,
+                rootNodeId: childRootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: {
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeId: resultNativeId,
+                  strength: "weak",
+                },
+                role: "assistant",
+                text: task.result,
+                ordinal: ++subagent.nextChildOrdinal,
+                now,
+              });
+              yield* emitProviderEvent({
+                type: "message.updated",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                message: resultArtifacts.message,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                turnItem: resultArtifacts.turnItem,
+              });
             }
             subagent.resultProjected = true;
           }
@@ -2156,10 +2173,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (subagent === undefined || !isOrchestrationV2WorkActive(subagent.task.status)) {
             return;
           }
-          subagent.liveProjected = true;
           const taskUpdate = update.taskUpdate;
           switch (taskUpdate.type) {
             case "text-delta":
+              subagent.liveProjected = true;
+              subagent.liveAssistantProjected = true;
               yield* completeSubagentReasoning(subagent);
               yield* appendSubagentText({
                 subagent,
@@ -2170,6 +2188,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* emitSubagentAssistant(subagent, false);
               return;
             case "thinking-delta":
+              subagent.liveProjected = true;
               yield* completeSubagentAssistant(subagent);
               yield* appendSubagentText({
                 subagent,
@@ -2185,6 +2204,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             case "tool-call-started":
             case "partial-tool-call":
             case "tool-call-completed": {
+              subagent.liveProjected = true;
               yield* completeSubagentAssistant(subagent);
               yield* completeSubagentReasoning(subagent);
               const nestedCallId = childToolCallId(subagent, taskUpdate.callId);
