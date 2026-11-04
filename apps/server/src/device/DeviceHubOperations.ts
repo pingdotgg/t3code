@@ -128,7 +128,9 @@ export const makeDeviceHubOperations = (options: {
       return {
         devices: [],
         detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
-        incompletePlatforms: ["ios", "android"] as const,
+        incompletePlatforms: (yield* options.androidAvailable)
+          ? (["ios", "android"] as const)
+          : (["ios"] as const),
       };
     }
     const hubList = listed.value;

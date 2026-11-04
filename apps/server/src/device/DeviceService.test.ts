@@ -159,7 +159,11 @@ const fixture = Effect.fn("fixture")(function* (
           Response.json(
             bootError
               ? { ok: false, ...(typeof bootError === "string" ? { error: bootError } : bootError) }
-              : { ok: true, serial: "emulator-5554" },
+              : // The hub reports a serial only for emulators; a simulator keeps its UDID.
+                request.body._tag === "Uint8Array" &&
+                  new TextDecoder().decode(request.body.body).includes('"platform":"ios"')
+                ? { ok: true }
+                : { ok: true, serial: "emulator-5554" },
           ),
         );
       }
@@ -250,14 +254,16 @@ const fixture = Effect.fn("fixture")(function* (
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
           return yield* runtimeFailure;
         starts.push("start");
-        yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
+        // A running hub reports no phase, as the real hosts do.
+        if (starts.length === 1)
+          yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
       }),
     ensureAgentReady: (onPhase) =>
       Effect.gen(function* () {
         if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
-        yield* onPhase("starting");
+        if (agentStarts.length === 1) yield* onPhase("starting");
         return {
           ...ready,
           agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
@@ -347,12 +353,19 @@ describe("device setup consent", () => {
         reason: "daemon_lock_not_directory",
         cause: { stdout: "private startup diagnostics", code: 1 },
       });
-      const { service, settings } = yield* fixture(Effect.void, undefined, false, startupError);
+      const { service, settings, discoveryErrors } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        startupError,
+      );
       yield* Ref.update(settings, (current) => ({
         ...current,
         enableDeviceSupport: true,
         enableAgentDeviceAccess: true,
       }));
+      yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
+      yield* service.list;
       const error = yield* service.agentReadinessIfSupported().pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DeviceHostUnavailableError",
@@ -364,6 +377,7 @@ describe("device setup consent", () => {
       expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
         status: "failed",
         detail: startupError.message,
+        incompletePlatforms: ["ios"],
       });
     }).pipe(Effect.scoped),
   );
@@ -711,7 +725,8 @@ it.effect(
         physical: false,
       } as const;
       devices.push(simulator, { ...simulator, id: DeviceId.make("pixel"), platform: "android" });
-      yield* service.configure({ enabled: true });
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      yield* service.agentReadinessIfSupported();
       devices.length = 0;
       yield* Ref.set(discoveryErrors, [{ message: simctlMessage }]);
       const failed = yield* service.list;
@@ -721,6 +736,8 @@ it.effect(
         detail: simctlMessage,
         incompletePlatforms: ["ios"],
       });
+      yield* service.agentReadinessIfSupported();
+      expect((yield* service.state).hostStatuses.local).toEqual(failed.hostStatuses.local);
       yield* Ref.set(discoveryErrors, []);
       const recovered = yield* service.list;
       expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
@@ -728,52 +745,76 @@ it.effect(
     }).pipe(Effect.scoped),
 );
 
-it.effect("keeps every device when the hub does not answer the listing within 40 seconds", () =>
-  Effect.gen(function* () {
-    const { service, devices, listing } = yield* fixture();
-    devices.push({
-      id: DeviceId.make("iphone"),
-      name: "iPhone",
-      platform: "ios",
-      version: "iOS 26",
-      booted: true,
-      physical: false,
-    });
-    yield* service.configure({ enabled: true });
-    listing.hangs = true;
-    const listed = yield* service.list.pipe(Effect.forkScoped);
-    yield* Deferred.await(listing.requested);
-    yield* TestClock.adjust("40 seconds");
-    const timedOut = yield* Fiber.join(listed);
-    expect(timedOut.devices.map((device) => device.id)).toEqual(["iphone", "Pixel_API_35"]);
-    expect(timedOut.hostStatuses.local).toEqual({
-      status: "ready",
-      detail: "The device hub did not answer within 40 seconds.",
-      incompletePlatforms: ["ios", "android"],
-    });
-  }).pipe(Effect.scoped),
+it.effect.each([
+  { android: true, incompletePlatforms: ["ios", "android"], kept: ["iphone", "Pixel_API_35"] },
+  { android: false, incompletePlatforms: ["ios"], kept: ["iphone"] },
+] as const)(
+  "keeps every device when the hub does not answer within 40 seconds (Android SDK: $android)",
+  ({ android, incompletePlatforms, kept }) =>
+    Effect.gen(function* () {
+      const { service, devices, listing, androidAvailable } = yield* fixture();
+      yield* Ref.set(androidAvailable, android);
+      devices.push({
+        id: DeviceId.make("iphone"),
+        name: "iPhone",
+        platform: "ios",
+        version: "iOS 26",
+        booted: true,
+        physical: false,
+      });
+      yield* service.configure({ enabled: true });
+      listing.hangs = true;
+      const listed = yield* service.list.pipe(Effect.forkScoped);
+      yield* Deferred.await(listing.requested);
+      yield* TestClock.adjust("40 seconds");
+      const timedOut = yield* Fiber.join(listed);
+      expect(timedOut.devices.map((device) => device.id)).toEqual(kept);
+      expect(timedOut.hostStatuses.local).toEqual({
+        status: "ready",
+        detail: "The device hub did not answer within 40 seconds.",
+        incompletePlatforms,
+      });
+    }).pipe(Effect.scoped),
 );
 
-it.effect("does not open the pre-boot AVD when the post-boot listing times out", () =>
+it.effect("does not open a retained pre-boot entry when the post-boot listing is incomplete", () =>
   Effect.gen(function* () {
-    const hang = { listing: () => {} };
-    const { service, listing } = yield* fixture(Effect.sync(() => hang.listing()));
-    hang.listing = () => {
-      listing.hangs = true;
-    };
-    yield* service.configure({ enabled: true });
-    const opening = yield* service
+    const afterBoot = { run: Effect.void as Effect.Effect<void> };
+    const android = yield* fixture(Effect.suspend(() => afterBoot.run));
+    afterBoot.run = Effect.sync(() => {
+      android.listing.hangs = true;
+    });
+    yield* android.service.configure({ enabled: true });
+    const opening = yield* android.service
       .open({
         threadId: ThreadId.make("boot-timeout"),
         deviceId: "Pixel_API_35",
         platform: "android",
       })
       .pipe(Effect.flip, Effect.forkScoped);
-    yield* Deferred.await(listing.requested);
+    yield* Deferred.await(android.listing.requested);
     yield* TestClock.adjust("40 seconds");
-    const error = yield* Fiber.join(opening);
+    expect((yield* Fiber.join(opening))._tag).toBe("DeviceNotFoundError");
+    expect((yield* android.service.state).sessions).toEqual([]);
+
+    const ios = yield* fixture(Effect.suspend(() => afterBoot.run));
+    afterBoot.run = Effect.sync(() => {
+      ios.devices.length = 0;
+    }).pipe(Effect.andThen(Ref.set(ios.discoveryErrors, [{ message: simctlMessage }])));
+    ios.devices.push({
+      id: DeviceId.make("iphone"),
+      name: "iPhone",
+      platform: "ios",
+      version: "iOS 26",
+      booted: false,
+      physical: false,
+    });
+    yield* ios.service.configure({ enabled: true });
+    const error = yield* ios.service
+      .open({ threadId: ThreadId.make("boot-simctl"), deviceId: "iphone", platform: "ios" })
+      .pipe(Effect.flip);
     expect(error._tag).toBe("DeviceNotFoundError");
-    expect((yield* service.state).sessions).toEqual([]);
+    expect((yield* ios.service.state).sessions).toEqual([]);
   }).pipe(Effect.scoped),
 );
 

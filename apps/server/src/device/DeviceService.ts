@@ -390,21 +390,36 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     Effect.suspend(() =>
       !hosts.has(hostId)
         ? SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state))
-        : publish((state) => ({
-            ...state,
-            ...(hostId === LOCAL_DEVICE_HOST_ID
-              ? { hostStatus: status.status, hostStatusDetail: status.detail }
-              : {}),
-            hostStatuses: {
-              ...state.hostStatuses,
-              [hostId]: {
-                ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
-                  ? { androidDiscoveryIncomplete: true }
-                  : {}),
-                ...status,
+        : publish((state) => {
+            const previous = state.hostStatuses[hostId];
+            // Discovery problems outlive readiness updates until a listing clears them.
+            const detail =
+              status.detail ??
+              (status.status === "ready" &&
+              previous?.status === "ready" &&
+              previous.incompletePlatforms
+                ? previous.detail
+                : undefined);
+            return {
+              ...state,
+              ...(hostId === LOCAL_DEVICE_HOST_ID
+                ? { hostStatus: status.status, hostStatusDetail: detail }
+                : {}),
+              hostStatuses: {
+                ...state.hostStatuses,
+                [hostId]: {
+                  ...(previous?.androidDiscoveryIncomplete
+                    ? { androidDiscoveryIncomplete: true }
+                    : {}),
+                  ...(previous?.incompletePlatforms
+                    ? { incompletePlatforms: previous.incompletePlatforms }
+                    : {}),
+                  ...status,
+                  ...(detail ? { detail } : {}),
+                },
               },
-            },
-          })),
+            };
+          }),
     );
 
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
@@ -795,12 +810,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
         );
         state = yield* refresh(ready);
-        // Retained entries predate the boot, so fall back to the pre-boot id only after a complete listing.
-        device =
-          findDevice(state, host.id, bootedId) ??
-          (state.hostStatuses[host.id]?.incompletePlatforms?.includes(device.platform)
-            ? undefined
-            : findDevice(state, host.id, device.id));
+        // Retained entries predate the boot, so only a complete listing confirms the booted device.
+        device = state.hostStatuses[host.id]?.incompletePlatforms?.includes(device.platform)
+          ? undefined
+          : (findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id));
         if (!device) {
           return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
         }
