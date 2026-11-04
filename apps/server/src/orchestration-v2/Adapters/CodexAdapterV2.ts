@@ -6346,9 +6346,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (waiter !== undefined) {
                 yield* Deferred.succeed(waiter, undefined);
               }
-              const interruptInProgress = (yield* Ref.get(interruptingNativeTurns)).has(
-                input.nativeTurnId,
-              );
+              // A waiting Stop keeps the turn's commands for its second terminal sweep and
+              // clears its own mark; a timed-out Stop left the mark for this finalization.
+              const interruptInProgress = waiter !== undefined;
+              yield* Ref.update(interruptingNativeTurns, (current) => {
+                if (interruptInProgress || !current.has(input.nativeTurnId)) return current;
+                const updated = new Set(current);
+                updated.delete(input.nativeTurnId);
+                return updated;
+              });
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
@@ -7420,14 +7426,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   return updated;
                 });
+                const stillActiveTurns = yield* Ref.get(activeTurns);
+                // A turn Codex never confirmed stays stopped until finalizeCodexTurn clears it.
                 yield* Ref.update(interruptingNativeTurns, (current) => {
                   const updated = new Set(current);
                   for (const target of interruptTargets) {
+                    if (stillActiveTurns.get(target.context.nativeTurnId) === target.context)
+                      continue;
                     updated.delete(target.context.nativeTurnId);
                   }
                   return updated;
                 });
-                const stillActiveTurns = yield* Ref.get(activeTurns);
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   const updated = new Map(current);
                   for (const target of interruptTargets) {
@@ -7664,8 +7673,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ],
                   { concurrency: "unbounded" },
                 );
+                let rootStillActive = false;
                 if (Option.isNone(completed)) {
-                  let rootStillActive = false;
                   for (const target of interruptTargets) {
                     const context = target.context;
                     if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
@@ -7679,17 +7688,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       nativeTurnId: context.nativeTurnId,
                     });
                   }
-                  // The lineage stays open: Codex may still be working, and the user decides
-                  // whether to Force stop it. A later turn/completed still finalizes it.
-                  if (rootStillActive) return false;
                 }
-
-                yield* interruptLateDescendants;
-                yield* finalizeRemainingInterruptLineage;
+                // An unconfirmed root keeps its lineage open: Codex may still be working, and
+                // the user decides whether to Force stop it. A later turn/completed finalizes it.
+                if (!rootStillActive) {
+                  yield* interruptLateDescendants;
+                  yield* finalizeRemainingInterruptLineage;
+                }
 
                 const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
                 const failedTermination = terminationResults.find((result) => !result.success);
                 if (failedTermination !== undefined && !failedTermination.success) {
+                  // Force stop answers both, and the timeout says Codex itself has not stopped.
+                  if (rootStillActive) return false;
                   return yield* failedTermination.error;
                 }
                 yield* turnTerminalizationPermit.withPermits(1)(
@@ -7723,7 +7734,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }
                   }),
                 );
-                return true;
+                return !rootStillActive;
               }).pipe(
                 Effect.onError(() => finalizeRemainingInterruptLineage),
                 Effect.ensuring(cleanupInterruptState),
