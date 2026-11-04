@@ -2668,8 +2668,11 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
+        // One snapshot for the check and the sweep: a turn promoted between two reads would
+        // be neither cancelled nor interrupted.
+        const runs = yield* readRuns;
         // The child's live turn belongs to another task, so only this task's queued turns go.
-        if (!delegatedTaskYieldsLiveRun(yield* readRuns, input.taskId)) {
+        if (!delegatedTaskYieldsLiveRun(runs, input.taskId)) {
           yield* threadManagement
             .dispatch({
               type: "thread.stop",
@@ -2697,7 +2700,7 @@ const make = Effect.gen(function* () {
               ),
             );
         }
-        for (const run of yield* readRuns) {
+        for (const run of runs) {
           if (
             run.status !== "queued" ||
             (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
