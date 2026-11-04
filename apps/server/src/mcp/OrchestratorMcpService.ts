@@ -2545,13 +2545,13 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
+      const limits =
+        callerThreadId === rootScope.thread.threadId
+          ? parent.thread
+          : yield* callerLimits(rootScope.thread.threadId, callerThreadId);
+      const runtimeMode = yield* resolveRuntimeMode(limits.runtimeMode, input.runtimeMode, target);
       const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
+        limits.interactionMode,
         input.interactionMode,
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;

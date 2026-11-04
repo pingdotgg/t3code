@@ -1263,6 +1263,85 @@ it.effect.each([
     ),
 );
 
+it.effect.each(["runtime", "interaction", "unchanged"] as const)(
+  "a native subagent delegates within its own modes, not only the root's: %s lowered",
+  (lowered) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness(`native-delegate-modes-${lowered}`);
+        const credential = "provider-session:native-delegate-modes";
+        const rootThreadId = ThreadId.make("thread:native-delegate-modes-root");
+        const root = yield* h.startRoot(rootThreadId, credential);
+        const native = h.nativeTask({
+          name: "lowered",
+          listing: root.projection.thread,
+          parentNodeId: root.run.rootNodeId!,
+          execution: { threadId: rootThreadId, runId: root.run.id },
+        });
+        yield* h.project(root.turn, [native]);
+        yield* h.mcpSessions.bindNativeCaller({
+          threadId: rootThreadId,
+          providerSessionId: credential,
+          callId: "claude-tool:lowered",
+          callerThreadId: native.thread.id,
+        });
+        // The native subagent's user lowers only its thread; the root keeps full-access/default.
+        if (lowered !== "unchanged") {
+          yield* h.orchestrator.dispatch(
+            lowered === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("lower-native-runtime"),
+                  threadId: native.thread.id,
+                  runtimeMode: "approval-required",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("lower-native-interaction"),
+                  threadId: native.thread.id,
+                  interactionMode: "plan",
+                },
+          );
+          yield* h.worker.drain();
+        }
+        const nativeScope = scopeFor(rootThreadId, credential, "claude-tool:lowered");
+
+        const inherited = yield* h.delegate(nativeScope, "inherited");
+        const child = yield* h.orchestrator.getThreadProjection(inherited.childThreadId!);
+        assert.deepEqual(
+          { runtimeMode: child.thread.runtimeMode, interactionMode: child.thread.interactionMode },
+          {
+            runtimeMode: lowered === "runtime" ? "approval-required" : "full-access",
+            interactionMode: lowered === "interaction" ? "plan" : "default",
+          },
+        );
+
+        const explicit = yield* h.service
+          .delegateTask(nativeScope, {
+            task: "Broader",
+            mode: "async",
+            clientRequestId: "explicit",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          })
+          .pipe(Effect.match({ onFailure: (error) => error.code, onSuccess: () => "delegated" }));
+        yield* h.worker.drain();
+        const listedTasks = (yield* h.orchestrator.getThreadProjection(native.thread.id)).subagents;
+        if (lowered === "unchanged") {
+          assert.equal(explicit, "delegated");
+          assert.lengthOf(listedTasks, 2);
+          return;
+        }
+        assert.equal(explicit, `${lowered}_mode_escalation_denied`);
+        assert.deepEqual(
+          listedTasks.map((task) => task.id),
+          [inherited.taskId],
+          "a refused delegation creates no task",
+        );
+      }),
+    ),
+);
+
 it.effect.each(["active", "archived", "deleted"] as const)(
   "a native task's question wakes only its active execution thread: %s",
   (executionState) =>
