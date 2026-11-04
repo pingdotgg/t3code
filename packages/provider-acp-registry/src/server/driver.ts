@@ -903,6 +903,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
       snapshotForCwd,
+      invalidateCaches: invalidateEnrichmentCache.pipe(Effect.andThen(clearWorkspaceProbeCache)),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {
