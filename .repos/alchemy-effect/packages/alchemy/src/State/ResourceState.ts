@@ -16,9 +16,7 @@ export type Props = Record<string, any>;
 export type Attr = Record<string, any>;
 
 export type ResourceStatus = ResourceState["status"];
-export type ReplacementResourceState =
-  | ReplacingResourceState
-  | ReplacedResourceState;
+export type ReplacementResourceState = ReplacingResourceState | ReplacedResourceState;
 export type ReplacementOldResourceState =
   | CreatingResourceState
   | CreatedResourceState
@@ -54,11 +52,13 @@ interface BaseResourceState {
   /** Desired state (input props) of this Resource */
   props?: Props;
   /** The output attributes of this Resource (if it has been created) */
-  attr?: Attr;
+  attr?: Attr | undefined;
   /** The removal policy of the resource */
   removalPolicy?: RemovalPolicy["Service"];
   /** Attr-less lookup could recover the predecessor migrated away from this FQN. */
   adoptionBlocked?: "migrated-fqn";
+  /** Unresolved props were stripped from this attr-less checkpoint; they cannot identify it. */
+  propsIncomplete?: true;
   /**
    * The {@link ProviderMode} this resource was last reconciled with.
    *
