@@ -2597,6 +2597,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 updatedAt: "2026-05-01T10:00:00Z",
               },
             ],
+            // Someone else's branch of the same name; this one was never pushed.
+            "feature/local-base": [
+              {
+                number: 62,
+                title: "Another local base",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/62",
+                baseRefName: "main",
+                headRefName: "feature/local-base",
+                state: "open",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ],
           },
         },
       });
