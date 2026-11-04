@@ -23,7 +23,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
@@ -750,7 +750,7 @@ export const make = Effect.gen(function* () {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   const stateRef = yield* Ref.make<DesktopSnapShotState>({
     mode: captureMode(environment.platform),
@@ -896,7 +896,7 @@ export const make = Effect.gen(function* () {
   const prepareCapture = Effect.fn("desktop.snapShot.prepareCapture")(function* (
     settings: ClientSettings,
   ) {
-    const id = yield* crypto.randomUUIDv4().pipe(Effect.mapError((cause) => captureFailure(cause)));
+    const id = yield* random.uuidV4().pipe(Effect.mapError((cause) => captureFailure(cause)));
     const mode = captureMode(environment.platform);
     if (mode === "unavailable") {
       return yield* new DesktopSnapShotError({ operation: "unsupported", captureId: id });

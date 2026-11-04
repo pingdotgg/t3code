@@ -1,9 +1,9 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { getEnv } from "./Env.ts";
 
 /**
@@ -19,12 +19,7 @@ import { getEnv } from "./Env.ts";
  * | GitLab CI      | `GITLAB_CI`       | `SIGSTORE_ID_TOKEN` from `id_tokens`        |
  * | GCP            | `K_SERVICE` etc.  | the metadata server's identity endpoint    |
  */
-export type OidcPlatform =
-  | "explicit"
-  | "vercel"
-  | "github-actions"
-  | "gitlab"
-  | "gcp";
+export type OidcPlatform = "explicit" | "vercel" | "github-actions" | "gitlab" | "gcp";
 
 export interface OidcToken {
   readonly platform: OidcPlatform;
@@ -60,11 +55,7 @@ const PLATFORMS: ReadonlyArray<{
   readonly name: OidcPlatform;
   readonly probe: (
     audience: string | undefined,
-  ) => Effect.Effect<
-    Redacted.Redacted<string> | undefined,
-    unknown,
-    HttpClient.HttpClient
-  >;
+  ) => Effect.Effect<Redacted.Redacted<string> | undefined, unknown, HttpClient.HttpClient>;
 }> = [
   {
     name: "vercel",
@@ -94,8 +85,7 @@ const PLATFORMS: ReadonlyArray<{
         },
       });
       if (response.status !== 200) return undefined;
-      const body =
-        yield* HttpClientResponse.schemaBodyJson(GitHubTokenResponse)(response);
+      const body = yield* HttpClientResponse.schemaBodyJson(GitHubTokenResponse)(response);
       return body.value ? Redacted.make(body.value) : undefined;
     }),
   },
@@ -140,9 +130,7 @@ const PLATFORMS: ReadonlyArray<{
  * order and the first token wins. A probe that fails or hangs counts as
  * "not this platform". `undefined` means nothing was detected.
  */
-export const detectOidcToken = Effect.fn("detectOidcToken")(function* (
-  env: OidcTokenEnv,
-) {
+export const detectOidcToken = Effect.fn("detectOidcToken")(function* (env: OidcTokenEnv) {
   const explicit = yield* getEnv(env.token);
   if (explicit) {
     const found: OidcToken = {
@@ -156,7 +144,7 @@ export const detectOidcToken = Effect.fn("detectOidcToken")(function* (
   for (const platform of PLATFORMS) {
     const token = yield* platform.probe(audience).pipe(
       Effect.timeout(PROBE_TIMEOUT),
-      Effect.catch(() => Effect.succeed(undefined)),
+      Effect.orElseSucceed(() => undefined),
     );
     if (token !== undefined) {
       const found: OidcToken = { platform: platform.name, token };
