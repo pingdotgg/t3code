@@ -13,7 +13,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
-type Sent = PullRequestDetailView["reviewThreads"] | "pending";
+// Weak so a snapshot is freed once refreshed activity replaces it in `detail`.
+type Sent = WeakRef<PullRequestDetailView["reviewThreads"]> | "pending";
 
 // Outlives the button, which unmounts when its thread collapses, so reopening it mid-request
 // cannot send a second one.
@@ -51,7 +52,7 @@ export function PullRequestResolveThreadButton({
   // which can land before activity does and would re-enable the button on the old label.
   const key = `${environmentId}:${thread.id}`;
   const sent = useSyncExternalStore(subscribeSent, () => sentByThread.get(key));
-  const waiting = sent === "pending" || sent === detail.reviewThreads;
+  const waiting = sent === "pending" || sent?.deref() === detail.reviewThreads;
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
@@ -70,7 +71,7 @@ export function PullRequestResolveThreadButton({
       toastManager.add({ type: "error", title: "The conversation could not be updated" });
       return;
     }
-    setSentFor(key, detail.reviewThreads);
+    setSentFor(key, new WeakRef(detail.reviewThreads));
     onRefresh();
   };
 
