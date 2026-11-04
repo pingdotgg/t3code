@@ -1,3 +1,4 @@
+import { ThreadSplitSuggestion } from "./ThreadSplitSuggestion";
 import type { ProjectKnowledgeContextRecord } from "@t3tools/contracts";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
@@ -3239,6 +3240,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
+      {routeKind === "server" && activeThread && typeof composerDraftTarget !== "string" && (
+        <ThreadSplitSuggestion
+          key={`${environmentId}:${activeThread.id}`}
+          threadRef={composerDraftTarget}
+          projectId={activeThread.projectId}
+          idle={
+            canOperateThread &&
+            phase !== "running" &&
+            !isSendBusy &&
+            !canInterrupt &&
+            !isCompacting &&
+            pendingUserInputs.length === 0 &&
+            pendingApprovals.length === 0
+          }
+        />
+      )}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />

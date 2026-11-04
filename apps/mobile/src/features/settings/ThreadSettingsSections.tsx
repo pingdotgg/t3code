@@ -42,6 +42,7 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <ThreadSplitSettingsSection />
         <BetaSettingsSection />
         <LegacySettingsSection />
       </ScrollView>
@@ -292,5 +293,49 @@ function LegacySettingsSection() {
         control; otherwise every task runs in Build mode.
       </Text>
     </View>
+  );
+}
+
+function ThreadSplitSettingsSection() {
+  const { environments } = useEnvironments();
+  const connected = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const writable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "thread split suggestions setting",
+    reportFailure: true,
+  });
+  return (
+    <SettingsSection title="Thread suggestions">
+      {connected.map((environment) => {
+        const policy = environment.serverConfig?.managedPolicy;
+        const managed = isManagedSettingPath(policy, "threadSplitSuggestionsEnabled");
+        return (
+          <SettingsSwitchRow
+            key={environment.environmentId}
+            icon="square.and.pencil"
+            label={environment.label}
+            subtitle={
+              environment.serverConfig?.settings.threadSplitModelEndpoint
+                ? "Suggest a fresh thread for an independent message. Nothing moves until you choose it."
+                : "Configure the local decision model in Labs on web or desktop first."
+            }
+            value={environment.serverConfig?.settings.threadSplitSuggestionsEnabled === true}
+            disabled={
+              managed ||
+              !writable.has(environment.environmentId) ||
+              !environment.serverConfig?.settings.threadSplitModelEndpoint
+            }
+            onValueChange={(value) =>
+              void updateSettings({
+                environmentId: environment.environmentId,
+                input: { patch: { threadSplitSuggestionsEnabled: value } },
+              })
+            }
+          />
+        );
+      })}
+    </SettingsSection>
   );
 }

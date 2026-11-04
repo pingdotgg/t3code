@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./threadSplitPrompt.json": "./src/threadSplitPrompt.json",
     "./pstack": {
       "types": "./src/pstack.ts",
       "import": "./src/pstack.ts"

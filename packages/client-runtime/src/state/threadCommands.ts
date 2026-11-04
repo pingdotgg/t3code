@@ -367,6 +367,10 @@ export function createThreadEnvironmentAtoms<R, E>(
           `history:${JSON.stringify([environmentId, input.threadId])}`,
       },
     }),
+    suggestSplit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:suggest-split",
+      tag: WS_METHODS.orchestrationSuggestThreadSplit,
+    }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:upload-feedback",
       tag: WS_METHODS.providerUploadFeedback,

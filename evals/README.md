@@ -8,6 +8,7 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | [mcp-tool-use](mcp-tool-use/)   | Whether agents use T3's MCP tools correctly, including device routing and recovery, in fake threads. |
 | [thread-titles](thread-titles/) | Whether generated thread titles name the right subject.                                              |
+| [thread-split](thread-split/)   | Offline local-model evaluation of whether a message can start an independent thread.                 |
 | [test-signal](test-signal/)     | Whether a cheap model running the test-signal check flags low-signal tests.                          |
 
 ## Run an eval
