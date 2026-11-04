@@ -140,7 +140,7 @@ describe("CommandPalette open intents", () => {
     await userEvent.fill(page.getByPlaceholder("Search..."), "li");
 
     await expect.element(page.getByRole("option", { name: /server/ })).not.toBeInTheDocument();
-    await expect.element(page.getByRole("option", { name: /lima/ })).toHaveTextContent("Ctrl+1");
+    await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent("Ctrl+1");
   });
 
   it("starts a thread in the first project New thread in... shows on jump 1", async () => {
