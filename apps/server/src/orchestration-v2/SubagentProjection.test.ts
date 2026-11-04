@@ -417,6 +417,8 @@ it("tells the parent which provider instance hit a usage limit and when it reset
   assert.match(result.text, /usage[ _]limit/i);
   assert.include(result.text, "work-a");
   assert.include(result.text, failure.resetAt);
+  // Clients preview a capped prefix, so a long provider message must not push the details out.
+  assert.isBelow(result.text.indexOf(failure.resetAt), result.text.indexOf(failure.message));
 });
 
 it("orders a task's assistant messages by turn item, not by timestamps", () => {

@@ -183,10 +183,11 @@ function failureResultText(
 ): string {
   if (failure.class !== "usage_limit") return failure.message;
   const reset = failure.resetAt ? `it resets at ${failure.resetAt}` : "its reset time is unknown";
+  // Clients preview only the first 280 characters, so the actionable details lead.
   return (
-    `${failure.message} Usage limit hit on provider instance ${run.providerInstanceId}; ${reset}. ` +
+    `Usage limit hit on provider instance ${run.providerInstanceId}; ${reset}. ` +
     "To continue elsewhere, move the child with t3_thread_configure (new modelSelection), " +
-    "then t3_thread_send; it keeps its history."
+    `then t3_thread_send; it keeps its history. Provider message: ${failure.message}`
   );
 }
 
