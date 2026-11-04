@@ -1,0 +1,5 @@
+# Captures, renders and the prepared presentation; regenerate with
+# `pnpm capture && pnpm render`.
+out/
+# The project the demo builds (a fresh copy of template/ on every capture).
+work/

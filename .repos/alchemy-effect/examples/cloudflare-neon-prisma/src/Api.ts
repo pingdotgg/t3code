@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as PrismaPostgres from "alchemy/Prisma/ORM/Postgres";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as PrismaPostgres from "@alchemy.run/prisma/ORM/Postgres";
+import { makeSchemas } from "@alchemy.run/prisma/ORM/Schema";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { makeSchemas } from "alchemy/Prisma/ORM/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
 import { Hyperdrive } from "./Db.ts";
 import { contract } from "./prisma/contract.ts";
 
@@ -31,9 +31,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
               return yield* HttpServerResponse.json({ users });
             }
             const id = request.url.split("/").pop() ?? "";
-            const user = yield* db.orm.public.User.where({ id })
-              .include("posts")
-              .first();
+            const user = yield* db.orm.public.User.where({ id }).include("posts").first();
             return yield* HttpServerResponse.json({ user });
           }
           case "POST": {
@@ -42,9 +40,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
               email: crypto.randomUUID(),
             }));
             const row = yield* db.orm.public.User.create(values);
-            const user = yield* Schema.decodeUnknownEffect(schemas.public.User)(
-              row,
-            );
+            const user = yield* Schema.decodeUnknownEffect(schemas.public.User)(row);
             return yield* HttpServerResponse.json({ user });
           }
           case "DELETE": {
@@ -53,18 +49,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
             return yield* HttpServerResponse.json({ user });
           }
           default: {
-            return yield* HttpServerResponse.json(
-              { error: "Method not allowed" },
-              { status: 405 },
-            );
+            return yield* HttpServerResponse.json({ error: "Method not allowed" }, { status: 405 });
           }
         }
       }).pipe(
         Effect.catch((cause) =>
-          HttpServerResponse.json(
-            { ok: false, error: cause._tag },
-            { status: 500 },
-          ),
+          HttpServerResponse.json({ ok: false, error: cause._tag }, { status: 500 }),
         ),
       ),
     };

@@ -341,7 +341,7 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
     expect(api.calls.some(isMutation)).toBe(false);
     const rebases = gitCalls.filter((args) => args[0] === "rebase");
     expect(rebases).toEqual([
-      ["rebase", "--quiet", "--onto", "origin/main", "new-sha"],
+      ["rebase", "--quiet", "--onto", "origin/main", "aaa"],
       ["rebase", "--quiet", "--onto", "new-sha", "bbb"],
     ]);
     expect(gitCalls.filter((args) => args[0] === "push")).toEqual([
