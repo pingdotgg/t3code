@@ -483,11 +483,13 @@ export const AntigravityDriver: ProviderDriver<
           }
 
           if (!tokenPath) {
-            return {
-              authenticated: false,
-              type: auth.authMethod,
-              label: antigravityAuthLabel(auth.authMethod),
-            };
+            return isSignedOut
+              ? {
+                  authenticated: false,
+                  type: auth.authMethod,
+                  label: antigravityAuthLabel(auth.authMethod),
+                }
+              : undefined;
           }
 
           const tokenContent = yield* fileSystem

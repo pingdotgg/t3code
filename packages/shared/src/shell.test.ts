@@ -886,7 +886,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         expect(homebrew.host.xcrunCalls).toBe(0);
 
         const linux = setup({ platform: "linux", gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* linux.resolve).toBe("/usr/bin/git");
+        expect(yield* linux.resolve).toBe("git");
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
@@ -938,34 +938,40 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
         const dirA = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-a-" });
         const dirB = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-b-" });
         const binDirA = path.join(dirA, "node_modules", ".bin");
         const binDirB = path.join(dirB, "node_modules", ".bin");
         yield* fs.makeDirectory(binDirA, { recursive: true });
         yield* fs.makeDirectory(binDirB, { recursive: true });
-        const exeA = path.join(binDirA, "my-tool.exe");
-        const exeB = path.join(binDirB, "my-tool.exe");
-        yield* fs.writeFileString(exeA, "");
-        yield* fs.writeFileString(exeB, "");
+        const binaryName = platform === "win32" ? "opencode.exe" : "opencode";
+        const exeA = path.join(binDirA, binaryName);
+        const exeB = path.join(binDirB, binaryName);
+        yield* fs.writeFileString(exeA, "#!/bin/sh\n");
+        yield* fs.writeFileString(exeB, "#!/bin/sh\n");
+        if (platform !== "win32") {
+          yield* fs.chmod(exeA, 0o755);
+          yield* fs.chmod(exeB, 0o755);
+        }
 
         const cache = new Map();
-        const env = { PATH: "node_modules\\.bin", PATHEXT: ".EXE" };
+        const env = {
+          PATH: path.join("node_modules", ".bin"),
+          PATHEXT: ".EXE",
+          HOME: dirA,
+          LOCALAPPDATA: dirA,
+          APPDATA: dirA,
+        };
 
-        const resolvedA = yield* resolveSpawnCommand("my-tool.exe", ["--version"], {
+        const resolvedA = yield* resolveSpawnCommand(binaryName, ["--version"], {
           env,
           cwd: dirA,
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(CommandResolutionCache, cache),
-        );
-        const resolvedB = yield* resolveSpawnCommand("my-tool.exe", ["--version"], {
+        }).pipe(Effect.provideService(CommandResolutionCache, cache));
+        const resolvedB = yield* resolveSpawnCommand(binaryName, ["--version"], {
           env,
           cwd: dirB,
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(CommandResolutionCache, cache),
-        );
+        }).pipe(Effect.provideService(CommandResolutionCache, cache));
 
         expect(resolvedA.command).toBe(exeA);
         expect(resolvedB.command).toBe(exeB);

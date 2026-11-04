@@ -994,6 +994,17 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
+  const normalizedBaseName = (platform === "win32" ? NodePath.win32 : NodePath.posix)
+    .basename(command)
+    .toLowerCase()
+    .replace(/\.(exe|cmd)$/u, "");
+  const isWellKnownTool =
+    normalizedBaseName === "opencode" ||
+    normalizedBaseName === "opencode-cli" ||
+    normalizedBaseName === "grok";
+  if (platform !== "win32" && !isMacosGit && !isWellKnownTool) {
+    return { command, args: [...args], shell: false };
+  }
 
   const hostEnvironment = yield* HostProcess.Environment;
   const env =
