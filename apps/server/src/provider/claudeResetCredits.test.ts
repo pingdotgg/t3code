@@ -90,7 +90,29 @@ describe("claudeResetCreditsToContract", () => {
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const fs = yield* FileSystem.FileSystem;
+      const initialIdentity =
+        yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath);
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"numStartups":42,"oauthAccount":{"organizationUuid":"org-1"}}',
+      );
+      expect(yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath)).toBe(
+        initialIdentity,
+      );
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-a","emailAddress":"a@example.test"}}',
+      );
+      const firstAccount = yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath);
+      yield* fs.writeFileString(
+        accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-1","accountUuid":"account-b","emailAddress":"b@example.test"}}',
+      );
+      expect(yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath)).not.toBe(
+        firstAccount,
+      );
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");

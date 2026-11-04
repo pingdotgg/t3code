@@ -552,7 +552,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         accountConfigPath,
         JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
       );
-      yield* claude!.invalidateCaches ?? Effect.void;
       failProbe = true;
       const accountChangedFailure = yield* claude!.snapshot.refresh;
 

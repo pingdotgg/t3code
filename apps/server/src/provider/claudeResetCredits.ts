@@ -22,7 +22,11 @@ const Credentials = Schema.Struct({
 });
 const Config = Schema.Struct({
   oauthAccount: Schema.optional(
-    Schema.Struct({ organizationUuid: Schema.optional(Schema.String) }),
+    Schema.Struct({
+      organizationUuid: Schema.optional(Schema.String),
+      accountUuid: Schema.optional(Schema.String),
+      emailAddress: Schema.optional(Schema.String),
+    }),
   ),
 });
 const Grant = Schema.Struct({
@@ -170,6 +174,15 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   },
   Effect.timeout("10 seconds"),
   Effect.orElseSucceed(() => undefined),
+);
+
+const encodeAccountCacheKey = Schema.encodeSync(Schema.fromJsonString(Config));
+export const readClaudeAccountCacheKey = Effect.fn("claudeResetCredits.readAccountCacheKey")(
+  (accountConfigPath: string) =>
+    readJson(Config, accountConfigPath).pipe(
+      Effect.map(encodeAccountCacheKey),
+      Effect.orElseSucceed(() => "unreadable"),
+    ),
 );
 
 export const readClaudeOrganizationId = (accountConfigPath: string) =>

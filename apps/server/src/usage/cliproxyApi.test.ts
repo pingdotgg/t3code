@@ -202,16 +202,16 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
-  it.effect(
-    "paces filtered Claude accounts, preserves readings, and shares account cooldowns",
-    () =>
+  it.effect.each([429, 503])(
+    "paces filtered Claude accounts, preserves readings, and shares HTTP %s cooldowns",
+    (status) =>
       Effect.gen(function* () {
         let limited = false;
         const test = fixture({
           accounts: accounts.map((account) => ({ ...account, provider: "claude" })),
           upstream: () =>
             limited
-              ? { status: 429, body: {}, headers: { "Retry-After": ["600"] } }
+              ? { status, body: {}, headers: { "Retry-After": ["600"] } }
               : { status: 200, body: { five_hour: { utilization: 25, resets_at: null } } },
         });
         const api = yield* test.api;

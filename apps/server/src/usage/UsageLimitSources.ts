@@ -91,11 +91,12 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return {
-        ...base,
-        accounts: lastGoodSources.get(accountKey) ?? [],
-        error: accounts.failure.detail,
-      };
+      const retained = (lastGoodSources.get(accountKey) ?? []).map((account) => ({
+        ...account,
+        usageLimits: { ...account.usageLimits, stale: true },
+      }));
+      lastGoodSources.set(accountKey, retained);
+      return { ...base, accounts: retained, error: accounts.failure.detail };
     }
     const retained =
       providers === undefined

@@ -163,8 +163,9 @@ it.effect("reads a management key from its secret provider", () => {
   );
 });
 
-it.effect("retains another window's account when provider-filtered usage refreshes finish", () =>
-  Effect.gen(function* () {
+it.effect("retains another window's account when provider-filtered usage refreshes finish", () => {
+  let fail = false;
+  return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
     yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["claudeAgent"]));
     expect((yield* sources.current)[0]?.accounts.map((account) => account.driver)).toEqual([
@@ -175,6 +176,23 @@ it.effect("retains another window's account when provider-filtered usage refresh
       "claudeAgent",
       "codex",
     ]);
+    const prior = (yield* sources.current)[0]!;
+    fail = true;
+    yield* sources.refresh;
+    const failed = (yield* sources.current)[0]!;
+    expect(failed.accounts).toEqual(
+      prior.accounts.map((account) => ({
+        ...account,
+        usageLimits: { ...account.usageLimits, stale: true },
+      })),
+    );
+    expect(failed.error).toContain("401");
+    fail = false;
+    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
+    expect(
+      (yield* sources.current)[0]?.accounts.find((account) => account.driver === "claudeAgent")
+        ?.usageLimits.stale,
+    ).toBe(true);
   }).pipe(
     Effect.provide([
       ServerSettings.layerTest({
@@ -195,6 +213,8 @@ it.effect("retains another window's account when provider-filtered usage refresh
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Effect.sync(() => {
+            if (fail)
+              return HttpClientResponse.fromWeb(request, Response.json({}, { status: 401 }));
             if (request.url.endsWith("/auth-files"))
               return HttpClientResponse.fromWeb(
                 request,
@@ -225,5 +245,5 @@ it.effect("retains another window's account when provider-filtered usage refresh
       NodeCrypto.layer,
     ]),
     Effect.scoped,
-  ),
-);
+  );
+});

@@ -275,10 +275,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
     const response = yield* decodeApiResponse(raw);
-    if (response.status_code === 429) {
-      const value = Object.entries(response.header ?? {}).find(
-        ([name]) => name.toLowerCase() === "retry-after",
-      )?.[1];
+    const value = Object.entries(response.header ?? {}).find(
+      ([name]) => name.toLowerCase() === "retry-after",
+    )?.[1];
+    if (response.status_code === 429 || (response.status_code >= 500 && value !== undefined)) {
       cooldowns.set(
         accountKey,
         (yield* Clock.currentTimeMillis) +

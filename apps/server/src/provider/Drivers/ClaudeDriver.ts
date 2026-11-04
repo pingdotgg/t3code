@@ -59,6 +59,9 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+const ProbeCacheKey = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Boolean]));
+const encodeProbeKey = Schema.encodeSync(ProbeCacheKey);
+const decodeProbeKey = Schema.decodeSync(ProbeCacheKey);
 
 const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilitiesProbe => {
   const result = { ...capabilities };
@@ -177,8 +180,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
-      (includeUsage: boolean) =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir, includeUsage).pipe(
+      (key: string) => {
+        const [, includeUsage] = decodeProbeKey(key);
+        return probeClaudeCapabilities(effectiveConfig, processEnv, stateDir, includeUsage).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
               Effect.map((workspaceId) => ({
@@ -209,14 +213,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
-        ),
+        );
+      },
       {
         capacity: 2,
         timeToLive: () => CAPABILITIES_PROBE_TTL,
       },
     );
     let lastAccount: ClaudeCapabilitiesProbe | undefined;
+    let lastIdentity: string | undefined;
     const resolveCapabilities = Effect.gen(function* () {
+      const identity = yield* ClaudeResetCredits.readClaudeAccountCacheKey(accountConfigPath);
+      if (lastIdentity !== identity) {
+        yield* Cache.invalidateAll(capabilitiesProbeCache);
+        yield* Ref.set(lastGoodCapabilities, undefined);
+        lastAccount = undefined;
+        lastIdentity = identity;
+      }
       let includeUsage = yield* UsagePolling;
       if (includeUsage && usageHttpClient) {
         const token = yield* ClaudeResetCredits.readAccessToken(configDir).pipe(
@@ -230,14 +243,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       }
       const capabilities: ClaudeCapabilitiesProbe = (yield* Cache.get(
         capabilitiesProbeCache,
-        includeUsage,
+        encodeProbeKey([identity, includeUsage]),
       )).capabilities;
       if (
         lastAccount !== undefined &&
         (lastAccount.email?.toLowerCase() !== capabilities.email?.toLowerCase() ||
           lastAccount.workspaceId !== capabilities.workspaceId)
       )
-        yield* Cache.invalidate(capabilitiesProbeCache, !includeUsage);
+        yield* Cache.invalidate(capabilitiesProbeCache, encodeProbeKey([identity, !includeUsage]));
       lastAccount = capabilities;
       return capabilities;
     }).pipe(
