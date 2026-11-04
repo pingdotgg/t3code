@@ -64,7 +64,7 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..2b9ef77c3eb58cd284152ad22b2e711a
          offset: SCREEN_WIDTH * index,
          index,
 diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
-index 5fcaa9f9a7d893817fee89b85186ee3936118e69..98ecef33888cbf7ad50a61bbf1645aee1857c054 100644
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464ed564c8b8 100644
 --- a/dist/components/ImageItem/ImageItem.android.js
 +++ b/dist/components/ImageItem/ImageItem.android.js
 @@ -6,17 +6,17 @@
@@ -114,7 +114,7 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..98ecef33888cbf7ad50a61bbf1645aee
 -      <Animated.Image {...panHandlers} source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>
 -      {(!isLoaded || !imageDimensions) && <ImageLoading />}
 +      {/* Pinch from anywhere on screen, not only on the fitted image. */}
-+      <View {...panHandlers} style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
++      <View {...panHandlers} pointerEvents={isLoaded && imageDimensions ? "auto" : "none"} style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
 +        <Animated.Image source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>
 +        {(!isLoaded || !imageDimensions) && <ImageLoading />}
 +      </View>
