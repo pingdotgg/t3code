@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
   CommandId,
   isProviderNativeSubagentThread,
   MessageId,
@@ -15,6 +16,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import { userFacingDispatchErrorMessage } from "../UserFacingErrors.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { subagentInput } from "./fixtures/subagent/input.ts";
+import { claudeStopHookContinuationInput } from "./fixtures/claude_stop_hook_continuation/input.ts";
 import { runOrchestratorV2Scenario } from "./OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
@@ -106,6 +108,42 @@ describe("Claude Agent SDK replay fixtures", () => {
         provideDeterministicTestRuntime,
         Effect.scoped,
       );
+    }),
+  );
+
+  // regression: #5297 a Stop hook's additionalContext continuation hid the answer before it.
+  // Recorded live: the CLI emits no user frame for the hook, only a second assistant message.
+  it.effect("marks a Stop hook continuation between the answer and the reply", () =>
+    runClaudeReplayFixture({
+      fixtureName: "claude_stop_hook_continuation",
+      buildInput: claudeStopHookContinuationInput,
+      driver: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./fixtures/claude_stop_hook_continuation/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: (result) => {
+          const projection = projectionFor(result, "claude_stop_hook_continuation");
+          assert.deepEqual(
+            projection.runs.map((run) => run.status),
+            ["completed"],
+          );
+          const items = projection.turnItems.flatMap((item) =>
+            item.type === "assistant_message"
+              ? [item.text.trim()]
+              : item.type === "notification"
+                ? [`notification:${item.summary}`]
+                : [],
+          );
+          assert.deepEqual(items, [
+            "STOP_HOOK_ANSWER",
+            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}`,
+            "STOP_HOOK_REPLY",
+          ]);
+        },
+      },
     }),
   );
 

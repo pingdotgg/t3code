@@ -59,6 +59,7 @@ import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "../src/orchestration-v2/t
 import { CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_background_subagent_wake/input.ts";
 import { CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/input.ts";
 import { CLAUDE_MCP_TOOL_PRESENTATION_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_mcp_tool_presentation/input.ts";
+import { CLAUDE_STOP_HOOK_CONTINUATION_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_stop_hook_continuation/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
 import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
 import {
@@ -249,6 +250,14 @@ const CLAUDE_RECORDINGS = {
   claude_mcp_tool_presentation: {
     prompts: [CLAUDE_MCP_TOOL_PRESENTATION_PROMPT],
     defaultTranscriptFile: "fixtures/claude_mcp_tool_presentation/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
+  // Record with T3_CLAUDE_REPLAY_CWD at a scratch project whose .claude/settings.json has the
+  // Stop hook described in the fixture's input.ts.
+  claude_stop_hook_continuation: {
+    prompts: [CLAUDE_STOP_HOOK_CONTINUATION_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_stop_hook_continuation/claude_transcript.ndjson",
     queryMode: "streaming",
     enableTools: true,
   },
