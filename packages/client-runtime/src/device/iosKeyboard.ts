@@ -1,32 +1,16 @@
-import { isAltGraphText, isMacPlatform } from "@t3tools/shared/keybindings";
+import {
+  EVENT_CODE_SHORTCUT_KEYS,
+  isAltGraphText,
+  isMacPlatform,
+  US_SHIFTED_TO_UNSHIFTED_KEYS,
+} from "@t3tools/shared/keybindings";
 
-const HID_CONTROL = 0xe0;
-export const HID_SHIFT = 0xe1;
-export const HID_OPTION = 0xe2;
-const HID_COMMAND = 0xe3;
-
-export type UsKey = { usage: number; shift: boolean };
+export type UsKey = { code: string; shift: boolean };
 export type UsKeyStroke = UsKey & { option: boolean };
 
-// The simulator reads HID keys with a US layout, so a key is found from the character the user's
-// own layout typed, not from its position.
-const US_KEY_ROWS = [
-  {
-    firstUsage: 0x04,
-    plain: "abcdefghijklmnopqrstuvwxyz1234567890",
-    shifted: "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()",
-  },
-  { firstUsage: 0x2c, plain: " -=[]\\", shifted: " _+{}|" },
-  { firstUsage: 0x33, plain: ";'`,./", shifted: ':"~<>?' },
-];
-
-const US_KEYS = new Map<string, UsKey>();
-for (const { firstUsage, plain, shifted } of US_KEY_ROWS) {
-  [...plain].forEach((character, index) => {
-    US_KEYS.set(shifted[index]!, { usage: firstUsage + index, shift: true });
-    US_KEYS.set(character, { usage: firstUsage + index, shift: false });
-  });
-}
+const US_CODE_BY_KEY = new Map(
+  Object.entries(EVENT_CODE_SHORTCUT_KEYS).map(([code, key]) => [key, code]),
+);
 
 // iOS takes the Option keys of the macOS US layout.
 const US_OPTION_KEYS: Readonly<Record<string, string>> = {
@@ -73,20 +57,27 @@ const US_ACCENT_KEYS: Readonly<Record<string, string>> = {
   "̈": "u",
 };
 
+// The simulator reads keys with a US layout, so find the US key that types this character.
 export function usKey(character: string): UsKey | undefined {
-  return US_KEYS.get(character);
+  const unshifted = US_SHIFTED_TO_UNSHIFTED_KEYS.get(character) ?? character.toLowerCase();
+  const code = /^[a-z]$/.test(unshifted)
+    ? `Key${unshifted.toUpperCase()}`
+    : unshifted === " "
+      ? "Space"
+      : US_CODE_BY_KEY.get(unshifted);
+  return code ? { code, shift: unshifted !== character } : undefined;
 }
 
 export function usKeyStrokes(character: string): UsKeyStroke[] | null {
-  const plain = US_KEYS.get(character);
+  const plain = usKey(character);
   if (plain) return [{ ...plain, option: false }];
 
-  const option = US_KEYS.get(US_OPTION_KEYS[character] ?? "");
+  const option = usKey(US_OPTION_KEYS[character] ?? "");
   if (option) return [{ ...option, option: true }];
 
   const [letter = "", accent = "", ...rest] = character.normalize("NFD");
-  const accentKey = US_KEYS.get(US_ACCENT_KEYS[accent] ?? "");
-  const letterKey = US_KEYS.get(letter);
+  const accentKey = usKey(US_ACCENT_KEYS[accent] ?? "");
+  const letterKey = usKey(letter);
   if (rest.length > 0 || !accentKey || !letterKey) return null;
   return [
     { ...accentKey, option: true },
@@ -107,9 +98,9 @@ export function typedCharacter(event: KeyboardEvent): string | null {
 export function iosModifierKeys() {
   const mac = isMac();
   return [
-    ["shiftKey", HID_SHIFT],
-    ["ctrlKey", mac ? HID_CONTROL : HID_COMMAND],
-    ["altKey", HID_OPTION],
-    ["metaKey", mac ? HID_COMMAND : HID_CONTROL],
+    ["shiftKey", "ShiftLeft"],
+    ["ctrlKey", mac ? "ControlLeft" : "MetaLeft"],
+    ["altKey", "AltLeft"],
+    ["metaKey", mac ? "MetaLeft" : "ControlLeft"],
   ] as const;
 }

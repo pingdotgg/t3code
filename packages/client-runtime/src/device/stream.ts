@@ -11,8 +11,6 @@ import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import {
-  HID_OPTION,
-  HID_SHIFT,
   iosModifierKeys,
   typedCharacter,
   usKey,
@@ -435,28 +433,32 @@ export function createDeviceStreamClient(
   let decodedVideoGeneration: number | null = null;
   let iosInputAdmitted = false;
   let iosInputUnavailable = false;
-  const iosHeldModifiers = new Set<number>();
+  const iosHeldModifiers = new Set<string>();
   const iosPressedKeys = new Map<string, number>();
   const sendIosKey = (type: "down" | "up", usage: number) =>
     send(taggedJson(IOS_MSG_KEY, { type, usage }));
+  const sendIosCode = (type: "down" | "up", code: string) => {
+    const usage = hidUsageForCode(code);
+    if (usage !== null) sendIosKey(type, usage);
+  };
   const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
-    for (const [flag, usage] of iosModifierKeys()) {
+    for (const [flag, code] of iosModifierKeys()) {
       const held = event?.[flag] === true;
-      if (held === iosHeldModifiers.has(usage) || (held && phase === "up")) continue;
-      if (held) iosHeldModifiers.add(usage);
-      else iosHeldModifiers.delete(usage);
-      sendIosKey(held ? "down" : "up", usage);
+      if (held === iosHeldModifiers.has(code) || (held && phase === "up")) continue;
+      if (held) iosHeldModifiers.add(code);
+      else iosHeldModifiers.delete(code);
+      sendIosCode(held ? "down" : "up", code);
     }
   };
   const typeIosStrokes = (strokes: UsKeyStroke[]) => {
     syncIosModifiers(null);
-    for (const { usage, shift, option } of strokes) {
-      if (option) sendIosKey("down", HID_OPTION);
-      if (shift) sendIosKey("down", HID_SHIFT);
-      sendIosKey("down", usage);
-      sendIosKey("up", usage);
-      if (shift) sendIosKey("up", HID_SHIFT);
-      if (option) sendIosKey("up", HID_OPTION);
+    for (const { code, shift, option } of strokes) {
+      if (option) sendIosCode("down", "AltLeft");
+      if (shift) sendIosCode("down", "ShiftLeft");
+      sendIosCode("down", code);
+      sendIosCode("up", code);
+      if (shift) sendIosCode("up", "ShiftLeft");
+      if (option) sendIosCode("up", "AltLeft");
     }
   };
   const pressIosKey = (event: KeyboardEvent) => {
@@ -469,8 +471,9 @@ export function createDeviceStreamClient(
       character === null || event.code.startsWith("Numpad") ? null : usKeyStrokes(character);
     if (strokes) return typeIosStrokes(strokes);
 
-    const usage =
-      (character === null ? usKey(event.key)?.usage : undefined) ?? hidUsageForCode(event.code);
+    const usage = hidUsageForCode(
+      (character === null ? usKey(event.key)?.code : undefined) ?? event.code,
+    );
     if (usage === null) return;
     syncIosModifiers(event);
     sendIosKey("down", usage);
