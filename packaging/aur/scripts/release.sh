@@ -17,16 +17,26 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
-asset_digest="$(jq -r --arg name "$asset_name" \
-  '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
-appimage_sha256="${asset_digest#sha256:}"
-
-if [[ ! "$appimage_sha256" =~ ^[0-9a-f]{64}$ ]]; then
-  echo "Release $tag is missing $asset_name or its SHA-256 digest." >&2
-  exit 1
-fi
+declare -A appimage_names appimage_checksums
+for architecture in x86_64 aarch64; do
+  upstream_arch="${architecture/aarch64/arm64}"
+  if ! asset="$(jq -er --arg suffix "-${upstream_arch}.AppImage" '
+    [.assets[] | select(.name | startswith("T3-Code-") and endswith($suffix))]
+    | select(length == 1) | .[0] | [.name, .digest] | @tsv
+  ' <<<"$release_json")"; then
+    echo "Release $tag must contain exactly one T3 Code $upstream_arch AppImage." >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r asset_name asset_digest <<<"$asset"
+  checksum="${asset_digest#sha256:}"
+  if [[ ! "$checksum" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Release $tag is missing the SHA-256 digest for $asset_name." >&2
+    exit 1
+  fi
+  appimage_names[$architecture]="$asset_name"
+  appimage_checksums[$architecture]="$checksum"
+done
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf -- "$work_dir"' EXIT
@@ -39,9 +49,15 @@ cd "$package_dir"
 sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
-  -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
   -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD
+
+for architecture in x86_64 aarch64; do
+  sed -Ei \
+    -e "s/^_asset_${architecture}=.*/_asset_${architecture}=\"${appimage_names[$architecture]}\"/" \
+    -e "s/^sha256sums_${architecture}=.*/sha256sums_${architecture}=('${appimage_checksums[$architecture]}')/" \
+    PKGBUILD
+done
 
 run_as_builder() {
   if [[ "$(id -u)" == 0 ]]; then
