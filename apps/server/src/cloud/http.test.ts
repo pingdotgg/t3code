@@ -25,6 +25,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as NetAddress from "effect/net/NetAddress";
 import { decodeRelayJwt, RELAY_LINK_PROOF_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -78,6 +79,7 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
+  Layer.provide(EnvironmentKeys.layer),
   Layer.provide(
     Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeedNone }),
   ),
