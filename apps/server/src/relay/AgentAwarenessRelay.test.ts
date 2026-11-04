@@ -178,17 +178,23 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
-  const catchUp = { shellSnapshotReads: 0 };
+  const catchUp = { activitySnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
-    getThreadShell: (threadId) =>
-      Effect.sync(() => shellReads.push(threadId)).pipe(
-        Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
-      ),
-    getShellSnapshot: () =>
-      Effect.sync(() => {
-        catchUp.shellSnapshotReads += 1;
-        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
-      }),
+    getThreadShell: unused,
+    getShellSnapshot: unused,
+    getAgentAwarenessSnapshot: (threadId) =>
+      threadId === undefined
+        ? Effect.sync(() => {
+            catchUp.activitySnapshotReads += 1;
+            return { snapshotSequence: 1, threads: [] };
+          })
+        : Effect.sync(() => shellReads.push(threadId)).pipe(
+            Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
+            Effect.map((thread) => ({
+              snapshotSequence: 1,
+              threads: thread === null ? [] : [thread],
+            })),
+          ),
     listActiveSubagentThreadIds: unused,
     listAppOwnedChildThreadIds: unused,
     countThreads: unused,
@@ -834,21 +840,21 @@ it.effect("catches up after startup without polling after success", () =>
     const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay();
     yield* relay.start();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 1);
+    assert.equal(catchUp.activitySnapshotReads, 1);
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 1);
+    assert.equal(catchUp.activitySnapshotReads, 1);
 
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(catchUp.activitySnapshotReads, 2);
 
     const readsBeforeIdle = secretReads.length;
     yield* TestClock.adjust("10 minutes");
-    assert.equal(catchUp.shellSnapshotReads, 2);
+    assert.equal(catchUp.activitySnapshotReads, 2);
     assert.equal(secretReads.length, readsBeforeIdle);
 
     yield* secrets.set(
@@ -857,6 +863,6 @@ it.effect("catches up after startup without polling after success", () =>
     );
     yield* relay.requestCatchUp();
     yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.shellSnapshotReads, 3);
+    assert.equal(catchUp.activitySnapshotReads, 3);
   }).pipe(Effect.scoped),
 );
