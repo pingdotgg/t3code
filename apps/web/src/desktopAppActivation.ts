@@ -27,11 +27,24 @@ export interface DesktopAppActivationTarget {
   readonly platform: ExecutionEnvironmentPlatformOs;
 }
 
-export function desktopActivationReady(
-  primaryReady: boolean,
-  findWslTarget: () => DesktopAppActivationTarget | null,
-): boolean {
-  return primaryReady || findWslTarget() !== null;
+export function resolveDesktopActivationTarget(
+  request: DesktopAppActivationRequest,
+  primaryId: EnvironmentId | null,
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly backendId: string | null;
+    readonly connected: boolean;
+    readonly platform: ExecutionEnvironmentPlatformOs | null;
+  }>,
+  bootstraps: ReadonlyArray<{ readonly id: string; readonly runningDistro?: string | null }>,
+): DesktopAppActivationTarget | null {
+  if (request.wslDistro !== undefined) {
+    return findWslActivationTarget(request.wslDistro, environments, bootstraps);
+  }
+  const primary = environments.find((environment) => environment.environmentId === primaryId);
+  return primary?.connected && primary.platform !== null
+    ? { environmentId: primary.environmentId, platform: primary.platform }
+    : null;
 }
 
 export function openedProjectDraft(
@@ -51,7 +64,9 @@ export function openedProjectDraft(
 }
 
 export interface DesktopAppActivationDependencies {
-  readonly getTarget: (request: DesktopAppActivationRequest) => DesktopAppActivationTarget | null;
+  readonly getTarget: (
+    request: DesktopAppActivationRequest,
+  ) => DesktopAppActivationTarget | null | Promise<DesktopAppActivationTarget | null>;
   readonly waitForSnapshot: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly findProject: (
     environmentId: EnvironmentId,
@@ -68,7 +83,7 @@ export interface DesktopAppActivationDependencies {
 }
 
 export function findWslActivationTarget(
-  distro: string | null,
+  distro: string,
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly backendId: string | null;
@@ -82,8 +97,7 @@ export function findWslActivationTarget(
     return (
       environment.connected &&
       environment.platform !== null &&
-      bootstrap?.runningDistro != null &&
-      (distro === null || bootstrap.runningDistro.toLowerCase() === distro.toLowerCase())
+      bootstrap?.runningDistro?.toLowerCase() === distro.toLowerCase()
     );
   });
   return target?.platform
@@ -113,7 +127,7 @@ export async function handleDesktopAppActivationRequest(
   request: DesktopAppActivationRequest,
   dependencies: DesktopAppActivationDependencies,
 ): Promise<DesktopAppActivationResponse> {
-  const target = dependencies.getTarget(request);
+  const target = await dependencies.getTarget(request);
   if (target === null) {
     return failure(
       request.requestId,

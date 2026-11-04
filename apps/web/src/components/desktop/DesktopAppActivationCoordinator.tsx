@@ -2,13 +2,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
+import { Atom } from "effect/reactivity";
 
 import {
-  findWslActivationTarget,
+  resolveDesktopActivationTarget,
   handleDesktopAppActivationRequest,
   openedProjectDraft,
   desktopAppActivationPendingAtom,
-  desktopActivationReady,
 } from "../../desktopAppActivation";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { desktopLocalBackendId } from "../../connection/desktopLocal";
@@ -19,9 +19,10 @@ import {
 } from "@t3tools/client-runtime/state/projects";
 import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
-import { environmentShell, useEnvironmentShellHasSnapshot } from "../../state/shell";
+import { environmentShell } from "../../state/shell";
+import { environmentPresentations } from "../../state/presentation";
+import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -30,8 +31,6 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 
 export function DesktopAppActivationCoordinator() {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const { environments } = useEnvironments();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
@@ -41,56 +40,44 @@ export function DesktopAppActivationCoordinator() {
   const queueRef = useRef(Promise.resolve());
   const pendingRef = useRef(0);
   const activation = window.desktopBridge?.appActivation;
-  const shellHasSnapshot = useEnvironmentShellHasSnapshot(
-    primaryEnvironment?.environmentId ?? null,
-  );
-  const primaryReady =
-    primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null &&
-    shellHasSnapshot;
-
-  const findWslTarget = (distro: string | null) => {
-    let bootstraps: ReturnType<
-      NonNullable<typeof window.desktopBridge>["getLocalEnvironmentBootstraps"]
-    >;
-    try {
-      bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
-    } catch {
-      return null;
-    }
-    return findWslActivationTarget(
-      distro,
-      environments.map((environment) => ({
-        environmentId: environment.environmentId,
-        backendId:
-          environment.environmentId === primaryEnvironment?.environmentId
-            ? PRIMARY_LOCAL_ENVIRONMENT_ID
-            : desktopLocalBackendId(environment.entry.target),
-        connected: environment.connection.phase === "connected",
-        platform: environment.serverConfig?.environment.platform.os ?? null,
-      })),
-      bootstraps,
-    );
-  };
-  const ready =
-    activation !== undefined && desktopActivationReady(primaryReady, () => findWslTarget(null));
-
   const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
-      getTarget: (request) => {
-        if (request.wslDistro !== undefined) {
-          return findWslTarget(request.wslDistro);
-        }
-        if (
-          primaryEnvironment?.connection.phase !== "connected" ||
-          primaryEnvironment.serverConfig === null
-        ) {
-          return null;
-        }
-        return {
-          environmentId: primaryEnvironment.environmentId,
-          platform: primaryEnvironment.serverConfig.environment.platform.os,
-        };
+      getTarget: async (request) => {
+        const targetAtom = Atom.make((get) => {
+          const primaryId = get(primaryEnvironmentIdAtom);
+          const presentations = get(environmentPresentations.presentationsAtom);
+          let bootstraps: ReturnType<
+            NonNullable<typeof window.desktopBridge>["getLocalEnvironmentBootstraps"]
+          > = [];
+          if (request.wslDistro !== undefined) {
+            try {
+              bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
+            } catch {
+              return null;
+            }
+          }
+          return resolveDesktopActivationTarget(
+            request,
+            primaryId,
+            [...presentations].map(([environmentId, environment]) => ({
+              environmentId,
+              backendId:
+                environmentId === primaryId
+                  ? PRIMARY_LOCAL_ENVIRONMENT_ID
+                  : desktopLocalBackendId(environment.entry.target),
+              connected: environment.connection.phase === "connected",
+              platform: environment.serverConfig?.environment.platform.os ?? null,
+            })),
+            bootstraps,
+          );
+        });
+        const ready = await waitForAtomValue({
+          registry: appAtomRegistry,
+          atom: targetAtom,
+          predicate: (target) => target !== null,
+          timeoutMs: 5_000,
+        });
+        return ready ? appAtomRegistry.get(targetAtom) : null;
       },
       waitForSnapshot: (environmentId) =>
         waitForAtomValue({
@@ -154,7 +141,7 @@ export function DesktopAppActivationCoordinator() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop activation requests over the bridge and marks the renderer ready
   useEffect(() => {
-    if (!ready || activation === undefined) return;
+    if (activation === undefined) return;
 
     let subscribed = true;
     const unsubscribe = activation.onRequest((request) => {
@@ -180,7 +167,7 @@ export function DesktopAppActivationCoordinator() {
       void activation.setReady(false).catch(() => undefined);
       unsubscribe();
     };
-  }, [activation, ready]);
+  }, [activation]);
 
   return null;
 }

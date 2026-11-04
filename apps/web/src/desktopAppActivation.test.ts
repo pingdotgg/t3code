@@ -1,10 +1,12 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AtomRegistry } from "effect/reactivity";
+import { waitForAtomValue } from "./state/waitForAtomValue";
 
 import {
   handleDesktopAppActivationRequest,
   findWslActivationTarget,
-  desktopActivationReady,
+  resolveDesktopActivationTarget,
   openedProjectDraft,
   type DesktopAppActivationDependencies,
 } from "./desktopAppActivation";
@@ -40,10 +42,77 @@ function dependencies(
 }
 
 describe("desktop app activation", () => {
-  it("accepts WSL requests when the primary is disconnected without routing native requests to WSL", async () => {
-    expect(desktopActivationReady(false, () => ({ environmentId, platform: "linux" }))).toBe(true);
-    expect(desktopActivationReady(false, () => null)).toBe(false);
-    expect(desktopActivationReady(true, () => null)).toBe(true);
+  it("waits for the requested environment when the other connects first", async () => {
+    const wsl = EnvironmentId.make("wsl");
+    const primary = {
+      environmentId,
+      backendId: "primary",
+      connected: false,
+      platform: "windows" as const,
+    };
+    const linux = {
+      environmentId: wsl,
+      backendId: "wsl",
+      connected: false,
+      platform: "linux" as const,
+    };
+    const bootstraps = [{ id: "wsl", runningDistro: "Ubuntu" }];
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    for (const wslRequest of [false, true]) {
+      const candidates = Atom.make(
+        wslRequest
+          ? [{ ...primary, connected: true }, linux]
+          : [primary, { ...linux, connected: true }],
+      );
+      const activationRequest = wslRequest
+        ? { ...request, wslDistro: "Ubuntu" }
+        : { ...request, platform: "win32" as const };
+      const target = Atom.make((get) =>
+        resolveDesktopActivationTarget(
+          activationRequest,
+          environmentId,
+          get(candidates),
+          bootstraps,
+        ),
+      );
+      expect(registry.get(target)).toBeNull();
+      const waiting = waitForAtomValue({
+        registry,
+        atom: target,
+        predicate: (value) => value !== null,
+        timeoutMs: 5_000,
+      });
+      registry.set(candidates, [
+        { ...primary, connected: true },
+        { ...linux, connected: true },
+      ]);
+      expect(await waiting).toBe(true);
+      expect(registry.get(target)?.environmentId).toBe(wslRequest ? wsl : environmentId);
+    }
+  });
+  it("waits for the requested target before looking up its project", async () => {
+    let releaseTarget!: (target: {
+      environmentId: typeof environmentId;
+      platform: "linux";
+    }) => void;
+    const target = new Promise<{ environmentId: typeof environmentId; platform: "linux" }>(
+      (resolve) => {
+        releaseTarget = resolve;
+      },
+    );
+    const findProject = vi.fn(() => ({
+      id: existingProjectId,
+      environmentId,
+      workspaceRoot: request.workspaceRoot,
+    }));
+    const activation = handleDesktopAppActivationRequest(
+      request,
+      dependencies({ getTarget: () => target, findProject }),
+    );
+    expect(findProject).not.toHaveBeenCalled();
+    releaseTarget({ environmentId, platform: "linux" });
+    expect(await activation).toMatchObject({ ok: true, projectId: existingProjectId });
     const response = await handleDesktopAppActivationRequest(
       request,
       dependencies({ getTarget: () => null }),
@@ -112,13 +181,6 @@ describe("desktop app activation", () => {
       environmentId: ubuntu,
       platform: "linux",
     });
-    expect(findWslActivationTarget(null, [candidates[1]!], bootstraps)).toEqual({
-      environmentId: ubuntu,
-      platform: "linux",
-    });
-    expect(
-      findWslActivationTarget(null, [{ ...candidates[1]!, connected: false }], bootstraps),
-    ).toBeNull();
     expect(findWslActivationTarget("Ubuntu", [candidates[0]!], bootstraps)).toBeNull();
     expect(
       findWslActivationTarget("Ubuntu", [{ ...candidates[1]!, connected: false }], bootstraps),
