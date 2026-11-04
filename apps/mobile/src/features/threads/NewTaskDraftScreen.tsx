@@ -97,6 +97,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
+const WORKTREE_BASE_BRANCH_BLOCK_REASON = "Choose a base branch before creating a worktree.";
+
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
   readonly worktreePath: string | null;
@@ -695,9 +697,14 @@ export function NewTaskDraftScreen(props: {
         : flow.submitting
           ? "Starting the thread…"
           : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
-            ? "Choose a base branch before creating a worktree."
+            ? WORKTREE_BASE_BRANCH_BLOCK_REASON
             : null
       : "Wait for shared content to finish importing.";
+  const showWorktreeBaseBranchHint =
+    setupBlockReason === WORKTREE_BASE_BRANCH_BLOCK_REASON &&
+    selectedBranchName === null &&
+    flow.isGitRepoKnown &&
+    !flow.branchesLoading;
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
       return;
@@ -929,6 +936,11 @@ export function NewTaskDraftScreen(props: {
                 </View>
               ) : null}
               {flow.canChooseWorkspace ? workspaceControls : null}
+              {flow.canChooseWorkspace && showWorktreeBaseBranchHint ? (
+                <Text textRole="footnote" className="px-4 text-foreground-muted">
+                  Choose a base branch or switch to Current checkout to send.
+                </Text>
+              ) : null}
             </View>
           ),
           editorRef: promptInputRef,
