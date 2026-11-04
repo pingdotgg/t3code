@@ -16,6 +16,15 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
+const decodeCdpMessage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.Number),
+      method: Schema.optional(Schema.String),
+      sessionId: Schema.optional(Schema.String),
+    }),
+  ),
+);
 const key = { threadId: "thread-1", tabId: "tab-1" };
 /** Sends a page command whose id the fake debugger records as it receives it. */
 const command = (
@@ -109,16 +118,24 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
 /**
  * Ids of the replies the host sends, in order. A screenshot's reply leaves after its turn
  * has passed on, so by then the next waiting screenshot, if any, has been sent. Subscribe
- * before sending commands: a new subscriber releases the tab's relay.
+ * before sending commands: a new subscriber releases the tab's relay. Screencast frames
+ * go to `frames` by the session they were sent to.
  */
-const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
+const watchReplies = (
+  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
+  frames: Array<string | undefined> = [],
+) =>
   Effect.gen(function* () {
     const replies = yield* Queue.unbounded<number>();
     yield* host.events.pipe(
       Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
-      Stream.runForEach((event) =>
-        event.type === "cdp" ? Queue.offer(replies, decodeCdpReply(event.message).id) : Effect.void,
-      ),
+      Stream.runForEach((event) => {
+        if (event.type !== "cdp") return Effect.void;
+        const { id, method, sessionId } = decodeCdpMessage(event.message);
+        if (id !== undefined) return Queue.offer(replies, id);
+        if (method === "Page.screencastFrame") frames.push(sessionId);
+        return Effect.void;
+      }),
       Effect.forkScoped,
     );
     yield* Effect.yieldNow;
@@ -921,13 +938,16 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
-      const replies = yield* watchReplies(host);
+      const frames: Array<string | undefined> = [];
+      const replies = yield* watchReplies(host, frames);
       const raw = (message: Record<string, unknown>) =>
         host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
       const nativeStops = () =>
         debuggee.methods.filter((method) => method === "Page.stopScreencast").length;
 
       // A viewer and a recording share Chromium's single screencast for the guest.
+      yield* raw({ id: 0, method: "Target.setAutoAttach", params: { autoAttach: true } });
+      expect(yield* Queue.take(replies)).toBe(0);
       yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
       yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
       expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
@@ -938,6 +958,12 @@ describe("DesktopBrowserHost", () => {
       yield* raw({ id: 5, method: "Page.stopScreencast", sessionId: "t3-preview-page-1" });
       yield* settle;
       expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
+      yield* settle;
+      expect(frames, "sent a stopped session the screencast's frames").toEqual([
+        "t3-preview-page",
+        "t3-preview-page-2",
+      ]);
 
       yield* raw({ id: 6, method: "Page.stopScreencast", sessionId: "t3-preview-page-2" });
       yield* settle;

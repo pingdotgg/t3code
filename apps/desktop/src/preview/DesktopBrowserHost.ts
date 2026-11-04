@@ -361,6 +361,9 @@ export const make = Effect.gen(function* () {
           detachedOwners.add(owner);
           dropSessionHolds(tab, owner);
         },
+        // Frames stop only for a session that stopped its own stream, not one that never streamed.
+        receivesScreencast: (owner) =>
+          tab.screencasts.has(owner) || owner === undefined || !streamingOwners.has(owner),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
