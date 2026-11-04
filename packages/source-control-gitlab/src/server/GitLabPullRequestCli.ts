@@ -37,6 +37,7 @@ import {
   decodeDiffRefsJson,
   decodeDiscussionsJson,
   decodeLabelPermissionJson,
+  decodeReviewerLimitJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
@@ -54,6 +55,7 @@ import {
   decodeViewerJson,
   gitLabAwardName,
   LABEL_PERMISSION_GRAPHQL_QUERY,
+  REVIEWER_LIMIT_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
@@ -1715,10 +1717,22 @@ export const make = Effect.gen(function* () {
 
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {
-        return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
-          concurrency: 2,
-        }).pipe(
-          Effect.map(([mergeRequest, users]) => {
+        return Effect.all(
+          [
+            mergeRequestDetail(input),
+            projectUsers(input),
+            graphqlRead({
+              cwd: input.cwd,
+              host: input.host,
+              operation: "getReviewerLimit",
+              query: REVIEWER_LIMIT_GRAPHQL_QUERY,
+              variables: { fullPath: input.repository, iid: String(input.number) },
+              decode: decodeReviewerLimitJson,
+            }),
+          ],
+          { concurrency: 3 },
+        ).pipe(
+          Effect.map(([mergeRequest, users, multiple]) => {
             const author = mergeRequest.author?.login;
             const requested = new Set(mergeRequest.reviewRequestLogins);
             return {
@@ -1729,6 +1743,7 @@ export const make = Effect.gen(function* () {
                   : [{ ...candidate, isRequested: requested.has(candidate.login) }],
               ),
               truncated: users.rawCount >= MAX_PAGE_SIZE,
+              multiple,
             };
           }),
         );

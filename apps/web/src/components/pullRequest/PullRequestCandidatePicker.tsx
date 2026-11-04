@@ -1,5 +1,11 @@
 // Menu typeahead consumes search keystrokes; use a combobox.
-import type { ReactNode } from "react";
+import {
+  draftChanges,
+  isDraftSelected,
+  toggleDraft,
+  type SelectionDraft,
+} from "@t3tools/client-runtime/pull-request-selection";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -26,14 +32,16 @@ export function PullRequestCandidatePicker<T>({
   isPending,
   error,
   candidates,
+  matches,
+  isSelected,
+  single,
   emptyLabel,
   noMatchLabel,
   errorLabel,
   truncated,
   truncatedLabel,
   candidateKey,
-  disabled,
-  onSelect,
+  onCommit,
   children,
 }: {
   icon: ReactNode;
@@ -48,16 +56,27 @@ export function PullRequestCandidatePicker<T>({
   isPending: boolean;
   error: string | null;
   candidates: ReadonlyArray<T>;
+  matches: (candidate: T, query: string) => boolean;
+  isSelected: (candidate: T) => boolean;
+  single: boolean;
   emptyLabel: string;
   noMatchLabel: string;
   errorLabel: string;
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  disabled: boolean;
-  onSelect: (candidate: T) => void;
-  children: (candidate: T) => ReactNode;
+  /** Called once on close with what changed; the draft holds until it settles. */
+  onCommit: (changes: { add: ReadonlyArray<T>; remove: ReadonlyArray<T> }) => Promise<void>;
+  children: (candidate: T, selected: boolean) => ReactNode;
 }) {
+  const [draft, setDraft] = useState<SelectionDraft>(new Map());
+  const [sending, setSending] = useState(false);
+  const selections = candidates.map((candidate) => ({
+    key: candidateKey(candidate),
+    selected: isSelected(candidate),
+    candidate,
+  }));
+
   if (!allowed) {
     return (
       <Tooltip>
@@ -73,7 +92,23 @@ export function PullRequestCandidatePicker<T>({
     );
   }
 
-  const keys = candidates.map(candidateKey);
+  const shown = selections.filter((selection) => matches(selection.candidate, query));
+  const keys = shown.map((selection) => selection.key);
+
+  const commit = async () => {
+    const changes = draftChanges(draft, selections);
+    if (changes.add.length === 0 && changes.remove.length === 0) {
+      setDraft(new Map());
+      return;
+    }
+    setSending(true);
+    await onCommit({
+      add: changes.add.map((selection) => selection.candidate),
+      remove: changes.remove.map((selection) => selection.candidate),
+    });
+    setSending(false);
+    setDraft(new Map());
+  };
 
   return (
     <Combobox
@@ -83,8 +118,8 @@ export function PullRequestCandidatePicker<T>({
       autoHighlight
       value={null}
       onValueChange={(key) => {
-        const candidate = candidates.find((entry) => candidateKey(entry) === key);
-        if (candidate) onSelect(candidate);
+        const toggled = selections.find((selection) => selection.key === key);
+        if (toggled) setDraft(toggleDraft(draft, selections, toggled, single));
       }}
       open={open}
       onOpenChange={(nextOpen, details) => {
@@ -94,6 +129,7 @@ export function PullRequestCandidatePicker<T>({
           return;
         }
         onOpenChange(nextOpen);
+        if (!nextOpen && !sending) void commit();
       }}
     >
       <ComboboxTrigger
@@ -117,20 +153,20 @@ export function PullRequestCandidatePicker<T>({
             <p className="p-2 text-xs text-muted-foreground">
               {errorLabel} {error}
             </p>
-          ) : candidates.length === 0 ? (
+          ) : shown.length === 0 ? (
             <p className="p-2 text-xs text-muted-foreground">
               {query.length > 0 ? noMatchLabel : emptyLabel}
             </p>
           ) : (
-            candidates.map((candidate, index) => (
+            shown.map((selection, index) => (
               <ComboboxItem
-                key={keys[index]}
+                key={selection.key}
                 hideIndicator
                 index={index}
-                value={keys[index]}
-                disabled={disabled}
+                value={selection.key}
+                disabled={sending}
               >
-                {children(candidate)}
+                {children(selection.candidate, isDraftSelected(draft, selection))}
               </ComboboxItem>
             ))
           )}

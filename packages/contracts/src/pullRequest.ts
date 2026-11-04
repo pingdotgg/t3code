@@ -202,6 +202,8 @@ export type PullRequestReviewerCandidate = typeof PullRequestReviewerCandidate.T
 export const PullRequestReviewerCandidateList = Schema.Struct({
   candidates: Schema.Array(PullRequestReviewerCandidate),
   truncated: Schema.Boolean,
+  /** False where the host keeps a single reviewer, as GitLab Free does. Absent means any number. */
+  multiple: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewerCandidateList = typeof PullRequestReviewerCandidateList.Type;
 

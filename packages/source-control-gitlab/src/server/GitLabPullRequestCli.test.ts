@@ -1248,28 +1248,42 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads who has access to the project and who is already on the merge request", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
-        .mockReturnValueOnce(
-          Effect.succeed(output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }]))),
-        );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+  it.effect(
+    "reads who has access, who is already on the merge request, and how many it keeps",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }])),
+            ),
+          )
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                JSON.stringify({
+                  data: { project: { mergeRequest: { allowsMultipleReviewers: false } } },
+                }),
+              ),
+            ),
+          );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const list = yield* cli.listReviewerCandidates({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100");
-      expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
-        ["5", true],
-        ["9", false],
-      ]);
-      assert.isFalse(list.truncated);
-    }),
+        expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100");
+        expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+          ["5", true],
+          ["9", false],
+        ]);
+        assert.isFalse(list.truncated);
+        assert.isFalse(list.multiple);
+      }),
   );
 
   it.effect("writes the reviewer set back with the one being asked added to it", () =>

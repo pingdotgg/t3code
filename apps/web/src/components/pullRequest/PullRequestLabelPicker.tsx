@@ -32,7 +32,6 @@ export function PullRequestLabelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
@@ -41,30 +40,22 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
-    matches(entry, query),
-  );
-
-  const toggle = async (candidate: PullRequestLabelCandidate) => {
-    if (pending !== null) return;
-    setPending(candidate.name);
+  const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+    if (labels.length === 0) return;
+    const names = labels.map((label) => label.name);
     const result = await setLabels({
       environmentId,
-      input: { ...reference, labels: [candidate.name], applied: !candidate.isApplied },
+      input: { ...reference, labels: names, applied },
     });
-    setPending(null);
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: candidate.isApplied
-          ? `Could not take ${candidate.name} off`
-          : `Could not put ${candidate.name} on`,
+        title: `Could not ${applied ? "add" : "remove"} ${names.join(", ")}`,
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have triage access on this repository.",
         ),
       });
-      return;
     }
   };
 
@@ -81,17 +72,22 @@ export function PullRequestLabelPicker({
       searchLabel="Search labels"
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
-      candidates={candidates}
+      candidates={candidatesQuery.data?.candidates ?? []}
+      matches={matches}
+      isSelected={(candidate) => candidate.isApplied}
+      single={false}
       emptyLabel="This repository has no labels."
       noMatchLabel="No label matches that."
       errorLabel="The labels could not be read."
       truncated={candidatesQuery.data?.truncated === true}
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      onCommit={async ({ add, remove }) => {
+        await send(remove, false);
+        await send(add, true);
+      }}
     >
-      {(candidate) => {
+      {(candidate, selected) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>
@@ -106,9 +102,7 @@ export function PullRequestLabelPicker({
                 <span className="text-muted-foreground"> · {candidate.description}</span>
               ) : null}
             </span>
-            {candidate.isApplied ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
-            ) : null}
+            {selected ? <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" /> : null}
           </>
         );
       }}

@@ -1,0 +1,47 @@
+import {
+  draftChanges,
+  isDraftSelected,
+  toggleDraft,
+  type SelectionDraft,
+} from "@t3tools/client-runtime/pull-request-selection";
+import { useEffect, useEffectEvent, useState } from "react";
+
+/** Picks stay local while the sheet is open and go to the host once, when it closes. */
+export function useSelectionDraft<T>(input: {
+  readonly candidates: ReadonlyArray<T>;
+  readonly candidateKey: (candidate: T) => string;
+  readonly isSelected: (candidate: T) => boolean;
+  readonly single: boolean;
+  readonly commit: (changes: {
+    readonly add: ReadonlyArray<T>;
+    readonly remove: ReadonlyArray<T>;
+  }) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<SelectionDraft>(new Map());
+  const selections = input.candidates.map((candidate) => ({
+    key: input.candidateKey(candidate),
+    selected: input.isSelected(candidate),
+    candidate,
+  }));
+  const send = useEffectEvent(() => {
+    const changes = draftChanges(draft, selections);
+    if (changes.add.length === 0 && changes.remove.length === 0) return;
+    void input.commit({
+      add: changes.add.map((selection) => selection.candidate),
+      remove: changes.remove.map((selection) => selection.candidate),
+    });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the sheet closing sends the picks
+  useEffect(() => () => send(), []);
+  return {
+    isSelected: (candidate: T) =>
+      isDraftSelected(draft, {
+        key: input.candidateKey(candidate),
+        selected: input.isSelected(candidate),
+      }),
+    toggle: (candidate: T) => {
+      const toggled = selections.find((selection) => selection.candidate === candidate);
+      if (toggled) setDraft(toggleDraft(draft, selections, toggled, input.single));
+    },
+  };
+}
