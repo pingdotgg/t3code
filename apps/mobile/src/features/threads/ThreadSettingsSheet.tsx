@@ -1435,7 +1435,6 @@ function ThreadSettingsChoiceScreen() {
       {Platform.OS === "android" ? (
         <AppBar
           embedded
-          sidebar={false}
           title={route.params.title}
           onBack={() => navigation.goBack()}
           hideBottomBorder

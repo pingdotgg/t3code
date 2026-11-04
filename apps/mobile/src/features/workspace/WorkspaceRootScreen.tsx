@@ -166,7 +166,6 @@ function WorkspaceRootContent() {
         ) : (
           <AppBar
             embedded
-            sidebar={false}
             title="T3 Code"
             titleContent={renderHeaderTitle()}
             actions={[

@@ -61,7 +61,6 @@ export function PullRequestToolbar(props: {
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
         />
       }
-      sidebar={false}
       search={{
         value: tab.query,
         onChangeText: (query) => dispatch({ type: "query", tab: "pullRequests", query }),

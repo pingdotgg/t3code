@@ -142,7 +142,6 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         {Platform.OS === "android" ? (
           <AppBar
             embedded
-            sidebar={false}
             title="Discussion"
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}

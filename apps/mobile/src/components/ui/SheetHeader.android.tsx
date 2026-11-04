@@ -39,7 +39,6 @@ export function SheetHeader(props: SheetHeaderProps) {
     <AppBar
       embedded
       sheet={props.presentation === "inline"}
-      sidebar={false}
       title={props.title}
       subtitle={props.subtitle}
       leading={

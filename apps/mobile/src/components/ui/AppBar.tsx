@@ -9,6 +9,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
+import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
@@ -41,7 +42,17 @@ export function AppBar(props: AppBarProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const headerId = useId();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const sidebarToggle = useSidebarToggle();
+  // The Duo's native columns show their own sidebar button while the sidebar is open.
+  const showsSidebarToggle =
+    sidebarToggle !== null &&
+    (!usesNativeWorkspaceColumns || deviceType === "pad" || !sidebarToggle.visible);
+  const splitBackPress = props.backInSplitView?.onPress ?? props.onBack;
+  const splitBack =
+    layout.usesSplitView && props.backInSplitView && splitBackPress
+      ? { ...props.backInSplitView, onPress: splitBackPress }
+      : null;
   const { themeVariables } = useAppearancePreferences();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
@@ -63,10 +74,7 @@ export function AppBar(props: AppBarProps) {
         ]}
         options={{
           headerShown: true,
-          headerBackVisible:
-            !layout.usesSplitView ||
-            !props.backInSplitView ||
-            !(props.backInSplitView.onPress || props.onBack),
+          headerBackVisible: splitBack === null,
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
@@ -117,30 +125,17 @@ export function AppBar(props: AppBarProps) {
           ...props.options,
         }}
       />
-      {layout.usesSplitView && (props.sidebar !== false || props.backInSplitView) ? (
+      {(splitBack || showsSidebarToggle) &&
+      props.options?.unstable_headerLeftItems === undefined ? (
         <Toolbar placement="left">
-          {props.backInSplitView && (props.backInSplitView.onPress || props.onBack) ? (
-            <ScreenHeaderButton
-              {...props.backInSplitView}
-              onPress={props.backInSplitView.onPress ?? props.onBack}
-            />
-          ) : null}
-          {props.sidebar !== false &&
-          (!usesNativeWorkspaceColumns || deviceType === "pad" || !panes.primarySidebarVisible) ? (
+          {splitBack ? <ScreenHeaderButton {...splitBack} /> : null}
+          {showsSidebarToggle ? (
             <ScreenHeaderButton
               axisBehavior={usesNativeWorkspaceColumns ? "horizontalOnly" : undefined}
-              accessibilityLabel={
-                panes.primarySidebarVisible
-                  ? `Maximize ${props.title.toLowerCase()}`
-                  : "Show threads"
-              }
-              icon={
-                panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-              }
-              onPress={togglePrimarySidebar}
-              separateBackground={
-                props.backInSplitView ? props.backInSplitView.separateBackground : true
-              }
+              accessibilityLabel={sidebarToggle.accessibilityLabel}
+              icon={sidebarToggle.icon}
+              onPress={sidebarToggle.onPress}
+              separateBackground={splitBack ? splitBack.separateBackground : true}
             />
           ) : null}
         </Toolbar>

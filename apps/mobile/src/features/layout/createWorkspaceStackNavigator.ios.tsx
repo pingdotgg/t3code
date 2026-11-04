@@ -48,6 +48,8 @@ import {
   useNativeWorkspaceColumnsSupported,
 } from "../../native/NativeWorkspaceColumns";
 import { V5StackHeader } from "../../native/V5StackHeader.ios";
+import { PaneContext } from "../../components/ui/Pane";
+import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import {
   collapsedSplitTransition,
@@ -130,34 +132,52 @@ function ColumnScreen(props: {
         props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: true } })
       }
     >
-      <NavigationContext value={descriptor.navigation}>
-        <NavigationRouteContext value={descriptor.route}>
-          <V5StackHeader
-            options={options}
-            canGoBack={!props.primary}
-            column={props.primary ? "primary" : "detail"}
-            onCompose={
-              descriptor.route.params &&
-              "draft" in descriptor.route.params &&
-              descriptor.route.params.draft
-                ? undefined
-                : props.onCompose
-            }
-          />
-          <ColumnContent
-            primary={props.primary}
-            insetHorizontally={
-              (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
-            }
-          >
-            <NativePrimaryColumnContext value={primaryColumn}>
-              {/* The Settings slot swaps pages here; its column keeps its measured insets. */}
-              <Fragment key={key}>{descriptor.render()}</Fragment>
-            </NativePrimaryColumnContext>
-          </ColumnContent>
-        </NavigationRouteContext>
-      </NavigationContext>
+      <PaneContext value={props.primary ? "sidebar" : "content"}>
+        <NavigationContext value={descriptor.navigation}>
+          <NavigationRouteContext value={descriptor.route}>
+            <V5StackHeader
+              options={options}
+              canGoBack={!props.primary}
+              column={props.primary ? "primary" : "detail"}
+              onCompose={
+                descriptor.route.params &&
+                "draft" in descriptor.route.params &&
+                descriptor.route.params.draft
+                  ? undefined
+                  : props.onCompose
+              }
+            />
+            <ColumnContent
+              primary={props.primary}
+              insetHorizontally={
+                (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
+              }
+            >
+              <NativePrimaryColumnContext value={primaryColumn}>
+                {/* The Settings slot swaps pages here; its column keeps its measured insets. */}
+                <Fragment key={key}>{descriptor.render()}</Fragment>
+              </NativePrimaryColumnContext>
+            </ColumnContent>
+          </NavigationRouteContext>
+        </NavigationContext>
+      </PaneContext>
     </Split.Screen>
+  );
+}
+
+function EmptyDetailHeader(props: { readonly onCompose: (() => void) | undefined }) {
+  const sidebarItem = useWorkspaceSidebarHeaderItem();
+  return (
+    <V5StackHeader
+      options={{
+        headerShown: true,
+        title: "",
+        unstable_headerLeftItems: () => (sidebarItem ? [sidebarItem] : []),
+      }}
+      canGoBack={false}
+      column="detail"
+      onCompose={props.onCompose}
+    />
   );
 }
 
@@ -167,7 +187,6 @@ function WorkspaceColumns(
   const {
     layout,
     panes,
-    togglePrimarySidebar,
     setPrimarySidebarVisible,
     toggleAuxiliaryPane,
     startNewTask,
@@ -383,23 +402,9 @@ function WorkspaceColumns(
             screenKey="workspace-empty"
             activityMode={layout.usesSplitView && !activeDetailKey ? "attached" : "detached"}
           >
-            <V5StackHeader
-              options={{
-                headerShown: true,
-                title: "",
-                unstable_headerLeftItems: () => [
-                  {
-                    type: "button",
-                    label: "",
-                    icon: { type: "sfSymbol", name: "sidebar.left" },
-                    onPress: togglePrimarySidebar,
-                  },
-                ],
-              }}
-              canGoBack={false}
-              column="detail"
-              onCompose={detailCompose}
-            />
+            <PaneContext value="content">
+              <EmptyDetailHeader onCompose={detailCompose} />
+            </PaneContext>
             <ColumnContent>
               <WorkspaceEmptyDetail
                 tab={settingsOpen ? "settings" : selectedTab}
@@ -435,7 +440,7 @@ function WorkspaceColumns(
             vertical bar wherever they sit, so each pane insets its own content instead. */}
         <ColumnContent insetHorizontally={false}>
           <View className="flex-1 bg-screen">
-            {inspector.render?.()}
+            <PaneContext value="inspector">{inspector.render?.()}</PaneContext>
             {inspector.visible ? (
               <GestureHandlerRootView
                 style={[StyleSheet.absoluteFill, { zIndex: 100 }]}
@@ -569,16 +574,19 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
                 navigation: props.descriptors[visibleRoute.key]!.navigation,
                 route: visibleRoute,
                 options: modalEnvelopeOptions(descriptor.options),
+                // Before iOS 26 the JS columns wrap this whole navigator in the content pane.
                 render: () => (
-                  <V5CardStackView
-                    {...props}
-                    state={{
-                      ...props.state,
-                      routes: group,
-                      index: group.length - 1,
-                      preloadedRoutes: [],
-                    }}
-                  />
+                  <PaneContext value={null}>
+                    <V5CardStackView
+                      {...props}
+                      state={{
+                        ...props.state,
+                        routes: group,
+                        index: group.length - 1,
+                        preloadedRoutes: [],
+                      }}
+                    />
+                  </PaneContext>
                 ),
               },
             ];

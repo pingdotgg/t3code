@@ -75,7 +75,6 @@ export interface AppBarProps {
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
   readonly onBack?: () => void;
-  readonly sidebar?: boolean;
   /** Android: replaces the sidebar button at the start of the bar. */
   readonly leading?: ReactNode;
   /** Leaves route options to the screen: in-screen bars, and screens that set their own. iOS draws nothing. */

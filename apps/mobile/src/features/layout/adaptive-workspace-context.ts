@@ -28,6 +28,11 @@ interface AdaptiveWorkspaceContextValue {
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
   readonly showInspector: () => void;
   readonly toggleAuxiliaryPane: () => void;
+  /**
+   * Whether the content pane offers a sidebar button: false without columns, on a list that keeps
+   * its sidebar, and on a workspace page (Android Settings, Usage) that covers it.
+   */
+  readonly sidebarToggleable: boolean;
   readonly togglePrimarySidebar: () => void;
   readonly setPrimarySidebarVisible: (visible: boolean) => void;
   /** Opens a workspace tab with its list and, with columns, the page it last showed. */
@@ -71,6 +76,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   setPrimarySidebarSearchQuery: () => undefined,
   showInspector: () => undefined,
   toggleAuxiliaryPane: () => undefined,
+  sidebarToggleable: false,
   togglePrimarySidebar: () => undefined,
   setPrimarySidebarVisible: () => undefined,
   openWorkspaceTab: () => undefined,
