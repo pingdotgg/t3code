@@ -1,0 +1,10 @@
+{
+  "id": "test.context",
+  "name": "Context fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "capabilities": ["transforms"],
+  "proposedApi": true,
+  "transforms": { "enrich": { "timeoutSeconds": 2 } }
+}

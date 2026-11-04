@@ -57,6 +57,25 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("sends plugin context whole, and compacts any other tool output", () => {
+    const pluginContext = {
+      ...base,
+      title: "Added context from Notes",
+      toolName: "plugin_context",
+      toolSource: { key: "plugin:test.notes", name: "Notes", kind: "integration" as const },
+      output: { context: [{ title: "Conventions", text: "x".repeat(8_000) }] },
+    };
+    expect(projectTurnItemForWire(pluginContext)).toEqual(pluginContext);
+    // The same shape from a provider, or one past the bound, is compacted as usual.
+    for (const item of [
+      { ...pluginContext, toolSource: { ...pluginContext.toolSource, key: "github" } },
+      { ...pluginContext, output: { context: [{ title: "Big", text: "x".repeat(20_000) }] } },
+    ]) {
+      const projected = projectTurnItemForWire(item);
+      expect(projected.type === "dynamic_tool" ? projected.output : null).toBeUndefined();
+    }
+  });
+
   it("keeps copied handoff transcripts out of activity items and live events", () => {
     const item = {
       ...base,

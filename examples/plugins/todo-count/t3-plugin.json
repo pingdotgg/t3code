@@ -1,0 +1,38 @@
+{
+  "id": "example.todo-count",
+  "name": "TODO count",
+  "version": "1.0.0",
+  "description": "Gives agents a tool that counts TODO and FIXME comments in a directory.",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "proposedApi": true,
+  "capabilities": ["tools"],
+  "tools": [
+    {
+      "name": "count_todos",
+      "title": "Count TODOs",
+      "description": "Count TODO and FIXME comments under a directory on the server's machine and list the files with the most. Skips hidden entries, node_modules, and files over 1 MiB.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Absolute path of the directory to search, usually the thread's working directory."
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "How many files to list. Defaults to 10."
+          }
+        },
+        "required": ["directory"],
+        "additionalProperties": false
+      },
+      "sideEffect": "read",
+      "timeoutSeconds": 30
+    }
+  ]
+}

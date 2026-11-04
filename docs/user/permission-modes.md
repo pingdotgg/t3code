@@ -23,6 +23,8 @@ An administrator can cap the modes available on a machine with a
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task. Subagent approval requests appear in
 the parent conversation with the subagent's name, so you can respond without switching threads.
+An enabled plugin with the approvals capability can answer a request before you do; see
+[Plugins](./plugins.md#approvals).
 
 ## Provider differences
 

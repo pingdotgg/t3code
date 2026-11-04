@@ -1,11 +1,68 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   resolvePullRequestTabLink,
+  rightPanelSurfaceActions,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
 } from "./RightPanelTabs";
+
+describe("right panel surface actions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const inputs = () => ({
+    panels: {
+      preview: { available: true, onOpen: () => undefined },
+      diff: { available: true, onOpen: () => undefined },
+      terminal: { available: true, onOpen: () => undefined },
+      device: { available: true, onOpen: () => undefined },
+      "pull-request": { available: true, onOpen: () => undefined },
+      "pull-requests": { available: true, onOpen: () => undefined },
+      files: { available: true, onOpen: () => undefined },
+    },
+  });
+
+  it("keeps launcher order, letters and copy for registered and local surfaces", () => {
+    const actions = rightPanelSurfaceActions(inputs());
+    expect(actions.map((action) => [action.shortcut, action.label])).toEqual([
+      ["B", "Browser"],
+      ["T", "Terminal"],
+      ["F", "Files"],
+      ["D", "Diff"],
+      ["P", "Pull request"],
+      ["L", "Linked pull requests"],
+      ["M", "Device"],
+    ]);
+    expect(actions.find((action) => action.id === "diff")).toMatchObject({
+      unavailableHint: "Available for Git repositories.",
+      unavailableReason: "Diff is only available for server threads in Git repositories.",
+    });
+  });
+
+  it("lists offered plugin views after the panels, with no launcher letter", () => {
+    const actions = rightPanelSurfaceActions({
+      ...inputs(),
+      pluginViews: [
+        { surfaceId: "plugin-view:installation-1:board", title: "Board", onOpen: () => undefined },
+      ],
+    });
+    expect(actions.at(-1)).toMatchObject({
+      id: "plugin-view:installation-1:board",
+      label: "Board",
+      shortcut: "",
+      available: true,
+    });
+    // The Mod+T menu and the empty launcher match letters; a plugin view never claims one.
+    for (const key of ["b", "Board", ""]) {
+      expect(surfaceShortcutActionForKey(actions, shortcutEvent(key))?.id).not.toBe(
+        "plugin-view:installation-1:board",
+      );
+    }
+  });
+});
 
 function shortcutEvent(
   key: string,
