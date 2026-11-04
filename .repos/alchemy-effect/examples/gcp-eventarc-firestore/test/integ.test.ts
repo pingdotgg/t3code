@@ -1,16 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as eventarc from "@distilled.cloud/gcp/eventarc_v1";
 import * as firestore from "@distilled.cloud/gcp/firestore_v1";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { LOCATION } from "../src/resources.ts";
 
@@ -23,26 +22,15 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// Both services are built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 const TRIGGER_PATH = "/__alchemy/eventarc/ordercreated";
 
 // Kept outside the handle so teardown can verify even after a failed test.
-let deployed:
-  | { project: string; auditorService: string; databaseName: string }
-  | undefined;
+let deployed: { project: string; auditorService: string; databaseName: string } | undefined;
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-eventarc-firestore", () => {
+describe("gcp-eventarc-firestore", () => {
   const stack = beforeAll(
     deploy(Stack).pipe(
       Effect.tap((outputs) =>
@@ -81,14 +69,12 @@ describe.skipIf(!dockerAvailable)("gcp-eventarc-firestore", () => {
 
       expect(yield* findTrigger(project, auditorService)).toBeUndefined();
 
-      const database = yield* firestore
-        .getProjectsDatabases({ name: databaseName })
-        .pipe(
-          Effect.map((db) => db.name),
-          Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
-          Effect.orDie,
-          Effect.provide(GcpHttp),
-        );
+      const database = yield* firestore.getProjectsDatabases({ name: databaseName }).pipe(
+        Effect.map((db) => db.name),
+        Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+        Effect.orDie,
+        Effect.provide(GcpHttp),
+      );
       expect(database).toBeUndefined();
     }),
     { timeout: 600_000 },
@@ -111,11 +97,7 @@ describe.skipIf(!dockerAvailable)("gcp-eventarc-firestore", () => {
    * to propagate, and not to every IAM backend at once; until it has, the
    * API answers 500 (Forbidden from Firestore).
    */
-  const createOrderWhenGranted = (
-    baseUrl: string,
-    item: string,
-    quantity: number,
-  ) =>
+  const createOrderWhenGranted = (baseUrl: string, item: string, quantity: number) =>
     createOrder(baseUrl, item, quantity).pipe(
       Effect.repeat({
         schedule: Schedule.spaced("10 seconds"),
@@ -152,9 +134,7 @@ describe.skipIf(!dockerAvailable)("gcp-eventarc-firestore", () => {
           { value: filter.value, operator: filter.operator },
         ]),
       );
-      expect(filters.type?.value).toEqual(
-        "google.cloud.firestore.document.v1.created",
-      );
+      expect(filters.type?.value).toEqual("google.cloud.firestore.document.v1.created");
       expect(filters.database?.value).toEqual(databaseId);
       expect(filters.document).toEqual({
         value: "orders/{id}",
@@ -225,9 +205,7 @@ describe.skipIf(!dockerAvailable)("gcp-eventarc-firestore", () => {
           "google.cloud.firestore.document.v1.created",
         );
         // The protobuf payload reached the handler as bytes.
-        expect(
-          Number(audit.fields?.payloadBytes?.integerValue ?? 0),
-        ).toBeGreaterThan(0);
+        expect(Number(audit.fields?.payloadBytes?.integerValue ?? 0)).toBeGreaterThan(0);
       }
     }),
     { timeout: 900_000 },

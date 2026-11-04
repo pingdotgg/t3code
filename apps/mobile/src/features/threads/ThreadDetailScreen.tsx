@@ -1178,7 +1178,7 @@ function ThreadDetailBody(
     ),
   );
   const layoutVariant = props.layoutVariant ?? "compact";
-  const isSplitLayout = layoutVariant === "split";
+  const isSplitLayout = layoutVariant !== "compact";
   const contentMaxWidth =
     Platform.OS === "android"
       ? ANDROID_READING_MAX_WIDTH
