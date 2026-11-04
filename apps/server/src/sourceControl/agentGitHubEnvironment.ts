@@ -1,7 +1,7 @@
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Hex from "effect/encoding/Hex";
@@ -50,12 +50,14 @@ export const prepareAgentGitHubEnvironment = Effect.fn(
   if (realCommand === null) return environment;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const digestService = yield* Digest.Digest;
   const args = selfInvocationArgs(input.invocation, ["__github-cli", realCommand]);
   const source = windows
     ? `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n${[input.invocation.command, ...args].map(quoteBatch).join(" ")} %*\r\n`
     : `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${[input.invocation.command, ...args].map(quoteShell).join(" ")} "$@"\n`;
-  const digest = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(source)));
+  const digest = Hex.encode(
+    yield* digestService.digest(Digest.sha256, new TextEncoder().encode(source)),
+  );
   const directory = path.join(input.stateDir, "github", "bin", digest);
   const launcher = path.join(directory, windows ? "gh.cmd" : "gh");
   // Immutable launchers allow concurrent provider instances with different gh installations.

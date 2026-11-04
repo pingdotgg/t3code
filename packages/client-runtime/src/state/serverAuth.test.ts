@@ -99,7 +99,7 @@ it.effect("waits for a newly configured provider and preserves its active auth s
     const session: RpcSession = {
       client,
       initialConfig: Effect.succeed(config),
-      subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+      subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
       ready: Effect.void,
       probe: Effect.void,
       inboundFrames: Effect.succeed(0),

@@ -39,6 +39,14 @@ jobs:
           git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
           git sparse-checkout set --no-cone '/*' '!/.repos/' '!/apps/mobile/modules/t3-terminal/Vendor/**/*.a'
           git checkout --detach FETCH_HEAD
+
+      # Mirrors ci.yml: the repository has no self-hosted runners, so a workflow
+      # that selects one fails here, before any other job starts.
+      - name: Check workflow runner labels
+        run: |
+          python3 -B .github/scripts/check-runner-labels.test.py
+          python3 -B .github/scripts/check-runner-labels.py
+
       - name: Detect affected jobs
         id: detect
         uses: ./.github/actions/ci-changes
@@ -137,8 +145,9 @@ jobs:
 
   server:
     name: Server tests ${{ matrix.shard }}
-    needs: changes
-    if: needs.changes.outputs.test_server != 'false'
+    needs: [changes]
+    if: >-
+      !cancelled() && needs.changes.outputs.test_server != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -155,15 +164,9 @@ jobs:
           git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
           git sparse-checkout set --no-cone '/*' '!/.repos/' '!/apps/mobile/modules/t3-terminal/Vendor/**/*.a'
           git checkout --detach FETCH_HEAD
-      - uses: ./.github/actions/setup-ci-deps
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: ./.github/actions/server-ci
         with:
-          toolchain: stable
-      - name: Install Chromium
-        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
-      - name: Test server shard
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          shard: ${{ matrix.shard }}/${{ strategy.job-total }}
 
   rust:
     name: Rust

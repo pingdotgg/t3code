@@ -4,6 +4,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -29,6 +30,7 @@ import {
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
   ProviderDriverKind,
   ProviderInstanceId,
+  providerPoolInstanceId,
   ServerSettings,
   ServerSettingsError,
   ServerProvider,
@@ -332,6 +334,7 @@ const awaitPersistedProvider = (
 const layerTestNodeServices = Layer.mergeAll(
   ProviderLatestVersions.layer,
   NodeServices.layer,
+  NodeCrypto.layer,
   Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
     endpoint: Effect.succeed("unused-private-pipe"),
   }),
@@ -1145,6 +1148,7 @@ it.layer(
             });
             yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
             const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+            const currentProvider = yield* Ref.make<ServerProvider>(pendingProvider);
             const instance = {
               instanceId: cachedProvider.instanceId,
               driverKind: cachedProvider.driver,
@@ -1162,8 +1166,10 @@ it.layer(
                       packageName: null,
                     }),
                   ),
-                getSnapshot: Effect.succeed(pendingProvider),
-                refresh: Ref.get(nextProvider),
+                getSnapshot: Ref.get(currentProvider),
+                refresh: Ref.get(nextProvider).pipe(
+                  Effect.tap((provider) => Ref.set(currentProvider, provider)),
+                ),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
                 markLimited: () => Effect.void,
@@ -1185,6 +1191,7 @@ it.layer(
             const retainedModels = [defaultModel, customModel, currentModel];
 
             for (const restarted of [false, true]) {
+              yield* Ref.set(currentProvider, pendingProvider);
               yield* Effect.gen(function* () {
                 const registry = yield* ProviderRegistry.ProviderRegistry;
                 assert.deepStrictEqual(
@@ -1221,7 +1228,7 @@ it.layer(
             Effect.provide(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-pi-model-cache-",
-              }).pipe(Layer.provideMerge(NodeServices.layer)),
+              }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
             ),
           ),
       );
@@ -1281,6 +1288,7 @@ it.layer(
           });
           yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
           const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+          const currentProvider = yield* Ref.make<ServerProvider>(pendingProvider);
           const instance = {
             instanceId: cachedProvider.instanceId,
             driverKind: cachedProvider.driver,
@@ -1298,8 +1306,10 @@ it.layer(
                     packageName: null,
                   }),
                 ),
-              getSnapshot: Effect.succeed(pendingProvider),
-              refresh: Ref.get(nextProvider),
+              getSnapshot: Ref.get(currentProvider),
+              refresh: Ref.get(nextProvider).pipe(
+                Effect.tap((provider) => Ref.set(currentProvider, provider)),
+              ),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
               markLimited: () => Effect.void,
@@ -1324,6 +1334,7 @@ it.layer(
           ];
 
           for (const restarted of [false, true]) {
+            yield* Ref.set(currentProvider, pendingProvider);
             yield* Effect.gen(function* () {
               const registry = yield* ProviderRegistry.ProviderRegistry;
               const expectedModels = restarted
@@ -1358,7 +1369,7 @@ it.layer(
           Effect.provide(
             ServerConfig.layerTest(process.cwd(), {
               prefix: "t3-codex-retired-model-cache-",
-            }).pipe(Layer.provideMerge(NodeServices.layer)),
+            }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
           ),
         ),
       );
@@ -1557,6 +1568,224 @@ it.layer(
       );
     });
 
+    it.effect("invalidates model caches only for explicit model or fresh workspace refreshes", () =>
+      Effect.gen(function* () {
+        const forceRefreshCalls = yield* Ref.make(0);
+        const makeInstance = (name: string) =>
+          Effect.gen(function* () {
+            const driver = ProviderDriverKind.make("codex");
+            const instanceId = ProviderInstanceId.make(name);
+            const provider = {
+              instanceId,
+              driver,
+              status: "ready",
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-06-10T00:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            const invalidations = yield* Ref.make(0);
+            const workspaceScans = yield* Ref.make(0);
+            const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
+            const instance = {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: {
+                driverKind: driver,
+                continuationKey: `codex:instance:${name}`,
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: (options) =>
+                  Ref.update(maintenanceReads, (reads) => [...reads, options?.fresh === true]).pipe(
+                    Effect.as(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driver,
+                        packageName: `${name}-package`,
+                      }),
+                    ),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+                markLimited: () => Effect.void,
+              },
+              invalidateCaches: Ref.update(invalidations, (count) => count + 1),
+              snapshotForCwd: (cwd) =>
+                Ref.update(workspaceScans, (count) => count + 1).pipe(
+                  Effect.as({
+                    ...provider,
+                    skills: [{ name, path: `${cwd}/${name}/SKILL.md`, enabled: true }],
+                  }),
+                ),
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            } satisfies ProviderInstance;
+            const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
+            return { instance, invalidations, workspaceScans, takeMaintenanceReads };
+          });
+        const first = yield* makeInstance("codex_first");
+        const second = yield* makeInstance("codex_second");
+        const unrelated = yield* makeInstance("codex_unrelated");
+        const instances = [first.instance, second.instance, unrelated.instance];
+        const poolInstanceId = providerPoolInstanceId(ProviderDriverKind.make("codex"));
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const layerModelManifest = Layer.succeed(ModelManifest.ModelManifest, {
+          current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          forceRefresh: Ref.update(forceRefreshCalls, (count) => count + 1).pipe(
+            Effect.as(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          ),
+          refreshInBackground: Effect.void,
+        });
+        const layerLatestVersions = Layer.effect(
+          ProviderLatestVersions.ProviderLatestVersions,
+          ProviderLatestVersions.make([
+            ["codex_first-package", "1.0.0"],
+            ["codex_second-package", "1.0.0"],
+          ]),
+        );
+        const readCachedVersion = (key: string) =>
+          ProviderLatestVersions.ProviderLatestVersions.use((latestVersions) =>
+            latestVersions.cached(key, Effect.succeed("2.0.0")),
+          );
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+
+          yield* registry.refreshInstance(first.instance.instanceId);
+          yield* registry.refresh();
+          assert.strictEqual(yield* Ref.get(forceRefreshCalls), 0);
+          assert.strictEqual(yield* Ref.get(first.invalidations), 0);
+          assert.strictEqual(yield* readCachedVersion("codex_first-package"), "1.0.0");
+          yield* first.takeMaintenanceReads;
+
+          yield* registry.invalidateModelCaches({ instanceId: first.instance.instanceId });
+          // The instance refresh that follows resolves installer metadata fresh itself.
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
+          assert.strictEqual(yield* Ref.get(forceRefreshCalls), 1);
+          assert.strictEqual(yield* Ref.get(first.invalidations), 1);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 0);
+          assert.strictEqual(yield* readCachedVersion("codex_first-package"), "2.0.0");
+          assert.strictEqual(yield* readCachedVersion("codex_second-package"), "1.0.0");
+
+          yield* registry.invalidateModelCaches({});
+          assert.strictEqual(yield* Ref.get(first.invalidations), 2);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 1);
+          assert.strictEqual(yield* readCachedVersion("codex_second-package"), "2.0.0");
+          yield* first.takeMaintenanceReads;
+
+          // Only a cached workspace refresh leaves the fresh resolution to this call.
+          const workspace = { instanceId: first.instance.instanceId, cwd: process.cwd() };
+          yield* registry.invalidateModelCaches(workspace);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, [true]);
+          yield* registry.invalidateModelCaches({ ...workspace, fresh: true });
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
+
+          yield* registry.invalidateModelCaches({
+            instanceId: poolInstanceId,
+          });
+          assert.strictEqual(yield* Ref.get(first.invalidations), 5);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 2);
+          assert.strictEqual(yield* Ref.get(unrelated.invalidations), 1);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
+
+          const poolWorkspace = { instanceId: poolInstanceId, cwd: "/workspace" };
+          yield* registry.refreshWorkspaceSnapshot(poolWorkspace);
+          yield* registry.refreshWorkspaceSnapshot({
+            instanceId: unrelated.instance.instanceId,
+            cwd: poolWorkspace.cwd,
+          });
+          yield* registry.refreshWorkspaceSnapshot({
+            instanceId: unrelated.instance.instanceId,
+            cwd: "/other-workspace",
+          });
+          // A cached pool request retains each member's workspace scan and cache timer.
+          yield* registry.refreshWorkspaceSnapshot(poolWorkspace);
+          assert.strictEqual(yield* Ref.get(first.workspaceScans), 1);
+          assert.strictEqual(yield* Ref.get(second.workspaceScans), 1);
+          assert.strictEqual(yield* Ref.get(first.invalidations), 5);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 2);
+
+          yield* registry.refreshWorkspaceSnapshot({ ...poolWorkspace, fresh: true });
+          assert.strictEqual(yield* Ref.get(first.invalidations), 6);
+          assert.strictEqual(yield* Ref.get(second.invalidations), 3);
+          assert.strictEqual(yield* Ref.get(unrelated.invalidations), 1);
+          assert.strictEqual(yield* Ref.get(first.workspaceScans), 2);
+          assert.strictEqual(yield* Ref.get(second.workspaceScans), 2);
+          assert.strictEqual(yield* Ref.get(unrelated.workspaceScans), 2);
+          const workspacesByInstance = registry.getProviders.pipe(
+            Effect.map((providers) =>
+              Object.fromEntries(
+                providers.map((provider) => [
+                  provider.instanceId,
+                  provider.workspaceSnapshots?.map((snapshot) => snapshot.cwd) ?? [],
+                ]),
+              ),
+            ),
+          );
+          assert.deepStrictEqual(yield* workspacesByInstance, {
+            [first.instance.instanceId]: [poolWorkspace.cwd],
+            [second.instance.instanceId]: [poolWorkspace.cwd],
+            [unrelated.instance.instanceId]: ["/other-workspace"],
+          });
+
+          // Selecting a single account still invalidates other accounts for only that cwd.
+          yield* registry.refreshWorkspaceSnapshot({
+            ...poolWorkspace,
+            instanceId: first.instance.instanceId,
+            fresh: true,
+          });
+          assert.deepStrictEqual(yield* workspacesByInstance, {
+            [first.instance.instanceId]: [poolWorkspace.cwd],
+            [second.instance.instanceId]: [],
+            [unrelated.instance.instanceId]: ["/other-workspace"],
+          });
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provideMerge(layerInstanceRegistry),
+              Layer.provideMerge(layerModelManifest),
+              Layer.provideMerge(layerLatestVersions),
+              Layer.provide(
+                ServerSettingsModule.layerTest({
+                  providerPools: {
+                    [ProviderDriverKind.make("codex")]: {
+                      enabled: true,
+                      memberInstanceIds: [first.instance.instanceId, second.instance.instanceId],
+                    },
+                  },
+                }),
+              ),
+              Layer.provide(layerUnusedMutator),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-model-cache-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+      }),
+    );
+
     it.effect(
       "a second request for a cwd being scanned gets its result, even if the first leaves",
       () =>
@@ -1630,7 +1859,7 @@ it.layer(
                   prefix: "t3-provider-registry-shared-workspace-scan-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -1727,7 +1956,7 @@ it.layer(
                 prefix: "t3-provider-registry-unhealthy-workspace-",
               }),
             ),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ).pipe(Scope.provide(scope));
 
@@ -1849,7 +2078,7 @@ it.layer(
                 prefix: "t3-provider-registry-shared-refresh-",
               }),
             ),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ).pipe(Scope.provide(scope));
 
@@ -1867,6 +2096,134 @@ it.layer(
 
           yield* registry.refresh();
           assert.strictEqual(yield* Ref.get(refreshCalls), 2);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("keeps an enriched snapshot that streams in before a manual refresh returns", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("acpRegistry");
+        const instanceId = ProviderInstanceId.make("gemini");
+        const initialProvider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const pendingProvider = {
+          ...initialProvider,
+          status: "warning",
+          auth: { status: "unknown" },
+          checkedAt: "2026-06-10T00:01:00.000Z",
+          message: "Checking ACP authentication, models, and commands in the background...",
+        } as const satisfies ServerProvider;
+        const enrichedProvider = {
+          ...initialProvider,
+          status: "error",
+          auth: { status: "unauthenticated" },
+          checkedAt: "2026-06-10T00:01:01.000Z",
+          message: "Sign in to Gemini to use this agent.",
+        } as const satisfies ServerProvider;
+        const snapshotRef = yield* Ref.make<ServerProvider>(initialProvider);
+        const changes = yield* PubSub.unbounded<ServerProvider>();
+        const publishSnapshot = (provider: ServerProvider) =>
+          Ref.set(snapshotRef, provider).pipe(Effect.andThen(PubSub.publish(changes, provider)));
+        const releaseRefresh = yield* Deferred.make<void>();
+        const instance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "acpRegistry:gemini" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(snapshotRef),
+            // Like a managed provider: publish the probe, let enrichment publish its result,
+            // then return the probe after a slow tail such as ACP's refreshMethods.
+            refresh: Effect.gen(function* () {
+              yield* publishSnapshot(pendingProvider);
+              yield* publishSnapshot(enrichedProvider);
+              yield* Deferred.await(releaseRefresh);
+              return pendingProvider;
+            }),
+            streamChanges: Stream.fromPubSub(changes),
+            applyUsageLimits: () => Effect.void,
+            markLimited: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-enriched-refresh-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const config = yield* ServerConfig.ServerConfig;
+          const filePath = yield* resolveProviderStatusCachePath({
+            cacheDir: config.providerStatusCacheDir,
+            instanceId,
+          });
+          expect(yield* registry.getProviders).toEqual([expect.objectContaining(initialProvider)]);
+
+          const enrichedObserved = yield* awaitPersistedProvider(
+            registry,
+            enrichedProvider.checkedAt,
+          );
+          const refreshed = yield* registry.refreshInstance(instanceId).pipe(Effect.forkChild);
+          yield* Fiber.join(enrichedObserved);
+          yield* Deferred.succeed(releaseRefresh, undefined);
+          const returned = yield* Fiber.join(refreshed);
+
+          const enriched = {
+            status: enrichedProvider.status,
+            auth: enrichedProvider.auth,
+            message: enrichedProvider.message,
+            checkedAt: enrichedProvider.checkedAt,
+          };
+          expect(
+            yield* registry.getProviders,
+            "getProviders should hold the enriched snapshot, not the stale pending one refresh returned",
+          ).toEqual([expect.objectContaining(enriched)]);
+          expect(returned).toEqual([expect.objectContaining(enriched)]);
+          expect(yield* readProviderStatusCache(filePath)).toEqual(
+            expect.objectContaining(enriched),
+          );
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
@@ -1958,7 +2315,7 @@ it.layer(
               }),
             ),
             Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ).pipe(Scope.provide(scope));
 
@@ -1984,6 +2341,168 @@ it.layer(
               ...refreshedProvider,
               models: [...initialProvider.models],
             }),
+          );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("streams the terminal update state when it lands during a slow cache write", () =>
+      Effect.gen(function* () {
+        const claudeDriver = ProviderDriverKind.make("claude");
+        const claudeInstanceId = ProviderInstanceId.make("claude");
+        const initialProvider = {
+          instanceId: claudeInstanceId,
+          driver: claudeDriver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2.1.300",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const verifyingProvider = { ...initialProvider, checkedAt: "2026-04-14T00:01:00.000Z" };
+        const laterProvider = { ...initialProvider, checkedAt: "2026-04-14T00:02:00.000Z" };
+        const changes = yield* PubSub.unbounded<ServerProvider>();
+        const instance = {
+          instanceId: claudeInstanceId,
+          driverKind: claudeDriver,
+          continuationIdentity: {
+            driverKind: claudeDriver,
+            continuationKey: "claude:instance:claude",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: claudeDriver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(initialProvider),
+            refresh: Effect.succeed(initialProvider),
+            streamChanges: Stream.fromPubSub(changes),
+            applyUsageLimits: () => Effect.void,
+            markLimited: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === claudeInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          },
+        );
+        const writeStarted = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const gatedCachePath = yield* Ref.make<string | undefined>(undefined);
+        const layerGatedFileSystem = Layer.effect(
+          FileSystem.FileSystem,
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            return {
+              ...fileSystem,
+              rename: (from, to) =>
+                Ref.modify(gatedCachePath, (path) =>
+                  path === to ? [true, undefined] : [false, path],
+                ).pipe(
+                  Effect.flatMap((gated) =>
+                    gated
+                      ? Deferred.succeed(writeStarted, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseWrite)),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.andThen(fileSystem.rename(from, to)),
+                ),
+            } satisfies FileSystem.FileSystem;
+          }),
+        ).pipe(Layer.provide(NodeServices.layer));
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-update-state-race-",
+              }),
+            ),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+            Layer.provideMerge(layerGatedFileSystem),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const config = yield* ServerConfig.ServerConfig;
+          const running = {
+            status: "running",
+            startedAt: "2026-04-14T00:00:30.000Z",
+            finishedAt: null,
+            message: "Verifying the installed version",
+            output: null,
+          } as const;
+          const unchanged = {
+            ...running,
+            status: "unchanged",
+            finishedAt: "2026-04-14T00:01:30.000Z",
+            message:
+              "Update command completed, but T3 Code still detects an outdated provider version.",
+          } as const;
+          yield* registry.setProviderMaintenanceActionState({
+            instanceId: claudeInstanceId,
+            action: "update",
+            state: running,
+          });
+          const streamed = yield* registry.streamChanges.pipe(
+            Stream.takeUntil((providers) =>
+              providers.some((provider) => provider.checkedAt === laterProvider.checkedAt),
+            ),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+          yield* Ref.set(
+            gatedCachePath,
+            yield* resolveProviderStatusCachePath({
+              cacheDir: config.providerStatusCacheDir,
+              instanceId: claudeInstanceId,
+            }),
+          );
+          yield* PubSub.publish(changes, verifyingProvider);
+          yield* Deferred.await(writeStarted);
+          yield* registry.setProviderMaintenanceActionState({
+            instanceId: claudeInstanceId,
+            action: "update",
+            state: unchanged,
+          });
+          yield* Deferred.succeed(releaseWrite, undefined);
+          // The snapshot stream is consumed in order, so this lands after the slow write publishes.
+          yield* PubSub.publish(changes, laterProvider);
+
+          const updateStateOf = (providers: ReadonlyArray<ServerProvider> | undefined) =>
+            providers?.find((provider) => provider.instanceId === claudeInstanceId)?.updateState;
+          const beforeLater = (yield* Fiber.join(streamed)).slice(0, -1);
+          assert.deepStrictEqual(updateStateOf(yield* registry.getProviders), unchanged);
+          assert.deepStrictEqual(
+            updateStateOf(beforeLater.at(-1)),
+            unchanged,
+            "the last streamed providers before the next snapshot should carry the terminal update state",
           );
         }).pipe(Effect.provide(runtimeServices));
       }),
@@ -2087,7 +2606,7 @@ it.layer(
                   prefix: "t3-provider-registry-opencode-authoritative-persist-",
                 }),
               ),
-              Layer.provideMerge(NodeServices.layer),
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
             ),
           ).pipe(Scope.provide(scope));
 
@@ -2193,7 +2712,7 @@ it.layer(
               }),
             ),
             Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
-            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ).pipe(Scope.provide(scope));
 
@@ -2286,7 +2805,7 @@ it.layer(
               return beforeSpawn.pipe(Effect.andThen(spawner.spawn(command)));
             }),
           ),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
         );
         const runtimeServices = yield* Layer.build(layerProviderRegistry).pipe(
@@ -2391,7 +2910,7 @@ it.layer(
           Layer.provideMerge(
             OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
         );
         const runtimeServices = yield* Layer.build(layerProviderRegistry).pipe(

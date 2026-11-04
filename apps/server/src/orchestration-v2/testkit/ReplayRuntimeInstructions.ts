@@ -11,13 +11,15 @@ export function materializeReplayTranscriptRuntimeInstructions(
       ? "Cursor"
       : runtime.driver === "grok"
         ? "Grok"
-        : runtime.driver === "acpRegistry"
-          ? "acpRegistry"
-          : runtime.driver === "muse"
-            ? "Muse Code"
-            : runtime.driver === "fx"
-              ? "fx"
-              : undefined;
+        : runtime.driver === "kiro"
+          ? "Kiro"
+          : runtime.driver === "acpRegistry"
+            ? "acpRegistry"
+            : runtime.driver === "muse"
+              ? "Muse Code"
+              : runtime.driver === "fx"
+                ? "fx"
+                : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   const sharedRuntimeInstructions = instructions.split("</runtime_info>\n\n")[1];
@@ -98,7 +100,10 @@ export function materializeReplayTranscriptRuntimeInstructions(
           "type" in lastPart &&
           lastPart.type === "text" &&
           "text" in lastPart &&
-          lastPart.text === instructions
+          typeof lastPart.text === "string" &&
+          // A recording that switched models mid-thread already carries the
+          // instructions for the model each prompt ran on.
+          (lastPart.text === instructions || lastPart.text.startsWith("<runtime_info>"))
         ) {
           return entry;
         }

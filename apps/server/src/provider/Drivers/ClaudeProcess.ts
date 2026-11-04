@@ -29,15 +29,12 @@ export function spawnClaudeProcess(
       cwd: options.cwd,
       env: configDir === undefined ? options.env : claudeCliEnvironment(options.env, configDir),
       signal: options.signal,
-      stdio:
-        platform === "win32"
-          ? ["pipe", "pipe", onStderr === undefined ? "ignore" : "pipe"]
-          : ["pipe", "pipe", "ignore", "pipe"],
+      stdio: platform === "win32" ? ["pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe", "pipe"],
       detached: platform !== "win32",
       windowsHide: true,
     },
   );
-  if (onStderr !== undefined) child.stderr?.setEncoding("utf8").on("data", onStderr);
+  child.stderr?.setEncoding("utf8").on("data", onStderr ?? (() => {}));
   child.once("exit", () => {
     onExit?.();
     if (platform === "win32") return;

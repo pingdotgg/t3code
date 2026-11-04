@@ -22,7 +22,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.label.name == '🚀 Mobile Continuous Deployment'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -129,7 +129,10 @@ jobs:
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action/continuous-deploy-fingerprint@main
+        # Pinned to the commit v9.0.1 tags rather than `main`: this job runs the
+        # reviewed head commit of a fork PR with EXPO_PREVIEW_TOKEN, so a moving
+        # branch ref would let a new upstream commit run here unreviewed.
+        uses: expo/expo-github-action/continuous-deploy-fingerprint@9da89d3617bb88139671bad31b09c65714c2ee06 # v9.0.1
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           RUNNER_DEBUG: "1"

@@ -161,7 +161,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
-  const enabledPlugins = new Map<string, boolean>();
+  const enabledPlugins = new Map<string, unknown>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
   for (const settingsPath of claudeSettingsPaths(
@@ -192,12 +192,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
       overridesByName.set(name, parseSkillOverride(value));
     }
     for (const [key, enabled] of Object.entries(parsed?.enabledPlugins ?? {})) {
-      if (typeof enabled === "boolean") {
-        enabledPlugins.set(key, enabled);
-      } else {
-        // Extended formats replace lower-precedence values without enabling the plugin here.
-        enabledPlugins.delete(key);
-      }
+      enabledPlugins.set(key, enabled);
     }
   }
 
@@ -240,7 +235,7 @@ function rebaseClaudePluginPath(path: Path.Path, pluginsPath: string, installPat
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
-  enabledPlugins: ReadonlyMap<string, boolean>,
+  enabledPlugins: ReadonlyMap<string, unknown>,
   environment: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -267,6 +262,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
   for (const [key, entries] of Object.entries(installed.plugins).sort()) {
+    // Version-constrained entries are left to the native plugin resolver.
     if (enabledPlugins.get(key) !== true) continue;
     const applicable = yield* Effect.filter(
       entries
@@ -360,24 +356,25 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-const SettingsBaseUrl = fromLenientJson(
-  Schema.Struct({
-    env: Schema.optional(Schema.Struct({ ANTHROPIC_BASE_URL: Schema.optional(Schema.String) })),
-  }),
+const SettingsEnv = Schema.Struct({
+  ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
+  CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+});
+const decodeSettingsEnv = Schema.decodeUnknownEffect(
+  fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
 );
-const decodeSettingsBaseUrl = Schema.decodeUnknownEffect(SettingsBaseUrl);
 
-/** ANTHROPIC_BASE_URL from Claude's settings `env`, which Claude Code applies over the process env. */
-export const readClaudeSettingsBaseUrl = Effect.fn("readClaudeSettingsBaseUrl")(function* (
+/** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
+export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<typeof SettingsEnv.Type, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
-  let baseUrl: string | undefined;
+  const settingsEnv: typeof SettingsEnv.Type = {};
   for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
@@ -389,12 +386,10 @@ export const readClaudeSettingsBaseUrl = Effect.fn("readClaudeSettingsBaseUrl")(
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
     if (contents === undefined) continue;
-    const parsed = yield* decodeSettingsBaseUrl(contents).pipe(
-      Effect.orElseSucceed(() => undefined),
-    );
-    baseUrl = parsed?.env?.ANTHROPIC_BASE_URL ?? baseUrl;
+    const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
+    Object.assign(settingsEnv, parsed?.env);
   }
-  return baseUrl;
+  return settingsEnv;
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
@@ -416,6 +411,16 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   }
   return directories;
 }
+
+/** Plugin enablement after Claude's settings-file precedence, keyed `name@marketplace`. */
+export const readClaudeEnabledPlugins = Effect.fn("readClaudeEnabledPlugins")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyMap<string, unknown>, never, FileSystem.FileSystem | Path.Path> {
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  return (yield* readSkillSettings(configDirPath, cwd, environment)).enabledPlugins;
+});
 
 /** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (

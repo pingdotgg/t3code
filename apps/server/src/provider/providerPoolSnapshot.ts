@@ -5,6 +5,7 @@ import {
   type ActiveProviderPool,
   type ProviderPoolSettings,
   type ServerProvider,
+  type ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
 
 const STATUS_RANK: Record<ServerProvider["status"], number> = {
@@ -58,6 +59,45 @@ const optionSignature = (model: ServerProvider["models"][number]): string =>
           : [descriptor.id, descriptor.type, null, descriptor.currentValue ?? null],
       ),
   );
+
+const intersectWorkspaceSnapshots = (
+  members: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProviderWorkspaceSnapshot> => {
+  const enabledMembers = members.filter((member) => member.enabled);
+  const [first, ...rest] = enabledMembers;
+  return (first?.workspaceSnapshots ?? []).flatMap((snapshot) => {
+    const otherSnapshots = rest.map((member) =>
+      member.workspaceSnapshots?.find((candidate) => candidate.cwd === snapshot.cwd),
+    );
+    if (otherSnapshots.some((candidate) => candidate === undefined)) return [];
+    const snapshots = [snapshot, ...otherSnapshots.filter((candidate) => candidate !== undefined)];
+    return [
+      {
+        cwd: snapshot.cwd,
+        // A pool snapshot expires as soon as any contributing member's inventory expires.
+        checkedAt: snapshots.reduce((oldest, candidate) =>
+          Date.parse(candidate.checkedAt) < Date.parse(oldest.checkedAt) ? candidate : oldest,
+        ).checkedAt,
+        slashCommands: intersectByName(snapshots.map((candidate) => candidate.slashCommands)),
+        skills: intersectByName(snapshots.map((candidate) => candidate.skills)),
+        ...(snapshots.some((candidate) => candidate.slashCommandsPending)
+          ? { slashCommandsPending: true }
+          : {}),
+        ...(snapshots.every((candidate) => candidate.optionDescriptors === undefined)
+          ? {}
+          : {
+              optionDescriptors: (snapshot.optionDescriptors ?? []).filter((descriptor) =>
+                snapshots.every((candidate) =>
+                  candidate.optionDescriptors?.some(
+                    (other) => JSON.stringify(other) === JSON.stringify(descriptor),
+                  ),
+                ),
+              ),
+            }),
+      },
+    ];
+  });
+};
 
 function makePoolEntry(
   pool: ActiveProviderPool,
@@ -121,6 +161,7 @@ function makePoolEntry(
     models,
     slashCommands: intersectByName(catalogMembers.map((member) => member.slashCommands)),
     skills: intersectByName(catalogMembers.map((member) => member.skills)),
+    workspaceSnapshots: intersectWorkspaceSnapshots(catalogMembers),
     pool: {
       role: "pool",
       memberInstanceIds: pool.memberInstanceIds,

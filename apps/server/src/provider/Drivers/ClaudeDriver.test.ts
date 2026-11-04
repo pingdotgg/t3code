@@ -1,6 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the native SDK callback reads the child fixture's account outside Effect.
 import * as NodeFSP from "node:fs/promises";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -54,7 +55,7 @@ const layerDeps = Layer.mergeAll(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Fixture must not send HTTP")),
   ),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerTest = Layer.effect(
   ProviderHost.ProviderHost,

@@ -120,12 +120,57 @@ permissions:
   contents: read
 
 jobs:
+  # `runner` and `verify_runner` are caller-supplied strings used directly as
+  # `runs-on`, so this workflow cannot tell a hosted pool from a private one on
+  # its own. Fail closed before either job is scheduled: a caller that passes
+  # `self-hosted`, a `*-runner` label, or anything outside the pools this
+  # workflow is designed for stops here instead of running release work (with
+  # release secrets) on hardware this repository does not control. The static
+  # half of the same policy is .github/scripts/check-runner-labels.py.
+  validate:
+    name: Validate runner inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject private runner labels
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.runner }}
+          VERIFY_RUNNER_LABEL: ${{ inputs.verify_runner }}
+        run: |
+          set -euo pipefail
+          # Standard GitHub-hosted images only.
+          allowed='^(ubuntu-(latest|22\.04|24\.04|26\.04)(-arm)?|macos-(latest|14|15|26)(-intel)?|windows-(latest|2022|2025|11-arm))$'
+          failed=0
+          check_label() {
+            local name="$1" label="$2" required="$3"
+            if [[ -z "$label" ]]; then
+              if [[ "$required" == "true" ]]; then
+                echo "::error::inputs.$name is empty, but this workflow needs a hosted runner label."
+                failed=1
+              fi
+              return 0
+            fi
+            # A private label is either a `*-runner` pool or simply outside the
+            # hosted pools above (GitHub's own self-hosted selector included).
+            if [[ "$label" == *-runner* ]] || [[ ! "$label" =~ $allowed ]]; then
+              echo "::error::inputs.$name=$label is not a hosted runner label (standard GitHub-hosted Ubuntu, macOS or Windows image)."
+              failed=1
+            else
+              echo "inputs.$name=$label is a hosted runner label."
+            fi
+          }
+          check_label runner "$RUNNER_LABEL" true
+          check_label verify_runner "$VERIFY_RUNNER_LABEL" false
+          exit "$failed"
+
   build:
     name: Build ${{ inputs.label }}
+    needs: [validate]
     runs-on: ${{ inputs.runner }}
     # Windows waits for the Linux CLI archive inside its own budget (see
     # "Wait for Linux CLI archive"), so it gets that wait on top of the usual 30.
-    timeout-minutes: ${{ inputs.platform == 'win' && 70 || 30 }}
+    timeout-minutes: ${{ inputs.platform == 'win' && 210 || 30 }}
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ inputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ inputs.clerk_jwt_template }}
@@ -260,6 +305,14 @@ jobs:
             native/kde-snap-shot/target/${{ inputs.rust_target }}/release/t3-kde-snap-shot
             native/hyprland-snap-shot/target/${{ inputs.rust_target }}/release/t3-hyprland-snap-shot
           key: linux-capture-helpers-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      - name: Ensure Rosetta for macOS x64 bytecode generation
+        if: inputs.platform == 'mac' && inputs.arch == 'x64'
+        shell: bash
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true; then
+            sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+          fi
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -497,7 +550,7 @@ jobs:
       - name: Wait for Linux CLI archive
         if: inputs.platform == 'win'
         shell: pwsh
-        timeout-minutes: 40
+        timeout-minutes: 180
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ARTIFACT: cli-linux-${{ inputs.arch }}
@@ -508,7 +561,6 @@ jobs:
           function Test-Archive {
             (Invoke-RestMethod -Headers $headers -Uri "$run/artifacts?name=$env:ARTIFACT").total_count -gt 0
           }
-          $missingSince = $null
           while ($true) {
             try {
               if (Test-Archive) {
@@ -516,17 +568,10 @@ jobs:
                 exit 0
               }
               $jobs = Invoke-RestMethod -Headers $headers -Uri "$run/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100"
+              # The Linux build is unlisted until its validate job finishes, which
+              # can take any time on a busy hosted queue, so absence is not failure.
               $linux = $jobs.jobs | Where-Object { $_.name.EndsWith($env:LINUX_JOB) } | Select-Object -First 1
-              if (-not $linux) {
-                # Both jobs start together, so a Linux job still missing after a
-                # few minutes means a renamed or skipped job, not a slow one.
-                if (-not $missingSince) {
-                  $missingSince = Get-Date
-                } elseif (((Get-Date) - $missingSince).TotalMinutes -ge 5) {
-                  Write-Host "::error::No job named '$env:LINUX_JOB' in this run, so $env:ARTIFACT will not arrive."
-                  exit 1
-                }
-              } elseif ($linux.conclusion) {
+              if ($linux -and $linux.conclusion) {
                 # The upload may have landed between the two requests above.
                 if (Test-Archive) {
                   Write-Host "$env:ARTIFACT is ready."
@@ -801,7 +846,7 @@ jobs:
 
   verify:
     name: Verify
-    needs: [build]
+    needs: [validate, build]
     if: inputs.verify_runner != ''
     runs-on: ${{ inputs.verify_runner }}
     timeout-minutes: 15

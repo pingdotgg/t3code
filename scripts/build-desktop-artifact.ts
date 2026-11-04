@@ -16,6 +16,7 @@ import {
   type DirectoryRecord,
 } from "@electron/asar";
 
+import { PSTACK_PACKAGED_PRUNED_DIR } from "@t3tools/pstack";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -2923,6 +2924,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.toolsets = { appimage: "1.0.3" };
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       target: target === "AppImage" ? [target, "deb"] : [target],
       executableName: "t3code",
@@ -3106,7 +3108,7 @@ export const prunePackagedPstackTestFixtures = Effect.fn("prunePackagedPstackTes
   function* (pstackDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const fixtureDir = path.join(pstackDir, "upstream/skills/statechart/scripts/test");
+    const fixtureDir = path.join(pstackDir, "upstream", PSTACK_PACKAGED_PRUNED_DIR);
     yield* fs.remove(fixtureDir, { recursive: true, force: true });
   },
 );

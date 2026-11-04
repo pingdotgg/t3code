@@ -26,8 +26,7 @@ permissions:
 jobs:
   test:
     name: Test (${{ inputs.package || 'all non-server' }})
-    # Forks do not inherit upstream's Blacksmith runner integration.
-    runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-windows-2025' || 'windows-2025' }}
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - name: Checkout

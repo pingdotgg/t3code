@@ -9,7 +9,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -58,6 +58,7 @@ const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
+const REMOTE_INSTALLED_PROBE_SECONDS = 15;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
@@ -88,7 +89,7 @@ interface SshTunnelEntry {
 
 type SshEnvironmentEffectContext =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -445,14 +446,36 @@ T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
-# Without the pinned runtime, reuse only an exact-release CLI from install.sh's PATH symlink.
+# Bound each probe so a hung candidate falls through to the archive download
+# instead of stalling until the SSH timeout. Output goes through a file and the
+# watchdog is detached: orphaned children holding a pipe would block the capture.
+t3_probe() {
+  T3_PROBE_OUT="$(mktemp "\${TMPDIR:-/tmp}/t3-probe.XXXXXX")"
+  "$@" >"$T3_PROBE_OUT" 2>/dev/null </dev/null &
+  T3_PROBE_PID=$!
+  (
+    sleep @@T3_INSTALLED_PROBE_SECONDS@@
+    kill "$T3_PROBE_PID" 2>/dev/null
+    sleep 2
+    kill -KILL "$T3_PROBE_PID" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  T3_PROBE_DOG=$!
+  wait "$T3_PROBE_PID" 2>/dev/null
+  T3_PROBE_RC=$?
+  kill "$T3_PROBE_DOG" 2>/dev/null
+  wait "$T3_PROBE_DOG" 2>/dev/null
+  cat "$T3_PROBE_OUT"
+  rm -f "$T3_PROBE_OUT"
+  return "$T3_PROBE_RC"
+}
+# Reuse only an exact-release CLI from the shell or the standard install locations.
 if ! t3_runtime_ready; then
-  for T3_INSTALLED in "$(command -v t3 2>/dev/null || true)" "$HOME/.local/bin/t3"; do
-    [ -n "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
-    T3_INSTALLED_VERSION="$("$T3_INSTALLED" --version 2>/dev/null || true)"
+  for T3_INSTALLED in "$(command -v t3 2>/dev/null || true)" "$HOME/.local/bin/t3" "$HOME/.t3/bin/t3"; do
+    [ -n "$T3_INSTALLED" ] && [ -f "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
+    T3_INSTALLED_VERSION="$(t3_probe "$T3_INSTALLED" --version 2>/dev/null || true)"
     case "$T3_INSTALLED_VERSION" in
       "t3 v$T3_ARCHIVE_VERSION")
-        if "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
+        if t3_probe "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
           exec "$T3_INSTALLED" "$@"
         fi
         ;;
@@ -829,6 +852,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
+      T3_INSTALLED_PROBE_SECONDS: String(REMOTE_INSTALLED_PROBE_SECONDS),
       T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
       T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -887,7 +911,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+    ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
   > {
     const stateKey = yield* remoteStateKey(target);
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
@@ -949,7 +973,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     readonly credential: string;
   },
   SshCommandError | SshInvalidTargetError | SshPairingError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
@@ -1001,7 +1025,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logInfo("ssh.remoteServer.stop.start", {
@@ -1027,7 +1051,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
@@ -1130,7 +1154,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -1575,7 +1599,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cryptoService = yield* Crypto.Crypto;
+    const digestService = yield* Digest.Digest;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
@@ -1615,7 +1639,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               },
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(Crypto.Crypto, cryptoService),
+          Effect.provideService(Digest.Digest, digestService),
           Effect.provideService(FileSystem.FileSystem, fileSystemService),
           Effect.provideService(Path.Path, pathService),
         );
@@ -1807,7 +1831,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 });
 
 /**
- * @effect-expect-leaking ChildProcessSpawner | Crypto | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ * @effect-expect-leaking ChildProcessSpawner | Digest | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
  */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,

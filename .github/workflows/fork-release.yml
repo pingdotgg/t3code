@@ -1,7 +1,7 @@
 name: Fork release
 
 # Publishes installers for this fork as a GitHub Release on every push to main.
-# release.yml needs upstream's Blacksmith runners, signing identities, and
+# release.yml needs upstream's signing identities and
 # deploy secrets, so this reuses only its per-platform packaging
 # (release-desktop.yml) on GitHub-hosted runners.
 
@@ -229,7 +229,15 @@ jobs:
             test -s "$manifest"
           done
           rm -f builder-debug.yml
-          sha256sum t3-*.tar.gz t3-*.zip > SHA256SUMS
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip T3-Code-*.dmg T3-Code-*.zip T3-Code-*.exe T3-Code-*.AppImage T3-Code-*.deb)
+          shopt -u nullglob
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No release archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Publish release
         if: github.event_name == 'push' || inputs.publish
