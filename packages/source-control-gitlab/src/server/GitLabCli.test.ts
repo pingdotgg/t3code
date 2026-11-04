@@ -30,6 +30,18 @@ it.effect.each([
   { operation: "view", requestedHost: "gitlab.example.test:8443", mapped: true },
   { operation: "checkout", requestedHost: "gitlab.example.test:8443", mapped: true },
   { operation: "api", requestedHost: "gitlab.example.test:8443", mapped: true },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: true,
+    configFailure: "first",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "all",
+  },
   { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
   { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
   {
@@ -39,7 +51,7 @@ it.effect.each([
     apiHost: "https://user:password@gitlab.example.test:8443",
   },
 ] as const)(
-  "routes $operation for $requestedHost using the configured host (mapped: $mapped)",
+  "routes $operation for $requestedHost using the configured host (mapped: $mapped, failed query: $configFailure)",
   (scenario) =>
     Effect.gen(function* () {
       const { operation, requestedHost, mapped } = scenario;
@@ -55,6 +67,16 @@ it.effect.each([
                 Effect.succeed(
                   Effect.succeed({
                     remotes: [
+                      ...("configFailure" in scenario && scenario.configFailure === "first"
+                        ? [
+                            {
+                              name: "upstream",
+                              url: "git@unavailable.example.test:team/repo.git",
+                              pushUrl: Option.none(),
+                              isPrimary: true,
+                            },
+                          ]
+                        : []),
                       {
                         name: "origin",
                         url: `git@${cliHost}:team/nested/repo.git`,
@@ -74,7 +96,23 @@ it.effect.each([
               run: (input) => {
                 calls.push(input);
                 if (input.args[0] === "config") {
+                  assert.strictEqual(input.timeoutMs, 3_000);
                   const candidate = input.args[4];
+                  if (
+                    candidate === "unavailable.example.test" ||
+                    ("configFailure" in scenario && scenario.configFailure === "all")
+                  ) {
+                    return Effect.fail(
+                      new VcsProcessExitError({
+                        operation: input.operation,
+                        command: input.command,
+                        cwd: input.cwd,
+                        exitCode: 1,
+                        detail: "Host configuration is unavailable.",
+                        failureKind: "command-failed",
+                      }),
+                    );
+                  }
                   assert.ok(candidate === cliHost || candidate === requestedHost);
                   return Effect.succeed(
                     processOutput(
@@ -121,7 +159,8 @@ it.effect.each([
       );
       assert.strictEqual(
         calls.filter((input) => input.args[0] === "config").length,
-        mapped ? 1 : 2,
+        (mapped ? 1 : 2) +
+          ("configFailure" in scenario && scenario.configFailure === "first" ? 1 : 0),
       );
     }),
 );

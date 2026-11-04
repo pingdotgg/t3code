@@ -492,11 +492,13 @@ export const make = Effect.gen(function* () {
           cwd,
           args: ["config", "get", "api_host", "--host", cliHost],
           maxOutputBytes: 4_096,
+          timeoutMs: 3_000,
         },
         (error) =>
           GitLabCliCommandError.fromVcsError({ operation: "execute", command: "glab", cwd }, error),
-      );
-      const webHost = gitLabApiHost(result.stdout) ?? cliHost.toLowerCase();
+      ).pipe(Effect.option);
+      if (Option.isNone(result)) continue;
+      const webHost = gitLabApiHost(result.value.stdout) ?? cliHost.toLowerCase();
       if (cliHost.toLowerCase() === host.toLowerCase() || webHost === host.toLowerCase()) {
         return { cliHost, webHost };
       }
