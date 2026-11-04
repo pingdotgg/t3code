@@ -22,6 +22,9 @@ const state = vi.hoisted(() => ({
       url: null;
     }>;
   }>,
+  activityPending: false,
+  activitySuccess: true,
+  activityError: null as string | null,
   perform: vi.fn(),
   startHandoff: vi.fn(),
   newThread: vi.fn(),
@@ -81,13 +84,19 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
   useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
   useEnvironmentQuery: (() => ({
     data: {
+      ...queryData(),
       code: { additions: 1, deletions: 0 },
       tests: { additions: 0, deletions: 0 },
       mocks: { additions: 0, deletions: 0 },
       generated: { additions: 0, deletions: 0 },
       docs: { additions: 7, deletions: 3 },
     },
-    isPending: false,
+    dataUpdatedAt: 1,
+    error: state.activityError,
+    failure: null,
+    isPending: state.activityPending,
+    isSuccess: state.activitySuccess,
+    refresh: vi.fn(),
   })) as never,
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
@@ -220,6 +229,43 @@ it("adds unresolved review feedback to the composer as chips", async () => {
   );
 });
 
+it("hides Merge while review activity is still fetching or failed", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  const render = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />
+  );
+  const mergeButton = () =>
+    [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Merge",
+    );
+
+  state.activityPending = true;
+  state.activitySuccess = true;
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeUndefined();
+
+  state.activityPending = false;
+  state.activitySuccess = false;
+  state.activityError = "The environment request failed.";
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeUndefined();
+
+  state.activitySuccess = true;
+  state.activityError = null;
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeTruthy();
+});
+
 it("requires a new merge click after passing checks become pending and pass again", async () => {
   await using screen = await setup();
   const { container } = screen;
@@ -277,6 +323,9 @@ async function setup() {
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
   state.reviewThreads = [];
+  state.activityPending = false;
+  state.activitySuccess = true;
+  state.activityError = null;
   useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);
 }

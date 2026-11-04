@@ -27,6 +27,7 @@ import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import {
+  useEnvironmentQuery,
   useEnvironmentQueryIsNewer,
   useEnvironmentQueryRefresh,
   useEnvironmentQuerySelector,
@@ -146,8 +147,9 @@ export function ThreadDetailsPrRow({
     reference !== null && detailData !== null
       ? pullRequestEnvironment.activity({ environmentId, input: reference })
       : null;
-  const activity = useEnvironmentQuerySelector(activityAtom, selectEnvironmentQueryData);
-  const activityQuery = useEnvironmentQueryRefresh(activityAtom);
+  const activityQuery = useEnvironmentQuery(activityAtom);
+  const activity = activityQuery.data;
+  const activityError = activity === null ? activityQuery.error : null;
   const feedback = {
     reviewThreads: activity?.reviewThreads ?? [],
     comments: activity?.comments ?? [],
@@ -161,7 +163,7 @@ export function ThreadDetailsPrRow({
   useLiveRefresh(
     () => {
       if (!detailQuery.isPending()) detailQuery.refresh();
-      if (!activityQuery.isPending()) activityQuery.refresh();
+      if (!activityQuery.isPending) activityQuery.refresh();
     },
     { enabled: open, key: `workspace-pr:${refreshKey}`, intervalMs: 10 * 60_000 },
   );
@@ -195,7 +197,7 @@ export function ThreadDetailsPrRow({
 
   const rowAction = gateThreadPanelMergeUntilFeedbackKnown(
     resolveThreadPanelPullRequestAction(detail, feedback),
-    activity !== null,
+    activityQuery.isSuccess && !activityQuery.isPending,
   );
   if (confirmingMerge && rowAction !== "merge") {
     setConfirmingMerge(false);
@@ -333,6 +335,14 @@ export function ThreadDetailsPrRow({
                 <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
                 <div className="min-w-0 flex-1 wrap-break-word">
                   Merge conflicts with {detail.baseBranch}
+                </div>
+              </div>
+            ) : null}
+            {detail.state === "open" && activityError ? (
+              <div className="flex min-w-0 items-start gap-2 text-destructive">
+                <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+                <div className="min-w-0 flex-1 wrap-break-word">
+                  Couldn't load review activity. Open the {terminology.singular} for details.
                 </div>
               </div>
             ) : null}

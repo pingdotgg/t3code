@@ -392,7 +392,7 @@ export function resolveThreadPanelPullRequestAction(
     : null;
 }
 
-/** Hold Merge until review activity has loaded; empty fallbacks would look like no feedback. */
+/** Hold Merge until a current activity fetch succeeds; stale or empty data would look like no feedback. */
 export function gateThreadPanelMergeUntilFeedbackKnown(
   action: ThreadPanelPullRequestAction | null,
   feedbackKnown: boolean,
