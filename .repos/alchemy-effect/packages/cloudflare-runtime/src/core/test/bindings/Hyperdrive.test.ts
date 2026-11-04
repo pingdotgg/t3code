@@ -1,6 +1,6 @@
+import * as Net from "node:net";
 import { expect, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Net from "node:net";
 import * as Hyperdrive from "../../bindings/hyperdrive/Hyperdrive.ts";
 import { localRuntimeLayer, startTestWorker } from "../helpers/runtime.ts";
 
@@ -41,21 +41,17 @@ export default {
 
 const startTcpEcho = (greeting: string) =>
   Effect.acquireRelease(
-    Effect.callback<{ host: string; port: number; server: Net.Server }>(
-      (resume) => {
-        const server = Net.createServer((socket) => {
-          socket.write(greeting);
-          socket.end();
-        });
-        server.once("error", (err) => resume(Effect.die(err)));
-        server.listen(0, "127.0.0.1", () => {
-          const addr = server.address() as Net.AddressInfo;
-          resume(
-            Effect.succeed({ host: "127.0.0.1", port: addr.port, server }),
-          );
-        });
-      },
-    ),
+    Effect.callback<{ host: string; port: number; server: Net.Server }>((resume) => {
+      const server = Net.createServer((socket) => {
+        socket.write(greeting);
+        socket.end();
+      });
+      server.once("error", (err) => resume(Effect.die(err)));
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address() as Net.AddressInfo;
+        resume(Effect.succeed({ host: "127.0.0.1", port: addr.port, server }));
+      });
+    }),
     ({ server }) =>
       Effect.callback<void>((resume) => {
         server.close(() => resume(Effect.void));
@@ -74,9 +70,7 @@ layer(localRuntimeLayer)("Hyperdrive binding", (it) => {
             name: `hyperdrive-test-${legacy ? "legacy" : "default"}`,
             compatibilityDate: "2026-03-10",
             compatibilityFlags: legacy ? ["legacy_module_registry"] : [],
-            modules: [
-              { name: "main.js", type: "ESModule", content: HYPERDRIVE_SCRIPT },
-            ],
+            modules: [{ name: "main.js", type: "ESModule", content: HYPERDRIVE_SCRIPT }],
             hyperdrives: {
               db: {
                 scheme: "postgresql",

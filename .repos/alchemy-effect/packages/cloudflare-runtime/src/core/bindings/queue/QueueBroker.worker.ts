@@ -8,11 +8,7 @@ import type {
 } from "@cloudflare/workers-types/experimental";
 import { DurableObject } from "cloudflare:workers";
 import { HttpError } from "../../internal/shared.worker.ts";
-import type {
-  QueueConsumer,
-  QueueContentType,
-  QueueProducerEntry,
-} from "./QueueOptions.shared.ts";
+import type { QueueConsumer, QueueContentType, QueueProducerEntry } from "./QueueOptions.shared.ts";
 import {
   BINDING_QUEUE_BROKER,
   BINDING_QUEUE_CONSUMER,
@@ -31,12 +27,7 @@ interface BrokerEnv {
   [binding: string]: unknown;
 }
 
-const QUEUE_CONTENT_TYPES: ReadonlyArray<QueueContentType> = [
-  "text",
-  "json",
-  "bytes",
-  "v8",
-];
+const QUEUE_CONTENT_TYPES: ReadonlyArray<QueueContentType> = ["text", "json", "bytes", "v8"];
 const MAX_MESSAGE_SIZE_BYTES = 128 * 1000;
 const MAX_MESSAGE_BATCH_COUNT = 100;
 const MAX_MESSAGE_BATCH_SIZE = (256 + 32) * 1000;
@@ -276,22 +267,18 @@ export class QueueBroker extends DurableObject<BrokerEnv> {
 
     const retryAll = response.retryBatch.retry || response.outcome !== "ok";
     const retryMessages = new Map(
-      response.retryMessages?.map(
-        (message) => [message.msgId, message.delaySeconds] as const,
-      ),
+      response.retryMessages?.map((message) => [message.msgId, message.delaySeconds] as const),
     );
     // Explicitly acked messages take precedence over a batch-wide retry (from
     // `batch.retryAll()` or a thrown handler): they have already succeeded and
     // must not be redelivered.
     const explicitAcks = new Set(response.explicitAcks ?? []);
-    const globalDelay =
-      response.retryBatch.delaySeconds ?? consumer.retryDelay ?? 0;
+    const globalDelay = response.retryBatch.delaySeconds ?? consumer.retryDelay ?? 0;
 
     const toDeadLetterQueue: Array<QueueMessage> = [];
     for (const message of batch) {
       const shouldRetry =
-        retryMessages.has(message.id) ||
-        (retryAll && !explicitAcks.has(message.id));
+        retryMessages.has(message.id) || (retryAll && !explicitAcks.has(message.id));
       if (!shouldRetry) {
         continue;
       }
@@ -322,14 +309,8 @@ export class QueueBroker extends DurableObject<BrokerEnv> {
       this.ensurePendingFlush();
     }
 
-    if (
-      toDeadLetterQueue.length > 0 &&
-      consumer.deadLetterQueue !== undefined
-    ) {
-      await this.sendToDeadLetterQueue(
-        consumer.deadLetterQueue,
-        toDeadLetterQueue,
-      );
+    if (toDeadLetterQueue.length > 0 && consumer.deadLetterQueue !== undefined) {
+      await this.sendToDeadLetterQueue(consumer.deadLetterQueue, toDeadLetterQueue);
     }
   }
 
@@ -354,20 +335,14 @@ export class QueueBroker extends DurableObject<BrokerEnv> {
         body: message.body.body,
       };
     });
-    return this.env[BINDING_QUEUE_USER_WORKER].queue(
-      this.queueName,
-      messages,
-      metadata,
-    );
+    return this.env[BINDING_QUEUE_USER_WORKER].queue(this.queueName, messages, metadata);
   }
 
   private async sendToDeadLetterQueue(
     deadLetterQueue: string,
     messages: Array<QueueMessage>,
   ): Promise<void> {
-    const binding = this.env[BINDING_QUEUE_DLQ(deadLetterQueue)] as
-      | Fetcher
-      | undefined;
+    const binding = this.env[BINDING_QUEUE_DLQ(deadLetterQueue)] as Fetcher | undefined;
     if (binding === undefined) {
       console.warn(
         `Cannot move messages on queue "${this.queueName}" to dead letter queue "${deadLetterQueue}": no binding configured`,
@@ -447,14 +422,8 @@ function validateBatchSizeHeaders(request: Request) {
     );
   }
   const batchSize = request.headers.get("CF-Queue-Batch-Bytes");
-  if (
-    batchSize !== null &&
-    Number.parseInt(batchSize) > MAX_MESSAGE_BATCH_SIZE
-  ) {
-    throw new HttpError(
-      413,
-      `batch size of ${batchSize} bytes exceeds limit of 256000`,
-    );
+  if (batchSize !== null && Number.parseInt(batchSize) > MAX_MESSAGE_BATCH_SIZE) {
+    throw new HttpError(413, `batch size of ${batchSize} bytes exceeds limit of 256000`);
   }
 }
 
@@ -494,10 +463,7 @@ function serialize(message: QueueMessage): QueueIncomingMessage {
   };
 }
 
-function deserialize(
-  contentType: QueueContentType,
-  bytes: Uint8Array,
-): MessageBody {
+function deserialize(contentType: QueueContentType, bytes: Uint8Array): MessageBody {
   switch (contentType) {
     case "text":
       return { contentType, body: decoder.decode(bytes) };
