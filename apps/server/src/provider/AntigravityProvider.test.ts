@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -121,7 +122,7 @@ const layerTest = ProviderHostLive.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   ),
 );
@@ -343,6 +344,21 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           });
           expect(yield* Ref.get(harness.probeCalls)).toBe(1);
         }
+      }),
+    ),
+  );
+
+  it.effect("does not offer Auto, so Auto threads fall back to Supervised", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        // Antigravity has no automatic review; the shared ACP policy would approve every request.
+        expect((yield* harness.provider.snapshot.getSnapshot).supportedRuntimeModes).toEqual([
+          "approval-required",
+          "auto-accept-edits",
+          "full-access",
+        ]);
       }),
     ),
   );

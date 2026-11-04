@@ -12,9 +12,7 @@ export const metadata = {
 export default function Home() {
   return (
     <main>
-      <h1 className="text-3xl font-bold">
-        {process.env.GREETING ?? "Hello!"}
-      </h1>
+      <h1 className="text-3xl font-bold">{process.env.GREETING ?? "Hello!"}</h1>
       <Card
         title="Styled with Tailwind CSS"
         body="This card is a React component styled with Tailwind utilities."

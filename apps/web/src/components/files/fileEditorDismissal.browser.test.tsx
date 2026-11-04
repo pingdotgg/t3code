@@ -1,3 +1,4 @@
+import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { Editor, type EditorFactory } from "@pierre/diffs/edit";
 import { EditProvider, File } from "@pierre/diffs/react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -16,6 +17,8 @@ describe("installFileEditorDismissal", () => {
     let editor: Editor<"file" | "file-diff", undefined, undefined> | undefined;
     const createEditor: EditorFactory<undefined, undefined> = (...args) =>
       (editor = new Editor(...args));
+    // File paints nothing until the shared highlighter has loaded; once it has, mount renders synchronously.
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
     await using screen = await render(
       <>
         <p>Assistant reply</p>
@@ -42,7 +45,7 @@ describe("installFileEditorDismissal", () => {
       { start: { line: 0, character: 8 }, end: { line: 0, character: 8 }, direction: "none" },
     ]);
     const isMac = isMacPlatform(navigator.platform);
-    content.dispatchEvent(
+    content!.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "f",
         code: "KeyF",
