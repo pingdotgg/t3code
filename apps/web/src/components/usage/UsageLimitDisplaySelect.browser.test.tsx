@@ -1,8 +1,13 @@
 import "~/index.css";
-import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import {
@@ -22,8 +27,9 @@ const persistence = vi.hoisted(() => ({
 }));
 vi.mock("../../localApi", () => ({ ensureLocalApi: () => ({ persistence }) }));
 
-const now = Date.parse("2026-10-25T16:00:00.000Z");
-const window = {
+const checkedAt = "2026-10-25T16:00:00.000Z";
+const now = Date.parse(checkedAt);
+const sessionWindow = {
   id: "session",
   kind: "session",
   label: "Session",
@@ -32,127 +38,142 @@ const window = {
   resetsAt: "2026-10-25T18:00:00.000Z",
 } as const;
 
-it("updates pooled, details-card and composer limits together, persists, and switches back", async () => {
+function setup(): Disposable {
   persistence.getClientSettings.mockReset().mockResolvedValue(null);
   persistence.setClientSettings.mockReset().mockResolvedValue(undefined);
   __resetClientSettingsPersistenceForTests();
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
-  using _settings = { [Symbol.dispose]: __resetClientSettingsPersistenceForTests };
-  const provider = {
+  return { [Symbol.dispose]: __resetClientSettingsPersistenceForTests };
+}
+
+function usageProvider(blocked: boolean) {
+  return {
     instanceId: ProviderInstanceId.make("claude"),
     driver: ProviderDriverKind.make("claudeAgent"),
     enabled: true,
     installed: true,
     version: null,
-    status: "ready" as const,
-    auth: { status: "authenticated" as const },
-    checkedAt: new Date(now).toISOString(),
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt,
     models: [],
     slashCommands: [],
     skills: [],
-    usageLimits: { checkedAt: new Date(now).toISOString(), windows: [window] },
-  };
+    usageLimits: {
+      checkedAt,
+      windows: blocked
+        ? [
+            sessionWindow,
+            {
+              ...sessionWindow,
+              id: "seven_day",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 100,
+            },
+          ]
+        : [sessionWindow],
+    },
+  } satisfies ServerProvider;
+}
+
+function UsageLimitsFixture({ blocked = false }: { readonly blocked?: boolean }) {
+  const provider = usageProvider(blocked);
   const presentations = new Map([
     [
       EnvironmentId.make("desk"),
       { entry: { target: { label: "Desk" } }, serverConfig: { providers: [provider] } },
     ],
   ]);
-  const ui = (blocked = false) => {
-    const shownProvider = blocked
-      ? {
-          ...provider,
-          usageLimits: {
-            ...provider.usageLimits,
-            windows: [
-              window,
-              {
-                ...window,
-                id: "seven_day",
-                kind: "weekly" as const,
-                label: "Weekly",
-                usedPercent: 100,
-              },
-            ],
-          },
-        }
-      : provider;
-    const shownPresentations = blocked
-      ? new Map([
-          [
-            EnvironmentId.make("desk"),
-            { entry: { target: { label: "Desk" } }, serverConfig: { providers: [shownProvider] } },
-          ],
-        ])
-      : presentations;
-    return (
-      <>
-        <UsageLimitDisplaySelect />
-        <div data-testid="pooled">
-          <UsageLimitsPooled presentations={shownPresentations} now={now} />
+  return (
+    <main className="mx-auto max-w-4xl space-y-8 bg-background p-6 text-foreground">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-lg font-semibold">Usage limit display</h1>
+          <p className="text-sm text-muted-foreground">
+            Component integration fixture · synthetic quota data
+          </p>
         </div>
-        <div data-testid="card">
+        <div className="w-52">
+          <UsageLimitDisplaySelect />
+        </div>
+      </header>
+
+      <section aria-labelledby="fixture-usage-heading" className="space-y-3">
+        <h2 id="fixture-usage-heading" className="text-sm font-medium">
+          Usage view
+        </h2>
+        <UsageLimitsPooled presentations={presentations} now={now} />
+      </section>
+
+      <section aria-labelledby="fixture-card-heading" className="space-y-3">
+        <h2 id="fixture-card-heading" className="text-sm font-medium">
+          Thread details card
+        </h2>
+        <div className="rounded-lg border border-border p-3">
           <ThreadDetailsUsage
             providerInstanceId={provider.instanceId}
-            providers={[shownProvider]}
+            providers={[provider]}
             sources={[]}
           />
         </div>
-        <div data-testid="composer">
+      </section>
+
+      <section aria-labelledby="fixture-composer-heading" className="space-y-3">
+        <h2 id="fixture-composer-heading" className="text-sm font-medium">
+          Composer banner
+        </h2>
+        <div className="rounded-lg border border-border p-4">
           <LimitWindows
+            compact
             driver={provider.driver}
-            windows={shownProvider.usageLimits.windows}
+            windows={provider.usageLimits.windows}
             now={now}
           />
         </div>
-      </>
-    );
-  };
-  const container = document.createElement("div");
-  container.style.width = "375px";
-  await using screen = await render(ui(), { container });
+      </section>
+    </main>
+  );
+}
+
+async function expectComposerBar(composer: Locator, percent: number, pace: number) {
   await vi.waitFor(() => {
-    const selector = screen.getByRole("combobox", { name: "Usage limit display" }).element();
-    expect(selector.getBoundingClientRect().right).toBeLessThanOrEqual(
-      container.getBoundingClientRect().right,
-    );
+    const bar = composer.getByRole("img", { name: /^Session:/ }).element();
+    const fill = bar.querySelector<HTMLElement>('[data-slot="usage-limit-fill"]')!;
+    const marker = bar.querySelector<HTMLElement>('[data-slot="usage-limit-pace"]')!;
+    expect(fill.style.width).toBe(`${percent}%`);
+    const track = bar.getBoundingClientRect();
+    const tick = marker.getBoundingClientRect();
+    expect((tick.left + tick.width / 2 - track.left) / track.width).toBeCloseTo(pace / 100, 2);
   });
-  await expect
-    .element(screen.getByTestId("pooled").getByRole("button", { name: /65% left/ }))
-    .toBeVisible();
-  await expect
-    .element(screen.getByTestId("card").getByLabelText("Session: 65% left"))
-    .toBeVisible();
-  await screen.getByRole("combobox", { name: "Usage limit display" }).click();
+}
+
+it("updates limit displays together, retains the preference after hydration, and switches back", async () => {
+  using _settings = setup();
+  await using screen = await render(<UsageLimitsFixture />);
+  const pooled = screen.getByRole("region", { name: "Usage view" });
+  const card = screen.getByRole("region", { name: "Thread details card" });
+  const composer = screen.getByRole("region", { name: "Composer banner" });
+  const selector = screen.getByRole("combobox", { name: "Usage limit display" });
+
+  await expect.element(pooled.getByRole("button", { name: /65% left/ })).toBeVisible();
+  await expect.element(card.getByLabelText("Session: 65% left")).toBeVisible();
+  await expectComposerBar(composer, 65, 40);
+
+  await selector.click();
   await page.getByRole("option", { name: "Used (fills up)" }).click();
+  await expect.element(pooled.getByRole("button", { name: /35% used/ })).toBeVisible();
+  await expect.element(card.getByLabelText("Session: 35% used")).toBeVisible();
   await expect
-    .element(screen.getByTestId("pooled").getByRole("button", { name: /35% used/ }))
+    .element(composer.getByRole("img", { name: /35% used, 60% of the window elapsed/ }))
     .toBeVisible();
-  await expect
-    .element(screen.getByTestId("card").getByLabelText("Session: 35% used"))
-    .toBeVisible();
-  await expect
-    .element(
-      screen
-        .getByTestId("composer")
-        .getByRole("img", { name: /35% used, 60% of the window elapsed/ }),
-    )
-    .toBeVisible();
-  await vi.waitFor(() => {
-    const bar = screen.container.querySelector<HTMLElement>(
-      '[data-testid="composer"] [role="img"]',
-    )!;
-    expect(bar.querySelector<HTMLElement>('div[style*="width:"]')?.style.width).toBe("35%");
-    expect(bar.querySelector<HTMLElement>('span[style*="left:"]')?.style.left).toContain("60%");
-  });
-  await screen.rerender(ui(true));
-  await expect
-    .element(screen.getByTestId("pooled").getByRole("button", { name: /100% unavailable/ }))
-    .toBeVisible();
-  await expect
-    .element(screen.getByTestId("card").getByLabelText("Session: 35% used"))
-    .toBeVisible();
-  await screen.rerender(ui());
+  await expectComposerBar(composer, 35, 60);
+
+  await screen.rerender(<UsageLimitsFixture blocked />);
+  await expect.element(pooled.getByRole("button", { name: /100% unavailable/ })).toBeVisible();
+  await expect.element(card.getByLabelText("Session: 35% used")).toBeVisible();
+  await screen.rerender(<UsageLimitsFixture />);
+
   await vi.waitFor(() =>
     expect(persistence.setClientSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({ usageLimitDisplay: "used" }),
@@ -163,25 +184,16 @@ it("updates pooled, details-card and composer limits together, persists, and swi
   __resetClientSettingsPersistenceForTests();
   persistence.getClientSettings.mockResolvedValue(saved);
   await ensureClientSettingsHydrated();
-  await screen.rerender(ui());
-  await expect
-    .element(screen.getByRole("combobox", { name: "Usage limit display" }))
-    .toHaveTextContent("Used (fills up)");
-  await screen.getByRole("combobox", { name: "Usage limit display" }).click();
+  await screen.rerender(<UsageLimitsFixture />);
+  await expect.element(selector).toHaveTextContent("Used (fills up)");
+  await expectComposerBar(composer, 35, 60);
+
+  await selector.click();
   await page.getByRole("option", { name: "Remaining (empties)" }).click();
-  await vi.waitFor(() => {
-    const bar = screen.container.querySelector<HTMLElement>(
-      '[data-testid="composer"] [role="img"]',
-    )!;
-    expect(bar.querySelector<HTMLElement>('div[style*="width:"]')?.style.width).toBe("65%");
-    expect(bar.querySelector<HTMLElement>('span[style*="left:"]')?.style.left).toContain("40%");
-  });
+  await expect.element(pooled.getByRole("button", { name: /65% left/ })).toBeVisible();
+  await expect.element(card.getByLabelText("Session: 65% left")).toBeVisible();
   await expect
-    .element(screen.getByTestId("card").getByLabelText("Session: 65% left"))
+    .element(composer.getByRole("img", { name: /65% left, 40% of the window left/ }))
     .toBeVisible();
-  await expect
-    .element(
-      screen.getByTestId("composer").getByRole("img", { name: /65% left, 40% of the window left/ }),
-    )
-    .toBeVisible();
+  await expectComposerBar(composer, 65, 40);
 });

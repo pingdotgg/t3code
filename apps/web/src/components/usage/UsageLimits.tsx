@@ -153,6 +153,7 @@ function WindowBar({
           <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
           {percent > 0 ? (
             <div
+              data-slot="usage-limit-fill"
               className="absolute inset-y-1.5 left-0 rounded-full"
               style={{ width: `${percent}%`, backgroundColor: color }}
             />
@@ -161,6 +162,7 @@ function WindowBar({
         {paceMark ? (
           <span
             aria-hidden
+            data-slot="usage-limit-pace"
             className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
             style={paceMark.tick}
           />
