@@ -4,9 +4,15 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { assert, expect, it } from "@effect/vitest";
-import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  EnvironmentId,
+  OrchestratorMcpDelegateTaskResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -27,6 +33,7 @@ import {
   summarize,
   t3Default,
   t3SystemAppend,
+  t3Result,
   t3SubagentContext,
   withDevices,
 } from "./run.ts";
@@ -418,6 +425,77 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
+const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const casesIn = (file: string) =>
+  NodeFS.readFileSync(new URL(`./cases/${file}`, import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeCase(line));
+const decodeTaskResult = Schema.decodeUnknownResult(OrchestratorMcpDelegateTaskResult);
+const isFailureMock = (mock: unknown) =>
+  typeof mock === "object" && mock !== null && "_tag" in mock;
+
+it.effect("gives the model every delegated-task result in T3's contract shape", () =>
+  Effect.gen(function* () {
+    // A Codex base answers any prior tool, so every case's prior turns replay.
+    const base = {
+      ...buildBase(template, { model: "gpt-6.1-sol", keepUserInstructions: false }),
+      codex: { input: [], reasoning: { effort: "high" } },
+    };
+    const cases = NodeFS.readdirSync(new URL("./cases/", import.meta.url))
+      .filter((file) => file.endsWith(".ndjson"))
+      .flatMap(casesIn);
+    const invalid: Array<string> = [];
+    for (const testCase of cases) {
+      const sample = makeSample(testCase, base);
+      yield* withDevices(sample);
+      const blocks = buildMessages(sample).flatMap((message) => message.content);
+      const seen = blocks.flatMap((use) => {
+        const tool = normalizeToolName(String(use.name));
+        if (use.type !== "tool_use" || !["delegate_task", "task_status"].includes(tool)) return [];
+        const result = blocks.find((block) => block.tool_use_id === use.id);
+        return [{ tool, value: JSON.parse(String(result?.content)), live: false }];
+      });
+      const delegated = t3Result(sample, "delegate_task", { task: "Review the diff." });
+      seen.push({ tool: "delegate_task", value: delegated, live: true });
+      const taskIds = new Set(seen.map(({ value }) => value.taskId).filter(Boolean));
+      for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) {
+        seen.push({
+          tool: "task_status",
+          value: t3Result(sample, "task_status", { taskId }),
+          live: true,
+        });
+      }
+      for (const { tool, value, live } of seen) {
+        const mock = testCase.setup.mocks?.[tool];
+        const decoded = decodeTaskResult(value);
+        if (live && isFailureMock(mock)) {
+          assert.deepEqual(value, mock);
+          assert.isTrue(Result.isFailure(decoded));
+        } else if (Result.isFailure(decoded)) {
+          invalid.push(
+            `${testCase.id} ${live ? "live" : "prior"} ${tool}: ${decoded.failure.message}`,
+          );
+        }
+      }
+    }
+    assert.deepEqual(invalid, []);
+
+    // A later status names the child and model the task's earlier results gave it.
+    const stale = cases.find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
+    const sample = makeSample(stale, base);
+    buildMessages(sample);
+    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-1" }), {
+      childRunId: "run-child-1",
+      providerInstanceId: "codex",
+      model: "gpt-6.1-sol",
+      status: "completed",
+      hasPendingChildRuns: true,
+      latestTerminalRunId: "run-child-1",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const sample = makeSample(childCase, base);
@@ -550,12 +628,7 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ textMustNot: ["paste"] }, run("Bash", "paste it here")));
 });
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
-const deviceCases = () =>
-  NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => decodeDeviceCase(line));
+const deviceCases = () => casesIn("device-manager.ndjson");
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
