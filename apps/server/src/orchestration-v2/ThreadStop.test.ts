@@ -1894,7 +1894,7 @@ it.effect("Force stop keeps the session a queued follow-up started its turn on",
         yield* Fiber.join(firstRunning);
         yield* send(threadId, "follow-up", "queue_after_active");
 
-        yield* threads.forceStopThread({ threadId });
+        const result = yield* threads.forceStopThread({ threadId });
         yield* worker.drain();
 
         assert.deepEqual(
@@ -1914,6 +1914,11 @@ it.effect("Force stop keeps the session a queued follow-up started its turn on",
         assert.isTrue(
           yield* sessions.isLive(providerSessionId),
           "Force stop of the first run released the session the follow-up's turn is running on",
+        );
+        assert.deepEqual(
+          result,
+          { outcome: "released", sharedWithThreadIds: [] },
+          "Force stop detached the thread the follow-up runs on as if its session were shared",
         );
       }).pipe(Effect.provide(layerLive));
     }),
