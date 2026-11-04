@@ -535,8 +535,13 @@ const requestRefreshedCodexModels = Effect.fn("requestRefreshedCodexModels")(fun
     return yield* fallbackModels;
   }
   return (
-    (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
-    (yield* fallbackModels)
+    (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Codex catalog refresh failed; using the cached catalog.").pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    )) ?? (yield* fallbackModels)
   );
 });
 

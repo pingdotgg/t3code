@@ -48,9 +48,42 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 const FAKE_CODEX_CUSTOM_PROVIDER_APP_SERVER = makeFakeCodexAppServer(
   `{ result: { config: { model_provider: "openrouter" }, origins: {} } }`,
 );
-const FAKE_CODEX_UNREADABLE_CONFIG_APP_SERVER = makeFakeCodexAppServer(
-  `{ error: { code: -32603, message: "config unavailable" } }`,
-);
+const FAKE_CODEX_UNREADABLE_CONFIG_APP_SERVER = String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const write = (message) => process.stdout.write(JSON.stringify(message) + "\n");
+const bundledModel = {
+  id: "gpt-6.1-sol", model: "gpt-6.1-sol", displayName: "GPT-6.1 Sol", description: "",
+  hidden: false, isDefault: true, defaultReasoningEffort: "high",
+  supportedReasoningEfforts: [{ reasoningEffort: "high", description: "" }], serviceTiers: [],
+};
+let modelLists = 0;
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    write({ id, result: { userAgent: "codex/0.166.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: "linux" } });
+  } else if (method === "account/read") {
+    write({ id, result: { account: null, requiresOpenaiAuth: false } });
+  } else if (method === "config/read") {
+    write({ id, error: { code: -32603, message: "config unavailable" } });
+  } else if (method === "model/list") {
+    modelLists += 1;
+    fs.writeFileSync(process.env.CODEX_HOME + "/models_cache.json", process.env.CODEX_TEST_CACHE);
+    if (modelLists > 1) {
+      write({ id, error: { code: -32603, message: "catalog refresh failed" } });
+      return;
+    }
+    write({ id, result: { data: [bundledModel], nextCursor: null } });
+  } else if (method === "skills/list") {
+    write({ id, result: { data: [] } });
+  } else if (method === "account/rateLimits/read") {
+    write({ id, result: null });
+  } else {
+    write({ id, error: { code: -32601, message: "unsupported" } });
+  }
+});
+`;
 
 const FAKE_CODEX_SLOW_CONFIG_APP_SERVER = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -175,19 +208,17 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
         const binaryPath = path.join(dir, "codex");
         yield* fs.writeFileString(binaryPath, FAKE_CODEX_UNREADABLE_CONFIG_APP_SERVER);
         yield* fs.chmod(binaryPath, 0o755);
-        yield* fs.writeFileString(
-          path.join(dir, "models_cache.json"),
-          JSON.stringify({
-            fetched_at: DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { minutes: 10 })),
-            models: [cachedCustomModel],
-          }),
-        );
+        const freshCache = JSON.stringify({
+          fetched_at: DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 })),
+          models: [cachedCustomModel],
+        });
+        yield* fs.writeFileString(path.join(dir, "models_cache.json"), freshCache);
 
         const { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: _ambient, ...environment } = process.env;
         const provider = yield* checkCodexProviderStatus(
           decodeCodexSettings({ binaryPath, homePath: dir }),
           undefined,
-          environment,
+          { ...environment, CODEX_TEST_CACHE: freshCache },
         );
 
         assert.deepStrictEqual(
