@@ -278,9 +278,9 @@ function workEntryIndicatesToolFailureFromOutput(
   }
   const item = entry.structuredPayload;
   if (item?.type === "command_execution") {
-    if (item.outputIndicatesFailure || (item.exitCode !== undefined && item.exitCode !== 0)) {
-      return true;
-    }
+    // The exit code outranks text in the output or the command itself.
+    if (item.exitCode !== undefined) return item.exitCode !== 0;
+    if (item.outputIndicatesFailure) return true;
     if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) {
       return true;
     }
@@ -291,12 +291,31 @@ function workEntryIndicatesToolFailureFromOutput(
   return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
+// Rows are re-derived on every timeline update but entries are reused while
+// their item is unchanged, so these per-entry checks are computed once.
+const entryChecks = new WeakMap<
+  WorkLogPresentationEntry,
+  { failure?: boolean; displayFailure?: boolean; action?: ToolGroupAction }
+>();
+
+function checksFor(entry: WorkLogPresentationEntry) {
+  let checks = entryChecks.get(entry);
+  if (!checks) {
+    checks = {};
+    entryChecks.set(entry, checks);
+  }
+  return checks;
+}
+
 export function workEntryIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
+  return (checksFor(entry).failure ??= workEntryIndicatesToolFailureFromOutput(entry, true));
 }
 
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
+  return (checksFor(entry).displayFailure ??= workEntryIndicatesToolFailureFromOutput(
+    entry,
+    false,
+  ));
 }
 
 function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean {
@@ -308,6 +327,10 @@ function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  return (checksFor(entry).action ??= computeToolGroupAction(entry));
+}
+
+function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
   if (entry.itemType === "thread_created") return "thread-create";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;

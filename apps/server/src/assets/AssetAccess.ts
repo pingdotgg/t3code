@@ -38,7 +38,7 @@ import {
 import { isNetworkPath } from "@t3tools/shared/path";
 import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -54,6 +54,7 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -281,7 +282,9 @@ const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(funct
   if (Option.isNone(canonicalFile)) return null;
 
   const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(canonicalFile.value));
-  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+  if (Option.isNone(info) || info.value.type !== "File") return null;
+  const isServerInternalPath = yield* makeIsServerInternalPath;
+  return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
@@ -309,7 +312,9 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const info = yield* ProjectFaviconResolver.optionOnNotFound(
       fileSystem.stat(canonicalFile.value),
     );
-    return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    const isServerInternalPath = yield* makeIsServerInternalPath;
+    return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
   },
 );
 
@@ -769,7 +774,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               expiresAt,
             };
       if (sourceFaviconPath && canonicalFaviconPath) {
-        const crypto = yield* Crypto.Crypto;
+        const digest = yield* Digest.Digest;
         const faviconBytes = yield* fileSystem.readFile(canonicalFaviconPath).pipe(
           Effect.mapError(
             (cause) =>
@@ -779,7 +784,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               }),
           ),
         );
-        const revision = yield* crypto.digest("SHA-256", faviconBytes).pipe(
+        const revision = yield* digest.digest(Digest.sha256, faviconBytes).pipe(
           Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
