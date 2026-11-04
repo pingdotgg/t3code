@@ -66,7 +66,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatusByHost?: Record<string, number>;
     tokenStatus?: number;
     refreshToken?: string;
-    userId?: string;
+    userId?: string | undefined;
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
@@ -154,37 +154,40 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
 });
 
 describe("Antigravity subscription limits", () => {
-  it.effect("retains account cooldowns when an expiring OAuth access token is renewed", () =>
-    Effect.gen(function* () {
-      const options = {
-        rotateAccessToken: true,
-        usageRetryAfter: "600",
-        summaryStatus: 200,
-        userId: "google-account",
-      };
-      const { probe, requests, writeToken } = yield* fixture(options);
-      yield* probe;
-      yield* TestClock.adjust("55 minutes");
-      options.summaryStatus = 429;
-      yield* probe;
-      const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
-      expect(quotaCalls()).toBe(4);
-      yield* TestClock.adjust("5 minutes");
-      yield* probe;
-      expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
-      expect(quotaCalls()).toBe(4);
-      options.userId = "another-google-account";
-      yield* writeToken("another-refresh-token");
-      yield* probe;
-      expect(quotaCalls()).toBe(6);
-      options.userId = "google-account";
-      yield* writeToken("refresh-a");
-      yield* probe;
-      expect(quotaCalls()).toBe(6);
-      yield* TestClock.adjust("5 minutes");
-      yield* probe;
-      expect(quotaCalls()).toBe(8);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  it.effect.each([true, false])(
+    "retains account cooldowns through OAuth renewal (userinfo available: %s)",
+    (userInfoAvailable) =>
+      Effect.gen(function* () {
+        const options = {
+          rotateAccessToken: true,
+          usageRetryAfter: "600",
+          summaryStatus: 200,
+          userId: "google-account" as string | undefined,
+        };
+        const { probe, requests, writeToken } = yield* fixture(options);
+        yield* probe;
+        yield* TestClock.adjust("55 minutes");
+        options.summaryStatus = 429;
+        yield* probe;
+        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+        expect(quotaCalls()).toBe(4);
+        yield* TestClock.adjust("5 minutes");
+        if (!userInfoAvailable) options.userId = undefined;
+        yield* probe;
+        expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
+        expect(quotaCalls()).toBe(4);
+        options.userId = "another-google-account";
+        yield* writeToken("another-refresh-token");
+        yield* probe;
+        expect(quotaCalls()).toBe(6);
+        options.userId = "google-account";
+        yield* writeToken("refresh-a");
+        yield* probe;
+        expect(quotaCalls()).toBe(6);
+        yield* TestClock.adjust("5 minutes");
+        yield* probe;
+        expect(quotaCalls()).toBe(8);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // Oracle: the 10:16 UTC payload and its narrow Workaround rule.

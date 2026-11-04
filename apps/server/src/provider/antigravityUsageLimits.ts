@@ -245,7 +245,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let accessToken: string;
     let account: string;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
-      cached = undefined;
+      const previousAccount = cached?.fingerprint === fingerprint ? cached.account : undefined;
       const refreshed = yield* request(
         HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
           HttpClientRequest.bodyUrlParams({
@@ -265,7 +265,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       ).pipe(
         Effect.flatMap(decodeUserInfo),
         Effect.flatMap((info) => sha256(`google-account\0${info.id}`)),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.orElseSucceed(() => previousAccount ?? fingerprint),
       );
       if (generation === startedGeneration) {
         cached = {
