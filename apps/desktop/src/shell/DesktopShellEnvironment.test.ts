@@ -379,6 +379,75 @@ describe("DesktopShellEnvironment", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.each([
+    { name: "lets a slow first probe finish", attempts: ["slow"], first: true, spawns: 1 },
+    { name: "retries once after a failed probe", attempts: ["fail", "slow"], spawns: 2 },
+    { name: "stops after the retry fails", attempts: ["fail", "fail", "slow"], spawns: 2 },
+    {
+      name: "drops the retry when the application scope closes",
+      attempts: ["fail", "slow"],
+      spawns: 1,
+      closeBeforeRetry: true,
+    },
+  ] as const)("$name", (row) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", PATH: "/usr/bin" };
+      const firstSpawn = yield* Deferred.make<void>();
+      let shellSpawns = 0;
+      yield* runShellEnvironment({
+        env,
+        stateDir,
+        platform: "linux",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/test-shell") {
+            return Effect.succeed(makeProcess(""));
+          }
+          const attempt = row.attempts[shellSpawns++];
+          return Deferred.succeed(firstSpawn, undefined).pipe(
+            Effect.andThen(
+              attempt === "slow"
+                ? Effect.sleep("10 seconds").pipe(
+                    Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+                  )
+                : Effect.succeed(makeProcess("", 1)),
+            ),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.installIntoProcess;
+            yield* Deferred.await(firstSpawn);
+            yield* TestClock.adjust("10 seconds");
+            const first = yield* service.awaitDiscovery;
+            assert.equal(first, "first" in row);
+            if (!("closeBeforeRetry" in row)) yield* TestClock.adjust("10 minutes");
+            const latest = yield* Stream.runHead(service.updates);
+            assert.isTrue(Option.isSome(latest));
+            if (Option.isSome(latest)) {
+              const recovered = row.attempts[row.spawns - 1] === "slow";
+              assert.equal(latest.value.discovered, recovered);
+              assert.equal(
+                latest.value.environment.PATH,
+                recovered ? "/fresh/bin:/usr/bin" : "/usr/bin",
+              );
+            }
+            return first;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(shellSpawns, row.spawns);
+      if ("first" in row) {
+        const cached = yield* fs
+          .readFileString(`${stateDir}/shell-environment-cache.json`)
+          .pipe(Effect.flatMap(decodeCache));
+        assert.equal(cached.environment.PATH, "/fresh/bin:/usr/bin");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("cancels background discovery when the application scope closes", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

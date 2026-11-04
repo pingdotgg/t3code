@@ -113,7 +113,11 @@ const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as 
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
-const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
+// Discovery runs in the background, so let slow startup finish. Killing zsh mid `pyenv rehash`
+// leaves a lock that stalls each new shell for up to a minute.
+const LOGIN_SHELL_TIMEOUT = Duration.minutes(3);
+const LOGIN_SHELL_RETRY_DELAY = Duration.seconds(30);
+const POWERSHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 
@@ -370,7 +374,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         command,
         args,
         env,
-        timeout: LOGIN_SHELL_TIMEOUT,
+        timeout: POWERSHELL_TIMEOUT,
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
@@ -594,7 +598,7 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(latest, Option.some(message));
     yield* PubSub.publish(changes, message);
   });
-  const refresh = Effect.gen(function* () {
+  const discover = Effect.gen(function* () {
     // Refresh from the inherited baseline so removed cached paths and values do not survive.
     const fresh = { ...inherited };
     const prepared = yield* installShellEnvironment({ env: fresh, platform: environment.platform });
@@ -621,8 +625,14 @@ export const make = Effect.gen(function* () {
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.withSpan("desktop.shellEnvironment.refresh"),
-    Effect.onExit((exit) => Deferred.done(discovered, exit)),
   );
+  const refresh = Effect.gen(function* () {
+    const prepared = yield* discover.pipe(Effect.onExit((exit) => Deferred.done(discovered, exit)));
+    if (!prepared && environment.platform !== "win32") {
+      yield* Effect.sleep(LOGIN_SHELL_RETRY_DELAY);
+      yield* discover;
+    }
+  });
   const installIntoProcess = yield* Effect.cached(
     Effect.gen(function* () {
       const cache = yield* fileSystem
