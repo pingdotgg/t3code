@@ -331,7 +331,11 @@ export const make = Effect.gen(function* () {
           run.status === "starting" &&
           neverStarted(run) &&
           !projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId) &&
-          !projection.runtimeRequests.some((request) => request.status === "pending"),
+          !projection.runtimeRequests.some(
+            (request) =>
+              request.status === "pending" &&
+              projection.nodes.some((node) => node.id === request.nodeId && node.runId === run.id),
+          ),
       );
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
       const pendingRuns = [...unstartedRuns, ...queuedRuns];
@@ -360,6 +364,7 @@ export const make = Effect.gen(function* () {
           .filter(
             (message) =>
               message.createdBy === "user" &&
+              message.scheduledTaskId === undefined &&
               message.notification === undefined &&
               message.delegatedCompletion === undefined,
           )

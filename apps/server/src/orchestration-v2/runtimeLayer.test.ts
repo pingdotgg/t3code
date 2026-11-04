@@ -6473,8 +6473,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             runId: source.id,
           });
         }
-        assert.equal(resumed.runs.length, 3, "resume retries must not duplicate messages or runs");
-        assert.lengthOf(resumed.messages, before.messages.length);
+        const afterRetries = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          afterRetries.runs.length,
+          3,
+          "resume retries must not duplicate messages or runs",
+        );
+        assert.lengthOf(afterRetries.messages, before.messages.length);
       }),
   );
 
