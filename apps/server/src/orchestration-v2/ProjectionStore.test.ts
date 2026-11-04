@@ -41,6 +41,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { runMigrations } from "../persistence/Migrations.ts";
+
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -313,6 +316,51 @@ it.effect("routes full projection reads to readers and retains uncommitted write
           (yield* store.getThreadProjection(threadId)).thread.title,
           "Uncommitted title",
         );
+      }),
+    );
+    const beforeShell = yield* store.getShellSnapshot();
+    const shellCommitRequested = yield* Deferred.make<void>();
+    const shellWriter = yield* Deferred.await(shellCommitRequested).pipe(
+      Effect.andThen(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = NULL
+          WHERE thread_id = ${parentId}`;
+            yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.title', 'Count committed')
+          WHERE thread_id = ${parentId}`;
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    let shellCommitInjected = false;
+    const duringShell = yield* store.getShellSnapshot().pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        const [query] = statement.compile();
+        if (
+          !shellCommitInjected &&
+          query.includes("FROM orchestration_v2_projection_shell_item_counts counts")
+        ) {
+          shellCommitInjected = true;
+          return Deferred.succeed(shellCommitRequested, undefined).pipe(
+            Effect.andThen(Fiber.join(shellWriter).pipe(Effect.orDie)),
+            Effect.as(statement),
+          );
+        }
+        return Effect.succeed(statement);
+      }),
+    );
+    assert.isTrue(shellCommitInjected);
+    assert.deepEqual(duringShell, beforeShell);
+    const afterShell = yield* store.getShellSnapshot();
+    assert.equal(afterShell.threads.find((row) => row.id === parentId)?.itemCount, 1);
+    assert.equal(afterShell.threads.find((row) => row.id === parentId)?.title, "Count committed");
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${parentId}`;
+        const uncommitted = yield* store.getShellSnapshot();
+        assert.equal(uncommitted.threads.find((row) => row.id === parentId)?.itemCount, 0);
       }),
     );
   }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(layerReaderDatabase)))),
@@ -6479,6 +6527,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         view: "activity",
       });
       assert.equal(sideChatTimeline.totalItems, 0);
+      const source = yield* projectionStore.getThreadProjection(sourceThreadId);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-imported-fork-shell:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...source.thread, deletedAt: now },
+      });
+      const afterDeletion = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(afterDeletion.threads.find((thread) => thread.id === sourceThreadId));
+      assert.equal(
+        afterDeletion.threads.find((thread) => thread.id === targetThreadId)?.visibleItemCount,
+        0,
+      );
     }),
   );
 
@@ -8078,3 +8140,70 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect("keeps shell count groups exact through item moves, deletes, replay and rollback", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 79 });
+    const assertCounts = Effect.fn("test.assertShellCounts")(function* () {
+      const expected = yield* sql`
+        SELECT thread_id, run_id, COUNT(*) AS item_count
+        FROM orchestration_v2_projection_turn_items
+        GROUP BY thread_id, run_id
+        ORDER BY thread_id, run_id
+      `;
+      const actual = yield* sql`
+        SELECT thread_id, run_id, item_count
+        FROM orchestration_v2_projection_shell_item_counts
+        ORDER BY thread_id, run_id
+      `;
+      assert.deepEqual(actual, expected);
+    });
+    for (const [id, runId] of [
+      ["a", null],
+      ["b", ""],
+      ["c", "orphan"],
+      ["d", "orphan"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+        VALUES (${id}, 'source', ${runId}, 0, 'user_message', 'completed', '', '{}')
+      `;
+    }
+    yield* runMigrations();
+    yield* assertCounts();
+    for (const runId of [null, ""] as const) {
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+        VALUES (${`extra:${runId}`}, 'source', ${runId}, 0, 'user_message', 'completed', '', '{}')`;
+    }
+    yield* assertCounts();
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+      (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+      VALUES ('c', 'target', NULL, 0, 'user_message', 'completed', '', '{}')
+      ON CONFLICT(turn_item_id) DO UPDATE SET thread_id = excluded.thread_id, run_id = excluded.run_id`;
+    yield* assertCounts();
+    yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = 'other' WHERE turn_item_id = 'a'`;
+    yield* assertCounts();
+    yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = 'source'`;
+          yield* assertCounts();
+          return yield* Effect.fail("rollback" as const);
+        }),
+      )
+      .pipe(Effect.ignore);
+    yield* assertCounts();
+    yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{"updated":true}'`;
+    yield* assertCounts();
+    const replayRows = yield* sql`SELECT * FROM orchestration_v2_projection_turn_items`;
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items`;
+    yield* assertCounts();
+    for (const row of replayRows) {
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(row)}`;
+    }
+    yield* assertCounts();
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
