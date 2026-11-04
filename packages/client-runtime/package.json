@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./assembly-highlighting": {
+      "types": "./src/assemblyHighlighting.ts",
+      "default": "./src/assemblyHighlighting.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"
@@ -528,6 +532,7 @@
     "@t3tools/provider-cursor": "workspace:*",
     "@t3tools/provider-fx": "workspace:*",
     "@t3tools/provider-grok": "workspace:*",
+    "@t3tools/provider-kiro": "workspace:*",
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",

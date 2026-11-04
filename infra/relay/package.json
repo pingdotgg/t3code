@@ -30,6 +30,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "catalog:",
     "@cloudflare/workers-types": "^4.20260601.1",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",

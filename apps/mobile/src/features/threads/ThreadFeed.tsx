@@ -15,7 +15,11 @@ import {
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
-import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
+import {
+  ThreadHandoffDivider,
+  ThreadHandoffRow,
+  ThreadModelSwitchDivider,
+} from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -57,7 +61,7 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -107,8 +111,10 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
+  type ComponentRef,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -127,6 +133,7 @@ import {
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
+import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
@@ -141,13 +148,14 @@ import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
+import { splitMarkdownDetails } from "../../lib/markdownDetails";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -167,6 +175,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import {
@@ -309,9 +318,6 @@ const FEED_REFLOW_SETTLE_MS = 200;
 const FEED_REFLOW_HOLD_MS = 600;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
-const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
-  THREAD_DISCLOSURE_TRANSITION_MS,
-).duration(140);
 
 // Virtualization remounts old rows; only newly created content should replay an entrance.
 const FRESH_ENTRY_WINDOW_MS = 3_000;
@@ -360,6 +366,8 @@ export interface ThreadFeedProps {
   readonly onJumpedToMessage?: () => void;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
+  readonly sendingWithKeyboard?: boolean;
+  readonly fitShortFeedToViewport?: boolean;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
@@ -420,6 +428,8 @@ function UserMessageCopyButton(props: {
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
   readonly iconColor: ColorValue;
+  readonly buttonSize: number;
+  readonly iconSize: number;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
 }) {
@@ -476,13 +486,18 @@ function AssistantForkButton(props: {
           .finally(() => setBusy(false));
       }}
       className="h-7 w-7 items-center justify-center disabled:opacity-40"
+      style={
+        Platform.OS === "android"
+          ? { width: props.buttonSize, height: props.buttonSize }
+          : undefined
+      }
     >
       {busy ? (
         <AppActivityIndicator size="small" />
       ) : (
         <SymbolView
           name="arrow.triangle.branch"
-          size={13}
+          size={props.iconSize}
           tintColor={props.iconColor}
           type="monochrome"
         />
@@ -1178,7 +1193,6 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
@@ -1186,31 +1200,108 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
 
-  return segments.map((segment) => {
-    if (segment.kind === "artifact-template") {
+  return (
+    <AssistantMarkdownBlocks
+      markdown={liveMarkdown}
+      markdownStyles={props.markdownStyles}
+      linkHandlers={linkHandlers}
+      onUseArtifactTemplate={props.onUseArtifactTemplate}
+      renderImage={props.renderImage}
+      skills={props.skills}
+    />
+  );
+});
+
+// Folds split first, so an artifact card inside a fold stays inside it.
+function AssistantMarkdownBlocks(props: {
+  readonly markdown: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+}) {
+  const blocks = useMemo(
+    () =>
+      splitMarkdownDetails(props.markdown).map((block) =>
+        block.kind === "details"
+          ? block
+          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+      ),
+    [props.markdown],
+  );
+  return blocks.map((block) => {
+    if (block.kind === "details") {
       return (
-        <ArtifactTemplateCard
-          key={`artifact-template:${segment.sourceOffset}`}
-          template={segment.template}
-          onUse={props.onUseArtifactTemplate}
-        />
+        <MarkdownDetailsFold
+          key={`details:${block.sourceOffset}`}
+          summary={block.summary}
+          initiallyOpen={block.open}
+        >
+          <AssistantMarkdownBlocks {...props} markdown={block.body} />
+        </MarkdownDetailsFold>
       );
     }
-    if (segment.markdown.trim().length === 0) return null;
-
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
-    return (
-      <SelectableMarkdownText
-        key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...linkHandlers}
-        renderImage={props.renderImage}
-      />
-    );
+    return block.segments.map((segment) => {
+      const offset = block.sourceOffset + segment.sourceOffset;
+      if (segment.kind === "artifact-template") {
+        return (
+          <ArtifactTemplateCard
+            key={`artifact-template:${offset}`}
+            template={segment.template}
+            onUse={props.onUseArtifactTemplate}
+          />
+        );
+      }
+      if (segment.markdown.trim().length === 0) return null;
+      return (
+        <SelectableMarkdownText
+          key={`markdown:${offset}`}
+          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          skills={props.skills}
+          textStyle={props.markdownStyles.nativeTextStyle}
+          {...props.linkHandlers}
+          renderImage={props.renderImage}
+        />
+      );
+    });
   });
-});
+}
+
+function MarkdownDetailsFold(props: {
+  readonly summary: string;
+  readonly initiallyOpen: boolean;
+  readonly children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(props.initiallyOpen);
+  const iconSubtleColor = useUniwindTheme()["--color-icon-subtle"];
+  return (
+    <View className="my-2 border-y border-border">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={props.summary}
+        accessibilityState={{ expanded }}
+        hitSlop={4}
+        className="min-h-10 flex-row items-center gap-2 py-2"
+        onPress={() => {
+          void Haptics.selectionAsync();
+          setExpanded((value) => !value);
+        }}
+      >
+        <ThreadDisclosureChevron
+          expanded={expanded}
+          collapsedDirection="right"
+          size={12}
+          tintColor={iconSubtleColor}
+        />
+        <Text className="min-w-0 shrink font-t3-medium text-sm text-foreground">
+          {props.summary}
+        </Text>
+      </Pressable>
+      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
+    </View>
+  );
+}
 
 function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
@@ -1597,6 +1688,7 @@ function renderFeedEntry(
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
+    readonly replyActionSize: { readonly button: number; readonly icon: number };
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -1897,7 +1989,7 @@ function renderFeedEntry(
       return (
         <Animated.View
           className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
-          {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
+          {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
@@ -2195,13 +2287,15 @@ function renderFeedEntry(
               accessibilityLabel="Copy message"
               text={renderedText}
               tintColor={iconSubtleColor}
-              buttonSize={28}
-              iconSize={13}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
             />
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
                 iconColor={iconSubtleColor}
+                buttonSize={props.replyActionSize.button}
+                iconSize={props.replyActionSize.icon}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}
               />
@@ -2502,6 +2596,64 @@ function useThreadFeedPresentation(
   );
 }
 
+type DisclosureLayout = {
+  positions: ReadonlyMap<string, number>;
+  anchorIndex: number;
+  list: LegendListRef;
+  playing: boolean;
+};
+const DISCLOSURE_DETAIL_DELAY_MS = 135;
+const DISCLOSURE_DETAIL_FADE_MS = 70;
+const unsubscribeNothing = () => {};
+
+function DisclosureRow(props: {
+  itemKey: string;
+  index: number;
+  layout: DisclosureLayout | null;
+  children: ReactNode;
+}) {
+  const { itemKey, layout } = props;
+  const previous = layout?.positions.get(itemKey);
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (!layout || layout.playing || previous === undefined || previous <= 0)
+        return unsubscribeNothing;
+      return layout.list.getState().listenToPosition(itemKey, notify);
+    },
+    [itemKey, layout, previous],
+  );
+  const getOffset = () => {
+    if (!layout || layout.playing || previous === undefined || previous <= 0) return 0;
+    const state = layout.list.getState();
+    const position = state.positionAtIndex(props.index);
+    const anchor = state.positionAtIndex(layout.anchorIndex);
+    return position === undefined || anchor === undefined ? 0 : previous - (position - anchor);
+  };
+  const offset = useSyncExternalStore(subscribe, getOffset, getOffset);
+  const entering = !!layout && previous === undefined;
+  return (
+    <Animated.View
+      collapsable={false}
+      style={
+        layout
+          ? {
+              opacity: entering && !layout.playing ? 0 : 1,
+              transform: [{ translateY: offset }],
+              transitionProperty: layout?.playing ? (entering ? "opacity" : "transform") : "none",
+              transitionDuration: entering
+                ? DISCLOSURE_DETAIL_FADE_MS
+                : THREAD_DISCLOSURE_TRANSITION_MS,
+              transitionDelay: entering ? DISCLOSURE_DETAIL_DELAY_MS : 0,
+              transitionTimingFunction: "ease-out",
+            }
+          : undefined
+      }
+    >
+      {props.children}
+    </Animated.View>
+  );
+}
+
 export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
@@ -2541,13 +2693,23 @@ export const ThreadFeed = memo(function ThreadFeed({
     fontScale,
   });
   const settledPaneWidth = useWorkspaceSettledContentWidth();
-  const [measuredViewportWidth, setViewportWidth] = useState(() =>
-    props.layoutVariant === "split" ? 0 : windowWidth,
-  );
+  const splitLayout = (props.layoutVariant ?? "compact") !== "compact";
+  const [measuredViewportWidth, setViewportWidth] = useState(() => (splitLayout ? 0 : windowWidth));
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(0);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
+  const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
+  const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useReduceMotionEnabled();
+  const headerEndRef = useRef<ComponentRef<typeof View>>(null);
+  const lastFeedId = props.feed.at(-1)?.id;
+  const [disclosureGap, setDisclosureGap] = useState<{
+    space: number;
+    tail: typeof lastFeedId;
+  } | null>(null);
+  const disclosureTopSpace = disclosureGap?.tail === lastFeedId ? (disclosureGap?.space ?? 0) : 0;
   // LegendList's geometric follow threshold can reclaim users reading history when streamed rows grow.
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   const endFollowEnabledRef = useRef(true);
@@ -2634,7 +2796,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     props.threadId,
     fileShareSourceIdentifier,
   );
-  const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
+  const horizontalPadding = splitLayout ? 20 : 16;
   const contentLeftInset = props.contentSideInsets?.left ?? 0;
   const contentRightInset = props.contentSideInsets?.right ?? 0;
   const usableViewportWidth = Math.max(0, viewportWidth - contentLeftInset - contentRightInset);
@@ -2665,6 +2827,15 @@ export const ThreadFeed = memo(function ThreadFeed({
 
   const theme = useUniwindTheme();
   const iconSubtleColor = theme["--color-icon-subtle"];
+  const { buttonSize: androidButtonSize, smallIconSize: androidIconSize } =
+    useAndroidControlSizing();
+  const replyActionSize = useMemo(
+    () =>
+      Platform.OS === "android"
+        ? { button: androidButtonSize, icon: androidIconSize }
+        : { button: 28, icon: 13 },
+    [androidButtonSize, androidIconSize],
+  );
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
   const openSkillInstructions = (path: string) => {
@@ -2886,9 +3057,10 @@ export const ThreadFeed = memo(function ThreadFeed({
         else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
         return;
       }
-      if (resolveLinkedThread(href)) {
+      const thread = resolveLinkedThread(href);
+      if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(href);
+        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
@@ -3043,6 +3215,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    disclosureLayout,
+    reduceMotion,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
@@ -3127,6 +3301,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     resetEndFollow: () => {
       clearUserScrollSettle();
       userScrollSessionRef.current = false;
+      setDisclosureGap(null);
       cancelReflow();
       transitionEndFollow({ type: "reset" });
     },
@@ -3248,6 +3423,12 @@ export const ThreadFeed = memo(function ThreadFeed({
     // A native resize re-wraps the rows before JS hears of it. This event reaches JS ahead
     // of the row measurements it caused, since layout events are sent parent first.
     if (Math.abs(measuredViewportWidth - nextWidth) > 1) beginReflow();
+    if (
+      Math.abs(measuredViewportWidth - nextWidth) > 1 ||
+      Math.abs(viewportHeight - nextHeight) > 1
+    ) {
+      setDisclosureGap(null);
+    }
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
   };
@@ -3299,6 +3480,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       if (userScrollSettleTimerRef.current !== null) clearTimeout(userScrollSettleTimerRef.current);
       if (reflowSettleTimerRef.current !== null) clearTimeout(reflowSettleTimerRef.current);
       if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+      if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
       if (disclosureSettleFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleFrameRef.current);
       }
@@ -3328,6 +3510,20 @@ export const ThreadFeed = memo(function ThreadFeed({
         }
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
+        const motion = disclosureMotionRef.current;
+        if (motion && !motion.playing) {
+          const playing = { ...motion, playing: true };
+          disclosureMotionRef.current = playing;
+          setDisclosureLayout(playing);
+          disclosureMotionTimer.current = setTimeout(
+            () => {
+              disclosureMotionRef.current = null;
+              setDisclosureLayout(null);
+              disclosureMotionTimer.current = null;
+            },
+            DISCLOSURE_DETAIL_DELAY_MS + DISCLOSURE_DETAIL_FADE_MS + 16,
+          );
+        }
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
       });
@@ -3339,6 +3535,45 @@ export const ThreadFeed = memo(function ThreadFeed({
   // wake between the data mutation and LegendList's final layout correction.
   const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string | null) => {
     cancelReflow();
+    const list = listRef.current;
+    if (list && anchorKey && !reduceMotion) {
+      const state = list.getState();
+      const anchorIndex = state.indexByKey(anchorKey);
+      if (anchorIndex !== undefined) {
+        const anchor = state.positionAtIndex(anchorIndex);
+        const anchorTop = state.elementAtIndex(anchorIndex)?.getBoundingClientRect().top;
+        const positions = new Map<string, number>();
+        for (let i = state.startBuffered; i <= state.endBuffered; i++) {
+          const item = groupedFeed[i];
+          if (!item) continue;
+          const displayed =
+            disclosureMotionRef.current &&
+            state.elementAtIndex(i)?.firstElementChild?.getBoundingClientRect().top;
+          positions.set(
+            item.id,
+            displayed != null && anchorTop !== undefined
+              ? displayed - anchorTop
+              : state.positionAtIndex(i) - anchor,
+          );
+        }
+        const motion = {
+          positions,
+          anchorIndex,
+          list,
+          playing: false,
+        };
+        if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
+        disclosureMotionRef.current = motion;
+        setDisclosureLayout(motion);
+      }
+    }
+    // Keep a short feed's bottom-alignment gap through collapse too; replacing it mid-frame moves the tap target.
+    const first = list?.getState().elementAtIndex(0);
+    if (first && headerEndRef.current) {
+      const gap =
+        first.getBoundingClientRect().top - headerEndRef.current.getBoundingClientRect().bottom;
+      if (gap > 1) setDisclosureGap({ space: disclosureTopSpace + gap, tail: lastFeedId });
+    }
     disclosureAnchorKeyRef.current = anchorKey;
     setDisclosureToggleSettling(true);
     settleDisclosureAfterLayout();
@@ -3482,9 +3717,11 @@ export const ThreadFeed = memo(function ThreadFeed({
   }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
 
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
-    <Animated.View
+    <DisclosureRow
       key={info.item.id}
-      entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
+      itemKey={info.item.id}
+      index={info.index}
+      layout={disclosureLayout}
     >
       <MessageImageGalleryScope
         entry={info.item}
@@ -3493,6 +3730,16 @@ export const ThreadFeed = memo(function ThreadFeed({
         workspaceRoot={props.workspaceRoot}
       >
         <ThreadMediaVisibility>
+          {info.item.type === "message" &&
+          !isCompactionCommandFeedEntry(info.item) &&
+          info.item.message.projectedItem?.item.type === "user_message" &&
+          info.item.message.projectedItem.item.modelSwitch ? (
+            <ThreadModelSwitchDivider
+              environmentId={props.environmentId}
+              modelSwitch={info.item.message.projectedItem.item.modelSwitch}
+              iconColor={iconSubtleColor}
+            />
+          ) : null}
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
@@ -3520,6 +3767,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             renderViewedImage,
             renderReasoning,
             iconSubtleColor,
+            replyActionSize,
             screenColor,
             userBubbleColor,
             markdownStyles,
@@ -3542,7 +3790,7 @@ export const ThreadFeed = memo(function ThreadFeed({
           ) : null}
         </ThreadMediaVisibility>
       </MessageImageGalleryScope>
-    </Animated.View>
+    </DisclosureRow>
   );
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
@@ -3559,7 +3807,12 @@ export const ThreadFeed = memo(function ThreadFeed({
 
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
-      <View className="flex-1" onLayout={handleViewportLayout}>
+      {/* While the pane tracks a sliding sidebar, rows keep its settled width and re-wrap once. */}
+      <View
+        className="flex-1"
+        style={settledPaneWidth !== null ? { width: settledPaneWidth } : undefined}
+        onLayout={handleViewportLayout}
+      >
         <View className="flex-1">
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
@@ -3573,7 +3826,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             // Horizontal Duo reservations are already included in the row padding.
             contentInsetAdjustmentBehavior={
               usesNativeAutomaticInsets
-                ? duoColumns && props.layoutVariant === "split"
+                ? duoColumns && splitLayout
                   ? "scrollableAxes"
                   : "automatic"
                 : "never"
@@ -3599,7 +3852,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             freeze={props.freeze}
             // Follow the measured end immediately; animating estimates races row measurement on acknowledgement.
             maintainScrollAtEnd={
-              disclosureToggleSettling || !followsEnd
+              disclosureToggleSettling || props.sendingWithKeyboard || !followsEnd
                 ? false
                 : {
                     animated: false,
@@ -3615,7 +3868,10 @@ export const ThreadFeed = memo(function ThreadFeed({
             maintainScrollAtEndThreshold={reflowFollowsEnd ? Number.POSITIVE_INFINITY : undefined}
             sizeChangeAnchor={reflowAnchorsSizeChanges ? holdReflowAnchor : undefined}
             maintainVisibleContentPosition={
-              followsEnd && !disclosureToggleSettling ? false : maintainVisibleContentPosition
+              (followsEnd && !disclosureToggleSettling) ||
+              (disclosureToggleSettling && disclosureTopSpace > 0)
+                ? false
+                : maintainVisibleContentPosition
             }
             data={groupedFeed}
             extraData={listAppearanceData}
@@ -3625,6 +3881,12 @@ export const ThreadFeed = memo(function ThreadFeed({
             getItemType={(entry) => {
               if (entry.type !== "message") return entry.type;
               if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
+              if (
+                entry.message.role === "assistant" &&
+                !terminalAssistantMessageIds.has(entry.message.id)
+              ) {
+                return "message:assistant-progress";
+              }
               const { attribution } = resolveUserMessagePresentation(entry.message);
               return attribution === "automation" || attribution === "agent"
                 ? `message:${attribution}`
@@ -3636,7 +3898,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             drawDistance={500}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
-            keyboardLiftBehavior="whenAtEnd"
+            keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
             // Seed viewport size to skip programmatic attach-time positioning, which races UIKit's adjustedContentInset.
             {...(viewportHeight > 0 && viewportWidth > 0
               ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
@@ -3669,6 +3931,7 @@ export const ThreadFeed = memo(function ThreadFeed({
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
+                <View ref={headerEndRef} collapsable={false} />
               </>
             }
             ListFooterComponent={
@@ -3683,7 +3946,8 @@ export const ThreadFeed = memo(function ThreadFeed({
               ) : null
             }
             contentContainerStyle={{
-              paddingTop: FEED_PADDING_TOP,
+              ...(props.fitShortFeedToViewport ? { minHeight: "100%" } : {}),
+              paddingTop: FEED_PADDING_TOP + disclosureTopSpace,
               paddingLeft: contentHorizontalPadding + contentLeftInset,
               paddingRight: contentHorizontalPadding + contentRightInset,
             }}

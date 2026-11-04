@@ -3,7 +3,7 @@ import {
   verifyDpopProof,
 } from "@t3tools/shared/dpop";
 import type { DpopFailureReason } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -17,6 +17,7 @@ import {
   type ServerAuthInternalError,
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
 
@@ -60,7 +61,7 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
   readonly expectedAccessToken?: string;
 }) {
   const proof = input.proof ?? input.request.headers.dpop;
-  const url = HttpServerRequest.toURL(input.request);
+  const url = requestUrl(input.request);
   if (Option.isNone(url)) {
     return yield* new ServerAuthInvalidCredentialError({
       diagnostic: "Invalid DPoP request URL.",
@@ -85,9 +86,9 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
     });
   }
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const replayKey = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) =>
-      crypto.digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
+  const replayKey = yield* Digest.Digest.pipe(
+    Effect.flatMap((digest) =>
+      digest.digest(Digest.sha256, new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
     ),
     Effect.map(Base64Url.encode),
     Effect.mapError(

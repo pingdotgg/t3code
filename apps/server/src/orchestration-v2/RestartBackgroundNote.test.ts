@@ -113,6 +113,13 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     parentTaskId: "a".repeat(400),
   }).label;
   assert.lengthOf(longId, 160);
+  assert.isTrue(
+    cancelledRosterTaskWork({
+      kind: "command",
+      taskId: "shell-1",
+      description: `${"d".repeat(158)}🚀 deploy`,
+    }).label.isWellFormed(),
+  );
   assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "shell-2" })));
   assert.isTrue(
     isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "tests", awaited: true })),

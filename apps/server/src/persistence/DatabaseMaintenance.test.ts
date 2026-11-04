@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -11,9 +12,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as Sqlite from "./Sqlite.ts";
-import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
@@ -44,6 +42,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          yield* sql`INSERT INTO retained_data VALUES ('keep')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
         assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
 
@@ -52,21 +51,52 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA journal_mode = WAL`;
           yield* sql`CREATE TABLE v1_data (value TEXT)`;
+          yield* sql`INSERT INTO v1_data VALUES ('rollback')`;
         }).pipe(Effect.provide(openLegacy));
         assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
 
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`SELECT value FROM v1_data`;
-          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+          const failure = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+          assert.deepEqual(yield* sql`SELECT value FROM v1_data`, [{ value: "rollback" }]);
+          return failure;
         }).pipe(Effect.provide(openLegacy));
         assert.equal(refused._tag, "DatabaseInUseError");
         assert.isTrue(yield* fs.exists(legacy));
 
-        yield* maintenance.removeLegacyDatabase(dbPath);
+        yield* Effect.flatMap(DatabaseMaintenance.DatabaseMaintenance, (service) =>
+          service.removeLegacyDatabase(dbPath),
+        ).pipe(
+          Effect.provide(Layer.fresh(DatabaseMaintenance.layer)),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            remove: (target, options) =>
+              Effect.gen(function* () {
+                if (target === legacy) {
+                  yield* Effect.gen(function* () {
+                    const sql = yield* SqlClient.SqlClient;
+                    yield* sql`PRAGMA busy_timeout = 0`;
+                    yield* sql`BEGIN EXCLUSIVE`;
+                    yield* sql`COMMIT`;
+                  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
+                  // Create sidecars after the probe closes so only Doctor can remove them.
+                  yield* fs.writeFileString(`${legacy}-wal`, "leftover WAL");
+                  yield* fs.writeFileString(`${legacy}-shm`, "leftover SHM");
+                }
+                yield* fs.remove(target, options);
+              }),
+          }),
+        );
         assert.isFalse(yield* fs.exists(legacy));
         assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+        assert.isFalse(yield* fs.exists(`${legacy}-shm`));
         assert.isTrue(yield* fs.exists(dbPath));
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
         assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
       }).pipe(Effect.scoped),
     );
@@ -78,17 +108,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-" });
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        yield* Effect.flatMap(
-          ProjectionMaintenance.ProjectionMaintenanceV2,
-          (projections) => projections.rebuild,
-        ).pipe(
-          Effect.provide(
-            ProjectionMaintenance.layer.pipe(
-              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
-            ),
-          ),
-        );
+        // Opening the database migrates it.
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA auto_vacuum = NONE`;
