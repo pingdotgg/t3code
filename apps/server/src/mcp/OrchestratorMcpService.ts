@@ -1998,13 +1998,11 @@ const make = Effect.gen(function* () {
     return task;
   });
 
-  /** A given target resolves against `base`, the selection the task would otherwise keep. */
-  const scheduledTaskModelSelection = Effect.fn(
-    "OrchestratorMcpService.scheduledTaskModelSelection",
-  )(function* (
+  /** A given target resolves against `base`, the selection and mode the task would otherwise keep. */
+  const scheduledTaskTarget = Effect.fn("OrchestratorMcpService.scheduledTaskTarget")(function* (
     projectId: ProjectId,
     bound: boolean,
-    base: ModelSelection,
+    base: { readonly modelSelection: ModelSelection; readonly runtimeMode: RuntimeMode },
     target: OrchestratorMcpScheduledTaskTarget | undefined,
   ) {
     if (target === undefined) return base;
@@ -2016,7 +2014,7 @@ const make = Effect.gen(function* () {
       );
     }
     const resolved = yield* resolveTargetRechecking({
-      parent: { thread: { modelSelection: base, projectId } },
+      parent: { thread: { modelSelection: base.modelSelection, projectId } },
       target,
       providers: yield* loadProviders,
     });
@@ -2028,7 +2026,10 @@ const make = Effect.gen(function* () {
         `Provider instance ${instanceId} is not enabled for this project.`,
       );
     }
-    return resolved.modelSelection;
+    return {
+      modelSelection: resolved.modelSelection,
+      runtimeMode: yield* resolveRuntimeMode(base.runtimeMode, undefined, resolved),
+    };
   });
 
   return OrchestratorMcpService.of({
@@ -2048,10 +2049,18 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection = yield* scheduledTaskModelSelection(
+      const { modelSelection, runtimeMode } = yield* scheduledTaskTarget(
         projectId,
         bindToCurrentThread,
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)),
+        {
+          modelSelection:
+            parent?.thread.modelSelection ??
+            project.defaultModelSelection ??
+            (input.target?.providerInstanceId !== undefined && input.target.model !== undefined
+              ? { instanceId: input.target.providerInstanceId, model: input.target.model }
+              : yield* projectDefaultModelSelection(project)),
+          runtimeMode: limits.runtimeMode,
+        },
         input.target,
       );
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
@@ -2066,7 +2075,7 @@ const make = Effect.gen(function* () {
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
-        runtimeMode: limits.runtimeMode,
+        runtimeMode,
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
@@ -2137,6 +2146,12 @@ const make = Effect.gen(function* () {
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
             : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
+        const { modelSelection, runtimeMode } = yield* scheduledTaskTarget(
+          existing.projectId,
+          threadId !== null,
+          existing,
+          input.target,
+        );
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2146,13 +2161,8 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: yield* scheduledTaskModelSelection(
-            existing.projectId,
-            threadId !== null,
-            existing.modelSelection,
-            input.target,
-          ),
-          runtimeMode: existing.runtimeMode,
+          modelSelection,
+          runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,

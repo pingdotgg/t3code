@@ -670,8 +670,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   ),
   target: Schema.optional(
     OrchestratorMcpScheduledTaskTarget.annotate({
-      description:
-        "Model and options, as in `delegate_task`. Unbound tasks only: a bound run uses its thread's model.",
+      description: "As in `delegate_task`. Unbound tasks only.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

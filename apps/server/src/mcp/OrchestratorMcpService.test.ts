@@ -13,6 +13,7 @@ import {
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -2989,6 +2990,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         instanceId: codexInstanceId,
         driver: ProviderDriverKind.make("codex"),
       }),
+      supportedRuntimeModes: ["approval-required", "auto-accept-edits"],
       models: ["gpt-5", "gpt-5-mini"].map((slug) => ({
         slug,
         name: slug,
@@ -3022,9 +3024,10 @@ describe("OrchestratorMcpService provider resolution", () => {
       threadId: ThreadId.make("thread:scheduled-model-bound"),
     };
     const service = (
-      saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
+      saved: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
       stored: ScheduledTask = existing,
       enabledForProject = true,
+      defaultModelSelection: ScheduledTask["modelSelection"] | null = existing.modelSelection,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3051,7 +3054,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.succeedSome({
                   id: projectId,
                   workspaceRoot: "/repo/scheduled-model",
-                  defaultModelSelection: existing.modelSelection,
+                  defaultModelSelection,
                 } as never),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -3059,7 +3062,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks: [stored] }),
               upsert: (input) =>
-                Ref.update(saved, (selections) => [...selections, input.modelSelection]).pipe(
+                Ref.update(saved, (inputs) => [...inputs, input]).pipe(
                   Effect.as({
                     task: {
                       ...stored,
@@ -3072,18 +3075,27 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
-    const savedSelections = <E>(
+    const savedInputs = <E>(
       run: (mcp: OrchestratorMcpService.OrchestratorMcpServiceShape) => Effect.Effect<unknown, E>,
       stored: ScheduledTask = existing,
+      defaultModelSelection?: ScheduledTask["modelSelection"] | null,
     ) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(saved, stored)),
+          Effect.provide(service(saved, stored, true, defaultModelSelection)),
         );
         yield* run(mcp);
         return yield* Ref.get(saved);
       });
+    const savedSelections = <E>(
+      run: (mcp: OrchestratorMcpService.OrchestratorMcpServiceShape) => Effect.Effect<unknown, E>,
+      stored: ScheduledTask = existing,
+      defaultModelSelection?: ScheduledTask["modelSelection"] | null,
+    ) =>
+      savedInputs(run, stored, defaultModelSelection).pipe(
+        Effect.map((inputs) => inputs.map((input) => input.modelSelection)),
+      );
 
     it.effect("saves a new task with the target's model and options", () =>
       Effect.gen(function* () {
@@ -3106,6 +3118,52 @@ describe("OrchestratorMcpService provider resolution", () => {
             options: [{ id: "serviceTier", value: "priority" }],
           },
         ]);
+      }),
+    );
+
+    it.effect("takes a complete target when the project has no default model", () =>
+      Effect.gen(function* () {
+        const saved = yield* savedSelections(
+          (mcp) =>
+            mcp.scheduleTask(client, {
+              projectId,
+              prompt: "Check the build",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+              target: { providerInstanceId: codexInstanceId, model: "gpt-5-mini" },
+            }),
+          existing,
+          null,
+        );
+        assert.deepEqual(saved, [{ instanceId: codexInstanceId, model: "gpt-5-mini" }]);
+      }),
+    );
+
+    it.effect("steps the runtime mode down to one the target's provider offers", () =>
+      Effect.gen(function* () {
+        const fullAccess: McpInvocationScope = {
+          ...client,
+          client: { sessionId: "scheduled-model", label: "Claude Code", access: "full-access" },
+        };
+        const stored: ScheduledTask = { ...existing, runtimeMode: "full-access" };
+        const target = { providerInstanceId: codexInstanceId };
+        const saved = yield* savedInputs(
+          (mcp) =>
+            Effect.all([
+              mcp.scheduleTask(fullAccess, {
+                projectId,
+                prompt: "Check the build",
+                schedule: { type: "interval", everyMs: 3_600_000 },
+                target,
+              }),
+              mcp.updateScheduledTask(fullAccess, { scheduledTaskId: stored.id, target }),
+              mcp.updateScheduledTask(fullAccess, { scheduledTaskId: stored.id, prompt: "Again" }),
+            ]),
+          stored,
+        );
+        assert.deepEqual(
+          saved.map((input) => input.runtimeMode),
+          ["auto-accept-edits", "auto-accept-edits", "full-access"],
+        );
       }),
     );
 
@@ -3141,7 +3199,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("reports the saved model and options", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(saved)),
         );
@@ -3156,7 +3214,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("refuses a target for a bound task, whose runs use the thread's model", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(saved, bound)),
         );
@@ -3190,7 +3248,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("refuses a provider the project has disabled, which every run would fail on", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(saved, existing, false)),
         );
@@ -3214,7 +3272,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       },
     ] as const)("refuses $name and saves nothing", ({ target, code }) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(saved)),
         );
