@@ -1361,6 +1361,7 @@ it.effect.each([
     name: "SSH credentials",
     stderr: "git@example.com: Permission denied (publickey).",
     expected: "could not authenticate",
+    attempts: 3,
   },
   {
     name: "disabled prompts",
@@ -1461,7 +1462,11 @@ it.effect.each([
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
-    const error = yield* driver.fetchRemote({ cwd, remoteName: "origin" }).pipe(Effect.flip);
+    const fetch = yield* driver
+      .fetchRemote({ cwd, remoteName: "origin" })
+      .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("2 seconds");
+    const error = yield* Fiber.join(fetch);
     assert.include(error.detail, scenario.expected);
     assert.equal(error.exitCode, 128);
     assert.equal(error.stderrLength, stderr.length);
@@ -1480,7 +1485,16 @@ it.effect.each([
   ),
 );
 
-it.effect("retries a fetch that lost a ref update to another Git process", () =>
+it.effect.each([
+  {
+    name: "lost a ref update to another Git process",
+    stderr: "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided",
+  },
+  {
+    name: "had a valid SSH key rejected once",
+    stderr: "git@github.com: Permission denied (publickey).",
+  },
+] as const)("retries a fetch that $name", (scenario) =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
     const spawner = ChildProcessSpawner.make((command) =>
@@ -1493,11 +1507,7 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
         return ChildProcessSpawner.makeHandle({
           ...makeNonRepositoryHandle(),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
-          stderr: Stream.encodeText(
-            Stream.make(
-              "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided",
-            ),
-          ),
+          stderr: Stream.encodeText(Stream.make(scenario.stderr)),
         });
       }),
     );
@@ -1505,7 +1515,11 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
-    yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "main" });
+    const fetch = yield* driver
+      .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("1 second");
+    yield* Fiber.join(fetch);
     assert.equal(yield* Ref.get(attempts), 2);
   }).pipe(
     Effect.provide(
