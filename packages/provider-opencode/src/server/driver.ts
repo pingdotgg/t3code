@@ -448,8 +448,14 @@ export const OpenCodeDriver: ProviderDriver<
             serverUrl,
             environment: processEnv,
           }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("OpenCode service replacement failed", cause),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Failed to replace the OpenCode service after an update.",
+                  cause,
+                }),
             ),
             Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
             Effect.provideService(FileSystem.FileSystem, fileSystem),

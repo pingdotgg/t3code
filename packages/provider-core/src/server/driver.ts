@@ -46,7 +46,7 @@ export interface ProviderInstance {
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
   /** Moves a long-lived service onto a newly updated binary before its version is read back. */
-  readonly afterUpdate?: Effect.Effect<void>;
+  readonly afterUpdate?: Effect.Effect<void, ProviderDriverError>;
   readonly consumeResetCredit?: () => Effect.Effect<
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
