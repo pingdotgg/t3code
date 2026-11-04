@@ -325,6 +325,10 @@ export const OpenCodeDriver: ProviderDriver<
               { concurrency: "unbounded" },
             ),
             Deferred.await(scanned),
+            client.debug.location.list().pipe(
+              Effect.map((loaded) => loaded.some((entry) => entry.directory === cwd)),
+              Effect.orElseSucceed(() => undefined),
+            ),
           );
         }).pipe(Effect.scoped),
       );

@@ -1069,6 +1069,7 @@ it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", ()
     const load = yield* loadOpenCode2Workspace(
       Effect.sync(() => reads.shift()!),
       Deferred.await(scanEnded),
+      Effect.succeed(false),
     ).pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     NodeAssert.equal(reads.length, 1);
@@ -1101,6 +1102,19 @@ it.effect("reads an already loaded OpenCode 2 directory once without waiting for
       Effect.sync(() => (calls.push("read"), scanned)),
       Effect.sync(() => void calls.push("scanned")),
       Effect.succeed(true),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["read"]);
+  }),
+);
+
+it.effect("trusts a first read that lists commands when the loaded locations are unknown", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), scanned)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.sync(() => undefined),
     );
     NodeAssert.deepEqual(workspace, scanned);
     NodeAssert.deepEqual(calls, ["read"]);
