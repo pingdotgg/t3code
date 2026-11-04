@@ -3770,42 +3770,74 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads who may review and who already has in one request", () =>
+  const reviewerTeam = {
+    slug: "web",
+    combinedSlug: "acme/web",
+    name: "Web",
+    avatarUrl: null,
+    repositories: { nodes: [{ nameWithOwner: "acme/web" }] },
+  };
+  it.effect.each([
+    {
+      name: "lists teams with access beside the people",
+      teams: {
+        data: {
+          organization: { teams: { pageInfo: { hasNextPage: false }, nodes: [reviewerTeam] } },
+        },
+      },
+      expected: [
+        ["octocat", true],
+        ["acme/web", false],
+        ["hubot", false],
+      ],
+    },
+    {
+      name: "still lists the people when the token cannot read the organization's teams",
+      teams: {
+        data: null,
+        errors: [{ type: "INSUFFICIENT_SCOPES", message: "Your token needs read:org." }],
+      },
+      expected: [
+        ["octocat", true],
+        ["hubot", false],
+      ],
+    },
+  ])("$name", ({ teams, expected }) =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  assignableUsers: {
-                    pageInfo: { hasNextPage: false },
-                    nodes: ["bilal", "octocat", "hubot"].map((login) => ({
-                      login,
-                      name: null,
-                      avatarUrl: `https://avatars/${login}`,
-                    })),
-                  },
-                  pullRequest: {
-                    author: { __typename: "User", login: "bilal" },
-                    reviewRequests: {
-                      nodes: [
-                        {
-                          requestedReviewer: {
-                            __typename: "User",
-                            login: "octocat",
-                            name: null,
-                            avatarUrl: "https://avatars/octocat",
-                          },
+      route(
+        [
+          "ReviewerCandidates",
+          {
+            data: {
+              repository: {
+                assignableUsers: {
+                  pageInfo: { hasNextPage: false },
+                  nodes: ["bilal", "octocat", "hubot"].map((login) => ({
+                    login,
+                    name: null,
+                    avatarUrl: `https://avatars/${login}`,
+                  })),
+                },
+                pullRequest: {
+                  author: { __typename: "User", login: "bilal" },
+                  reviewRequests: {
+                    nodes: [
+                      {
+                        requestedReviewer: {
+                          __typename: "User",
+                          login: "octocat",
+                          name: null,
+                          avatarUrl: "https://avatars/octocat",
                         },
-                      ],
-                    },
+                      },
+                    ],
                   },
                 },
               },
-            }),
-          ),
-        ),
+            },
+          },
+        ],
+        ["ReviewerTeams", teams],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3816,12 +3848,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
-      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
-        ["octocat", true],
-        ["hubot", false],
+      expect(variablesOf("ReviewerCandidates")).toEqual([
+        { owner: "acme", name: "web", number: 7 },
       ]);
+      expect(variablesOf("ReviewerTeams")).toEqual([{ owner: "acme", name: "web" }]);
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual(
+        expected,
+      );
     }),
   );
 

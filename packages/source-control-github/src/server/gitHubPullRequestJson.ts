@@ -64,6 +64,7 @@ import type {
   RepositoryAuthors,
   RepositoryLabels,
   ReviewerCandidates,
+  ReviewerTeams,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
 import type {
@@ -1431,9 +1432,40 @@ export interface GitHubBaseComparison {
   readonly viewerCanUpdate: boolean;
 }
 
+/** Teams with access to `repository` (owner/name). Null when the owner is not an organization. */
+export function toReviewerTeams(
+  result: ReviewerTeams.Result,
+  repository: string,
+): PullRequestReviewerCandidateList | null {
+  const teams = result.organization?.teams;
+  if (teams == null) return null;
+  const wanted = repository.toLowerCase();
+  return {
+    candidates: nodesOf(teams).flatMap((team) => {
+      const slug = trimmed(team.slug);
+      const hasAccess = nodesOf(team.repositories).some(
+        (node) => node.nameWithOwner.toLowerCase() === wanted,
+      );
+      if (slug === null || !hasAccess) return [];
+      return [
+        {
+          id: slug,
+          kind: "team" as const,
+          login: trimmed(team.combinedSlug) ?? slug,
+          name: trimmed(team.name),
+          avatarUrl: trimmed(team.avatarUrl),
+          isRequested: false,
+        },
+      ];
+    }),
+    truncated: teams.pageInfo.hasNextPage,
+  };
+}
+
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */
 export function toReviewerCandidates(
   result: ReviewerCandidates.Result,
+  teams: PullRequestReviewerCandidateList | null = null,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1457,6 +1489,9 @@ export function toReviewerCandidates(
       isRequested: true,
     });
   }
+  for (const team of teams?.candidates ?? []) {
+    if (!candidates.has(`team ${team.id}`)) candidates.set(`team ${team.id}`, team);
+  }
   for (const node of nodesOf(repository.assignableUsers)) {
     const login = trimmed(node.login);
     if (login === null || login === author || candidates.has(`user ${login}`)) continue;
@@ -1471,7 +1506,7 @@ export function toReviewerCandidates(
   }
   return {
     candidates: [...candidates.values()],
-    truncated: repository.assignableUsers.pageInfo.hasNextPage,
+    truncated: repository.assignableUsers.pageInfo.hasNextPage || teams?.truncated === true,
   };
 }
 
