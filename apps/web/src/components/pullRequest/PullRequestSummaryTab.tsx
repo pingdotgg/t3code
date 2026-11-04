@@ -652,11 +652,7 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div
-      ref={scrollerRef}
-      className="h-full overflow-y-auto pb-16"
-      data-pull-request-summary-scroll
-    >
+    <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">

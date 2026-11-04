@@ -1846,7 +1846,7 @@ export function PullRequestDetailPanel({
         <div
           className={
             tab === "summary" || tab === "timeline"
-              ? "absolute inset-x-4 bottom-3 z-20 mx-auto max-w-2xl"
+              ? "mx-auto w-full max-w-2xl shrink-0 px-4 pt-2 pb-3"
               : "absolute right-4 bottom-3 z-20"
           }
         >
