@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   phase: "connected" as "connected" | "offline",
   sessionAtom: {},
   searchAtom: {},
+  searchRequests: vi.fn(),
   contentAtom: {},
   contentRequests: vi.fn(),
   contentError: null as string | null,
@@ -34,7 +35,12 @@ vi.mock("./presentation", () => ({
   }),
 }));
 vi.mock("./projects", () => ({
-  projectEnvironment: { searchEntries: () => state.searchAtom },
+  projectEnvironment: {
+    searchEntries: (target: unknown) => {
+      state.searchRequests(target);
+      return state.searchAtom;
+    },
+  },
   projectContentSearch: (target: unknown) => {
     state.contentRequests(target);
     return state.contentAtom;
@@ -67,7 +73,7 @@ vi.mock("./query", () => ({
   }),
 }));
 
-import { useProjectContentSearch } from "./queries";
+import { useComposerPathSearch, useProjectContentSearch } from "./queries";
 
 const target = {
   environmentId: EnvironmentId.make("test-environment"),
@@ -80,6 +86,7 @@ beforeEach(() => {
   state.sessionError = null;
   state.sessionWaiting = false;
   state.phase = "connected";
+  state.searchRequests.mockClear();
   state.contentRequests.mockClear();
   state.contentError = null;
 });
@@ -91,6 +98,23 @@ const contentTarget = {
   wholeWord: true,
   useRegex: false,
 };
+
+it.each([
+  "src",
+  "a".repeat(256),
+  ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
+])("bounds the path search request while preserving query identity: %s", (query) => {
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  const result = useComposerPathSearch({ ...target, query: ` ${query} ` });
+
+  expect(state.searchRequests).toHaveBeenCalledExactlyOnceWith({
+    environmentId: target.environmentId,
+    input: { cwd: target.cwd, query: query.slice(0, 256), limit: 80 },
+  });
+  expect(result.searchedTarget).toMatchObject({ ...target, query });
+  expect(result.searchedQuery).toBe(query);
+  expect(result.isPending).toBe(false);
+});
 
 it("shows content-search denial before typing and never issues an unauthorized request", () => {
   state.session = { authenticated: true, scopes: [] };
