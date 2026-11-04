@@ -218,6 +218,9 @@ describe("hosted thread links", () => {
     String.raw`"say \"hi\""`,
     String.raw`'say \'hi\''`,
     String.raw`(say \(hi\))`,
+    '"title" ',
+    "'title'\t",
+    "(title)  ",
   ])("leaves a link with Markdown title %s intact", (title) => {
     for (const label of ["label", "label `code`"]) {
       const markdown = `[${label}](https://app.t3.codes/threads/one/same ${title})`;
