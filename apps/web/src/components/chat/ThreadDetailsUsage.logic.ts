@@ -27,7 +27,7 @@ const CARD_ENVIRONMENT = EnvironmentId.make("thread-details");
 
 /**
  * The limits the thread details card shows for one provider instance: its own, or, when it reads
- * none (as when it sends requests through a CLIProxyAPI hub), the pool of its driver's hub accounts.
+ * none (as when it sends requests through a CLIProxyAPI hub), the pool of its driver's accounts.
  * The hub picks an account per request, so a thread spends the pool rather than any one account.
  */
 export function resolveThreadDetailsLimits(
@@ -46,7 +46,7 @@ export function resolveThreadDetailsLimits(
     provider.usageLimits;
   if (!own) return null;
   if (limitsNotice(own) === null) return { kind: "instance", limits: own };
-  return hubPool(provider.driver, sources, now) ?? { kind: "instance", limits: own };
+  return hubPool(provider.driver, providers, sources, now) ?? { kind: "instance", limits: own };
 }
 
 /** The reset the card names: the soonest for one account, the soonest that refills quota for a pool. */
@@ -59,16 +59,16 @@ export function nextPoolReset(window: LimitPoolWindow, now: number) {
 
 function hubPool(
   driver: ServerProvider["driver"],
+  providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
 ): ThreadDetailsLimits | null {
-  // No native providers: a login outside the hubs is not one the hub can route a request to.
   const presentations = new Map([
     [
       CARD_ENVIRONMENT,
       {
         entry: { target: { label: "" } },
-        serverConfig: { providers: [], usageLimitSources: sources },
+        serverConfig: { providers, usageLimitSources: sources },
       },
     ],
   ]);
@@ -76,7 +76,6 @@ function hubPool(
     (account) => account.driver === driver,
   );
   const [pool] = collectLimitPools(accounts, now);
-  if (!pool) return null;
   const hubLabels = sources
     .filter((source) =>
       source.accounts.some(
@@ -84,5 +83,6 @@ function hubPool(
       ),
     )
     .map((source) => source.label);
+  if (!pool || hubLabels.length === 0) return null;
   return { kind: "hub", windows: displayLimitWindows(pool), hubLabels };
 }

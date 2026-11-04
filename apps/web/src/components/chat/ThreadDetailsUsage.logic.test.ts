@@ -60,6 +60,15 @@ function claudeInstance(usageLimits: ServerProviderUsageLimits): ServerProvider 
   };
 }
 
+function signedIn(id: string, email: string, usageLimits: ServerProviderUsageLimits) {
+  const base = claudeInstance(usageLimits);
+  return {
+    ...base,
+    instanceId: ProviderInstanceId.make(id),
+    auth: { ...base.auth, email },
+  } satisfies ServerProvider;
+}
+
 interface HubAccountInput {
   readonly id: string;
   readonly email?: string;
@@ -88,8 +97,17 @@ function hub(
 }
 
 /** What the card shows, reduced to the rows a user reads. */
-function shown(own: ServerProviderUsageLimits, sources: readonly UsageLimitSourceSnapshot[]) {
-  const resolved = resolveThreadDetailsLimits(instanceId, [claudeInstance(own)], sources, now);
+function shown(
+  own: ServerProviderUsageLimits,
+  sources: readonly UsageLimitSourceSnapshot[],
+  natives: readonly ServerProvider[] = [],
+) {
+  const resolved = resolveThreadDetailsLimits(
+    instanceId,
+    [claudeInstance(own), ...natives],
+    sources,
+    now,
+  );
   if (resolved?.kind !== "hub") return resolved;
   return {
     kind: resolved.kind,
@@ -176,8 +194,22 @@ describe("resolveThreadDetailsLimits", () => {
       hubs: ["Hub"],
       rows: [{ label: "Session", left: 50, accounts: 1 }],
     },
-  ])("pools $name when the instance reads no limits", ({ sources, hubs, rows }) => {
-    expect(shown(unsupported, sources)).toEqual({ kind: "hub", hubs, rows });
+    {
+      name: "a login signed in natively and on a hub, counted once at its freshest reading",
+      sources: [hub("Hub", [{ id: "a.json", email: "a@example.com", limits: limitsAt(90) }])],
+      natives: [signedIn("claude-a", "a@example.com", limitsAt(30, "2026-10-30T11:59:30.000Z"))],
+      hubs: ["Hub"],
+      rows: [{ label: "Session", left: 70, accounts: 1 }],
+    },
+    {
+      name: "a signed-in account no hub holds, alongside the hub's",
+      sources: [hub("Hub", [{ id: "a.json", email: "a@example.com", limits: limitsAt(20) }])],
+      natives: [signedIn("claude-b", "b@example.com", limitsAt(60))],
+      hubs: ["Hub"],
+      rows: [{ label: "Session", left: 60, accounts: 2 }],
+    },
+  ])("pools $name when the instance reads no limits", ({ sources, natives, hubs, rows }) => {
+    expect(shown(unsupported, sources, natives)).toEqual({ kind: "hub", hubs, rows });
   });
 
   it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {
@@ -210,6 +242,10 @@ describe("resolveThreadDetailsLimits", () => {
         { id: "d.json", limits: unsupported },
       ]),
     ];
-    expect(shown(unsupported, sources)).toEqual({ kind: "instance", limits: unsupported });
+    const natives = [signedIn("claude-b", "b@example.com", limitsAt(60))];
+    expect(shown(unsupported, sources, natives)).toEqual({
+      kind: "instance",
+      limits: unsupported,
+    });
   });
 });
