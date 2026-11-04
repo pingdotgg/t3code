@@ -1054,7 +1054,8 @@ export function decodeSourceBranchJson(
     const mergeRequest = decoded.data.project?.mergeRequest;
     if (mergeRequest == null) return null;
     return {
-      open: mergeRequest.state === "opened",
+      // `locked` is GitLab's transient state while a merge runs, so only these two are settled.
+      open: mergeRequest.state !== "merged" && mergeRequest.state !== "closed",
       branch: mergeRequest.sourceBranch,
       headSha: trimmed(mergeRequest.diffHeadSha),
       sourceProject: mergeRequest.sourceProject?.fullPath ?? null,

@@ -1470,7 +1470,17 @@ export const make = Effect.gen(function* () {
             ? read
             : {
                 ...read,
-                viewerCanDeleteBranch: (yield* sourceBranch(input))?.canDelete === true,
+                viewerCanDeleteBranch: yield* sourceBranch(input).pipe(
+                  Effect.map((source) => source?.canDelete === true),
+                  // The answer gates one optional action; an unusable CLI or account still surfaces.
+                  Effect.catchIf(
+                    (cause) =>
+                      cause._tag !== "GitLabCliUnavailableError" &&
+                      cause._tag !== "GitLabCliAuthenticationError" &&
+                      cause._tag !== "GitLabCliRateLimitError",
+                    () => Effect.succeed(false),
+                  ),
+                ),
               };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({

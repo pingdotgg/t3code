@@ -1148,11 +1148,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks GitLab whether a merged merge request's branch can be deleted", () =>
+  it.effect.each([
+    { answer: sourceBranchJson({}), expected: true },
+    { answer: "not json", expected: false },
+  ])("asks GitLab whether a merged merge request's branch can be deleted", ({ answer, expected }) =>
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ state: "merged" }))))
-        .mockReturnValueOnce(Effect.succeed(output(sourceBranchJson({}))));
+        .mockReturnValueOnce(Effect.succeed(output(answer)));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const detail = yield* cli.getMergeRequestDetail({
@@ -1161,7 +1164,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      expect(detail.viewerCanDeleteBranch).toBe(true);
+      expect(detail.viewerCanDeleteBranch).toBe(expected);
       expect(argsOfCall(1)).toContain("graphql");
     }),
   );
@@ -1197,6 +1200,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect.each([
     { reason: "open", source: { state: "opened" }, branch: undefined },
+    { reason: "open", source: { state: "locked" }, branch: undefined },
     {
       reason: "not-allowed",
       source: { userPermissions: { removeSourceBranch: false } },
