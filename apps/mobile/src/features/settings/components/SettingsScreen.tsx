@@ -2,7 +2,6 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
-import { AndroidSheetHeader } from "../../../components/ui/AndroidScreenHeader";
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
@@ -19,7 +18,7 @@ import {
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search" | "menus"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
@@ -44,25 +43,18 @@ export function SettingsScreen(
 
   return (
     <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
-      {Platform.OS === "android" && props.formSheet ? (
-        <AndroidSheetHeader
-          title={props.title}
-          actions={props.actions}
-          trailing={props.trailing}
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
-      ) : (
-        <AppBar
-          title={props.title}
-          actions={props.actions}
-          search={props.search}
-          trailing={Platform.OS === "android" ? props.trailing : undefined}
-          sidebar={false}
-          onBack={workspaceRoot ? undefined : () => navigation.goBack()}
-          hideBottomBorder={!props.formSheet}
-        />
-      )}
+      <AppBar
+        title={props.title}
+        actions={props.actions}
+        search={props.search}
+        trailing={Platform.OS === "android" ? props.trailing : undefined}
+        // iOS screens put their filter menus in native header items themselves.
+        menus={Platform.OS === "android" ? props.menus : undefined}
+        sheet={Platform.OS === "android" && props.formSheet}
+        sidebar={false}
+        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
+        hideBottomBorder={!props.formSheet || Platform.OS === "android"}
+      />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
           {props.formSheet && Platform.OS !== "android" ? (

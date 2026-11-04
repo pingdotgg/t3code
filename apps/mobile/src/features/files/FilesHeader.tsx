@@ -1,10 +1,8 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 
-import {
-  AndroidHeaderIconButton,
-  AndroidScreenHeader,
-} from "../../components/ui/AndroidScreenHeader";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
@@ -43,7 +41,9 @@ export function FilesHeader(props: {
         importantForAccessibility={searching ? "no-hide-descendants" : "auto"}
         style={{ opacity: searching ? 0 : 1 }}
       >
-        <AndroidScreenHeader
+        <AppBar
+          embedded
+          sidebar={false}
           title="Files"
           subtitle={props.projectName}
           hideBottomBorder
