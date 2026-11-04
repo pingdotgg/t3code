@@ -1,4 +1,4 @@
-import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { AuthEnvironmentMaintainScope, supportsLessonSideChats } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -45,7 +45,8 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const hasSideChats = environments.some(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.sideChats === true &&
+      environment.serverConfig !== null &&
+      supportsLessonSideChats(environment.serverConfig.environment) &&
       hasSideChatSettings(environment.serverConfig.settings),
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();

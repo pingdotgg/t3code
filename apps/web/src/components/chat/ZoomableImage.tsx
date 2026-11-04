@@ -7,7 +7,6 @@ import {
 } from "../../lib/windowControlsOverlay";
 
 import { AttachmentImage } from "../media/AttachmentImage";
-import { fitZoomableImage, isVectorImage } from "./ZoomableImage.logic";
 
 const MAX_ZOOM = 8;
 
@@ -72,13 +71,12 @@ export function ZoomableImage({
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
-  const fit = fitZoomableImage({
-    availableWidth: viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0),
-    maxHeight,
-    naturalWidth: naturalSize.width,
-    naturalHeight: naturalSize.height,
-    allowUpscale: isVectorImage(src, mimeType),
-  });
+  // A vector scales without loss, and an SVG without width and height reports a tiny default size.
+  const fit = Math.min(
+    mimeType === "image/svg+xml" ? Infinity : 1,
+    (viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
+    maxHeight / (naturalSize.height || 1),
+  );
   const width = naturalSize.width * fit * zoom;
   const height = naturalSize.height * fit * zoom;
 

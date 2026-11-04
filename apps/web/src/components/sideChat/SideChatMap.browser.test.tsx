@@ -100,7 +100,7 @@ it("marks the side chat of the tab the learner was last on", async () => {
   useRightPanelStore.setState({ byThreadKey: {} });
   const panels = useRightPanelStore.getState();
   for (const id of ["a", "b", "c"])
-    panels.openSideChat(lessonRef, { topThreadId: id, threadId: id });
+    panels.openLessonSideChat(lessonRef, { topThreadId: id, threadId: id });
   panels.activateSurface(lessonRef, "side-chat:a");
   panels.activateSurface(lessonRef, "side-chat:c");
   panels.open(lessonRef, "thread-map");

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { supportsLessonSideChats } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import {
@@ -46,7 +47,7 @@ if (typeof window !== "undefined") {
 // The host sits at the app root, so it reads one boolean instead of every environment's config.
 const sideChatsAvailableAtom = Atom.make((get) => {
   for (const config of get(environmentPresentations.serverConfigsAtom).values()) {
-    if (config.environment.capabilities.sideChats === true) return true;
+    if (supportsLessonSideChats(config.environment)) return true;
   }
   return false;
 }).pipe(Atom.withLabel("web-welcome-guide-side-chats-available"));

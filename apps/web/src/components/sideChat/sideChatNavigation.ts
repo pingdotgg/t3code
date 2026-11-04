@@ -32,7 +32,7 @@ export function revealSideChat(
 ): void {
   const rows = deriveSideChatTree(readSideChatTreeShells(lessonRef), lessonRef.threadId);
   const panels = useRightPanelStore.getState();
-  panels.openSideChat(
+  panels.openLessonSideChat(
     lessonRef,
     { topThreadId: topSideChatId(rows, threadId) ?? threadId, threadId },
     automatic,
@@ -168,7 +168,7 @@ export function resolveFinishableSideChat(input: {
   readonly finished: boolean;
 } | null {
   const surface = input.surfaces.find((entry) => entry.id === input.activeSurfaceId);
-  if (surface?.kind !== "side-chat") return null;
+  if (surface?.kind !== "lesson-side-chat") return null;
   const shell = input.shells.find(
     (entry) => entry.environmentId === input.environmentId && entry.id === surface.threadId,
   );

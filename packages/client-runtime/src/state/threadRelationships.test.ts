@@ -61,6 +61,40 @@ describe("thread relationships", () => {
     ).toBeNull();
   });
 
+  it.each(["fork", "subagent"] as const)(
+    "keeps the parent edge of an opened %s omitted from the shell",
+    (relationshipToParent) => {
+      const parent = ThreadId.make("parent");
+      const child = ThreadId.make("omitted-child");
+      const projection = {
+        thread: {
+          id: child,
+          forkedFrom:
+            relationshipToParent === "fork"
+              ? { type: "run", threadId: parent, runId: "source-run" }
+              : null,
+          lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent },
+        },
+        subagents: [],
+        contextTransfers: [],
+      } as never;
+      const graph = deriveThreadRelationshipGraph({ threads: [], projection });
+      expect(immediateThreadRelationships(graph, child)).toEqual([
+        expect.objectContaining({
+          threadId: parent,
+          edge: expect.objectContaining({
+            sourceThreadId: parent,
+            targetThreadId: child,
+            kind: relationshipToParent,
+          }),
+        }),
+      ]);
+      expect(resolveMergeBackTargetThreadId(projection)).toBe(
+        relationshipToParent === "fork" ? parent : null,
+      );
+    },
+  );
+
   it("keeps an older activity run visible over a newer cancelled run", () => {
     const parent = ThreadId.make("thread-parent");
     const child = ThreadId.make("thread-child");
@@ -269,7 +303,7 @@ describe("thread relationships", () => {
     ).toBeNull();
   });
 
-  it("offers no merge-back target for a side chat", () => {
+  it("offers no merge-back target for a T3 Learn side chat, only for an upstream one", () => {
     const lesson = ThreadId.make("thread-lesson");
     const sideChat = ThreadId.make("thread-side-chat");
 
@@ -300,6 +334,20 @@ describe("thread relationships", () => {
         },
       } as never),
     ).toBeNull();
+    expect(
+      resolveMergeBackTargetThreadId({
+        thread: {
+          id: sideChat,
+          forkedFrom: { type: "run", threadId: lesson, runId: "run-lesson" },
+          lineage: {
+            rootThreadId: lesson,
+            parentThreadId: lesson,
+            relationshipToParent: "fork",
+            sideChat: true,
+          },
+        },
+      } as never),
+    ).toBe(lesson);
   });
 });
 

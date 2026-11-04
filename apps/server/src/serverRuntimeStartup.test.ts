@@ -7,8 +7,6 @@ import {
   ProviderDriverKind,
   CommandId,
   EnvironmentId,
-  MessageId,
-  type OrchestrationV2ThreadShell,
   ThreadId,
   type ServerLifecycleStreamEvent,
 } from "@t3tools/contracts";
@@ -180,41 +178,29 @@ it.effect.each([
                 }),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              threads:
-                scenario === "side-chat-only"
-                  ? [
-                      {
-                        id: ThreadId.make("side-chat"),
-                        projectId,
-                        lineage: {
-                          rootThreadId: ThreadId.make("lesson"),
-                          parentThreadId: ThreadId.make("lesson"),
-                          relationshipToParent: "fork",
-                        },
-                        sideChat: {
-                          lessonThreadId: ThreadId.make("lesson"),
-                          anchor: {
-                            threadId: ThreadId.make("lesson"),
-                            messageId: MessageId.make("message-1"),
-                            start: 0,
-                            end: 3,
-                            prefix: "",
-                            suffix: "",
-                          },
-                          label: "Box",
-                          state: "open",
-                          noteStatus: null,
-                          excerptLength: 3,
-                        },
-                      } as unknown as OrchestrationV2ThreadShell,
-                    ]
-                  : [],
-              archivedThreads: [],
-              schemaVersion: 1,
-              snapshotSequence: 0,
-            }),
+          countThreads: () => Effect.succeed(0),
+          listActiveShellIndex: () =>
+            Effect.succeed(
+              scenario === "side-chat-only"
+                ? [
+                    {
+                      id: ThreadId.make("side-chat"),
+                      projectId,
+                      lineage: {
+                        rootThreadId: ThreadId.make("lesson"),
+                        parentThreadId: ThreadId.make("lesson"),
+                        relationshipToParent: "fork",
+                      },
+                      settledOverride: null,
+                      settledAt: null,
+                      pinnedAt: null,
+                      snoozedUntil: null,
+                      sideChat: { lessonThreadId: ThreadId.make("lesson") },
+                      mayBeLive: false,
+                    },
+                  ]
+                : [],
+            ),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {

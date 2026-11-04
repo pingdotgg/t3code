@@ -15,6 +15,8 @@ export interface ReopenOwnerState {
   environmentKnown: boolean;
   catalogReady: boolean;
   ownerExists: boolean;
+  /** False only for a side chat tab whose thread is gone from the shell. */
+  sideChatExists: boolean;
   shellLive: boolean;
   panel: ThreadRightPanelState;
 }
@@ -31,7 +33,7 @@ export function planNextReopen(
       drop.push(entry);
       continue;
     }
-    if (!owner.ownerExists) {
+    if (!owner.ownerExists || !owner.sideChatExists) {
       if (owner.shellLive) continue;
       break;
     }
@@ -136,7 +138,10 @@ export async function reopenClosedView(
       panels.openPullRequest(ref, surface);
       break;
     case "side-chat":
-      panels.openSideChat(ref, {
+      panels.openSideChat(ref, surface.threadId);
+      break;
+    case "lesson-side-chat":
+      panels.openLessonSideChat(ref, {
         topThreadId: sideChatSurfaceTopThreadId(surface),
         threadId: surface.threadId,
       });

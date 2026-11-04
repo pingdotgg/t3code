@@ -18,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -66,6 +67,7 @@ const thread = (
     readonly deletedAt?: DateTime.Utc;
     readonly subagentOf?: ThreadId;
     readonly sideChatOf?: ThreadId;
+    readonly lessonSideChatOf?: ThreadId;
     readonly title?: string;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
@@ -103,16 +105,23 @@ const thread = (
             parentThreadId: overrides.sideChatOf,
             relationshipToParent: "fork",
             rootThreadId: overrides.sideChatOf,
+            sideChat: true,
           }
-        : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        : overrides.lessonSideChatOf
+          ? {
+              parentThreadId: overrides.lessonSideChatOf,
+              relationshipToParent: "fork",
+              rootThreadId: overrides.lessonSideChatOf,
+            }
+          : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
-    ...(overrides.sideChatOf === undefined
+    ...(overrides.lessonSideChatOf === undefined
       ? {}
       : {
           sideChat: {
-            lessonThreadId: overrides.sideChatOf,
+            lessonThreadId: overrides.lessonSideChatOf,
             anchor: {
-              threadId: overrides.sideChatOf,
+              threadId: overrides.lessonSideChatOf,
               messageId: MessageId.make(`message:anchor:${threadId}`),
               start: 0,
               end: 4,
@@ -168,6 +177,119 @@ const message = (
   },
 });
 
+it.effect.each([true, false])(
+  "ThreadSearch excludes bootstrap text before the hit and candidate limits (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:attachments");
+      const threadId = ThreadId.make("thread:attachments");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "ordinary", "user", "Review the attached files in context", {
+            minute: 1,
+          }),
+          message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { minute: 2 }),
+          message(
+            threadId,
+            "ultrathink",
+            "user",
+            `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+            { minute: 3 },
+          ),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+      assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "attached files" })).matches.map((match) => [
+          match.messageId,
+          match.snippet,
+        ]),
+        [[MessageId.make("ordinary"), "Review the attached files in context"]],
+      );
+      for (const text of [
+        ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+      ]) {
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${indexed ? 10_000 : 2000})
+          INSERT INTO orchestration_v2_projection_messages
+            (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          SELECT 'attachment-limit:' || i, ${threadId}, 'user', 0,
+            ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
+          FROM n
+        `;
+        assert.deepEqual(
+          (yield* search.search({ query: "context" })).matches.map((match) => match.messageId),
+          [MessageId.make("ordinary")],
+        );
+        yield* sql`
+          DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE 'attachment-limit:%'
+        `;
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ThreadSearch excludes legacy placeholders still in the index", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const sql = yield* SqlClient.SqlClient;
+    const project = ProjectId.make("project:legacy-attachments");
+    const threadId = ThreadId.make("thread:legacy-attachments");
+    yield* createProject(project);
+    // Simulate the pre-upgrade trigger, which indexed attachment placeholders.
+    yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+    yield* sql`
+      CREATE TRIGGER orchestration_v2_message_search_insert
+      AFTER INSERT ON orchestration_v2_projection_messages
+      BEGIN
+        INSERT INTO orchestration_v2_message_search (rowid, text)
+        VALUES (new.rowid, json_extract(new.payload_json, '$.text'));
+      END
+    `;
+    yield* Effect.forEach(
+      [
+        thread(threadId, project),
+        message(threadId, "ordinary", "user", "Review the attached files in context"),
+        message(threadId, "attachment", "user", ATTACHMENT_ONLY_BOOTSTRAP_PROMPT),
+        message(
+          threadId,
+          "ultrathink",
+          "user",
+          `uLtRaThInK:\r\n\t\u00a0${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        ),
+      ],
+      projections.apply,
+      { discard: true },
+    );
+    assert.lengthOf(
+      yield* sql`SELECT rowid FROM orchestration_v2_message_search WHERE orchestration_v2_message_search MATCH '"context"'`,
+      3,
+    );
+    assert.deepEqual((yield* search.search({ query: "conversation context" })).matches, []);
+    assert.deepEqual((yield* search.search({ query: "ultrathink" })).matches, []);
+    assert.deepEqual(
+      (yield* search.search({ query: "context" })).matches.map((match) => match.messageId),
+      [MessageId.make("ordinary")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("reads the newest hits without sorting all of them", () =>
     Effect.gen(function* () {
@@ -180,6 +302,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
         );
+        if (match !== null) {
+          assert.lengthOf(
+            plan.filter((row) =>
+              row.detail.startsWith("SEARCH messages USING INTEGER PRIMARY KEY"),
+            ),
+            1,
+            plan.map((row) => row.detail).join("\n"),
+          );
+        }
       }
     }),
   );
@@ -270,13 +401,14 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
-  it.effect("matches inside identifiers and skips subagent threads and short tokens", () =>
+  it.effect("matches inside identifiers and skips hidden threads and short tokens", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:search-tokens");
       const parent = ThreadId.make("thread:tokens-parent");
       const subagent = ThreadId.make("thread:tokens-subagent");
+      const sideChat = ThreadId.make("thread:tokens-side-chat");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -284,6 +416,8 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
+          thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
+          message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
         ],
         projections.apply,
         { discard: true },
@@ -712,7 +846,12 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
           thread(id("recent"), project, { title: "Kestrel nest", settledAt: at(50) }),
           thread(id("open"), project, { title: "Kestrel nest" }),
           thread(id("child"), project, { title: "Kestrel nest", subagentOf: id("old") }),
-          // The lesson's shell always holds its side chats, so none is an older row.
+          // The lesson's shell always holds its T3 Learn side chats, so none is an older row.
+          thread(id("lesson-side-chat"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+            lessonSideChatOf: id("old"),
+          }),
           thread(id("side-chat"), project, {
             title: "Kestrel nest",
             settledAt: old,
@@ -726,7 +865,13 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old"), id("side-chat")];
+      const messageThreadIds = [
+        id("new-note"),
+        id("note"),
+        id("old"),
+        id("lesson-side-chat"),
+        id("side-chat"),
+      ];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],
@@ -900,7 +1045,7 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       yield* Effect.forEach(
         [
           thread(lesson, project, { title: "Shearwater lesson" }),
-          thread(sideChat, project, { title: "Shearwater", sideChatOf: lesson }),
+          thread(sideChat, project, { title: "Shearwater", lessonSideChatOf: lesson }),
           message(sideChat, "shearwater-side", "user", "why do shearwaters glide"),
         ],
         projections.apply,
@@ -930,7 +1075,7 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
           ...Array.from({ length: 60 }, (_, index) => {
             const id = ThreadId.make(`thread:crowded-agent-side-chat-${index}`);
             return [
-              thread(id, project, { title: `Side chat ${index}`, sideChatOf: lesson }),
+              thread(id, project, { title: `Side chat ${index}`, lessonSideChatOf: lesson }),
               message(id, `side-chat-${index}-a`, "user", "recursion", { minute: 2 }),
               message(id, `side-chat-${index}-b`, "user", "recursion recursion", { minute: 3 }),
             ];

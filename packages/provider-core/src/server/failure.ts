@@ -61,6 +61,10 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+// codex_protocol::protocol::validate_thread_goal_objective
+const CODEX_GOAL_VALIDATION_MESSAGE =
+  /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
+
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
@@ -107,8 +111,32 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeAppendSystemPromptMissingValueError":
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
+        case "ClaudeCodeRootRefusalError":
         case "CursorModelUnavailableError":
+        case "CodexGoalObjectiveTooLongError":
+        case "ProviderSetupError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "CodexAppServerRequestError": {
+          // Only Codex's fixed-shape goal validation text is actionable and
+          // safe to show; other request error text stays hidden.
+          const rejection = stringField(cause, "message");
+          if (
+            (cause as Record<string, unknown>).method === "thread/goal/set" &&
+            rejection !== undefined &&
+            CODEX_GOAL_VALIDATION_MESSAGE.test(rejection)
+          ) {
+            return { known: `Codex rejected the goal: ${rejection}.`, category: categoryMessage() };
+          }
+          break;
+        }
+        case "AcpProcessExitedError": {
+          const exit = `provider process exited${processExitStatus(cause)}`;
+          const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
+          return {
+            known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,
+            category: categoryMessage(),
+          };
+        }
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
@@ -137,6 +165,15 @@ function curatedCauseMessages(cause: unknown): {
     }
   }
   return { known: undefined, category: categoryMessage() };
+}
+
+// Only the structured status; stderr and the spawner cause can carry provider output.
+function processExitStatus(exited: object): string {
+  const { signal, code } = exited as Record<string, unknown>;
+  if (typeof signal === "string" && /^SIG[A-Z0-9]{1,16}$/u.test(signal)) {
+    return ` after signal ${signal}`;
+  }
+  return typeof code === "number" && Number.isSafeInteger(code) ? ` with code ${code}` : "";
 }
 
 /**
@@ -194,11 +231,11 @@ function redactProviderFailureText(value: string): string {
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(
-      /(["'](?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
+      /(["'][\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2",
     )
     .replace(
-      /(\b(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")

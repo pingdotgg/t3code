@@ -106,7 +106,7 @@ function setup() {
 
 /** Shows `threadId` in the tab of the top-level side chat `topThreadId`. */
 function showSideChat(topThreadId: string, threadId = topThreadId) {
-  useRightPanelStore.getState().openSideChat(LESSON_REF, { topThreadId, threadId });
+  useRightPanelStore.getState().openLessonSideChat(LESSON_REF, { topThreadId, threadId });
 }
 
 const surfaces = () =>
@@ -177,7 +177,9 @@ it("clears the unsent drafts of side chats that are gone", async () => {
 
   await using _screen = await render(<Probe input={lessonInput()} onResult={() => {}} />);
 
-  expect(surfaces()).toEqual([{ id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" }]);
+  expect(surfaces()).toEqual([
+    { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "side-1" },
+  ]);
   const after = useComposerDraftStore.getState();
   expect(after.getComposerDraft(draftRef("side-1"))?.prompt).toBe("Kept question");
   expect(after.getComposerDraft(draftRef("nested-gone"))).toBeNull();
@@ -209,7 +211,9 @@ it("opens the side chat whose AI is waiting for an answer", async () => {
 
   await using screen = await render(<Probe input={lessonInput()} onResult={() => {}} />);
 
-  expect(surfaces()).toEqual([{ id: "side-chat:side-1", kind: "side-chat", threadId: "nested-1" }]);
+  expect(surfaces()).toEqual([
+    { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "nested-1" },
+  ]);
 
   // Closing it sticks while it still waits: only a newly waiting side chat opens again.
   useRightPanelStore.getState().closeSurface(LESSON_REF, "side-chat:side-1");

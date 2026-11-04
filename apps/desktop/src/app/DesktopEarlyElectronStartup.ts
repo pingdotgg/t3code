@@ -1,9 +1,5 @@
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import {
-  T3_LEARN_EXECUTABLE_NAME,
-  T3_LEARN_HOME_ENV,
-  T3_LEARN_LINUX_DESKTOP_ENTRY,
-} from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_HOME_ENV, T3_LEARN_LINUX_DESKTOP_ENTRY } from "@t3tools/shared/t3LearnIdentity";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -31,7 +27,6 @@ type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
 
 export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
-  readonly linuxWmClass: string;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
 }
@@ -153,7 +148,6 @@ export function resolveEarlyLinuxElectronOptions(
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
-    linuxWmClass: isDevelopment ? "t3code-dev" : T3_LEARN_EXECUTABLE_NAME,
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,

@@ -1,76 +1,138 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
-
-const state = vi.hoisted(() => ({
-  shells: [] as ReadonlyArray<{ readonly id: string }>,
-  finish: vi.fn(),
-}));
-
-vi.mock(import("../state/entities"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  readThreadShell: ((ref: { threadId: string }) =>
-    state.shells.find((shell) => shell.id === ref.threadId) ?? null) as never,
-}));
-
-vi.mock(import("../state/use-orchestration-command"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useOrchestrationCommand: (() => state.finish) as never,
-}));
-
-vi.mock(import("../state/use-atom-command"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
-}));
-
-import { render } from "../../test/render";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { type SideChatSurface, useRightPanelStore } from "../rightPanelStore";
-import { makeSideChatThreadFixture, makeThreadFixture } from "../test-fixtures";
+import { act, render } from "../../test/render";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useRightPanelSurfaceClose } from "./useRightPanelSurfaceClose";
 
-const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
-const LESSON_REF = scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("lesson-1"));
-const SIDE_REF = scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("side-1"));
-const SURFACE: SideChatSurface = { id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" };
+const fixture = vi.hoisted(() => ({
+  confirm: (_labels: readonly string[]): Promise<boolean> => Promise.resolve(false),
+  allowed: new Set<string>(),
+  sessions: new Map<string, string>(),
+  failClose: false,
+}));
+vi.mock("../lib/terminalCloseConfirm", () => ({
+  confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
+}));
+vi.mock("../components/ChatView.logic", () => ({
+  agentControlledBrowserCloseConfirmation: () => null,
+}));
+vi.mock("../previewStateStore", () => ({
+  useThreadPreviewState: () => ({ sessions: {}, desktopByTabId: {} }),
+  setActivePreviewTab: () => {},
+  beginPreviewSessionClose: () => {},
+  cancelPreviewSessionClose: () => {},
+}));
+vi.mock("../state/session", () => ({
+  useEnvironmentScope: (id: string) => fixture.allowed.has(id),
+  readEnvironmentScope: (id: string) => fixture.allowed.has(id),
+}));
+vi.mock("../state/entities", () => ({
+  useQuietThreadShell: () => null,
+  useProject: () => null,
+  readThreadShell: () => null,
+}));
+vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
+vi.mock("../composerDraftStore", async () => {
+  const Schema = await import("effect/Schema");
+  return {
+    useComposerDraftStore: () => null,
+    DraftId: Schema.String.pipe(Schema.brand("DraftId")),
+  };
+});
+vi.mock("../state/use-atom-command", () => ({
+  useAtomCommand:
+    (_command: unknown, label: string) =>
+    async (request: {
+      environmentId: string;
+      input: { threadId: string; terminalId: string; data?: string };
+    }) => {
+      const key = `${request.environmentId}/${request.input.threadId}/${request.input.terminalId}`;
+      if (label === "terminal close" && fixture.failClose) return { _tag: "Failure" };
+      if (label === "terminal close" || label === "terminal write") fixture.sessions.delete(key);
+      return { _tag: "Success" };
+    },
+}));
+// The commands are replaced above; importing their runtime would connect a client.
+vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}, write: {} } }));
+vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
+vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {}, finishSideChat: {} } }));
+vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: () => {} }));
+vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  isAtomCommandInterrupted: () => false,
+}));
 
-function CloseTab(props: { readonly surface: SideChatSurface }) {
-  const { closeSurface } = useRightPanelSurfaceClose({
-    threadRef: LESSON_REF,
-    terminalLabelsById: new Map(),
+function setup() {
+  fixture.allowed = new Set(["environment-a", "environment-b"]);
+  fixture.sessions = new Map();
+  fixture.failClose = false;
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
+  const original: ScopedThreadRef = {
+    environmentId: EnvironmentId.make("environment-a"),
+    threadId: ThreadId.make("thread-a"),
+  };
+  const other: ScopedThreadRef = {
+    environmentId: EnvironmentId.make("environment-b"),
+    threadId: ThreadId.make("thread-b"),
+  };
+  for (const ref of [original, other]) {
+    fixture.sessions.set(`${ref.environmentId}/${ref.threadId}/term-1`, "history to preserve");
+    useRightPanelStore.getState().openTerminal(ref, "term-1");
+  }
+  const surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original)
+    .surfaces[0]!;
+  let resolve!: (confirmed: boolean) => void;
+  const confirmation = new Promise<boolean>((done) => {
+    resolve = done;
   });
-  return (
-    <button type="button" onClick={() => closeSurface(props.surface)}>
-      Close tab
-    </button>
-  );
+  fixture.confirm = () => confirmation;
+  function Harness({ threadRef }: { threadRef: ScopedThreadRef }) {
+    const { closeSurface } = useRightPanelSurfaceClose({
+      threadRef,
+      terminalLabelsById: new Map(),
+    });
+    return <button onClick={() => closeSurface(surface)}>Close original terminal</button>;
+  }
+  return { original, other, Harness, resolve };
 }
 
-it("forgets the draft of an empty side chat that closing its tab deletes", async () => {
-  state.shells = [
-    makeThreadFixture({ id: LESSON_REF.threadId, environmentId: ENVIRONMENT_ID }),
-    makeSideChatThreadFixture({
-      id: SIDE_REF.threadId,
-      lessonId: LESSON_REF.threadId,
-      environmentId: ENVIRONMENT_ID,
-    }),
-  ];
-  state.finish.mockResolvedValue(AsyncResult.success({ sequence: 1 }));
-  useRightPanelStore.setState({ byThreadKey: {} });
-  useRightPanelStore
-    .getState()
-    .openSideChat(LESSON_REF, { topThreadId: "side-1", threadId: "side-1" });
-  useComposerDraftStore.getState().setPrompt(SIDE_REF, "And the reward?");
-  await using screen = await render(<CloseTab surface={SURFACE} />);
+it.each([false, true])(
+  "keeps a pending close on its original environment and thread, fallback=%s",
+  async (failClose) => {
+    const { original, other, Harness, resolve } = setup();
+    fixture.failClose = failClose;
+    await using screen = await render(<Harness threadRef={original} />);
+    await screen.getByRole("button").click();
+    await screen.rerender(<Harness threadRef={other} />);
+    await act(async () => {
+      resolve(true);
+    });
+    expect([...fixture.sessions]).toEqual([
+      ["environment-b/thread-b/term-1", "history to preserve"],
+    ]);
+    const panels = useRightPanelStore.getState().byThreadKey;
+    expect(selectThreadRightPanelState(panels, original).surfaces).toEqual([]);
+    expect(selectThreadRightPanelState(panels, other).surfaces).toHaveLength(1);
+  },
+);
 
-  await screen.getByRole("button", { name: "Close tab" }).click();
-
-  expect(state.finish).toHaveBeenCalledWith({
-    environmentId: ENVIRONMENT_ID,
-    input: { threadId: "side-1" },
-  });
-  await vi.waitFor(() =>
-    expect(useComposerDraftStore.getState().getComposerDraft(SIDE_REF)?.prompt ?? "").toBe(""),
-  );
-});
+it.each(["cancel", "revoked"])(
+  "leaves both sessions intact when confirmation is %s",
+  async (outcome) => {
+    const { original, other, Harness, resolve } = setup();
+    await using screen = await render(<Harness threadRef={original} />);
+    await screen.getByRole("button").click();
+    await screen.rerender(<Harness threadRef={other} />);
+    if (outcome === "revoked") fixture.allowed.delete(original.environmentId);
+    await act(async () => {
+      resolve(outcome !== "cancel");
+    });
+    expect(fixture.sessions.size).toBe(2);
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]?.surfaces,
+    ).toHaveLength(1);
+  },
+);

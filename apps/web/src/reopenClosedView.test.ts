@@ -92,14 +92,14 @@ describe("reopenClosedView", () => {
       {
         kind: "panel-tab",
         threadRef,
-        surface: { id: "side-chat:side-1", kind: "side-chat", threadId: "nested-1" },
+        surface: { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "nested-1" },
       },
       { openPreview: vi.fn(), workspaceAvailable: false },
     );
     expect(reopened).toBe(true);
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
-    ).toEqual([{ id: "side-chat:side-1", kind: "side-chat", threadId: "nested-1" }]);
+    ).toEqual([{ id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "nested-1" }]);
   });
 
   it("recreates a browser tab with saved URL, viewport and profile, then selects its new ID", async () => {
@@ -149,6 +149,7 @@ describe("planNextReopen", () => {
     environmentKnown: true,
     catalogReady: true,
     ownerExists: true,
+    sideChatExists: true,
     shellLive: true,
     panel: { isOpen: false, activeSurfaceId: null, surfaces: [] },
   };
@@ -177,6 +178,18 @@ describe("planNextReopen", () => {
       [{ ...known, ownerExists: false }, known],
       [],
       "b",
+    ],
+    [
+      "skips but keeps a side chat deleted from a live shell",
+      [{ ...known, sideChatExists: false }, known],
+      [],
+      "b",
+    ],
+    [
+      "waits when a cached shell lacks the side chat",
+      [{ ...known, sideChatExists: false, shellLive: false }, known],
+      [],
+      null,
     ],
     [
       "waits when a cached shell lacks the thread",

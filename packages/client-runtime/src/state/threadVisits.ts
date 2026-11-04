@@ -115,7 +115,8 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         }
         const lastVisitedAtMs = shell.lastVisitedAt ? Date.parse(shell.lastVisitedAt) : NaN;
         if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= updatedAtMs) return;
-        if (lastDispatchedUpdatedAt === visitedAt) return;
+        if (lastDispatchedUpdatedAt !== null && Date.parse(lastDispatchedUpdatedAt) >= updatedAtMs)
+          return;
 
         const completedAtMs = shell.latestRun?.completedAt
           ? Date.parse(shell.latestRun.completedAt)

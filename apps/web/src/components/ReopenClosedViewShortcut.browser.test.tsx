@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   params: {} as Record<string, string>,
   workspaceAvailable: true,
   deletedThreadIds: [] as ReadonlyArray<string>,
+  upstreamSideChatIds: [] as ReadonlyArray<string>,
   navigate: vi.fn(),
   openPreview: vi.fn(),
   setShortcuts: vi.fn(async () => undefined),
@@ -69,7 +70,11 @@ vi.mock(import("../state/entities"), async (original) => ({
   readThreadShell: ((threadRef: ScopedThreadRef) =>
     state.deletedThreadIds.includes(threadRef.threadId)
       ? null
-      : { projectId: "project-1", worktreePath: null }) as never,
+      : {
+          projectId: "project-1",
+          worktreePath: null,
+          lineage: { sideChat: state.upstreamSideChatIds.includes(threadRef.threadId) },
+        }) as never,
   readProject: (() =>
     state.workspaceAvailable ? { workspaceRoot: "/work/project" } : null) as never,
 }));
@@ -101,6 +106,7 @@ function setup() {
     params: {},
     workspaceAvailable: true,
     deletedThreadIds: [],
+    upstreamSideChatIds: [],
   });
   state.navigate.mockResolvedValue(undefined);
   state.openPreview.mockReset();
@@ -278,7 +284,7 @@ describe("root reopen shortcut", () => {
     const discarded = store.remember({
       kind: "panel-tab",
       threadRef: ref,
-      surface: { id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" },
+      surface: { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "side-1" },
     });
     state.deletedThreadIds = ["side-1"];
     await using _view = await renderShortcut();
@@ -291,5 +297,32 @@ describe("root reopen shortcut", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
     ).toEqual([{ kind: "diff", id: "diff" }]);
     expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([discarded]);
+  });
+
+  it("reopens an official build's side chat that an older closed view saved as T3 Learn's", async () => {
+    setup();
+    useClosedViewStore.getState().remember({
+      kind: "panel-tab",
+      threadRef: ref,
+      surface: { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "side-1" },
+    });
+    state.upstreamSideChatIds = ["side-1"];
+    await using _view = await renderShortcut();
+
+    await act(() => {
+      press();
+    });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
+    ).toEqual([{ id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" }]);
+  });
+
+  it("forwards address-bar focus from a focused desktop page", async () => {
+    setup();
+    await using _shortcut = await renderShortcut();
+    expect(state.setShortcuts).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ command: "preview.focusUrl" })]),
+    );
   });
 });

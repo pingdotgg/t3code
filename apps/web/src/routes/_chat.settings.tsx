@@ -26,6 +26,7 @@ import {
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
 } from "../components/settings/settingsSearch";
+import { supportsLessonSideChats } from "@t3tools/contracts";
 import { hasSideChatSettings } from "../components/settings/sideChatSettingsSupport";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
@@ -57,7 +58,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
           .filter(
             (environment) =>
               environment.connection.phase === "connected" &&
-              environment.serverConfig?.environment.capabilities.sideChats === true &&
+              environment.serverConfig !== null &&
+              supportsLessonSideChats(environment.serverConfig.environment) &&
               hasSideChatSettings(environment.serverConfig.settings),
           )
           .map((environment) => environment.environmentId),
@@ -183,7 +185,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({

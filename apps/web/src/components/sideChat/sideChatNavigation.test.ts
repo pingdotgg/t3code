@@ -64,7 +64,11 @@ describe("side-chat navigation targets", () => {
 });
 
 describe("resolveFinishableSideChat", () => {
-  const surface: SideChatSurface = { id: "side-chat:side", kind: "side-chat", threadId: nestedId };
+  const surface: SideChatSurface = {
+    id: "side-chat:side",
+    kind: "lesson-side-chat",
+    threadId: nestedId,
+  };
   const map: RightPanelSurface = { id: "thread-map", kind: "thread-map" };
   const input = {
     surfaces: [surface, map],
@@ -107,7 +111,7 @@ describe("returnToLesson", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, lessonRef);
     useRightPanelStore
       .getState()
-      .openSideChat(lessonRef, { topThreadId: sideId, threadId: sideId });
+      .openLessonSideChat(lessonRef, { topThreadId: sideId, threadId: sideId });
     const focusComposer = vi.fn();
 
     returnToLesson(lessonRef, false, focusComposer);
@@ -117,7 +121,7 @@ describe("returnToLesson", () => {
     returnToLesson(lessonRef, true, focusComposer);
     expect(panel().isOpen).toBe(false);
     expect(panel().surfaces).toEqual([
-      { id: "side-chat:side", kind: "side-chat", threadId: sideId },
+      { id: "side-chat:side", kind: "lesson-side-chat", threadId: sideId },
     ]);
     expect(focusComposer).toHaveBeenCalledTimes(2);
   });
@@ -126,7 +130,7 @@ describe("returnToLesson", () => {
     useRightPanelStore.setState(useRightPanelStore.getInitialState());
     const lessonRef = scopeThreadRef(environmentId, lessonId);
     const panels = useRightPanelStore.getState();
-    panels.openSideChat(lessonRef, { topThreadId: sideId, threadId: sideId });
+    panels.openLessonSideChat(lessonRef, { topThreadId: sideId, threadId: sideId });
     panels.setMaximized(lessonRef, true);
 
     returnToLesson(lessonRef, false, () => {});

@@ -300,7 +300,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -343,7 +343,7 @@ jobs:
           fi
 
       - name: Test
-        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }} --testTimeout=30000
 
       # Browser tests run source modules; this boots the production chunk graph.
       - name: Boot the built web client

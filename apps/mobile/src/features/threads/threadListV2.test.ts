@@ -277,6 +277,16 @@ describe("getThreadListV2OrderedSection", () => {
 
   it("hides side chats from the list and its ordered sections", () => {
     const lesson = makeThread({ id: ThreadId.make("lesson"), title: "Lesson" });
+    const lineageSideChat = makeThread({
+      id: ThreadId.make("lineage-side-chat"),
+      title: "Side chat",
+      lineage: {
+        parentThreadId: lesson.id,
+        rootThreadId: lesson.id,
+        relationshipToParent: "fork",
+        sideChat: true,
+      },
+    });
     const sideChat = makeThread({
       id: ThreadId.make("side-chat"),
       title: "Side chat",
@@ -301,7 +311,7 @@ describe("getThreadListV2OrderedSection", () => {
         excerptLength: 17,
       },
     });
-    const threads = [lesson, sideChat];
+    const threads = [lesson, sideChat, lineageSideChat];
     expect(
       buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
         (item) => item.thread.id,

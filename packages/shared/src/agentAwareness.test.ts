@@ -81,28 +81,32 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
-  it.each(["running", "completed", "failed"] as const)(
-    "does not publish %s subagent activity",
-    (status) => {
-      expect(
-        projectThreadAwarenessV2({
-          environmentId: "env-1" as EnvironmentId,
-          project,
-          thread: v2Thread({
-            status,
-            lineage: {
-              rootThreadId: "parent" as ThreadId,
-              parentThreadId: "parent" as ThreadId,
-              relationshipToParent: "subagent",
-            },
-          }),
+  it.each([
+    ["running", "subagent"],
+    ["completed", "subagent"],
+    ["failed", "subagent"],
+    ["running", "side chat"],
+  ] as const)("does not publish %s %s activity", (status, kind) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status,
+          lineage: {
+            rootThreadId: "parent" as ThreadId,
+            parentThreadId: "parent" as ThreadId,
+            ...(kind === "subagent"
+              ? { relationshipToParent: "subagent" }
+              : { relationshipToParent: "fork", sideChat: true }),
+          },
         }),
-      ).toBeNull();
-    },
-  );
+      }),
+    ).toBeNull();
+  });
 
   it.each(["running", "completed", "failed"] as const)(
-    "does not publish %s side-chat activity",
+    "does not publish %s T3 Learn side-chat activity",
     (status) => {
       expect(
         projectThreadAwarenessV2({
@@ -218,7 +222,7 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase });
   });
 
-  it("reports an async question as input only after the working run completes", () => {
+  it("reports an async question as input while the run keeps working", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,
       project,
@@ -232,12 +236,9 @@ describe("projectThreadAwarenessV2", () => {
       }),
     };
     expect(projectThreadAwarenessV2(input)).toMatchObject({
-      phase: "running",
-      headline: "Agent is working",
+      phase: "waiting_for_input",
+      headline: "Waiting for input",
     });
-    expect(
-      projectThreadAwarenessV2({ ...input, thread: { ...input.thread, status: "completed" } }),
-    ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
 
   it("does not present authentication refreshes as user approvals", () => {

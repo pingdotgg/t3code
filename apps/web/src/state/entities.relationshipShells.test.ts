@@ -2,9 +2,10 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { isLineageThread } from "@t3tools/client-runtime/state/thread-relationships";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isLineageThread, selectThreadRelationshipShells } from "./entities";
+import { selectThreadRelationshipShells } from "./entities";
 
 type Projection = Parameters<typeof selectThreadRelationshipShells>[1];
 

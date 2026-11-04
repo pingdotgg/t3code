@@ -39,7 +39,7 @@ export interface ThreadRelationshipWalkRow {
 export function resolveMergeBackTargetThreadId(
   projection: Pick<OrchestrationV2ThreadProjection, "thread"> | null,
 ): ThreadId | null {
-  // A side chat is a fork of its parent, but it hands back through Done, not Merge back.
+  // A T3 Learn side chat is a fork of its parent, but it hands back through Done, not Merge back.
   if (
     projection?.thread.lineage.relationshipToParent !== "fork" ||
     isSideChatThread(projection.thread)
@@ -89,7 +89,12 @@ export function deriveThreadRelationshipGraph(input: {
     );
   };
 
-  for (const thread of threads) {
+  const selectedThread = input.projection?.thread;
+  const lineageThreads =
+    selectedThread !== undefined && !threadsById.has(selectedThread.id)
+      ? [...threads, { ...selectedThread, activityRunStatus: null, status: null }]
+      : threads;
+  for (const thread of lineageThreads) {
     const parentThreadId =
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId
@@ -230,6 +235,14 @@ interface SideChatTreeMember {
 function compareSideChatSiblings(left: SideChatTreeMember, right: SideChatTreeMember): number {
   if (left.createdAt !== right.createdAt) return left.createdAt < right.createdAt ? -1 : 1;
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+/** Side chats live in their lesson's panel, so Lineage shows one only as the current thread. */
+export function isLineageThread(
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "sideChat">,
+  currentThreadId: ThreadId,
+): boolean {
+  return thread.id === currentThreadId || !isSideChatThread(thread);
 }
 
 /**

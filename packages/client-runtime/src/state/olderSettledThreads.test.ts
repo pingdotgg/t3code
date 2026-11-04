@@ -60,6 +60,7 @@ const row = (
     readonly settledDay?: number;
     readonly createdDay?: number;
     readonly subagent?: boolean;
+    readonly sideChat?: "upstream" | "lesson";
   },
 ) =>
   ({
@@ -69,7 +70,11 @@ const row = (
       parentThreadId: input.subagent === true ? ThreadId.make("parent") : null,
       relationshipToParent: input.subagent === true ? "subagent" : null,
       rootThreadId: ThreadId.make(id),
+      ...(input.sideChat === "upstream" ? { sideChat: true } : {}),
     },
+    ...(input.sideChat === "lesson"
+      ? { sideChat: { lessonThreadId: ThreadId.make("parent") } }
+      : {}),
     settledOverride: input.settledDay === undefined ? null : "settled",
     settledAt: input.settledDay === undefined ? null : DateTime.makeUnsafe(input.settledDay * DAY),
     createdAt: DateTime.makeUnsafe((input.createdDay ?? 1) * DAY),
@@ -95,11 +100,16 @@ describe("olderSettledCountKey", () => {
     expect(key([base[0]!, row("open", { createdDay: 60, settledDay: 20 })])).not.toBe(start);
   });
 
-  it("stays put for new threads and subagents", () => {
+  it("stays put for new threads, subagents and side chats", () => {
     const start = key(base);
     expect(key([...base, row("new", { createdDay: 70 })])).toBe(start);
     expect(key([...base, row("new-settled", { createdDay: 70, settledDay: 71 })])).toBe(start);
     expect(key([...base, row("child", { createdDay: 5, subagent: true })])).toBe(start);
+    for (const sideChat of ["upstream", "lesson"] as const) {
+      expect(key([...base, row(sideChat, { createdDay: 5, settledDay: 10, sideChat })])).toBe(
+        start,
+      );
+    }
   });
 });
 

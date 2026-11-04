@@ -24,7 +24,8 @@ output_file="$root/.github/workflows/t3-learn-ci.yml"
 # Test Web runs on one 8 vCPU runner upstream. Browser test files share one
 # Chromium page, and on a slower 4 vCPU runner the heaviest file previews then
 # miss their 15s test and waitFor windows, so the fork splits Test Web across
-# three runners. vp run passes a `--` through, so the flag follows the script.
+# four runners. Upstream's PDF reload test still takes 13-15s there, so tests
+# get 30s. vp run passes a `--` through, so the flags follow the script.
 transform='
 s/^name: CI$/name: T3 Learn CI/
 s/^( *)runs-on: blacksmith-[0-9]+vcpu-ubuntu-2404$/\1runs-on: ubuntu-24.04/
@@ -35,8 +36,8 @@ s/^( *)runs-on: blacksmith-[0-9]+vcpu-macos-26$/\1runs-on: macos-26/
     strategy:\
       fail-fast: false\
       matrix:\
-        shard: [1, 2, 3]
-  s/^(        run: vp run --filter @t3tools\/web test)$/\1 --shard ${{ matrix.shard }}\/${{ strategy.job-total }}/
+        shard: [1, 2, 3, 4]
+  s/^(        run: vp run --filter @t3tools\/web test)$/\1 --shard ${{ matrix.shard }}\/${{ strategy.job-total }} --testTimeout=30000/
 }
 /^      - name: Reject repository-owned PR assets$/i\
       - name: Require t3-learn-ci.yml to match ci.yml\

@@ -8,11 +8,12 @@ import {
 } from "@t3tools/contracts";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
+  parseKeybindingShortcut,
   parseKeybindingWhenExpression,
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
 
-import { shortcutKeyFromEvent } from "../../keybindings";
+import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
@@ -180,13 +181,18 @@ function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
 export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
+  platform = navigator.platform,
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
+  const shortcut = parseKeybindingShortcut(input.key);
+  if (!shortcut) return [];
+  // Compare resolved chords so mod+k and ctrl+k collide where mod is Ctrl.
+  const conflictKey = shortcutConflictKey(shortcut, platform);
   const conflicts: Array<string> = [];
   for (const candidate of rows) {
     if (
       candidate.id !== input.rowId &&
-      candidate.key === input.key &&
+      shortcutConflictKey(candidate.binding.shortcut, platform) === conflictKey &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
       conflicts.push(commandLabel(candidate.command));
@@ -240,18 +246,19 @@ export function groupKeybindingRows(
   });
 }
 
-// sideChat.* commands only run against a server that advertises side chats.
-function isAvailableCommand(command: KeybindingCommand, sideChats: boolean): boolean {
-  return sideChats || !command.startsWith("sideChat.");
+// sideChat.* commands only run against a server that advertises T3 Learn side chats.
+function isAvailableCommand(command: KeybindingCommand, lessonSideChats: boolean): boolean {
+  return lessonSideChats || !command.startsWith("sideChat.");
 }
 
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
-  sideChats = false,
+  platform = navigator.platform,
+  lessonSideChats = false,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
   for (const binding of keybindings) {
-    if (!isAvailableCommand(binding.command, sideChats)) continue;
+    if (!isAvailableCommand(binding.command, lessonSideChats)) continue;
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
@@ -271,11 +278,15 @@ export function buildKeybindingRows(
   const rows = [...rowsById.values()];
 
   const rowsWithConflicts = rows.map((row) => {
-    const conflicts = keybindingConflictLabels(rows, {
-      rowId: row.id,
-      key: row.key,
-      when: row.when,
-    });
+    const conflicts = keybindingConflictLabels(
+      rows,
+      {
+        rowId: row.id,
+        key: row.key,
+        when: row.when,
+      },
+      platform,
+    );
     return conflicts.length > 0
       ? Object.assign({}, row, { conflicts: [...new Set(conflicts)].toSorted() })
       : row;
@@ -355,14 +366,14 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
-  sideChats = false,
+  lessonSideChats = false,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
   return [...commands]
-    .filter((command) => isAvailableCommand(command, sideChats))
+    .filter((command) => isAvailableCommand(command, lessonSideChats))
     .toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
 

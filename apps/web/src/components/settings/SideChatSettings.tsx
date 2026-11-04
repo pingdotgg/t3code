@@ -122,11 +122,14 @@ export function SideChatSettings() {
     );
   });
   if (!supportsSideChatSettings) return null;
-  const skillOptions = uniqueSkills.map((skill) => ({
-    name: skill.name,
-    provider: skill.provider,
-    instanceId: skill.instanceId,
-  }));
+  // `instanceId` keys rows; the typed entry below has no provider instance.
+  const skillOptions = uniqueSkills.map(
+    (skill): { name: string; provider: string; instanceId: string } => ({
+      name: skill.name,
+      provider: skill.provider,
+      instanceId: skill.instanceId,
+    }),
+  );
   const skillQuery = normalizeSkillName(skillDraft);
   const skillQueryKey = skillQuery.toLowerCase();
   const addedSkills = new Set(skills.map((skill) => normalizeSkillName(skill).toLowerCase()));

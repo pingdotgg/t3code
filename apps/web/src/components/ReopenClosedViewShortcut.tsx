@@ -9,7 +9,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { useClosedViewStore } from "../closedViewStore";
+import { type ClosedViewEntry, useClosedViewStore } from "../closedViewStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentCatalog } from "../connection/catalog";
 import { effectiveShortcutsForCommand, resolveShortcutCommand } from "../keybindings";
@@ -43,13 +43,24 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 
-const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
+const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "preview.focusUrl",
 ] as const;
+
+/** A closed view saved before version 3 may hold an official build's side chat as T3 Learn's. */
+function withOwnSideChatKind(entry: ClosedViewEntry): ClosedViewEntry {
+  if (entry.kind !== "panel-tab" || entry.surface.kind !== "lesson-side-chat") return entry;
+  const threadId = ThreadId.make(entry.surface.threadId);
+  const shell = readThreadShell(scopeThreadRef(entry.threadRef.environmentId, threadId));
+  return shell?.lineage.sideChat === true
+    ? { ...entry, surface: { id: `side-chat:${threadId}`, kind: "side-chat", threadId } }
+    : entry;
+}
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(PULL_REQUESTS_PANEL_REF);
@@ -91,6 +102,7 @@ export function ReopenClosedViewShortcut() {
           environmentKnown: true,
           catalogReady: true,
           ownerExists: true,
+          sideChatExists: true,
           shellLive: true,
           panel,
         };
@@ -98,14 +110,13 @@ export function ReopenClosedViewShortcut() {
       return {
         environmentKnown: catalog.entries.has(ref.environmentId),
         catalogReady: catalog.isReady,
-        ownerExists:
-          (readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null) &&
-          // Discard, or Done on an empty side chat, deletes the side chat its tab showed.
-          (entry.kind !== "panel-tab" ||
-            entry.surface.kind !== "side-chat" ||
-            readThreadShell(
-              scopeThreadRef(ref.environmentId, ThreadId.make(entry.surface.threadId)),
-            ) !== null),
+        ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
+        sideChatExists:
+          entry.kind !== "panel-tab" ||
+          (entry.surface.kind !== "side-chat" && entry.surface.kind !== "lesson-side-chat") ||
+          readThreadShell(
+            scopeThreadRef(ref.environmentId, ThreadId.make(entry.surface.threadId)),
+          ) !== null,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -119,7 +130,10 @@ export function ReopenClosedViewShortcut() {
     const thread = globalPullRequests ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
-    if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
+    const reopened = withOwnSideChatKind(restore);
+    if (
+      !(await reopenClosedView(reopened, { openPreview, workspaceAvailable: project !== null }))
+    ) {
       useClosedViewStore.getState().defer(restore.id);
       return;
     }
@@ -207,7 +221,7 @@ export function ReopenClosedViewShortcut() {
     // Guest browser processes miss app keydown listeners; desktop forwards the chords as menu actions.
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
-      ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      ...PREVIEW_FORWARDED_COMMANDS,
     ];
     void preview
       .setForwardedShortcuts(

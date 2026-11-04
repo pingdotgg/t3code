@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  ExecutionEnvironmentDescriptor,
+  supportsLessonSideChats,
+  supportsSideChats,
+} from "./environment.ts";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 
@@ -31,6 +35,33 @@ describe("ExecutionEnvironmentDescriptor", () => {
           capabilities: { ...descriptor.capabilities, serverInstallation: installation },
         }).capabilities.serverInstallation,
       ).toBeUndefined();
+    }
+  });
+});
+
+describe("side-chat capabilities", () => {
+  it("tells T3 Learn side chats from upstream side chats across server versions", () => {
+    const cases = [
+      { serverVersion: "0.1.6", capabilities: {}, lesson: false, upstream: false },
+      { serverVersion: "0.1.6", capabilities: { sideChats: true }, lesson: false, upstream: true },
+      // A released T3 Learn server from before `lessonSideChats` meant its own side chats.
+      {
+        serverVersion: "0.1.3-learn.8",
+        capabilities: { sideChats: true },
+        lesson: true,
+        upstream: false,
+      },
+      {
+        serverVersion: "0.1.6-learn.1",
+        capabilities: { sideChats: true, lessonSideChats: true },
+        lesson: true,
+        upstream: true,
+      },
+    ] as const;
+    for (const { serverVersion, capabilities: advertised, lesson, upstream } of cases) {
+      const capabilities = { repositoryIdentity: true, ...advertised };
+      expect(supportsLessonSideChats({ serverVersion, capabilities })).toBe(lesson);
+      expect(supportsSideChats({ serverVersion, capabilities })).toBe(upstream);
     }
   });
 });

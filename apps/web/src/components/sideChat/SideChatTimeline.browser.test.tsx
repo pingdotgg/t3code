@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useThreadVisibleTurnItems: (() => state.visibleTurnItems) as never,
+  useTimelineVisibleTurnItems: (() => state.visibleTurnItems) as never,
 }));
 
 import { render } from "../../../test/render";

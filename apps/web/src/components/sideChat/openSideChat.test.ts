@@ -1,6 +1,13 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { type AssistantCitation, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  type AssistantCitation,
+  EnvironmentId,
+  MessageId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -111,7 +118,7 @@ describe("openSideChatFromSelection", () => {
     expect(panel()).toMatchObject({
       isOpen: true,
       activeSurfaceId: `side-chat:${threadId}`,
-      surfaces: [{ id: `side-chat:${threadId}`, kind: "side-chat", threadId }],
+      surfaces: [{ id: `side-chat:${threadId}`, kind: "lesson-side-chat", threadId }],
     });
     expect(panel().maximized).toBeUndefined();
     expect(pendingEntry(threadId)).toEqual({
@@ -213,14 +220,14 @@ describe("openSideChatFromSelection", () => {
     expect(outcome).toEqual({ _tag: "Reused", threadId: "side-1" });
     expect(run).not.toHaveBeenCalled();
     expect(panel().surfaces).toEqual([
-      { id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" },
+      { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "side-1" },
     ]);
   });
 
   it("opens a nested side chat inside its parent's tab and falls back to the parent on failure", async () => {
     useRightPanelStore
       .getState()
-      .openSideChat(lessonRef, { topThreadId: "side-1", threadId: "side-1" });
+      .openLessonSideChat(lessonRef, { topThreadId: "side-1", threadId: "side-1" });
     const { run, startedThreadId, settle } = deferredRunner();
 
     const outcome = openSideChatFromSelection({
@@ -237,13 +244,15 @@ describe("openSideChatFromSelection", () => {
     const threadId = startedThreadId();
 
     expect(run.mock.calls[0]?.[0].input.anchorThreadId).toBe("side-1");
-    expect(panel().surfaces).toEqual([{ id: "side-chat:side-1", kind: "side-chat", threadId }]);
+    expect(panel().surfaces).toEqual([
+      { id: "side-chat:side-1", kind: "lesson-side-chat", threadId },
+    ]);
 
     settle(refusal);
 
     await expect(outcome).resolves.toMatchObject({ _tag: "Failed" });
     expect(panel().surfaces).toEqual([
-      { id: "side-chat:side-1", kind: "side-chat", threadId: "side-1" },
+      { id: "side-chat:side-1", kind: "lesson-side-chat", threadId: "side-1" },
     ]);
   });
 
@@ -258,7 +267,14 @@ describe("openSideChatFromSelection", () => {
       run,
     });
     const threadId = startedThreadId();
-    useComposerDraftStore.getState().setPrompt(scopeThreadRef(environmentId, threadId), "What");
+    const sideChatRef = scopeThreadRef(environmentId, threadId);
+    useComposerDraftStore.getState().setPrompt(sideChatRef, "What");
+    useComposerDraftStore
+      .getState()
+      .setModelSelection(
+        sideChatRef,
+        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5"),
+      );
     useRightPanelStore.getState().closeSurface(lessonRef, `side-chat:${threadId}`);
 
     settle(AsyncResult.success({ sequence: 1 }));

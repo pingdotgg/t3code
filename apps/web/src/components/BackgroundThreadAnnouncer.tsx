@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isListedThreadLineage, isSideChatThread } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -46,7 +46,7 @@ export function startBackgroundThreadAnnouncements(
       // Subagents and side chats have no row of their own; their requests surface on the parent.
       if (
         thread.archivedAt !== null ||
-        thread.lineage.relationshipToParent === "subagent" ||
+        !isListedThreadLineage(thread.lineage) ||
         isSideChatThread(thread)
       )
         continue;

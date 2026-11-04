@@ -12,6 +12,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isListedThreadLineage,
   isLiveSubagentShell,
   isOlderSettledThreadShell,
   isSideChatThread,
@@ -32,6 +33,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 
 type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
 
@@ -57,7 +59,7 @@ export const bufferShellLiveStream = <E, R>(
     limits,
   );
 
-export function buildActiveShellSnapshot(input: {
+function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: OrchestrationV2ThreadShellSnapshot;
   readonly snapshotSequence: number;
@@ -71,6 +73,119 @@ export function buildActiveShellSnapshot(input: {
   };
 }
 
+type ShellTrimRow = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+> & { readonly sideChat?: unknown };
+
+/**
+ * What a subscriber's trims read across every active row. Computed from full shells or from the
+ * store's index, so a snapshot read only for the rows it sends trims the same way.
+ */
+interface ShellTrimFacts {
+  readonly subagentParentIds: ReadonlySet<string>;
+  /** Subagents and T3 Learn side chats: clients get their transcripts by thread subscription. */
+  readonly transcriptQuietThreadIds: Set<string>;
+  /** Undefined when no thread is settled, so none is older. */
+  readonly olderSettledBeforeMs: number | undefined;
+  readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+}
+
+const NEWEST_SETTLED_KEPT = 25;
+
+function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
+  const subagentParentIds = new Set<string>();
+  const transcriptQuietThreadIds = new Set<string>();
+  const settledTimes: Array<number> = [];
+  for (const row of rows) {
+    if (row.lineage.relationshipToParent === "subagent") {
+      transcriptQuietThreadIds.add(row.id);
+      if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
+    } else if (isSideChatThread(row)) {
+      transcriptQuietThreadIds.add(row.id);
+    } else if (
+      isListedThreadLineage(row.lineage) &&
+      row.settledOverride === "settled" &&
+      row.settledAt !== null
+    ) {
+      settledTimes.push(DateTime.toEpochMillis(row.settledAt));
+    }
+  }
+  settledTimes.sort((left, right) => right - left);
+  // With fewer than 25, the oldest one is the cut, so nothing is older.
+  const olderSettledBeforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1);
+  const counts = new Map<ProjectId, number>();
+  if (olderSettledBeforeMs !== undefined) {
+    for (const row of rows) {
+      if (isOlderSettledThreadShell(row, olderSettledBeforeMs)) {
+        counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1);
+      }
+    }
+  }
+  return {
+    subagentParentIds,
+    transcriptQuietThreadIds,
+    olderSettledBeforeMs,
+    olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
+  };
+}
+
+function hiddenChildAncestorIds(
+  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage">>,
+) {
+  const ancestorIds = new Set<string>();
+  for (const thread of threads) {
+    if (isListedThreadLineage(thread.lineage)) continue;
+    if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
+    ancestorIds.add(thread.lineage.rootThreadId);
+  }
+  return ancestorIds;
+}
+
+function omitIdleSubagentShellsWith(
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  facts: Pick<ShellTrimFacts, "subagentParentIds">,
+): ReadonlyArray<OrchestrationV2ThreadShell> {
+  return threads.filter(
+    (thread) =>
+      thread.lineage.relationshipToParent !== "subagent" ||
+      isLiveSubagentShell(thread) ||
+      facts.subagentParentIds.has(thread.id),
+  );
+}
+
+function omitOlderSettledShellsWith(
+  input: {
+    readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly snapshotSequence: number;
+    readonly now: DateTime.Utc;
+  },
+  facts: Pick<ShellTrimFacts, "olderSettledBeforeMs" | "olderSettledCounts">,
+): {
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly olderSettled: OrchestrationV2OlderSettledThreads;
+} {
+  const nowMs = DateTime.toEpochMillis(input.now);
+  const beforeMs = facts.olderSettledBeforeMs ?? nowMs;
+  const ancestorIds = hiddenChildAncestorIds(input.threads);
+  const threads = input.threads.filter(
+    (thread) =>
+      !isOlderSettledThreadShell(thread, beforeMs) ||
+      thread.pinnedAt != null ||
+      (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
+      isLiveSubagentShell(thread) ||
+      ancestorIds.has(thread.id),
+  );
+  return {
+    threads,
+    olderSettled: {
+      before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
+      asOfSequence: input.snapshotSequence,
+      counts: facts.olderSettledCounts,
+    },
+  };
+}
+
 /**
  * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
  * family instead. A child stays while it is live or the parent of another child, so the request
@@ -79,24 +194,13 @@ export function buildActiveShellSnapshot(input: {
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
-  const parentIds = new Set<string>();
-  for (const thread of threads) {
-    if (thread.lineage.relationshipToParent === "subagent" && thread.lineage.parentThreadId) {
-      parentIds.add(thread.lineage.parentThreadId);
-    }
-  }
-  return threads.filter(
-    (thread) =>
-      thread.lineage.relationshipToParent !== "subagent" ||
-      isLiveSubagentShell(thread) ||
-      parentIds.has(thread.id),
-  );
+  return omitIdleSubagentShellsWith(threads, shellTrimFacts(threads));
 }
 
 /**
- * The active rows a shell subscriber gets, and the subagent and side-chat ids whose transcript
- * events its stream drops. The ids come from every row, so an omitted child that wakes keeps that
- * filter.
+ * The active rows a shell subscriber gets, and the subagent and T3 Learn side-chat ids whose
+ * transcript events its stream drops. The ids come from every row, so an omitted child that wakes
+ * keeps that filter.
  */
 export function activeShellRowsForSubscriber(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -105,26 +209,18 @@ export function activeShellRowsForSubscriber(
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly transcriptQuietThreadIds: Set<string>;
 } {
+  const facts = shellTrimFacts(threads);
   return {
-    threads: omitIdleSubagents ? omitIdleSubagentShells(threads) : threads,
-    transcriptQuietThreadIds: new Set(
-      threads
-        .filter(
-          (thread) =>
-            thread.lineage.relationshipToParent === "subagent" || isSideChatThread(thread),
-        )
-        .map((thread) => thread.id),
-    ),
+    threads: omitIdleSubagents ? omitIdleSubagentShellsWith(threads, facts) : threads,
+    transcriptQuietThreadIds: facts.transcriptQuietThreadIds,
   };
 }
-
-const NEWEST_SETTLED_KEPT = 25;
 
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
  * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, or above a kept subagent, so walks over shell rows still find them. Side
- * chats have no list row to count, and a kept lesson's Map and side panel read them from the shell.
+ * pinned, snoozed, live, or above a kept subagent or side chat, so walks over shell rows still find
+ * them. T3 Learn side chats are never older rows: a kept lesson's Map and panel read them here.
  */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -134,79 +230,110 @@ export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
 } {
-  const nowMs = DateTime.toEpochMillis(input.now);
-  const settledTimes = input.threads
-    .flatMap((thread) =>
-      thread.lineage.relationshipToParent !== "subagent" &&
-      !isSideChatThread(thread) &&
-      thread.settledOverride === "settled" &&
-      thread.settledAt !== null
-        ? [DateTime.toEpochMillis(thread.settledAt)]
-        : [],
-    )
-    .sort((left, right) => right - left);
-  // With fewer than 25, the oldest one is the cut, so nothing is older.
-  const beforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1) ?? nowMs;
-  const ancestorIds = new Set<string>();
-  for (const thread of input.threads) {
-    if (thread.lineage.relationshipToParent !== "subagent") continue;
-    if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
-    ancestorIds.add(thread.lineage.rootThreadId);
-  }
-  const counts = new Map<ProjectId, number>();
-  const threads = input.threads.filter((thread) => {
-    if (isSideChatThread(thread) || !isOlderSettledThreadShell(thread, beforeMs)) return true;
-    counts.set(thread.projectId, (counts.get(thread.projectId) ?? 0) + 1);
-    return (
-      thread.pinnedAt != null ||
-      (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
-      isLiveSubagentShell(thread) ||
-      ancestorIds.has(thread.id)
-    );
-  });
-  return {
-    threads,
-    olderSettled: {
-      before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
-      asOfSequence: input.snapshotSequence,
-      counts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
-    },
-  };
+  return omitOlderSettledShellsWith(input, shellTrimFacts(input.threads));
+}
+
+interface ShellSubscriberOptions {
+  readonly omitIdleSubagents: boolean;
+  readonly omitOlderSettled: boolean;
+}
+
+function trimShellSnapshot(
+  base: OrchestrationV2ShellSnapshot,
+  facts: ShellTrimFacts,
+  options: ShellSubscriberOptions & { readonly now: DateTime.Utc },
+): OrchestrationV2ShellSnapshot {
+  const threads = options.omitIdleSubagents
+    ? omitIdleSubagentShellsWith(base.threads, facts)
+    : base.threads;
+  if (!options.omitOlderSettled) return { ...base, threads };
+  const older = omitOlderSettledShellsWith(
+    { threads, snapshotSequence: base.snapshotSequence, now: options.now },
+    facts,
+  );
+  return { ...base, threads: older.threads, olderSettled: older.olderSettled };
 }
 
 /**
- * The snapshot a shell subscriber gets for its opt-ins, and the subagent and side-chat ids whose
- * transcript events its stream drops (from every row, so an omitted child that wakes keeps that
- * filter).
+ * The threads whose shells a trimmed snapshot can contain: a superset of what the trims keep, so
+ * trimming the shells read for these ids gives the snapshot trimming every shell would.
  */
-export function shellSnapshotForSubscriber(
-  base: OrchestrationV2ShellSnapshot,
-  options: {
-    readonly omitIdleSubagents: boolean;
-    readonly omitOlderSettled: boolean;
-    readonly now: DateTime.Utc;
-  },
-): {
-  readonly snapshot: OrchestrationV2ShellSnapshot;
-  readonly transcriptQuietThreadIds: Set<string>;
-} {
-  const rows = activeShellRowsForSubscriber(base.threads, options.omitIdleSubagents);
-  if (!options.omitOlderSettled) {
-    return {
-      snapshot: { ...base, threads: rows.threads },
-      transcriptQuietThreadIds: rows.transcriptQuietThreadIds,
-    };
-  }
-  const older = omitOlderSettledShells({
-    threads: rows.threads,
-    snapshotSequence: base.snapshotSequence,
-    now: options.now,
-  });
-  return {
-    snapshot: { ...base, threads: older.threads, olderSettled: older.olderSettled },
-    transcriptQuietThreadIds: rows.transcriptQuietThreadIds,
-  };
+function shellSubscriberThreadIds(
+  index: ReadonlyArray<ActiveShellIndexEntry>,
+  options: ShellSubscriberOptions,
+): ReadonlyArray<ThreadId> {
+  const facts = shellTrimFacts(index);
+  const subagents = index.filter(
+    (entry) =>
+      entry.lineage.relationshipToParent === "subagent" &&
+      (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
+  );
+  const ancestorIds = hiddenChildAncestorIds([
+    ...subagents,
+    ...index.filter((entry) => entry.lineage.sideChat === true),
+  ]);
+  const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
+  const beforeMs = facts.olderSettledBeforeMs;
+  return index.flatMap((entry) =>
+    entry.lineage.relationshipToParent === "subagent"
+      ? keptSubagentIds.has(entry.id)
+        ? [entry.id]
+        : []
+      : !options.omitOlderSettled ||
+          beforeMs === undefined ||
+          !isOlderSettledThreadShell(entry, beforeMs) ||
+          entry.pinnedAt != null ||
+          entry.snoozedUntil != null ||
+          entry.mayBeLive ||
+          ancestorIds.has(entry.id)
+        ? [entry.id]
+        : [],
+  );
 }
+
+/**
+ * A subscriber's active shell snapshot, read like `loadShellSnapshotParts`. With an opt-in, the
+ * store's index decides which shells to read, so threads the trims drop are never built.
+ */
+export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriberShellSnapshot")(
+  function* <E1, E2, E3, E4, E5>(input: {
+    readonly sql: SqlClient.SqlClient;
+    readonly listShellIndex: Effect.Effect<ReadonlyArray<ActiveShellIndexEntry>, E1>;
+    readonly readThreads: (
+      threadIds: ReadonlyArray<ThreadId> | undefined,
+    ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E3>, E2>;
+    readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E4>;
+    readonly latestSequence: Effect.Effect<number, E5>;
+    readonly options: ShellSubscriberOptions;
+  }) {
+    const trims = input.options.omitIdleSubagents || input.options.omitOlderSettled;
+    const read = yield* input.sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const index = trims ? yield* input.listShellIndex : null;
+          return {
+            index,
+            decodeThreads: yield* input.readThreads(
+              index === null ? undefined : shellSubscriberThreadIds(index, input.options),
+            ),
+            projects: yield* input.listProjects,
+            snapshotSequence: yield* input.latestSequence,
+          };
+        }),
+      )
+      .pipe(NodeSqliteClient.readOnly);
+    const base = buildActiveShellSnapshot({
+      projects: read.projects,
+      threads: yield* read.decodeThreads,
+      snapshotSequence: read.snapshotSequence,
+    });
+    const facts = shellTrimFacts(read.index ?? base.threads);
+    return {
+      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      transcriptQuietThreadIds: facts.transcriptQuietThreadIds,
+    };
+  },
+);
 
 /**
  * One transaction covers the reads so they agree; the threads are decoded after it commits,
@@ -289,7 +416,7 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
-/** Focused subagents and side chats receive these updates through their thread subscription. */
+/** Focused subagents and T3 Learn side chats get these updates by their thread subscription. */
 export function shouldPublishShellApplicationEvent(
   stored: ApplicationStoredEvent,
   quietThreadIds: Set<string>,

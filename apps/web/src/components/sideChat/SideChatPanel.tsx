@@ -195,7 +195,7 @@ export function SideChatPanel(props: {
     shell === null ? null : scopeProjectRef(environmentId, shell.projectId),
   );
   const workspaceRoot = shell?.worktreePath ?? project?.workspaceRoot ?? undefined;
-  const refreshWorkspaceSnapshotOnTyping = useProviderWorkspaceSnapshotRefresh({
+  const { refresh: refreshWorkspaceSnapshotOnTyping } = useProviderWorkspaceSnapshotRefresh({
     environmentId,
     gitCwd: workspaceRoot ?? null,
     instanceId: shell?.modelSelection.instanceId,

@@ -37,7 +37,7 @@ import { lessonSideChatWaitLabel, sideChatAwaitingInput } from "./sideChatPanel.
 export function useLessonSideChats(input: {
   /** Null for drafts and for a route that is itself a side chat. */
   readonly lessonRef: ScopedThreadRef | null;
-  /** The environment advertises `capabilities.sideChats`. */
+  /** The environment handles T3 Learn side chats (`supportsLessonSideChats`). */
   readonly supported: boolean;
   /** The server config, which can arrive after the shells, has said whether `supported`. */
   readonly capabilityKnown: boolean;
@@ -118,7 +118,7 @@ function clearGoneSideChatDrafts(lessonRef: ScopedThreadRef, live: ReadonlySet<s
   );
   const drafts = useComposerDraftStore.getState();
   for (const surface of surfaces) {
-    if (surface.kind !== "side-chat") continue;
+    if (surface.kind !== "lesson-side-chat") continue;
     const shown = [sideChatSurfaceTopThreadId(surface), surface.threadId, ...(surface.trail ?? [])];
     for (const id of new Set(shown)) {
       if (live.has(id)) continue;

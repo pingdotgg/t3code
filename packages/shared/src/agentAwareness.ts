@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  isSideChatThread,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { isSideChatThread } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
@@ -62,7 +63,7 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent" || isSideChatThread(thread)) return null;
+  if (!isListedThreadLineage(thread.lineage) || isSideChatThread(thread)) return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
     return null;
@@ -99,22 +100,14 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  const runStatus = thread.activityRunStatus ?? thread.status;
-  if (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false ||
-      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
-  ) {
-    return "waiting_for_input";
-  }
+  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
   }
-  switch (runStatus) {
+  switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
       return "starting";

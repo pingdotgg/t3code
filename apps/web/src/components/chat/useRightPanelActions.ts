@@ -50,6 +50,8 @@ interface RightPanelActionsInput {
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
+  /** A side chat pane; the main view already answers preview bus actions. */
+  readonly embedded: boolean;
   readonly isGitRepo: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
@@ -83,6 +85,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     pullRequestPanelTarget,
     threadPanelPresentation,
     isServerThread,
+    embedded,
     isGitRepo,
     browserAvailable,
     canOperatePreview,
@@ -336,10 +339,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
-      subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanelStable();
-      }),
-    [togglePreviewPanelStable],
+      embedded
+        ? undefined
+        : subscribePreviewAction((action) => {
+            if (action === "toggle-panel") togglePreviewPanelStable();
+          }),
+    [embedded, togglePreviewPanelStable],
   );
 
   const shortcuts = {
@@ -354,7 +359,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     },
     "diff.toggle": () => onToggleDiff(),
     "sideChat.toggleMap": ({ event }) => {
-      if (activeThreadRef === null || activeRightPanelSurface?.kind !== "side-chat") return false;
+      if (activeThreadRef === null || activeRightPanelSurface?.kind !== "lesson-side-chat") {
+        return false;
+      }
       if (event.repeat) return;
       const wasInPanel =
         typeof document !== "undefined" &&

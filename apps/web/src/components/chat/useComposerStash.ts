@@ -62,6 +62,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
 /**
@@ -702,7 +703,14 @@ export function useComposerStash(input: {
     if (backgroundThread) return;
     return registerCommands(
       { "composer.stash": handleStashShortcut },
-      { capture: true, context: readShortcutContext },
+      {
+        capture: true,
+        context: readShortcutContext,
+        // T3 Learn's panel reaches the handler, which claims the chord there and does nothing.
+        when: (event) =>
+          !isInSideChatPane(event.target) ||
+          eventPathContainsSelector(event, SIDE_CHAT_PANEL_SELECTOR),
+      },
     );
   }, [backgroundThread, handleStashShortcut, readShortcutContext]);
 

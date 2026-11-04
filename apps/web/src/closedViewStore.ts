@@ -65,7 +65,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "pull-requests":
     case "thread-map":
       return surface.id === surface.kind;
-    case "side-chat":
+    case "lesson-side-chat":
       return normalizeSideChatSurface(surface) !== null;
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";
@@ -86,6 +86,8 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "side-chat":
+      return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&
@@ -99,6 +101,13 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     default:
       return false;
   }
+};
+
+// Before version 3 both builds saved "side-chat" entries; reopen returns an official one to its tab.
+const renameLessonSideChatEntry = (entry: unknown): unknown => {
+  const view = entry as { kind?: unknown; surface?: { kind?: unknown } } | null;
+  if (view?.kind !== "panel-tab" || view.surface?.kind !== "side-chat") return entry;
+  return { ...view, surface: { ...view.surface, kind: "lesson-side-chat" } };
 };
 
 export const useClosedViewStore = create<ClosedViewStoreState>()(
@@ -130,13 +139,16 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      version: 2,
-      migrate: (persisted) => {
+      version: 3,
+      migrate: (persisted, version) => {
         const entries = (persisted as Partial<Pick<ClosedViewStoreState, "entries">> | null)
           ?.entries;
         return {
           entries: Array.isArray(entries)
-            ? entries.filter(isClosedViewEntry).filter(isPersistentView)
+            ? entries
+                .map((entry) => (version < 3 ? renameLessonSideChatEntry(entry) : entry))
+                .filter(isClosedViewEntry)
+                .filter(isPersistentView)
             : [],
         };
       },

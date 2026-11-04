@@ -148,6 +148,7 @@ export function SideChatMap(props: {
                         aria-selected={current}
                         aria-description={sideChatMapNodeDescription(row)}
                         tabIndex={row.threadId === tabStopId ? 0 : -1}
+                        data-workspace-focus-default={row.threadId === tabStopId ? "" : undefined}
                         className={cn(
                           "absolute flex cursor-pointer items-center gap-1.5 rounded-md border bg-card px-1.5 text-left text-foreground text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                           current && "border-primary ring-1 ring-primary",

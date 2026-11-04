@@ -44,11 +44,11 @@ const EARLIER = "2026-01-02T03:04:05.000Z";
 const NOW = "2026-10-26T12:00:00.000Z";
 
 function setup({
-  sideChats = [false, true],
+  lessonSideChats = [false, true],
   seenAt = null,
   setupDone = true,
 }: {
-  readonly sideChats?: ReadonlyArray<boolean>;
+  readonly lessonSideChats?: ReadonlyArray<boolean>;
   readonly seenAt?: string | null;
   readonly setupDone?: boolean;
 } = {}): Disposable {
@@ -57,9 +57,9 @@ function setup({
     onboardingCompletedAt: setupDone ? EARLIER : null,
   });
   state.serverConfigs = new Map(
-    sideChats.map((supported, index) => [
+    lessonSideChats.map((supported, index) => [
       `environment-${index}`,
-      { environment: { capabilities: { sideChats: supported } } },
+      { environment: { capabilities: { lessonSideChats: supported }, serverVersion: "0.0.0" } },
     ]),
   );
   if (seenAt === null) localStorage.removeItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
@@ -119,7 +119,7 @@ it("stays closed once this device has seen it", async () => {
 });
 
 it("stays closed, and unseen, while no environment supports side chats", async () => {
-  using _storage = setup({ sideChats: [false] });
+  using _storage = setup({ lessonSideChats: [false] });
   await using _screen = await mount();
 
   await expect.element(guide()).not.toBeInTheDocument();
@@ -170,7 +170,7 @@ it("closes on Skip and records the visit", async () => {
 });
 
 it("opens on request even after it was seen, and keeps the first visit's time", async () => {
-  using _storage = setup({ seenAt: EARLIER, sideChats: [false] });
+  using _storage = setup({ seenAt: EARLIER, lessonSideChats: [false] });
   await using _screen = await mount();
   await expect.element(guide()).not.toBeInTheDocument();
 

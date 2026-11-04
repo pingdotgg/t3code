@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 
 import type { ServerInstallation } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -144,7 +144,7 @@ const resolveInstallLauncher = Effect.gen(function* () {
 });
 
 /**
- * Uses `t3-learn` on PATH, the originating package runner, or this install's absolute launcher path.
+ * Uses this install's `t3-learn` on PATH, the originating runner, or its absolute launcher path.
  * Arguments are quoted for POSIX shells or PowerShell on Windows.
  */
 export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand")(function* (
@@ -158,8 +158,15 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
   // `t3` on PATH is T3 Code's; T3 Learn's desktop app installs its command as t3-learn.
   const learnCommand = `${T3_LEARN_COMMAND} ${subcommand}`;
-  if (yield* isCommandAvailable(T3_LEARN_COMMAND)) {
-    return { command: withArgs(learnCommand), launcher: false };
+  const onPath = yield* resolveCommandPath(T3_LEARN_COMMAND);
+  if (onPath !== null) {
+    const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
+    const fs = yield* FileSystem.FileSystem;
+    const real = (file: string) => fs.realPath(file).pipe(Effect.orElseSucceed(() => null));
+    const shimReal = shim ? yield* real(shim) : null;
+    if (shimReal === null || shimReal === (yield* real(onPath))) {
+      return { command: withArgs(learnCommand), launcher: false };
+    }
   }
   const launcher = yield* resolveInstallLauncher;
   if (Option.isNone(launcher)) return { command: withArgs(learnCommand), launcher: false };
@@ -177,8 +184,9 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
  */
 export const resolveRootCliCommand = Effect.fn("invocation.resolveRootCliCommand")(function* (
   subcommand: string,
+  args: ReadonlyArray<string> = [],
 ) {
-  const { command, launcher } = yield* resolveHostCliCommand(subcommand);
+  const { command, launcher } = yield* resolveHostCliCommand(subcommand, args);
   if (launcher) return `sudo ${command}`;
   const executablePath = yield* HostProcess.ExecutablePath;
   const systemNode = ROOT_PATH_DIRECTORIES.some((directory) =>
