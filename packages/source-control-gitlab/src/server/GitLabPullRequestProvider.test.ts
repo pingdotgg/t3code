@@ -137,6 +137,7 @@ describe("gitLabViewerPermissions", () => {
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      maintainerEdits: false,
       updateMethods: ["rebase"],
     });
   });
@@ -148,6 +149,7 @@ describe("gitLabViewerPermissions", () => {
       resolve: true,
       verdicts: ["comment", "approve"],
       requestReviewers: true,
+      maintainerEdits: false,
     });
   });
 });

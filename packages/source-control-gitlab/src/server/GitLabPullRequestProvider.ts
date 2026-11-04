@@ -39,7 +39,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
-  edit: { changeRequest: true, comment: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true },
 };
 
 const UNAVAILABLE_REQUIREMENT = {
@@ -63,6 +63,7 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly viewerCanEditMaintainerEdits?: boolean | undefined;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter(
@@ -72,6 +73,7 @@ export function gitLabViewerPermissions(input: {
     resolve: true,
     verdicts: CAPABILITIES.review.verdicts,
     requestReviewers: true,
+    maintainerEdits: input.viewerCanEditMaintainerEdits === true,
     ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
 }
@@ -454,6 +456,9 @@ export const make = Effect.gen(function* () {
           number: input.number,
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { description: input.body }),
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { allowCollaboration: input.maintainerCanModify }),
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
     ),

@@ -1105,7 +1105,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads merge permissions without reading the trigger jobs", () =>
+  it.effect("reads merge permissions without reading the trigger jobs or fork settings", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -1113,6 +1113,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
             mergeRequestJson({
               head_pipeline: { id: 31, project_id: 12, status: "success" },
               user: { can_merge: false },
+              source_project_id: 12,
+              target_project_id: 12,
+              allow_collaboration: null,
             }),
           ),
         ),
@@ -1127,7 +1130,71 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect(detail.viewerCanMerge).toBe(false);
+      expect(detail.maintainerCanModify).toBeUndefined();
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect.each([
+    ["the author who can push to the fork", "bilal", true, true],
+    ["a target maintainer the fork lets push", "octocat", true, false],
+    ["the author without push access", "bilal", false, false],
+  ] as const)(
+    "reads a fork's maintainer edits and lets %s change them",
+    ([, viewer, pushToSourceBranch, allowed]) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1] === "graphql"
+                ? JSON.stringify({
+                    data: {
+                      currentUser: { username: viewer },
+                      project: {
+                        mergeRequest: {
+                          author: { username: "bilal" },
+                          userPermissions: { pushToSourceBranch },
+                        },
+                      },
+                    },
+                  })
+                : mergeRequestJson({
+                    author,
+                    source_project_id: 40,
+                    target_project_id: 12,
+                    allow_collaboration: true,
+                  }),
+            ),
+          ),
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          downstreamChecks: false,
+        });
+
+        expect(detail.maintainerCanModify).toBe(true);
+        expect(detail.viewerCanEditMaintainerEdits).toBe(allowed);
+      }),
+  );
+
+  it.effect("sends maintainer edits as allow_collaboration", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        allowCollaboration: false,
+      });
+
+      expect(argsOfCall(0)).toContain("PUT");
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ allow_collaboration: false });
     }),
   );
 

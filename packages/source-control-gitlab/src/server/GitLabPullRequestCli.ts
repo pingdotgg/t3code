@@ -35,6 +35,7 @@ import {
   decodeCommitsJson,
   decodeDiffRefsJson,
   decodeDiscussionsJson,
+  decodeMaintainerEditsPermissionJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
@@ -51,6 +52,7 @@ import {
   decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
+  MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
@@ -395,6 +397,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly title?: string | undefined;
       readonly description?: string | undefined;
+      readonly allowCollaboration?: boolean | undefined;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly commentOnMergeRequest: (input: {
@@ -1357,7 +1360,22 @@ export const make = Effect.gen(function* () {
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
-        const detail = yield* mergeRequestDetail(input);
+        const read = yield* mergeRequestDetail(input);
+        // Only forks have the setting, so same-project merge requests skip the extra read.
+        const detail =
+          read.maintainerCanModify === undefined || read.state !== "open"
+            ? read
+            : {
+                ...read,
+                viewerCanEditMaintainerEdits: yield* graphqlRead({
+                  cwd: input.cwd,
+                  host: input.host,
+                  operation: "getMaintainerEditsPermission",
+                  query: MAINTAINER_EDITS_PERMISSION_GRAPHQL_QUERY,
+                  variables: { fullPath: input.repository, iid: String(input.number) },
+                  decode: decodeMaintainerEditsPermissionJson,
+                }),
+              };
         if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
@@ -1687,6 +1705,9 @@ export const make = Effect.gen(function* () {
         stdin: JSON.stringify({
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.description === undefined ? {} : { description: input.description }),
+          ...(input.allowCollaboration === undefined
+            ? {}
+            : { allow_collaboration: input.allowCollaboration }),
         }),
       }).pipe(Effect.asVoid);
     }),
