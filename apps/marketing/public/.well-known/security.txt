@@ -1,4 +1,4 @@
-Contact: mailto:security@ping.gg
+Contact: mailto:security@t3.codes
 Policy: https://t3.codes/security-policy
 Canonical: https://t3.codes/.well-known/security.txt
 Preferred-Languages: en
