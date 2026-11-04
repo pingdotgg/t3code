@@ -6,19 +6,14 @@ export const NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED = NATIVE_LIQUID_GLASS_SUPPORTE
 
 export const NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET = 56;
 
-/** `composeTitle` labels the compose action when the Duo's rail folds it into its More menu. */
-export type NativeMailSearchToolbarItem = HeaderBarButtonMailSearchToolbarItem & {
-  readonly composeTitle?: string;
-};
-
 type NativeMailSearchToolbarInput = Omit<
-  NativeMailSearchToolbarItem,
+  HeaderBarButtonMailSearchToolbarItem,
   "type" | "useFallbackSearchField"
 >;
 
 export function createNativeMailSearchToolbarItem(
   input: NativeMailSearchToolbarInput,
-): NativeMailSearchToolbarItem {
+): HeaderBarButtonMailSearchToolbarItem {
   return {
     placeholder: "Search",
     ...input,

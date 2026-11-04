@@ -13,7 +13,6 @@ import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
 import { fitColumnVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
-import type { NativeMailSearchToolbarItem } from "../features/layout/native-mail-search-toolbar";
 import {
   SearchBar,
   Stack,
@@ -179,7 +178,7 @@ export function V5StackHeader(props: {
   );
   const toolbar = options.unstable_headerToolbarItems?.() ?? [];
   const mailSearch = toolbar.find(
-    (item): item is NativeMailSearchToolbarItem => item.type === "mailSearchToolbar",
+    (item): item is HeaderBarButtonMailSearchToolbarItem => item.type === "mailSearchToolbar",
   );
   const bottomSearch = Boolean(mailSearch) && deviceType !== "pad";
   // A vertical bar keeps fixed spaces at full length and separates items itself.
@@ -213,7 +212,6 @@ export function V5StackHeader(props: {
       bottom.push({
         type: "item",
         id: mailSearch.composeButtonId ?? "compose",
-        title: mailSearch.composeTitle,
         identifier: "workspace-trailing-action",
         icon: { type: "sfSymbol", name: mailSearch.composeSystemImageName ?? "square.and.pencil" },
         onPress: mailSearch.onComposePress,
