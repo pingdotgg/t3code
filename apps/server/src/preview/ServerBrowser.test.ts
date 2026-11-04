@@ -440,7 +440,7 @@ it.live("preview_open reports its navigation timeout instead of the request budg
   ).pipe(Effect.provide(layer)),
 );
 
-it.live.each([
+it.effect.each([
   { renderer: "idle", title: "Heavy page" },
   { renderer: "busy", title: null },
 ])(
@@ -450,10 +450,14 @@ it.live.each([
       Effect.gen(function* () {
         const { broker, tabId } = yield* ready;
         const page = contexts[0]!.page;
-        // A busy main thread never answers title(); the status must not wait past the broker's grace.
-        page.title.mockImplementation(() =>
-          renderer === "busy" ? new Promise<string>(() => {}) : Promise.resolve("Heavy page"),
-        );
+        const titleRequested = Promise.withResolvers<void>();
+        // A busy main thread never answers title(); drive its native deadline explicitly.
+        page.title.mockImplementation(() => {
+          titleRequested.resolve();
+          return renderer === "busy"
+            ? new Promise<string>(() => {})
+            : Promise.resolve("Heavy page");
+        });
         const heavy = "http://localhost:5173/heavy";
         const timedOut = (method: string, timeout: number | undefined) =>
           Object.assign(new Error(`${method}: Timeout ${timeout}ms exceeded.`), {
@@ -475,16 +479,24 @@ it.live.each([
           }
         });
 
-        const status = yield* broker.invoke<PreviewAutomationStatus>({
-          scope,
-          tabId,
-          operation: "navigate",
-          input: { url: heavy, timeoutMs: 4_000 },
-        });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const result = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: heavy, timeoutMs: 4_000 },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.promise(() => titleRequested.promise);
+        if (renderer === "busy") {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
+        }
+        const status = yield* Fiber.join(result);
 
         expect(status).toMatchObject({ url: heavy, title, loading: true });
       }),
-    ).pipe(Effect.provide(layer)),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
 );
 
 it.live("navigate fails when the page never commits within its timeout", () =>
