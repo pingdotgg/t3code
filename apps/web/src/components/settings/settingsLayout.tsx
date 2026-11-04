@@ -490,7 +490,7 @@ export function SettingsRow({
     <div
       {...rowProps}
       ref={targetRef}
-      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
+      tabIndex={rowProps.tabIndex ?? -1}
       data-slot="settings-row"
       className={cn(
         "group/settings-row @container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
