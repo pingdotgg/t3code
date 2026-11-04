@@ -52,8 +52,9 @@ export function markdownMathRanges(source: string, tree?: Root) {
 
 /** Messages without these characters skip math parsing entirely. */
 function mayContainMath(text: string): boolean {
+  // Dollar math needs a pair, so a lone `$` (such as one `$skill` chip) cannot open a formula.
   return (
-    text.includes("$") ||
+    text.indexOf("$") !== text.lastIndexOf("$") ||
     text.includes("\\(") ||
     text.includes("\\[") ||
     /(?:`{3,}|~{3,})[ \t]*math\b/.test(text)

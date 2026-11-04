@@ -1085,14 +1085,18 @@ function ComposerPromptEditorTiptapInner(
     "aria-placeholder": placeholder,
   };
 
+  // useEditor reads content only on mount; building it per render reparses the prompt every keystroke.
+  const [initialContent] = useState(() =>
+    buildDocJson(value, (name) => composerSkillMeta(skills, name), {
+      styling: richText,
+      literalText,
+      isKnownModel: (instanceId, model) => modelKeys.has(modelMentionKey(instanceId, model)),
+    }),
+  );
   const editor = useEditor(
     {
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
-      content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
-        styling: richText,
-        literalText,
-        isKnownModel: (instanceId, model) => modelKeys.has(modelMentionKey(instanceId, model)),
-      }),
+      content: initialContent,
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
