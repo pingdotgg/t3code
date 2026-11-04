@@ -215,6 +215,38 @@ describe("commit quick-action provider session", () => {
       }),
   );
 
+  it.effect.each([false, true])(
+    "keeps validation opt-in while preserving Git safety checks (requested: %s)",
+    (requested) =>
+      Effect.gen(function* () {
+        const h = yield* harness();
+        const instructions = "Run the focused PHPUnit tests at dependency boundaries.";
+        yield* Effect.gen(function* () {
+          const runner = yield* Runner.CommitWorkflowRunner;
+          yield* runner.run({
+            ...input,
+            request: {
+              ...input.request,
+              ...(requested ? { instructions } : {}),
+            },
+          });
+        }).pipe(Effect.provide(h.layer));
+        const prompt = h.startTurn.mock.calls[0]![0].message.text;
+        expect(prompt).toContain(
+          "Run builds, typechecks, linters, tests, or IDE diagnostics only when explicitly requested in Additional requirements",
+        );
+        expect(prompt).toContain("skip these checks and dependency/runtime setup");
+        expect(prompt).toContain(
+          "even if general repository instructions normally require validation",
+        );
+        expect(prompt).not.toContain("Use the project's setup procedure");
+        expect(prompt).toContain("Inspect intermediate commits for dependency ordering");
+        expect(prompt).toContain("compare the candidate Git tree object");
+        expect(prompt).toContain("have not changed since the snapshot");
+        expect(prompt.includes(`Additional requirements:\n\n${instructions}`)).toBe(requested);
+      }),
+  );
+
   it.effect.each(["failed", "request", "stream_end"] as const)(
     "reports %s and releases the provider session",
     (outcome) =>
