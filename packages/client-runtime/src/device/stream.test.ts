@@ -196,8 +196,8 @@ describe("native device stream transport", () => {
     press("ControlLeft", "Control", { ctrlKey: true });
     press("AltRight", "AltGraph", ctrlAlt, true);
     press("Digit0", "@", ctrlAlt, true);
-    // Some browsers report AltGr only as Ctrl+Alt.
-    press("Digit0", "@", ctrlAlt);
+    // Chromium on Windows reports AltGr without Ctrl and Alt.
+    press("Digit0", "@", {}, true);
     expect(take()).toEqual([...shifted("1f"), ...shifted("1f")]);
     press("Comma", ".", { shiftKey: true });
     expect(take()).toEqual(["down 37", "up 37"]);

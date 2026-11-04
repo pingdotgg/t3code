@@ -1,4 +1,4 @@
-import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { isAltGraphText, isMacPlatform } from "@t3tools/shared/keybindings";
 
 const HID_CONTROL = 0xe0;
 export const HID_SHIFT = 0xe1;
@@ -99,12 +99,8 @@ function isMac() {
 }
 
 export function typedCharacter(event: KeyboardEvent): string | null {
-  if (event.metaKey) return null;
-  const character = [...event.key].length === 1 ? event.key : null;
-  if (!event.ctrlKey || event.getModifierState("AltGraph")) return character;
-  // Windows reports AltGr as Ctrl+Alt. A real Ctrl+Alt shortcut reports the plain letter or digit.
-  const isAltGraph = event.altKey && !isMac() && !/^[a-z0-9]$/i.test(character ?? "a");
-  return isAltGraph ? character : null;
+  if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
+  return [...event.key].length === 1 ? event.key : null;
 }
 
 // Windows and Linux shortcuts such as Ctrl+A use Ctrl where iOS uses Command.
