@@ -180,13 +180,16 @@ it.effect("honors an exact alias before a similar preferred term in batch and st
       speechCustomWords: [
         { term: "Bob", aliases: ["Robert"] },
         { term: "Roberts", aliases: [] },
+        { term: "O'Reilly", aliases: ['"the publisher"'] },
       ],
     };
-    native.transcribe.mockResolvedValueOnce({ text: "Robert, Roberts." });
-    native.finish.mockResolvedValueOnce("Robert, Roberts.");
-    expect(yield* speech.transcribe(pcm(), options)).toBe("Bob, Roberts.");
+    const spoken = 'Robert, Roberts. "the publisher" and the publisher.';
+    const expected = "Bob, Roberts. O'Reilly and the publisher.";
+    native.transcribe.mockResolvedValueOnce({ text: spoken });
+    native.finish.mockResolvedValueOnce(spoken);
+    expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
     const stream = yield* speech.startStream(options);
-    expect(yield* stream.finish).toBe("Bob, Roberts.");
+    expect(yield* stream.finish).toBe(expected);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
