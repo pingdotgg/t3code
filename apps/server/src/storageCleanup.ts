@@ -644,8 +644,9 @@ const make = Effect.gen(function* () {
     });
     if (overflow) return "hidden tracked files exceed the inspection limit";
     const reason = (file: string) => `has uncommitted changes hidden from git status (${file})`;
-    // Git quotes names with control characters, quotes or backslashes, so the listed text is not a path on disk.
-    const unreadable = flagged.find(({ file }) => file.startsWith('"'));
+    // Quoted names (control characters, quotes, backslashes) and names that are not valid UTF-8
+    // decode to text that is not the path on disk.
+    const unreadable = flagged.find(({ file }) => file.startsWith('"') || file.includes("\uFFFD"));
     if (unreadable !== undefined) return reason(unreadable.file);
     const onDisk = yield* Effect.forEach(
       flagged,
