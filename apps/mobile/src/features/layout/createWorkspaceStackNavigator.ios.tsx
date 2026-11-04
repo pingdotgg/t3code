@@ -320,7 +320,7 @@ function WorkspaceColumns(
       ref={hostRef}
       testID="adaptive-workspace-layout"
       preferredSplitBehavior={
-        !sidebarByOrientation && layout.primarySidebarOverlaysContent ? "overlay" : "tile"
+        !sidebarByOrientation && layout.variant === "medium" ? "overlay" : "tile"
       }
       portraitPreferredSplitBehavior={sidebarByOrientation ? "overlay" : undefined}
       portraitPreferredDisplayMode={
@@ -358,11 +358,11 @@ function WorkspaceColumns(
                 ? panes.primarySidebarVisible
                 : panes.primarySidebarWhenExpanded) ||
                 (!layout.usesSplitView && !activeDetailKey),
-              layout.primarySidebarOverlaysContent,
+              layout.variant === "medium",
             )
       }
       onDisplayModeWillChange={({ nativeEvent }) => {
-        if (!layout.primarySidebarOverlaysContent) return;
+        if (layout.variant !== "medium") return;
         if (nativeEvent.nextDisplayMode === "oneOverSecondary") setPrimarySidebarVisible(true);
         else if (nativeEvent.nextDisplayMode === "secondaryOnly") setPrimarySidebarVisible(false);
       }}

@@ -79,7 +79,7 @@ describe("native workspace sizing", () => {
         reservedRegions: [],
       };
       const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
-      expect(layout.primarySidebarOverlaysContent).toBe(overlay);
+      expect(layout.variant === "medium").toBe(overlay);
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({
@@ -128,6 +128,18 @@ describe("native workspace sizing", () => {
     expect(
       deriveLayout({ ...nativeMetrics, nativeMetrics, nativeWorkspace: true }).usesSplitView,
     ).toBe(split);
+  });
+});
+
+describe("width classes", () => {
+  it.each([
+    { width: 599, height: 900, variant: "compact" },
+    { width: 600, height: 900, variant: "medium" },
+    { width: 719, height: 900, variant: "medium" },
+    { width: 720, height: 900, variant: "expanded" },
+    { width: 900, height: 599, variant: "compact" },
+  ] as const)("classes a window without native columns by size: %j", ({ variant, ...size }) => {
+    expect(deriveLayout(size).variant).toBe(variant);
   });
 });
 
