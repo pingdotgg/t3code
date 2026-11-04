@@ -199,6 +199,31 @@ describe("isAutoSettlementCandidate", () => {
   });
 });
 
+describe("awaitingAgentWake", () => {
+  const endedAtMs = NOW_MS;
+
+  it("holds through the grace after awaited work ends, then lets go", () => {
+    assert.isTrue(ThreadSettlementService.awaitingAgentWake(shell(), endedAtMs, endedAtMs + 1_000));
+    assert.isFalse(
+      ThreadSettlementService.awaitingAgentWake(shell(), endedAtMs, endedAtMs + 2 * 60 * 1_000),
+    );
+    assert.isFalse(ThreadSettlementService.awaitingAgentWake(shell(), undefined, endedAtMs));
+  });
+
+  it("holds a queued or running wake run past the grace, until it completes", () => {
+    const later = endedAtMs + 10 * 60 * 1_000;
+    const queued = shell({ latestRunRequestedAt: at(100), latestRunCompletedAt: null });
+    assert.isTrue(ThreadSettlementService.awaitingAgentWake(queued, endedAtMs, later));
+    const done = shell({ latestRunRequestedAt: at(100), latestRunCompletedAt: at(5_000) });
+    assert.isFalse(ThreadSettlementService.awaitingAgentWake(done, endedAtMs, endedAtMs + 6_000));
+  });
+
+  it("ignores a run that finished before the work ended", () => {
+    const earlier = shell({ latestRunRequestedAt: at(-60_000), latestRunCompletedAt: at(-30_000) });
+    assert.isTrue(ThreadSettlementService.awaitingAgentWake(earlier, endedAtMs, endedAtMs + 1_000));
+  });
+});
+
 describe("resolveAutoSettlementAt", () => {
   it("keeps threads with a PR from inactivity settlement only when asked", () => {
     const input = {
@@ -1151,6 +1176,153 @@ describe("ThreadSettlementServiceV2 worker", () => {
           );
           yield* Deferred.succeed(releasePeriodicLookup, undefined);
           yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect(
+    "waits for the agent's wake before settling a merged thread whose awaited work ended",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const settled = yield* Deferred.make<void>();
+          const mergedLink: NonNullable<SettlementShell["pullRequests"]>[number] = {
+            ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+            snapshot: {
+              state: "merged",
+              title: "Pull request",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: NOW,
+              syncedAt: NOW,
+              mergedAt: NOW,
+            },
+          };
+          const waiting = makeThread("awaiting-deploy", {
+            pullRequests: [mergedLink],
+            pendingBackgroundTasks: [
+              { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
+            ],
+          });
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([waiting]),
+            onDispatch: () => Deferred.succeed(settled, undefined),
+          });
+          const at = DateTime.makeUnsafe(NOW);
+          const runId = RunId.make("run:awaiting-deploy");
+
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+            // The deploy wait finished; its agent is now being woken to carry on.
+            yield* Ref.set(
+              fixture.snapshots,
+              makeSnapshot([{ ...waiting, pendingBackgroundTasks: [] }]),
+            );
+            yield* fixture.publishEvent({
+              type: "turn-item.updated",
+              id: EventId.make("event:awaiting-deploy:command"),
+              threadId: waiting.id,
+              runId,
+              occurredAt: at,
+              payload: {
+                id: TurnItemId.make("item:awaiting-deploy:command"),
+                threadId: waiting.id,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: null,
+                startedAt: at,
+                completedAt: at,
+                updatedAt: at,
+                type: "command_execution",
+                input: "gh run watch 42",
+              },
+            });
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+            // The minute's full sweep still holds it inside the grace.
+            yield* TestClock.adjust("61 seconds");
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+            // No wake run came, so the thread settles once the grace has passed.
+            yield* TestClock.adjust("59 seconds");
+            yield* Deferred.await(settled);
+            assert.deepStrictEqual(
+              [...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId))],
+              [waiting.id],
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
+  it.effect("settles at once when the agent's awaited work is stopped instead of ending", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        const waiting = makeThread("stopped-deploy", {
+          pullRequests: [
+            {
+              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+            },
+          ],
+          pendingBackgroundTasks: [
+            { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
+          ],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([waiting]),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...waiting, pendingBackgroundTasks: [] }]),
+          );
+          yield* fixture.publishEvent({
+            type: "run.background-work-cancelled",
+            id: EventId.make("event:stopped-deploy"),
+            threadId: waiting.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              runId: RunId.make("run:stopped-deploy"),
+              restartCancelledBackgroundWork: [],
+            },
+          });
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [waiting.id],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
