@@ -68,6 +68,29 @@ export interface BasePluginOptions {
    * ```
    */
   skipEnvironments?: Array<string>;
+  /**
+   * Extra rules for imports emitted as separate Worker modules, checked
+   * before the built-in rules (`.wasm` → CompiledWasm, `.bin` → Data,
+   * `.txt`/`.html`/`.sql` → Text). `test` receives the resolved file path.
+   *
+   * @default []
+   * @example
+   * ```ts
+   * cloudflare({ moduleRules: [{ type: "Text", test: (path) => path.endsWith(".md") }] });
+   * ```
+   */
+  moduleRules?: Array<AdditionalModuleRule>;
+}
+
+/** A rule that emits matching imports as a separate Worker module. */
+export interface AdditionalModuleRule {
+  /**
+   * The module type. Without one, the built-in rules decide by extension
+   * and other files are Data.
+   */
+  type?: "CompiledWasm" | "Data" | "Text" | undefined;
+  /** Whether the resolved file path belongs to this rule. */
+  test: (path: string) => boolean;
 }
 
 /**
@@ -75,39 +98,32 @@ export interface BasePluginOptions {
  * plugins — the browser `client` environment, plus anything the user listed in
  * {@link BasePluginOptions.skipEnvironments}.
  */
-export const isSkippedEnvironment = (
-  options: BasePluginOptions,
-  name: string,
-): boolean =>
+export const isSkippedEnvironment = (options: BasePluginOptions, name: string): boolean =>
   name === "client" || (options.skipEnvironments?.includes(name) ?? false);
 
-export const parseViteEnvironments = (
-  options: BasePluginOptions,
-): [string, ...Array<string>] => {
+export const parseViteEnvironments = (options: BasePluginOptions): [string, ...Array<string>] => {
   const entry = options.viteEnvironments?.entry ?? "ssr";
   if (entry === "client") {
     throw new Error(
       'The "client" environment cannot be used as a worker environment because it is reserved for the browser.',
     );
   }
-  const children = (options.viteEnvironments?.children ?? []).map(
-    (name, index, self) => {
-      if (name === "client") {
-        throw new Error(
-          'The "client" environment cannot be used as a worker environment because it is reserved for the browser.',
-        );
-      } else if (self.indexOf(name) !== index) {
-        throw new Error(
-          `The name "${name}" appears more than once in the Vite environment list. Worker environment names must be unique.`,
-        );
-      } else if (name === entry) {
-        throw new Error(
-          `The child environment "${name}" cannot have the same name as the entry environment "${entry}".`,
-        );
-      }
-      return name;
-    },
-  );
+  const children = (options.viteEnvironments?.children ?? []).map((name, index, self) => {
+    if (name === "client") {
+      throw new Error(
+        'The "client" environment cannot be used as a worker environment because it is reserved for the browser.',
+      );
+    } else if (self.indexOf(name) !== index) {
+      throw new Error(
+        `The name "${name}" appears more than once in the Vite environment list. Worker environment names must be unique.`,
+      );
+    } else if (name === entry) {
+      throw new Error(
+        `The child environment "${name}" cannot have the same name as the entry environment "${entry}".`,
+      );
+    }
+    return name;
+  });
   for (const name of options.skipEnvironments ?? []) {
     if (name === entry || children.includes(name)) {
       throw new Error(
