@@ -13,7 +13,10 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type { ApnsCredentials } from "../Config.ts";
 import * as ApnsClient from "./ApnsClient.ts";
-import { sanitizeApnsNotificationPayload } from "./agentActivityPayloads.ts";
+import {
+  sanitizeAgentActivityAggregateState,
+  sanitizeApnsNotificationPayload,
+} from "./agentActivityPayloads.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 
 const layerTest = ApnsClient.layer.pipe(
@@ -166,6 +169,81 @@ describe("ApnsClient", () => {
           deepLink: notification.deepLink,
         },
       });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("shortens multibyte row titles so Live Activity updates fit within 4096 bytes", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const longState = sanitizeAgentActivityAggregateState({
+        ...state,
+        activeCount: 5,
+        activities: ["a", "b", "c", "d", "e"].map((id) => ({
+          ...state.activities[0]!,
+          threadId: ThreadId.make(id),
+          projectTitle: "界".repeat(200),
+          threadTitle: "界".repeat(200),
+        })),
+      });
+      const request = apns.makeLiveActivityRequest({
+        event: "update",
+        token: "token",
+        state: longState,
+        alert: { title: "界".repeat(120), body: "界".repeat(120) },
+        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+        nowIso: DateTime.formatIso(now),
+      });
+
+      expect(
+        new TextEncoder().encode(JSON.stringify(request.payload)).byteLength,
+      ).toBeLessThanOrEqual(4096);
+      const payload = request.payload as { aps: { "content-state": { props: string } } };
+      const sent = JSON.parse(payload.aps["content-state"].props) as typeof longState;
+      expect(sent.activities.map((row) => row.threadId)).toEqual(["a", "b", "c", "d", "e"]);
+      expect(sent.activities[0]?.threadTitle).toMatch(/^界+\.\.\.$/);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("fits Live Activity updates at every sanitizer cap within 4096 bytes", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const ids = ["a", "b", "c", "d", "e"];
+      const cappedState = sanitizeAgentActivityAggregateState({
+        ...state,
+        activeCount: 5,
+        activities: ids.map((id) => ({
+          ...state.activities[0]!,
+          threadId: ThreadId.make(id),
+          projectTitle: "界".repeat(120),
+          threadTitle: "界".repeat(120),
+          deepLink: `/${"d".repeat(511)}`,
+        })),
+      });
+      const alert = {
+        title: "界".repeat(120),
+        body: `Working: ${"界".repeat(120)}`,
+      };
+
+      for (const event of ["update"] as const) {
+        const request = apns.makeLiveActivityRequest({
+          event,
+          token: "token",
+          state: cappedState,
+          alert,
+          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+          nowIso: DateTime.formatIso(now),
+        });
+
+        expect(
+          new TextEncoder().encode(JSON.stringify(request.payload)).byteLength,
+        ).toBeLessThanOrEqual(4096);
+        const payload = request.payload as { aps: { "content-state": { props: string } } };
+        const sent = JSON.parse(payload.aps["content-state"].props) as typeof cappedState;
+        expect(sent.activities.length).toBeGreaterThan(0);
+        expect(sent.activities.map((row) => row.threadId)).toEqual(
+          ids.slice(0, sent.activities.length),
+        );
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 

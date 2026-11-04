@@ -1,6 +1,6 @@
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -33,10 +33,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -110,9 +107,7 @@ test(
     // ones as a <style> block — accept both, but the compiled rule for the
     // utility must be served either way. That rule only exists if the
     // @tailwindcss/vite plugin from the project's own astro.config.ts ran.
-    const link = html.match(
-      /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-    );
+    const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
     if (link) {
       const href = link[1]!;
       const cssUrl = href.startsWith("http")

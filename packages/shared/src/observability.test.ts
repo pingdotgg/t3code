@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import { cast } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
@@ -13,10 +14,12 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import type { OtlpTracer } from "effect/observability";
 
 import {
   causeErrorTag,
   compactTraceAttributes,
+  decodeOtlpTraceRecords,
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
@@ -214,6 +217,39 @@ describe("observability", () => {
     );
   });
 
+  it("keeps an object that appears twice without marking it circular", () => {
+    const shared = { cwd: "/repo" };
+    const sharedMap = new Map([["cwd", "/repo"]]);
+    const sharedSet = new Set(["/repo"]);
+
+    assert.deepStrictEqual(
+      compactTraceAttributes({
+        ctx: { first: shared, second: shared },
+        list: [shared, shared],
+        maps: [sharedMap, sharedMap],
+        sets: [sharedSet, sharedSet],
+      }),
+      {
+        ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
+        list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        maps: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        sets: [["/repo"], ["/repo"]],
+      },
+    );
+  });
+
+  it("caps shared references that would expand exponentially", () => {
+    let graph: Record<string, unknown> = { cwd: "/repo" };
+    for (let depth = 0; depth < 20; depth++) {
+      graph = { left: graph, right: graph };
+    }
+
+    const serialized = JSON.stringify(compactTraceAttributes({ graph }));
+
+    assert.include(serialized, '"[Truncated]"');
+    assert.isBelow(serialized.length, 1_000_000);
+  });
+
   nodeServicesIt("node services", (it) => {
     it.effect(
       "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
@@ -330,6 +366,73 @@ describe("observability", () => {
             ["retained"],
           );
           assert.isAtMost(Number(stat.size), maxBytes);
+        }),
+      ),
+    );
+
+    it.effect("keeps WebSocket credentials out of trace files and exported spans", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+          const delegates: Array<Tracer.NativeSpan> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            sink,
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan(options);
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const url = "/ws?wsTicket=ticket-secret&dpop=proof-secret&clientSurface=web";
+
+          yield* Effect.annotateCurrentSpan({
+            "url.full": `http://127.0.0.1:3773${url}`,
+            "url.query": url.slice(4),
+          }).pipe(
+            Effect.withSpan("GET", { kind: "server" }),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          yield* Effect.die(new Error(`RequestParseError (GET ${url})`)).pipe(
+            Effect.tapCause((cause) => Effect.logError(cause)),
+            Effect.withSpan("DeviceHubProxy.proxyWebSocket"),
+            Effect.provideService(Tracer.Tracer, tracer),
+            Effect.provide(Logger.layer([Logger.tracerLogger], { mergeWithExisting: false })),
+            Effect.exit,
+          );
+          yield* sink.close();
+
+          const written = yield* fileSystem.readFileString(tracePath);
+          const exported = delegates.map((span) =>
+            JSON.stringify({
+              attributes: Object.fromEntries(span.attributes),
+              events: span.events.map(([, , attributes]) => attributes),
+              exit:
+                span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+                  ? Cause.pretty(span.status.exit.cause)
+                  : "",
+            }),
+          );
+          for (const text of [written, ...exported]) {
+            assert.notInclude(text, "ticket-secret");
+            assert.notInclude(text, "proof-secret");
+          }
+          assert.include(written, "wsTicket=<redacted>&dpop=<redacted>&clientSurface=web");
+          assert.include(exported.join("\n"), "effect.cause");
         }),
       ),
     );
@@ -454,6 +557,55 @@ describe("observability", () => {
         }),
       ),
     );
+  });
+});
+
+describe("decodeOtlpTraceRecords", () => {
+  it("decodes spans when OTLP/JSON omits unset and empty fields", () => {
+    // Protobuf JSON leaves out unset and empty fields, so this batch is valid.
+    const payload = cast<unknown, OtlpTracer.TraceData>({
+      resourceSpans: [
+        {},
+        {
+          scopeSpans: [
+            {},
+            {
+              spans: [
+                {
+                  traceId: "trace-1",
+                  spanId: "span-1",
+                  name: "browser.request",
+                  startTimeUnixNano: "1000000",
+                  endTimeUnixNano: "3000000",
+                  attributes: [{ key: "tags", value: { arrayValue: {} } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(decodeOtlpTraceRecords(cast<unknown, OtlpTracer.TraceData>({})), []);
+    assert.deepStrictEqual(decodeOtlpTraceRecords(payload), [
+      {
+        type: "otlp-span",
+        name: "browser.request",
+        traceId: "trace-1",
+        spanId: "span-1",
+        sampled: true,
+        kind: "internal",
+        startTimeUnixNano: "1000000",
+        endTimeUnixNano: "3000000",
+        durationMs: 2,
+        attributes: { tags: [] },
+        resourceAttributes: {},
+        scope: { attributes: {} },
+        events: [],
+        links: [],
+        status: { code: "0" },
+      },
+    ]);
   });
 });
 
