@@ -107,7 +107,10 @@ describe("ServerBrowserContexts", () => {
       launches.launch.mock.calls[0]?.[0],
       launches.persistent.mock.calls[0]?.[1],
     ]) {
-      expect(launch?.proxy).toEqual({ server: "http://127.0.0.1:18991", bypass: "<-loopback>" });
+      expect(launch?.proxy).toEqual({
+        server: "http://127.0.0.1:18991",
+        bypass: "<-loopback>,localhost,*.localhost,127.0.0.0/8,[::1]",
+      });
       expect(launch?.args).toContain("--disable-quic");
     }
     await pool.close();

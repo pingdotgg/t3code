@@ -97,7 +97,13 @@ export class ServerBrowserContexts {
     return {
       executable,
       env,
-      ...(proxy && { proxy: { server: `http://${host}:${proxy.port}`, bypass: "<-loopback>" } }),
+      ...(proxy && {
+        proxy: {
+          server: `http://${host}:${proxy.port}`,
+          // Remove implicit link-local bypasses, then preserve local preview access.
+          bypass: "<-loopback>,localhost,*.localhost,127.0.0.0/8,[::1]",
+        },
+      }),
       args: [
         "--disable-gpu",
         // QUIC and non-proxied WebRTC UDP would leave the browser outside the HTTP proxy.
