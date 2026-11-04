@@ -451,9 +451,9 @@ it.effect.each(["sqlite"] as const)(
         "answer-image",
         "attachment:old",
         "message-file",
+        recordingId,
         offloadedContentId,
         offloadedImageId,
-        recordingId,
       ]);
     }).pipe(Effect.provide(layerDatabase)),
 );
