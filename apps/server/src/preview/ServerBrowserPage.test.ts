@@ -415,6 +415,36 @@ describe("server browser drag", () => {
   });
 });
 
+describe("server browser click", () => {
+  it("clicks a target the page replaced while it was being scrolled into view", async () => {
+    let scrolls = 0;
+    const clicks: Array<unknown> = [];
+    const page = {
+      locator: () => ({
+        // Playwright resolves the node once; a page re-rendering it detaches that node.
+        scrollIntoViewIfNeeded: async () => {
+          if (scrolls++ === 0) {
+            throw new Error("locator.scrollIntoViewIfNeeded: Element is not attached to the DOM");
+          }
+        },
+        boundingBox: async () => ({ x: 0, y: 0, width: 20, height: 20 }),
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+        count: async () => 1,
+      }),
+      once: () => {},
+      off: () => {},
+    } as unknown as Page;
+
+    await expect(ServerBrowserPage.click(page, { selector: "#save" })).resolves.toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(clicks).toHaveLength(1);
+  });
+});
+
 describe("server browser net errors", () => {
   it.each([
     ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
