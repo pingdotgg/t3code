@@ -3107,6 +3107,76 @@ it.layer(
       ),
     );
 
+    it.effect(
+      "uses the CLI model list without bundled legacy labels or version gates when selected",
+      () =>
+        Effect.gen(function* () {
+          const reported = [
+            {
+              value: "default",
+              resolvedModel: "claude-sonnet-5-5",
+              displayName: "Default",
+              description: "",
+            },
+            { value: "opus-5", displayName: "Gateway Opus", description: "" },
+            { value: "claude-opus-5[1m]", displayName: "Duplicate Opus", description: "" },
+            { value: "claude-opus-5-5", displayName: "Gateway Opus 5.5", description: "" },
+            { value: "gateway/glm-5", displayName: "GLM 5", description: "" },
+            { value: "gateway/glm-5[1m]", displayName: "GLM 5 again", description: "" },
+          ];
+          const settings = {
+            ...defaultClaudeSettings,
+            useCliModelList: true,
+            customModels: [{ slug: "gateway/glm-5", name: "My GLM" }],
+          };
+          const status = yield* checkClaudeProviderStatus(
+            settings,
+            claudeCapabilities({ models: reported }),
+          );
+          assert.deepStrictEqual(
+            status.models.map((model) => [model.slug, model.name, model.isLegacy === true]),
+            [
+              ["claude-opus-5", "Gateway Opus", false],
+              ["claude-opus-5-5", "Gateway Opus 5.5", false],
+              ["gateway/glm-5", "My GLM", false],
+            ],
+          );
+          assert.deepStrictEqual(
+            status.models[0]?.capabilities,
+            BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
+              (entry) => entry.model.slug === "claude-opus-5",
+            )?.model.capabilities,
+          );
+          assert.deepStrictEqual(status.updateRequiredModels ?? [], []);
+          assert.isUndefined(status.message);
+
+          for (const models of [
+            undefined,
+            [],
+            [{ value: "default", displayName: "Default", description: "" }],
+          ]) {
+            const fallback = yield* checkClaudeProviderStatus(
+              settings,
+              claudeCapabilities(models === undefined ? {} : { models }),
+            );
+            const standard = yield* checkClaudeProviderStatus(
+              { ...settings, useCliModelList: false },
+              claudeCapabilities(models === undefined ? {} : { models }),
+            );
+            assert.deepStrictEqual(fallback.models, standard.models);
+            assert.deepStrictEqual(fallback.updateRequiredModels, standard.updateRequiredModels);
+          }
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              if (args.join(" ") === "--version")
+                return { stdout: "2.1.258\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
+            }),
+          ),
+        ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

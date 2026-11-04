@@ -128,6 +128,21 @@ Verify the model used in OpenRouter's activity dashboard. For current compatibil
 requirements, use the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
 
+## Gateway model lists
+
+For a gateway whose model selection differs from Anthropic's, enable **Use Claude
+Code model list** on its instance in **Settings > Providers**. T3 then uses the
+model list reported by that Claude Code instance, without applying T3's bundled
+legacy labels or model-version requirements. Known models keep their built-in
+controls; other models use the reasoning options Claude Code reports. This does
+not upgrade Claude Code or verify that the gateway can serve every reported model.
+
+If your gateway supports Claude Code's model discovery, also set
+`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` in that instance's environment or
+Claude settings. T3 does not query the gateway's model endpoint itself. If Claude
+Code reports no models, T3 falls back to its built-in catalog. Custom models remain
+available with either model list. Turn the setting off to restore T3's catalog.
+
 ## Other routers
 
 A local router uses an ordinary Claude provider instance. Give it a separate

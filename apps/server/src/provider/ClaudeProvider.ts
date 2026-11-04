@@ -49,6 +49,7 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  claudeCliModelCatalog,
   claudeReportedModels,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
@@ -587,9 +588,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
-
   const probeResult = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
     : undefined;
@@ -597,9 +595,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
+  const catalog =
+    claudeSettings.useCliModelList &&
+    capabilities?.models?.some((info) => info.value.trim() && info.value.trim() !== "default")
+      ? claudeCliModelCatalog(modelCatalog, capabilities.models)
+      : modelCatalog;
+  const updateRequiredModels = resolveClaudeUpdateRequiredModels(catalog, parsedVersion);
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(catalog, parsedVersion);
   const models = providerModelsFromSettings(
     [
-      ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+      ...resolveClaudeModelsForVersion(catalog, parsedVersion),
       ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
     ],
     claudeSettings.customModels,

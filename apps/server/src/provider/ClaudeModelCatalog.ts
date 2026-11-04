@@ -127,6 +127,30 @@ function stripClaudeContextWindowSuffix(value: string): string {
   return value.replace(/\[[^\]]*\]$/, "").trim();
 }
 
+export function claudeCliModelCatalog(
+  catalog: ClaudeModelCatalog,
+  reported: ReadonlyArray<ClaudeModelInfo>,
+): ClaudeModelCatalog {
+  const seen = new Set<string>();
+  const models: Array<ClaudeCatalogModel> = [];
+  for (const info of reported) {
+    if (info.value.trim() === "default") continue;
+    const entry = [info.value, info.resolvedModel ?? ""]
+      .map((id) => resolveClaudeCatalogModel(catalog, stripClaudeContextWindowSuffix(id)))
+      .find((entry) => entry !== undefined);
+    if (!entry || seen.has(entry.model.slug)) continue;
+    seen.add(entry.model.slug);
+    const { isLegacy: _isLegacy, ...model } = entry.model;
+    models.push({
+      ...entry,
+      model: { ...model, name: info.displayName.trim() || model.name },
+      // The user chose the CLI's availability, but native model controls still need their mappings.
+      compatibility: {},
+    });
+  }
+  return { models };
+}
+
 export function claudeReportedModels(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
