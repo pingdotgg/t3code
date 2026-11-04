@@ -370,10 +370,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
       const resign = (claims: string) => {
         const payload = base64UrlEncode(claims);
-        return `${payload}.${signPayload(payload, secret)}`;
+        return signPayload(payload, secret).pipe(
+          Effect.map((signature) => `${payload}.${signature}`),
+        );
       };
-      const legacyToken = resign(currentClaims.replace('"v":1', '"v":2'));
-      const editedToken = resign(
+      const legacyToken = yield* resign(currentClaims.replace('"v":1', '"v":2'));
+      const editedToken = yield* resign(
         currentClaims.replace(/"scopes":\[[^\]]*\]/, '"scopes":["access:write"]'),
       );
 

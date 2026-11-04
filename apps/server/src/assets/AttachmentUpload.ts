@@ -31,7 +31,7 @@ import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
   signPayload,
-  timingSafeEqualBase64Url,
+  verifyPayloadSignature,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -120,9 +120,10 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     }),
   );
 
+  const signature = yield* signPayload(encodedPayload, secret);
   return {
     attachmentId,
-    relativeUrl: `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/${encodedPayload}.${signPayload(encodedPayload, secret)}`,
+    relativeUrl: `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/${encodedPayload}.${signature}`,
     expiresAt,
   };
 });
@@ -141,7 +142,7 @@ export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validat
     ),
     Effect.orElseSucceed(() => null),
   );
-  if (!secret || !timingSafeEqualBase64Url(signature, signPayload(encodedPayload, secret))) {
+  if (!secret || !(yield* verifyPayloadSignature(encodedPayload, signature, secret))) {
     return null;
   }
 
