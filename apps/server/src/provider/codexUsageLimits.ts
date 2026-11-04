@@ -124,7 +124,9 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const selected = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(selected);
+  const planType = selected.planType ?? input.snapshot.planType ?? "";
   const accountId = input.accountId?.trim();
   return {
     ...makeUsageLimits({
@@ -132,7 +134,7 @@ export function codexRateLimitsToLimits(input: {
       windows,
     }),
     // A personal plan's account id names one person; team members share theirs.
-    ...(accountId && PERSONAL_PLANS.has(input.snapshot.planType ?? "")
+    ...(accountId && PERSONAL_PLANS.has(planType)
       ? { credentialFingerprint: `chatgpt:${accountId}` }
       : {}),
     ...(resetCredits ? { resetCredits } : {}),

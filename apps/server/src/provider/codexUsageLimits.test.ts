@@ -78,6 +78,14 @@ describe("codexRateLimitsToLimits", () => {
         .credentialFingerprint;
     expect(fingerprint("pro")).toBe("chatgpt:acct-1");
     expect(fingerprint("business")).toBeUndefined();
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { limitId: "spark" },
+        rateLimitsByLimitId: { codex: { limitId: "codex", planType: "plus" } },
+        accountId: "acct-1",
+      }).credentialFingerprint,
+    ).toBe("chatgpt:acct-1");
   });
 
   it("treats a lone duration-less primary as monthly on Free and Go", () => {
