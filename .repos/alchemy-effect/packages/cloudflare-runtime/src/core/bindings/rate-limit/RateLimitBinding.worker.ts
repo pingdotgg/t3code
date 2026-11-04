@@ -31,17 +31,11 @@ class RateLimitBinding implements RateLimit {
   // method that counts and checks against the limit in in-memory buckets
   async limit(options: RateLimitOptions): Promise<RateLimitOutcome> {
     // validate options input
-    validate(
-      typeof options === "object" && options !== null,
-      "invalid rate limit options",
-    );
+    validate(typeof options === "object" && options !== null, "invalid rate limit options");
     const invalidProps = Object.keys(options ?? {}).filter(
       (key) => !RATE_LIMIT_OPTION_KEYS.includes(key),
     );
-    validate(
-      invalidProps.length == 0,
-      `bad rate limit options: [${invalidProps.join(",")}]`,
-    );
+    validate(invalidProps.length == 0, `bad rate limit options: [${invalidProps.join(",")}]`);
     const {
       key = "",
       limit = this.config.simple.limit,
@@ -50,10 +44,7 @@ class RateLimitBinding implements RateLimit {
     validate(typeof key === "string", `invalid key: ${key}`);
     validate(typeof limit === "number", `limit must be a number: ${limit}`);
     validate(typeof period === "number", `period must be a number: ${period}`);
-    validate(
-      RATE_LIMIT_PERIOD_VALUES.includes(period),
-      `unsupported period: ${period}`,
-    );
+    validate(RATE_LIMIT_PERIOD_VALUES.includes(period), `unsupported period: ${period}`);
 
     const now = Date.now();
     let bucket = this.buckets.get(key);

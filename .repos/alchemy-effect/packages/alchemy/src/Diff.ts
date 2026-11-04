@@ -5,13 +5,22 @@ import type { Input } from "./Input.ts";
 import * as Output from "./Output.ts";
 import type { BindingNode } from "./Plan.ts";
 import type { ResourceBinding } from "./Resource.ts";
+import { bytesToBase64 } from "./Util/base64.ts";
 import { isPlainData, isPrimitive, mapPlainData } from "./Util/data.ts";
 
 export type Diff = NoopDiff | UpdateDiff | ReplaceDiff;
 
 export interface NoopDiff {
   action: "noop";
-  stables?: undefined;
+  /**
+   * Properties that stay stable if `--force` upgrades this noop to an
+   * update. A plain noop exposes every persisted attribute downstream, so
+   * this only matters under `--force`, where the engine otherwise falls back
+   * to `provider.stables` and drops conditional stables (e.g. a
+   * rename-mutable `name` that is stable because the `name` prop is
+   * unchanged).
+   */
+  stables?: string[];
 }
 
 export interface UpdateDiff {
@@ -41,13 +50,9 @@ export interface ReplaceDiff {
 export const hasUnresolvedInputs = <T>(value: Input<NoInfer<T>>): value is T =>
   _hasUnresolved(value);
 
-export const isResolved = <T>(value: Input<T>): value is T =>
-  !_hasUnresolved(value);
+export const isResolved = <T>(value: Input<T>): value is T => !_hasUnresolved(value);
 
-const _hasUnresolved = (
-  value: unknown,
-  seen: WeakSet<object> = new WeakSet(),
-): boolean => {
+const _hasUnresolved = (value: unknown, seen: WeakSet<object> = new WeakSet()): boolean => {
   if (value == null || isPrimitive(value)) return false;
   if (Output.isExpr(value) || Effect.isEffect(value)) return true;
   // Only plain data is traversed; any other class instance (Layer, Context,
@@ -88,19 +93,18 @@ const _stripUnresolved = (
   if (value == null || isPrimitive(value)) return value;
   if (Output.isExpr(value) || Effect.isEffect(value)) return undefined;
   // Serializable leaves — the only class instances persisted state may
-  // carry (StateEncoding knows Redacted/Duration; Date JSON-encodes).
-  // Rebuilding them structurally would strip their prototype.
+  // carry (StateEncoding knows Redacted/Duration/Date/bytes). Rebuilding
+  // them structurally would strip their prototype.
   if (
     Redacted.isRedacted(value) ||
     Duration.isDuration(value) ||
-    value instanceof Date
+    value instanceof Date ||
+    value instanceof Uint8Array
   ) {
     return value;
   }
   if (isPlainData(value)) {
-    return mapPlainData(value, ancestors, (child) =>
-      _stripUnresolved(child, ancestors),
-    );
+    return mapPlainData(value, ancestors, (child) => _stripUnresolved(child, ancestors));
   }
   // Any other class instance (Layer, Context, SDK objects) is runtime-only
   // wiring that can't round-trip through JSON — a beta.103 Context is even
@@ -136,14 +140,13 @@ const _stripEffects = (
   if (
     Redacted.isRedacted(value) ||
     Duration.isDuration(value) ||
-    value instanceof Date
+    value instanceof Date ||
+    value instanceof Uint8Array
   ) {
     return value;
   }
   if (isPlainData(value)) {
-    return mapPlainData(value, ancestors, (child) =>
-      _stripEffects(child, ancestors),
-    );
+    return mapPlainData(value, ancestors, (child) => _stripEffects(child, ancestors));
   }
   // Non-plain instances (Layer, Context, SDK objects) are dropped with
   // Effects — same runtime-only rationale, and their internals may be
@@ -217,11 +220,7 @@ export type DeepEqualOptions = {
  * By default, `null` and `undefined` are treated as distinct. Pass
  * `{ stripNullish: true }` to opt into treating them as equivalent.
  */
-export const deepEqual = (
-  a: unknown,
-  b: unknown,
-  options?: DeepEqualOptions,
-): boolean =>
+export const deepEqual = (a: unknown, b: unknown, options?: DeepEqualOptions): boolean =>
   JSON.stringify(canonicalize(a, options?.stripNullish ?? false)) ===
   JSON.stringify(canonicalize(b, options?.stripNullish ?? false));
 
@@ -241,6 +240,8 @@ const canonicalize = (
   // JSON-safe leaves compare by their serialized form (Duration/Date have
   // toJSON).
   if (Duration.isDuration(value) || value instanceof Date) return value;
+  // Bytes compare by content.
+  if (value instanceof Uint8Array) return { __bytes__: bytesToBase64(value) };
   if (isPlainData(value)) {
     const rebuilt = mapPlainData(value, ancestors, (child) =>
       canonicalize(child, stripNullish, ancestors),
