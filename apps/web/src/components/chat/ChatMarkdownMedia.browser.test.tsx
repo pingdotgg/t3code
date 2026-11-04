@@ -15,6 +15,7 @@ vi.mock(import("~/state/assets"), async (original) => {
       return AsyncResult.success({
         relativeUrl: `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#${assetQuery.mints}`,
         expiresAt: Number.MAX_SAFE_INTEGER,
+        fileRevision: String(assetQuery.mints),
       });
     }).pipe(Atom.keepAlive),
   );
@@ -60,37 +61,59 @@ function setup() {
 }
 
 describe("ChatMarkdownAssetImage", () => {
-  it("refreshes repeated local images together after a new chat revision", async () => {
-    setup();
-    const images = (revision: string) => (
-      <WorkspaceMutationIdContext value={revision}>
-        {["first", "second"].map((alt) => (
-          <ChatMarkdownAssetImage
-            key={alt}
-            environmentId={EnvironmentId.make("environment-1")}
-            resource={{
-              _tag: "media-file",
-              threadId: ThreadId.make("thread-1"),
-              path: "/tmp/render.png",
-            }}
-            alt={alt}
-          />
-        ))}
-      </WorkspaceMutationIdContext>
-    );
-    await using screen = await render(images("message-1"));
-    using errors = vi.spyOn(console, "error");
-    await vi.waitFor(() => expect(assetQuery.mints).toBe(2));
-    const previousSrc = screen.getByRole("img", { name: "first" }).element().getAttribute("src");
+  it.each(["image", "video"] as const)(
+    "refreshes repeated local %s embeds together after a new chat revision",
+    async (kind) => {
+      setup();
+      const images = (revision: string) => (
+        <WorkspaceMutationIdContext value={revision}>
+          {["first", "second"].map((alt) => (
+            <ChatMarkdownAssetImage
+              key={alt}
+              kind={kind}
+              environmentId={EnvironmentId.make("environment-1")}
+              resource={{
+                _tag: "media-file",
+                threadId: ThreadId.make("thread-1"),
+                path: `/tmp/render.${kind === "video" ? "mp4" : "png"}`,
+              }}
+              alt={alt}
+            />
+          ))}
+        </WorkspaceMutationIdContext>
+      );
+      await using screen = await render(images("message-1"));
+      using errors = vi.spyOn(console, "error");
+      await vi.waitFor(() => expect(assetQuery.mints).toBe(2));
+      const previousSrc = (
+        kind === "image"
+          ? screen.getByRole("img", { name: "first" })
+          : screen.getByLabelText("first", { exact: true })
+      )
+        .element()
+        .getAttribute("src");
 
-    await screen.rerender(images("message-2"));
-    await vi.waitFor(() => expect(assetQuery.mints).toBe(3));
-    const first = screen.getByRole("img", { name: "first" });
-    const second = screen.getByRole("img", { name: "second" });
-    await expect.element(first).not.toHaveAttribute("src", previousSrc);
-    await expect.element(second).toHaveAttribute("src", first.element().getAttribute("src"));
-    expect(errors).not.toHaveBeenCalled();
-  });
+      if (kind === "video") {
+        for (const video of document.querySelectorAll("video")) {
+          video.dispatchEvent(new Event("loadedmetadata"));
+        }
+      }
+
+      await screen.rerender(images("message-2"));
+      await vi.waitFor(() => expect(assetQuery.mints).toBe(3));
+      const first =
+        kind === "image"
+          ? screen.getByRole("img", { name: "first" })
+          : screen.getByLabelText("first", { exact: true });
+      const second =
+        kind === "image"
+          ? screen.getByRole("img", { name: "second" })
+          : screen.getByLabelText("second", { exact: true });
+      await expect.element(first).not.toHaveAttribute("src", previousSrc);
+      await expect.element(second).toHaveAttribute("src", first.element().getAttribute("src"));
+      expect(errors).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not re-mint an unchanged workspace image's URL on remount", async () => {
     setup();
