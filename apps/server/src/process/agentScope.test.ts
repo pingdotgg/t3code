@@ -12,11 +12,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
+
+const GiB = 1024 ** 3;
+const memory = vi.hoisted(() => ({ total: 16 * 1024 ** 3 }));
+vi.mock("node:os", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:os")>()),
+  totalmem: () => memory.total,
+}));
 
 const running: ScopeState = {
   loadState: "loaded",
@@ -48,6 +56,7 @@ const withFakeSystemd = <A, E>(
     readonly scope: Effect.Success<typeof make>;
     readonly units: Map<string, FakeUnit>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
+    readonly failingVerbs: Set<string>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
   }) => Effect.Effect<A, E>,
@@ -65,6 +74,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const failingVerbs = new Set<string>();
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -83,6 +93,7 @@ const withFakeSystemd = <A, E>(
             return output("", 1);
           }
           const [, verb, unit = ""] = args;
+          if (failingVerbs.has(verb!)) return output("", 1);
           if (stopFails && verb === "stop") {
             return {
               ...output(""),
@@ -115,7 +126,7 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    return yield* body({ scope, units, calls, failingVerbs, stateDir, cgroupRoot }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -307,6 +318,47 @@ describe("AgentScope service", () => {
       }),
     ),
   );
+
+  it.effect("follows a live memory change at the next launch", () => {
+    const messages: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    memory.total = 16 * GiB;
+    return withFakeSystemd(({ scope, calls, failingVerbs }) =>
+      Effect.gen(function* () {
+        const launch = scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        const memoryLimits = () =>
+          calls
+            .filter(
+              ([, verb, , slice]) => verb === "set-property" && slice === "app-t3code-agents.slice",
+            )
+            .map((args) => args.slice(4));
+        yield* launch;
+        yield* launch;
+        expect(memoryLimits()).toEqual([[`MemoryHigh=${10 * GiB}`, `MemoryMax=${12 * GiB}`]]);
+
+        // A VM balloon or `pct set --memory` grows RAM while the server keeps running.
+        memory.total = 22 * GiB;
+        failingVerbs.add("set-property");
+        yield* launch;
+        yield* launch;
+        failingVerbs.delete("set-property");
+        yield* launch;
+        yield* launch;
+        const grown = [`MemoryHigh=${16 * GiB}`, `MemoryMax=${18 * GiB}`];
+        expect(memoryLimits()).toEqual([
+          [`MemoryHigh=${10 * GiB}`, `MemoryMax=${12 * GiB}`],
+          grown,
+          grown,
+          grown,
+        ]);
+        expect(messages.flat()).toContainEqual(
+          expect.objectContaining({ previousTotal: 16 * GiB, total: 22 * GiB }),
+        );
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+    );
+  });
 
   it.effect("stops agents a killed server left before the first launch", () =>
     withFakeSystemd(({ scope, units, calls, stateDir }) =>
