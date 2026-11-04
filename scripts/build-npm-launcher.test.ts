@@ -214,8 +214,8 @@ globalThis.fetch = (input, options) => {
           ["--import", forkReleaseHook, launcher, "--version"],
           { cwd: root, env: { PATH: process.env.PATH, T3CODE_HOME: path.join(root, "fork-home") } },
         );
-        assert.equal(defaultRelease.exitCode, 7, defaultRelease.stderr);
-        assert.equal(defaultRelease.stdout.trim(), `stub --version launcher=${launcher}`);
+        assert.equal(defaultRelease.exitCode, 0, defaultRelease.stderr);
+        assert.equal(defaultRelease.stdout.trim(), VERSION);
 
         const unsupportedHook = path.join(root, "unsupported-platform.mjs");
         yield* fs.writeFileString(
@@ -437,7 +437,7 @@ syncBuiltinESMExports();
             assert.include(failed.stderr, "runtime loader failed");
           }
           if (executable.includes("trap")) {
-            assert.isTrue(yield* fs.exists(env.T3CODE_TEST_READY));
+            assert.isTrue(yield* fs.exists(env.T3CODE_TEST_READY), failed.stderr);
             assert.isFalse(yield* fs.exists(env.T3CODE_TEST_TERM));
           }
           if ((yield* HostProcess.Platform) === "linux") {

@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
@@ -53,6 +54,12 @@ export function withCodexReplayChildMetadata(
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError> = (threadId) =>
     Effect.succeed({ thread: { id: threadId }, model: null }),
 ): CodexClient.CodexAppServerClient["Service"] {
+  const recordsConfigReads = transcript.entries.some(
+    (entry) =>
+      entry.type === "expect_outbound" &&
+      Predicate.isObject(entry.frame) &&
+      entry.frame.method === "config/read",
+  );
   const childThreadIds = new Set(
     transcript.entries.flatMap((entry) => {
       if (entry.type !== "emit_inbound" || !Predicate.isObject(entry.frame)) return [];
@@ -72,7 +79,7 @@ export function withCodexReplayChildMetadata(
     raw: {
       ...client.raw,
       request: (method, params) =>
-        method === "config/read"
+        method === "config/read" && !recordsConfigReads
           ? Effect.succeed({
               config: {
                 model_provider: null,
@@ -152,6 +159,10 @@ export function layer(input: {
         NodeServices.layer,
         NodeCrypto.layer,
         IdAllocator.layer,
+        Layer.succeed(HostProcess.Environment, {
+          ...process.env,
+          T3_GH_SHIM_DIR: undefined,
+        }),
       ),
     ),
   );
