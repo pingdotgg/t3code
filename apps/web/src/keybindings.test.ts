@@ -248,6 +248,29 @@ describe("settle thread shortcut", () => {
   });
 });
 
+describe.each(["thread.archive", "thread.delete"] as const)("%s shortcut", (command) => {
+  it("is unbound by default and leaves terminal input alone when bound", () => {
+    assert.isFalse(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command));
+    const bindings = compileResolvedKeybindingsConfig([
+      { key: "mod+shift+s", command, when: "!terminalFocus" },
+    ]);
+    const shortcut = event({ key: "s", ctrlKey: true, shiftKey: true });
+    assert.isNull(
+      resolveShortcutCommand(shortcut, bindings, {
+        platform: "Win32",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.equal(
+      resolveShortcutCommand(shortcut, bindings, {
+        platform: "Win32",
+        context: { terminalFocus: false },
+      }),
+      command,
+    );
+  });
+});
+
 describe("thread undo shortcut", () => {
   it("leaves native undo alone inside text fields and terminals", () => {
     assert.isNull(

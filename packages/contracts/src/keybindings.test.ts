@@ -37,6 +37,19 @@ it.effect("drops resolved rules with commands this build does not know", () =>
   }),
 );
 
+it.effect("accepts custom archive and delete thread bindings", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(ResolvedKeybindingsConfig, [
+      { command: "thread.archive", shortcut },
+      { command: "thread.delete", shortcut },
+    ]);
+    assert.deepEqual(
+      parsed.map((rule) => rule.command),
+      ["thread.archive", "thread.delete"],
+    );
+  }),
+);
+
 it.effect("drops malformed resolved rule entries", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(ResolvedKeybindingsConfig, [

@@ -1089,7 +1089,14 @@ function useNewKeybindingDraft({
 
   return {
     commandDraft,
-    setCommandDraft,
+    setCommandDraft: (command: KeybindingCommand) => {
+      setCommandDraft(command);
+      if ((command === "thread.archive" || command === "thread.delete") && !whenDraft) {
+        setDraft({
+          whenDraft: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+        });
+      }
+    },
     keyDraft,
     whenDraft,
     whenDraftExpression,
