@@ -1329,6 +1329,17 @@ export interface DesktopBridge {
     uninstall: () => Promise<DesktopCliCommandState>;
     addToPath: () => Promise<DesktopCliCommandState>;
   };
+  /** Read replies aloud with Edge's natural voices (custom build). Optional for older desktops. */
+  readAloud?: {
+    synthesize: (input: {
+      text: string;
+      voice: string;
+      rate?: string;
+    }) => Promise<{ ok: true; audioBase64: string } | { ok: false; error: string }>;
+    listVoices: () => Promise<
+      ReadonlyArray<{ shortName: string; gender: string; personalities: string }>
+    >;
+  };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;

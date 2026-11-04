@@ -441,6 +441,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  readAloud: {
+    synthesize: (input) => ipcRenderer.invoke(IpcChannels.READ_ALOUD_SYNTHESIZE_CHANNEL, input),
+    listVoices: () => ipcRenderer.invoke(IpcChannels.READ_ALOUD_LIST_VOICES_CHANNEL, null),
+  },
   webLinks: {
     setReady: (ready) => ipcRenderer.invoke(IpcChannels.WEB_LINK_READY_CHANNEL, ready),
     onOpen: (listener) => {

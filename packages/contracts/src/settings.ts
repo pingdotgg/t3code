@@ -479,6 +479,8 @@ export const VoiceTranscriptionDestination = Schema.Union([
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+export const DEFAULT_READ_ALOUD_VOICE = "en-US-AvaMultilingualNeural";
+
 export const NewThreadButtonTarget = Schema.Literals(["pick-project", "no-project"]);
 export type NewThreadButtonTarget = typeof NewThreadButtonTarget.Type;
 
@@ -635,6 +637,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   newThreadButtonTarget: NewThreadButtonTarget.pipe(
     Schema.withDecodingDefault(Effect.succeed("pick-project")),
+  ),
+  // Voice for the read-aloud button on replies (an edge-tts voice name).
+  readAloudVoice: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_VOICE)),
   ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -2338,6 +2344,7 @@ export const ClientSettingsPatch = Schema.Struct({
   tabsEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   newThreadButtonTarget: Schema.optionalKey(NewThreadButtonTarget),
+  readAloudVoice: Schema.optionalKey(Schema.String),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
