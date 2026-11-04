@@ -209,8 +209,9 @@ describe("thread title header content", () => {
     });
     for (const shell of [idle, asking]) {
       expect(shell.hasPendingApprovals).toBe(false);
-      expect(shell.hasPendingUserInput).toBe(false);
     }
+    expect(idle.hasPendingUserInput).toBe(false);
+    expect(asking.hasPendingUserInput).toBe(true);
     expect(ids({ thread: idle })).toContain("snooze");
     expect(ids({ thread: asking })).not.toContain("snooze");
     expect(threadTitleMenuVersion(asking)).not.toEqual(threadTitleMenuVersion(idle));
