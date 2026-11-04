@@ -42,6 +42,7 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { T3_CODE_BROWSER_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -1185,112 +1186,121 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect("checks native MCP status before advertising tools and reconnects on later turns", () =>
-    Effect.gen(function* () {
-      const suffix = "mcp-availability";
-      const threadId = ThreadId.make(`thread-opencode-${suffix}`);
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode-adapter",
-        providerInstanceId: ProviderInstanceId.make(`opencode-${suffix}`),
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      const nativeEvents = asyncEventStream();
-      const nativeSessionId = "native-opencode-mcp-availability";
-      const systems: string[] = [];
-      const operations: string[] = [];
-      let connectionStatus: "failed" | "connected" | "needs_auth" = "failed";
-      const statusMap = () => ({
-        data: {
-          "t3-code": {
-            status: connectionStatus,
-            ...(connectionStatus === "connected" ? {} : { error: "Unavailable" }),
-          },
-        },
-      });
-      const harness = yield* makeOpenCodeRuntimeHarness(
-        suffix,
-        nativeSessionId,
-        {
-          event: {
-            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-              return { stream: nativeEvents.stream };
+  it.effect.each([false, true])(
+    "checks native MCP status before advertising tools and reconnects on later turns (browser=%s)",
+    (browserToolsAvailable) =>
+      Effect.gen(function* () {
+        const suffix = "mcp-availability";
+        const threadId = ThreadId.make(`thread-opencode-${suffix}`);
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode-adapter",
+          providerInstanceId: ProviderInstanceId.make(`opencode-${suffix}`),
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable,
+        });
+        const nativeEvents = asyncEventStream();
+        const nativeSessionId = "native-opencode-mcp-availability";
+        const systems: string[] = [];
+        const operations: string[] = [];
+        let connectionStatus: "failed" | "connected" | "needs_auth" = "failed";
+        const statusMap = () => ({
+          data: {
+            "t3-code": {
+              status: connectionStatus,
+              ...(connectionStatus === "connected" ? {} : { error: "Unavailable" }),
             },
           },
-          session: {
-            create: async () => ({
-              data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
-            }),
-            promptAsync: async (input: { system: string; messageID: string }) => {
-              systems.push(input.system);
-              await nativeEvents.push({
-                type: "message.updated",
-                properties: {
-                  sessionID: nativeSessionId,
-                  info: {
-                    id: input.messageID,
+        });
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          suffix,
+          nativeSessionId,
+          {
+            event: {
+              subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                  once: true,
+                });
+                return { stream: nativeEvents.stream };
+              },
+            },
+            session: {
+              create: async () => ({
+                data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+              }),
+              promptAsync: async (input: { system: string; messageID: string }) => {
+                systems.push(input.system);
+                await nativeEvents.push({
+                  type: "message.updated",
+                  properties: {
                     sessionID: nativeSessionId,
-                    role: "user",
-                    time: { created: 1 },
+                    info: {
+                      id: input.messageID,
+                      sessionID: nativeSessionId,
+                      role: "user",
+                      time: { created: 1 },
+                    },
                   },
-                },
-              });
-              return { data: true };
+                });
+                return { data: true };
+              },
+            },
+            mcp: {
+              add: async () => {
+                operations.push("add");
+                return statusMap();
+              },
+              status: async () => {
+                operations.push("status");
+                return statusMap();
+              },
+              connect: async () => {
+                operations.push("connect");
+                if (connectionStatus === "failed") connectionStatus = "connected";
+                // Native connect also acknowledges an unsuccessful authentication handshake.
+                return { data: true };
+              },
             },
           },
-          mcp: {
-            add: async () => {
-              operations.push("add");
-              return statusMap();
-            },
-            status: async () => {
-              operations.push("status");
-              return statusMap();
-            },
-            connect: async () => {
-              operations.push("connect");
-              if (connectionStatus === "failed") connectionStatus = "connected";
-              // Native connect also acknowledges an unsuccessful authentication handshake.
-              return { data: true };
-            },
-          },
-        },
-        {},
-        {},
-        { external: false },
-      );
-      for (let index = 0; index < 3; index++) {
-        if (index === 2) connectionStatus = "needs_auth";
-        yield* harness.startTurn(`turn ${index + 1}`);
-        if (index === 1) {
-          assert.include(systems[index]!, "## T3 Code orchestration");
-          assert.include(systems[index]!, "native OpenCode subagents do not inherit");
-        } else {
-          assert.notInclude(systems[index]!, "## T3 Code orchestration");
-          assert.notInclude(systems[index]!, "native OpenCode subagents");
-        }
-        yield* Effect.promise(() =>
-          nativeEvents.push({ type: "session.idle", properties: { sessionID: nativeSessionId } }),
+          {},
+          {},
+          { external: false },
         );
-      }
-      assert.deepEqual(operations, [
-        "add",
-        "status",
-        "connect",
-        "status",
-        "status",
-        "connect",
-        "status",
-      ]);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+        for (let index = 0; index < 3; index++) {
+          if (index === 2) connectionStatus = "needs_auth";
+          yield* harness.startTurn(`turn ${index + 1}`);
+          if (index === 1) {
+            assert.include(systems[index]!, "## T3 Code orchestration");
+            assert.include(systems[index]!, "native OpenCode subagents do not inherit");
+            assert.equal(
+              systems[index]!.includes(T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()),
+              browserToolsAvailable,
+            );
+          } else {
+            assert.notInclude(systems[index]!, "## T3 Code orchestration");
+            assert.notInclude(systems[index]!, "native OpenCode subagents");
+            assert.notInclude(systems[index]!, T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim());
+          }
+          yield* Effect.promise(() =>
+            nativeEvents.push({ type: "session.idle", properties: { sessionID: nativeSessionId } }),
+          );
+        }
+        assert.deepEqual(operations, [
+          "add",
+          "status",
+          "connect",
+          "status",
+          "status",
+          "connect",
+          "status",
+        ]);
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
   );
 
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>

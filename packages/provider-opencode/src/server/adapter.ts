@@ -62,7 +62,10 @@ import {
   summarizeNativeProtocolPayload,
 } from "@t3tools/provider-core/server/nativeProtocolLogging";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
+  t3OrchestrationSystemPrompt,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
@@ -2999,6 +3002,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),
             system: [
+              mcpSession?.browserToolsAvailable === true
+                ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()
+                : undefined,
               t3OrchestrationSystemPrompt(
                 mcpSession !== undefined,
                 mcpSession?.capabilities?.has("device") === true,

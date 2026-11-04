@@ -59,7 +59,10 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
+  t3OrchestrationSystemPrompt,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -356,6 +359,55 @@ interface PendingRequest {
 
 const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resource: "*", effect });
 
+const browserRule = (entry: Rule) =>
+  (entry.action === "browser" && entry.resource === "*") ||
+  (entry.action === "skill" && entry.resource === "browser");
+
+// A full-access `*` allow matches the browser. Drop inherited allows, then deny whatever that still turns on.
+const withoutInheritedBrowserAccess = (rules: ReadonlyArray<Rule>): ReadonlyArray<Rule> => {
+  const kept = rules.filter((entry) => !browserRule(entry) || entry.effect !== "allow");
+  let browser: Rule["effect"] | undefined;
+  let skill: Rule["effect"] | undefined;
+  for (const entry of kept) {
+    if (entry.action === "*" && entry.resource === "*") {
+      browser = entry.effect;
+      skill = entry.effect;
+    } else if (entry.action === "browser" && entry.resource === "*") {
+      browser = entry.effect;
+    } else if (entry.action === "skill" && entry.resource === "browser") {
+      skill = entry.effect;
+    }
+  }
+  return [
+    ...kept,
+    ...(browser === "allow" ? [rule("browser", "deny")] : []),
+    ...(skill === "allow"
+      ? [{ action: "skill", resource: "browser", effect: "deny" } satisfies Rule]
+      : []),
+  ];
+};
+
+const nativeBrowserRules = (
+  rules: ReadonlyArray<Rule>,
+  deniedByDefault: boolean,
+): ReadonlyArray<Rule> => {
+  const kept: Array<Rule> = [];
+  for (const entry of rules) {
+    if (!browserRule(entry)) continue;
+    const previous = kept.findLast(
+      (rule) => rule.action === entry.action && rule.resource === entry.resource,
+    );
+    // Attachment replacement removes the first allow; preserve every allow and its later denies.
+    if (
+      entry.effect === "deny" &&
+      (previous?.effect ?? (deniedByDefault ? "deny" : undefined)) === "deny"
+    )
+      continue;
+    kept.push(entry);
+  }
+  return kept;
+};
+
 /** OpenCode hides tools for names over 64 chars and rejects names over 100; hash long thread IDs. */
 export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId: string) {
   const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -381,15 +433,28 @@ const sessionRules = (
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
+  browser: ReadonlyArray<Rule>,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
-    ? [rule("*", "allow")]
+    ? [
+        rule("*", "allow"),
+        // OpenCode's desktop grants browser access to individual attached sessions.
+        rule("browser", "deny"),
+        { action: "skill", resource: "browser", effect: "deny" } satisfies Rule,
+      ]
     : [
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
       ]),
-  ...grants,
+  ...browser,
+  ...grants.filter(
+    (grant) =>
+      !browserRule(grant) ||
+      browser.findLast(
+        (entry) => entry.action === grant.action && entry.resource === grant.resource,
+      )?.effect === "ask",
+  ),
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
@@ -2291,6 +2356,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       const sessionId = sessionOfEvent(event);
+      if (connection.external && event.type === "session.permissions") {
+        const state = threads.get(event.data.sessionID);
+        if (state !== undefined) state.rules = event.data.permissions;
+        const info = announced.get(event.data.sessionID);
+        if (info !== undefined) {
+          announced.set(event.data.sessionID, { ...info, permissions: event.data.permissions });
+        }
+        return;
+      }
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
         if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
@@ -2328,7 +2402,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const owner = ownerOf(event.data.parentID);
         if (owner !== undefined) {
           childOwners.set(event.data.sessionID, owner);
-          announced.set(event.data.sessionID, event.data);
+          let info = event.data;
+          if (info.permissions !== undefined) {
+            const permissions = withoutInheritedBrowserAccess(info.permissions);
+            if (!sameRules(info.permissions, permissions)) {
+              const updated = yield* client.session
+                .update({ sessionID: info.sessionID, permissions })
+                .pipe(
+                  Effect.timeout(REQUEST_REPLY_TIMEOUT),
+                  Effect.tapCause((cause) =>
+                    Effect.logWarning(
+                      "Could not clear a child's inherited browser permissions.",
+                      cause,
+                    ),
+                  ),
+                  Effect.exit,
+                );
+              if (Exit.isSuccess(updated)) info = { ...info, permissions };
+            }
+          }
+          announced.set(event.data.sessionID, info);
           holderOf(event.data.parentID)?.wakes.at(-1)?.children.add(event.data.sessionID);
         }
         return;
@@ -2673,8 +2766,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       client = next.client;
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
-      // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
+      if (connection.external) {
+        for (const state of threads.values()) state.rules = undefined;
+        for (const [id, info] of announced) {
+          announced.set(id, { ...info, permissions: undefined });
+        }
+      }
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -2811,31 +2908,62 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const rulesFor = Effect.fnUntraced(function* (
-      thread: Pick<ThreadState, "directory" | "agent" | "grants">,
+      thread: Pick<ThreadState, "directory" | "agent" | "grants" | "rules">,
       policy: RulesPolicy,
       appThreadId: string | null,
+      preserveBrowser = true,
     ) {
       const plan = policy.interactionMode === "plan";
       const paths =
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
-      return sessionRules(
-        policy,
-        paths,
-        policy.runtimeMode === "full-access" ? [] : thread.grants,
-        appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
-      );
+      const mcpServerName = appThreadId === null ? null : yield* mcpServerNameFor(appThreadId);
+      const previous = thread.rules;
+      return {
+        previous,
+        rules: sessionRules(
+          policy,
+          paths,
+          policy.runtimeMode === "full-access" ? [] : thread.grants,
+          mcpServerName,
+          connection.external && preserveBrowser
+            ? nativeBrowserRules(previous ?? [], policy.runtimeMode === "full-access")
+            : [],
+        ),
+      };
     });
 
-    const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
-      const rules = yield* rulesFor(state, policy, rootOf(state).providerThread.appThreadId);
-      if (!sameRules(state.rules, rules)) {
+    const writeRules = Effect.fnUntraced(function* (
+      state: ThreadState,
+      policy: RulesPolicy,
+      preserveBrowser = true,
+    ) {
+      if (connection.external && preserveBrowser && state.rules === undefined) {
+        const native = yield* client.session.get({ sessionID: Session.ID.make(state.sessionId) });
+        if (state.rules === undefined) state.rules = native.permissions ?? [];
+      }
+      // A desktop permission event can land while an update is in flight.
+      let caughtUp = false;
+      while (!caughtUp) {
+        const { previous, rules } = yield* rulesFor(
+          state,
+          policy,
+          rootOf(state).providerThread.appThreadId,
+          preserveBrowser,
+        );
+        if (sameRules(previous, rules)) {
+          caughtUp = true;
+          continue;
+        }
         yield* client.session.update({
           sessionID: Session.ID.make(state.sessionId),
           permissions: rules,
         });
-        state.rules = rules;
+        if (state.rules === previous) {
+          state.rules = rules;
+          caughtUp = true;
+        }
       }
       state.policy = policy;
     });
@@ -2867,14 +2995,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         existing.directory = directory;
         existing.agent = native.agent ?? existing.agent;
         existing.title = native.title;
-        existing.rules = native.permissions;
+        existing.rules = native.permissions ?? [];
         return existing;
       }
       const state = newThreadState(native.id, providerThread, directory, undefined);
       state.model = native.model;
       state.agent = native.agent ?? state.agent;
       state.title = native.title;
-      state.rules = native.permissions;
+      state.rules = native.permissions ?? [];
       threads.set(native.id, state);
       return state;
     };
@@ -3145,6 +3273,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        mcpAvailable && mcpSession?.browserToolsAvailable === true
+          ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()
+          : undefined,
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
         mcpAvailable ? OPENCODE_NATIVE_CHILD_INSTRUCTIONS : undefined,
       ]
@@ -3480,8 +3611,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
-          const permissions = yield* rulesFor(
-            { directory, agent: "build", grants: [] },
+          const { rules: permissions } = yield* rulesFor(
+            { directory, agent: "build", grants: [], rules: undefined },
             policy,
             threadInput.threadId,
           );
@@ -4114,7 +4245,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // Forks inherit source worktrees and skip initial resume; relocate to the destination now.
           const cwd = forkInput.runtimePolicy?.cwd;
           const state = register(providerThread, forked, cwd ?? forked.location.directory);
-          yield* writeRules(state, forkInput.runtimePolicy ?? state.policy);
+          yield* writeRules(state, forkInput.runtimePolicy ?? state.policy, false);
           if (cwd != null && forked.location.directory !== cwd) {
             yield* client.session.move({
               sessionID: Session.ID.make(forked.id),
