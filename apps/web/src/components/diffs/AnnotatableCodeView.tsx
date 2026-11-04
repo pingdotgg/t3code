@@ -100,7 +100,7 @@ interface AnnotatableCodeViewProps {
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
-  renderHeaderMetadata?: (fileDiff: FileDiffMetadata) => ReactNode;
+  renderHeaderMetadata?: (fileDiff: FileDiffMetadata, fileKey: string) => ReactNode;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
@@ -282,7 +282,7 @@ export function AnnotatableCodeView({
       {...(renderHeaderMetadata
         ? {
             renderHeaderMetadata: (item: CodeViewItem<DiffCommentAnnotationGroup>) =>
-              item.type === "diff" ? renderHeaderMetadata(item.fileDiff) : null,
+              item.type === "diff" ? renderHeaderMetadata(item.fileDiff, item.id) : null,
           }
         : {})}
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}

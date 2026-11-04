@@ -151,10 +151,12 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `diffFocus`, `diffLineMode`, `modelPickerOpen`, `usagePageOpen`,
-`composerFocus`, `draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and
-`isDesktop`. `diffFocus` is true while the Diff panel has the keyboard and no text
-field in it does. `diffLineMode` is true while you are on a diff's lines or a selection.
+`previewOpen`, `rightPanelOpen`, `diffFocus`, `diffLineMode`, `modelPickerOpen`,
+`usagePageOpen`, `composerFocus`, `draftThreadRoute`, `turnRunning`, `editableFocus`,
+`isWeb`, and `isDesktop`. `rightPanelOpen` applies only to `rightPanel.new` and is true
+while the right panel is open; the default `mod+t` uses it to open the panel's new-tab menu.
+`diffFocus` is true while the Diff panel has the keyboard and no text field in it does.
+`diffLineMode` is true while you are on a diff's lines or a selection.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
