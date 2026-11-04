@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Hetzner from "@alchemy.run/hetzner";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -34,10 +34,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -90,9 +87,7 @@ if (!hasCreds) {
       expect(html).toContain("Hello from TanStack Start on Hetzner!");
       // The Card component rendered under the heading.
       expect(html).toContain("Styled with Tailwind CSS");
-      expect(html).toContain(
-        "This card is a React component styled with Tailwind utilities.",
-      );
+      expect(html).toContain("This card is a React component styled with Tailwind utilities.");
     }),
     { timeout: 180_000 },
   );
@@ -109,9 +104,7 @@ if (!hasCreds) {
       // src/styles/global.css. The compiled rule for the utility must be
       // served — it only exists if the @tailwindcss/vite plugin from the
       // project's own vite.config.ts ran.
-      const link = html.match(
-        /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-      );
+      const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
       expect(link).not.toBeNull();
       const href = link![1]!;
       const cssUrl = href.startsWith("http")
