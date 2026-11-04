@@ -31,6 +31,7 @@ const DesktopSettingsPatch = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  autoUpdate: Schema.optionalKey(Schema.Boolean),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -188,6 +189,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          autoUpdate: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -223,6 +225,7 @@ describe("DesktopSettings", () => {
 
         yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setAutoUpdate(true);
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
@@ -231,6 +234,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
+          autoUpdate: true,
         } satisfies typeof DesktopSettingsPatch.Type);
       }),
     ),
@@ -306,6 +310,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
+          autoUpdate: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -323,6 +328,7 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          autoUpdate: false,
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -335,6 +341,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          autoUpdate: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,

@@ -3,6 +3,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
   canCheckForUpdate,
+  getDesktopUpdatePrompt,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
@@ -11,6 +12,7 @@ import {
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  autoUpdate: false,
   status: "idle",
   channel: "latest",
   currentVersion: "1.0.0",
@@ -88,5 +90,21 @@ describe("canCheckForUpdate", () => {
         downloadedVersion: "1.1.0",
       }),
     ).toBe(true);
+  });
+});
+
+describe("desktop update prompt", () => {
+  it.each([
+    [{ status: "available", autoUpdate: false, availableVersion: "1.1.0" }, "available", undefined],
+    [{ status: "available", autoUpdate: true, availableVersion: "1.1.0" }, null, undefined],
+    [{ status: "downloaded", autoUpdate: true, downloadedVersion: "1.1.0" }, "ready", undefined],
+    [{ status: "available", autoUpdate: false, availableVersion: "1.1.0" }, null, "1.1.0"],
+    [
+      { status: "available", autoUpdate: false, availableVersion: "1.1.0", enabled: false },
+      null,
+      undefined,
+    ],
+  ] as const)("resolves prompt", (overrides, expected, dismissed) => {
+    expect(getDesktopUpdatePrompt({ ...baseState, ...overrides }, dismissed)).toBe(expected);
   });
 });

@@ -2,6 +2,10 @@
 
 # Updating T3 Code
 
+On desktop, T3 Learn prompts when a new version is available and offers to update now or later.
+Turn on **Settings → About → Update automatically** to download updates in the background and
+install them when T3 Learn starts.
+
 The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, the update button at the bottom
 of the sidebar and **Settings → Environments** offer to update it.

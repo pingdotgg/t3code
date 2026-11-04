@@ -23,6 +23,63 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
+  it.effect("auto-updates and installs a release found by the startup check", () => {
+    const harness = makeHarness({
+      autoUpdate: true,
+      onCheck: (emit) => emit("update-available", { version: "1.2.4" }),
+      onDownload: (emit) => emit("update-downloaded", { version: "1.2.4" }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust("15 seconds");
+        yield* flushCallbacks;
+        yield* flushCallbacks;
+        assert.equal(harness.downloadCount(), 1);
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("auto-updates without installing a release found by the poll check", () => {
+    const harness = makeHarness({
+      autoUpdate: true,
+      onCheck: (emit) => {
+        if (harness.checkCount() === 2) emit("update-available", { version: "1.2.4" });
+      },
+      onDownload: (emit) => emit("update-downloaded", { version: "1.2.4" }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust("4 minutes");
+        yield* flushCallbacks;
+        yield* flushCallbacks;
+        assert.equal(harness.downloadCount(), 1);
+        assert.equal(harness.quitAndInstalls(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not auto-update when the setting is off", () => {
+    const harness = makeHarness({
+      autoUpdate: false,
+      onCheck: (emit) => emit("update-available", { version: "1.2.4" }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust("4 minutes");
+        yield* flushCallbacks;
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal(harness.quitAndInstalls(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>

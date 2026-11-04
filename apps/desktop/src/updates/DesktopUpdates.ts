@@ -203,6 +203,9 @@ export class DesktopUpdates extends Context.Service<
       channel: DesktopUpdateChannel,
       options?: { readonly minimumVersion?: string | undefined },
     ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
+    readonly setAutoUpdate: (
+      enabled: boolean,
+    ) => Effect.Effect<DesktopUpdateState, DesktopAppSettings.DesktopSettingsWriteError>;
     /** `allowDowngrade` is for a guarded track switch, which checked that older release. */
     readonly check: (
       reason: string,
@@ -296,6 +299,7 @@ function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   disabledReason: Option.Option<string>,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  autoUpdate = false,
 ): DesktopUpdateState {
   const enabled = Option.isNone(disabledReason);
   return {
@@ -303,6 +307,7 @@ function createBaseUpdateState(
     enabled,
     status: enabled ? "idle" : "disabled",
     message: Option.getOrNull(disabledReason),
+    autoUpdate,
   };
 }
 
@@ -694,10 +699,14 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: Option.Option<string>) =>
+  const baseUpdateState = (
+    channel: DesktopUpdateChannel,
+    disabledReason: Option.Option<string>,
+    autoUpdate = false,
+  ) =>
     Ref.get(notAppliedVersionRef).pipe(
       Effect.map((notAppliedVersion) => ({
-        ...createBaseUpdateState(channel, disabledReason, environment),
+        ...createBaseUpdateState(channel, disabledReason, environment, autoUpdate),
         // Callers fall back to the channel's reason only when nothing else turns updates off.
         ...(Option.isSome(disabledReason) &&
         disabledReason.value === Option.getOrUndefined(channelBlockedReason(channel))
@@ -883,9 +892,24 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const runAutomaticUpdate = Effect.fn("desktop.updates.runAutomaticUpdate")(function* (
+    reason: "startup" | "poll",
+  ) {
+    const settings = yield* desktopSettings.get;
+    const state = yield* Ref.get(updateStateRef);
+    if (!settings.autoUpdate || state.status !== "available") return;
+    const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
+    yield* downloadAvailableUpdate;
+    if (reason === "startup") {
+      yield* PubSub.take(actionCompletions);
+      yield* installDownloadedUpdate();
+    }
+  });
+
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
       Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(runAutomaticUpdate("startup")),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -901,6 +925,7 @@ export const make = Effect.gen(function* () {
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
       Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(runAutomaticUpdate("poll")),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1148,6 +1173,7 @@ export const make = Effect.gen(function* () {
         yield* baseUpdateState(
           settings.updateChannel,
           Option.orElse(disabledReason, () => channelBlockedReason(settings.updateChannel)),
+          settings.autoUpdate,
         ),
       );
       if (Option.isSome(disabledReason)) {
@@ -1242,7 +1268,13 @@ export const make = Effect.gen(function* () {
           );
 
         const disabledReason = yield* resolveDisabledReason;
-        yield* setState(yield* baseUpdateState(nextChannel, disabledReason));
+        yield* setState(
+          yield* baseUpdateState(
+            nextChannel,
+            disabledReason,
+            (yield* desktopSettings.get).autoUpdate,
+          ),
+        );
 
         if (Option.isSome(disabledReason) || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
@@ -1257,6 +1289,10 @@ export const make = Effect.gen(function* () {
         );
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("channel")));
+    }),
+    setAutoUpdate: Effect.fn("desktop.updates.setAutoUpdate")(function* (enabled) {
+      yield* desktopSettings.setAutoUpdate(enabled);
+      return yield* updateState((state) => ({ ...state, autoUpdate: enabled }));
     }),
     check: Effect.fn("desktop.updates.check")(function* (
       reason: string,

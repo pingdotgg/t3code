@@ -20,6 +20,8 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 export const flushCallbacks = Effect.yieldNow;
 
 export interface UpdatesHarnessOptions {
+  readonly onCheck?: (emit: (eventName: string, payload?: unknown) => void) => void;
+  readonly onDownload?: (emit: (eventName: string, payload?: unknown) => void) => void;
   readonly checkForUpdates?: Effect.Effect<
     void,
     ElectronUpdater.ElectronUpdaterCheckForUpdatesError
@@ -41,6 +43,7 @@ export interface UpdatesHarnessOptions {
   readonly appVersion?: string;
   /** Starts from in-memory settings with this track saved, as after a restart. */
   readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
+  readonly autoUpdate?: boolean;
   /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
   readonly wslBackend?: boolean;
 }
@@ -96,9 +99,15 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
       checkAllowedDowngrade.push(allowDowngrade);
+      options.onCheck?.((eventName, payload) => {
+        for (const listener of listeners.get(eventName) ?? []) listener(payload);
+      });
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
+      options.onDownload?.((eventName, payload) => {
+        for (const listener of listeners.get(eventName) ?? []) listener(payload);
+      });
     }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
     quitAndInstall: () =>
       Effect.sync(() => {
@@ -198,13 +207,17 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.autoUpdate === undefined ? {} : { autoUpdate: options.autoUpdate }),
     ...(options.savedChannel === undefined
       ? {}
       : { updateChannel: options.savedChannel, updateChannelConfiguredByUser: true }),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const layerSettings =
-    setUpdateChannelError || options.beforeSetUpdateChannel || options.savedChannel
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.savedChannel ||
+    options.autoUpdate !== undefined
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -227,6 +240,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
                     }),
                   ),
                 ),
+          setAutoUpdate: (enabled) =>
+            Effect.sync(() => {
+              const changed = testSettings.autoUpdate !== enabled;
+              testSettings = { ...testSettings, autoUpdate: enabled };
+              return { settings: testSettings, changed };
+            }),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
           setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),

@@ -310,6 +310,22 @@ function AboutVersionSection() {
           }
         />
       ) : null}
+      {hasDesktopBridge && updateState?.enabled ? (
+        <SettingsRow
+          {...searchableSetting("auto-update")}
+          description="Download updates in the background and install them when T3 Learn starts."
+          control={
+            <Switch
+              aria-label="Update automatically"
+              checked={updateState.autoUpdate}
+              onCheckedChange={(checked) => {
+                const bridge = window.desktopBridge;
+                if (bridge) void bridge.setAutoUpdate(checked);
+              }}
+            />
+          }
+        />
+      ) : null}
       {hasDesktopBridge ? <CliCommandSettingsRow /> : null}
     </>
   );
