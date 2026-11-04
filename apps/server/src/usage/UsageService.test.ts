@@ -1088,7 +1088,7 @@ describe("UsageService", () => {
           };
           const muse = (summary: UsageSummary) =>
             summary.buckets.filter((bucket) => bucket.provider === "muse");
-          const first = yield* service.readSummary(window);
+          const first = yield* service.readSummary({ ...window, awaitRefresh: true });
           const buckets = muse(first);
           assert.strictEqual(
             buckets.reduce((sum, b) => sum + b.records, 0),
@@ -1208,16 +1208,30 @@ describe("UsageService", () => {
       const { transcript, settings, home } = yield* setup;
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
       const museStarted = yield* Deferred.make<void>();
+      const museReady = yield* Deferred.make<MuseSdk.MuseSdkHost>();
+      const museHome = NodePath.join(home, "muse");
       using _create = vi
         .spyOn(MuseSdk, "createMuseSdkHostEffect")
         .mockImplementation(() =>
-          Deferred.succeed(museStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          Deferred.succeed(museStarted, undefined).pipe(Effect.andThen(Deferred.await(museReady))),
         );
-      const summary = yield* Effect.gen(function* () {
+      const museSources = (summary: UsageSummary) =>
+        summary.sources
+          .filter((source) => source.fingerprint.provider === "muse")
+          .map((source) => [source.fingerprint.resolvedHomePath, source.refreshing]);
+      const [pending, refreshed] = yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
         const read = yield* Effect.forkChild(service.readSummary(WINDOW));
         yield* Deferred.await(museStarted);
-        return yield* Fiber.join(read);
+        const pending = yield* Fiber.join(read);
+        const refresh = yield* Effect.forkChild(
+          service.readSummary({ ...WINDOW, awaitRefresh: true }),
+        );
+        yield* Deferred.succeed(museReady, {
+          initializeResult: { grantedCapabilities: [], museHome },
+          close: async () => {},
+        } as unknown as MuseSdk.MuseSdkHost);
+        return [pending, yield* Fiber.join(refresh)] as const;
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -1237,13 +1251,11 @@ describe("UsageService", () => {
           }),
         ),
       );
-      assert.strictEqual(totalOutputTokens(summary), 5);
-      assert.deepStrictEqual(
-        summary.sources
-          .filter((source) => source.fingerprint.provider === "muse")
-          .map((source) => source.refreshing),
-        [true],
-      );
+      assert.strictEqual(totalOutputTokens(pending), 5);
+      assert.deepStrictEqual(museSources(pending), [["muse", true]]);
+      assert.deepStrictEqual(museSources(refreshed), [
+        [NodePath.join(museHome, "sessions"), undefined],
+      ]);
     }).pipe(Effect.scoped),
   );
 
