@@ -136,6 +136,7 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { splitMermaidMarkdown } from "../../lib/mermaidMarkdown";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
@@ -243,6 +244,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -1226,7 +1228,14 @@ function AssistantMarkdownBlocks(props: {
       splitMarkdownDetails(props.markdown).map((block) =>
         block.kind === "details"
           ? block
-          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+          : {
+              ...block,
+              segments: splitCodexArtifactTemplateMarkdown(block.markdown).map((segment) =>
+                segment.kind === "artifact-template"
+                  ? segment
+                  : { ...segment, parts: splitMermaidMarkdown(segment.markdown) },
+              ),
+            },
       ),
     [props.markdown],
   );
@@ -1253,17 +1262,25 @@ function AssistantMarkdownBlocks(props: {
           />
         );
       }
-      if (segment.markdown.trim().length === 0) return null;
-      return (
-        <SelectableMarkdownText
-          key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
-          skills={props.skills}
-          textStyle={props.markdownStyles.nativeTextStyle}
-          {...props.linkHandlers}
-          renderImage={props.renderImage}
-        />
-      );
+      return segment.parts.map((part) => {
+        if (part.markdown.trim().length === 0) return null;
+        const key = `${part.kind}:${offset + part.sourceOffset}`;
+        const text = (
+          <SelectableMarkdownText
+            key={key}
+            markdown={renderCodexInlineDirectivesAsMarkdown(part.markdown)}
+            skills={props.skills}
+            textStyle={props.markdownStyles.nativeTextStyle}
+            {...props.linkHandlers}
+            renderImage={props.renderImage}
+          />
+        );
+        return part.kind === "mermaid" ? (
+          <MermaidDiagram key={key} source={part.source} fallback={text} />
+        ) : (
+          text
+        );
+      });
     });
   });
 }
