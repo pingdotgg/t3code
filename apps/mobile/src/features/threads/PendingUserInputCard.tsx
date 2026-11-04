@@ -5,10 +5,9 @@ import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thre
 import {
   markdownProseDirection,
   markdownWithDirection,
-  textDirection,
   type TextDirection,
 } from "@t3tools/shared/textDirection";
-import { directionalText } from "../../lib/directionalText";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -58,14 +57,6 @@ export interface PendingUserInputCardProps {
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
   readonly onDismiss: () => Promise<unknown>;
-}
-
-function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
-  const direction = textDirection(text);
-  return {
-    ...(direction ? { direction, writingDirection: direction } : null),
-    textAlign: (direction === "rtl") === (setDirection === "rtl") ? "left" : "right",
-  } as const;
 }
 
 function QuestionText(props: {

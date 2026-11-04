@@ -50,6 +50,11 @@ export function textDirection(text: string): TextDirection | undefined {
   );
 }
 
+/** A field with any right-to-left letter stays in its right-to-left set, whatever its majority. */
+export function fieldDirection(text: string, setDirection: TextDirection | undefined) {
+  return setDirection === "rtl" && RTL_LETTER.test(text) ? "rtl" : textDirection(text);
+}
+
 const markdownParser = unified().use(remarkParse).freeze();
 const nativeMarkdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath).freeze();
 

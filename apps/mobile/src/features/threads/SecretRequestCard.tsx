@@ -12,6 +12,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import { markdownProseDirection, textDirection } from "@t3tools/shared/textDirection";
 import { useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
 
@@ -20,6 +21,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
+import { directionalText, proseDirectionStyle } from "../../lib/directionalText";
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -51,7 +53,7 @@ export function SecretRequestCard(props: {
     <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
       <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
       <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
-        {item.label} · {display.label}
+        {`\u2068${item.label}\u2069 · ${display.label}`}
       </Text>
     </View>
   );
@@ -74,6 +76,9 @@ function PendingSecretRequestForm(props: {
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
+  const cardDirection = markdownProseDirection(item.label, item.reason);
+  const placeholder = item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER;
+  const inputDirection = secret ? "ltr" : textDirection(placeholder);
 
   const send = async (
     reply: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
@@ -99,16 +104,29 @@ function PendingSecretRequestForm(props: {
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
-        <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
+        <Text
+          className="font-t3-bold text-base text-foreground"
+          style={proseDirectionStyle(item.label, cardDirection)}
+        >
+          {directionalText(item.label)}
+        </Text>
         {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
-            {item.reason}
+          <Text
+            className="font-sans text-sm leading-5 text-foreground-muted"
+            selectable
+            style={proseDirectionStyle(item.reason, cardDirection)}
+          >
+            {directionalText(item.reason)}
           </Text>
         ) : null}
       </View>
       <TextInput
         accessibilityLabel={item.label}
-        placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+        placeholder={directionalText(placeholder)}
+        style={{
+          writingDirection: inputDirection,
+          textAlign: inputDirection === "rtl" ? "right" : "left",
+        }}
         value={secret}
         onChangeText={setSecret}
         editable={!submitting}

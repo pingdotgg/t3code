@@ -1,5 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { markdownProseDirection, textDirection } from "~/textDirection";
+import { fieldDirection, markdownProseDirection } from "~/textDirection";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -187,10 +187,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
     ]),
   );
-  const labelDirection = (text: string) =>
-    promptDirection === "rtl" && /[\p{Script=Hebrew}\p{Script=Arabic}]/u.test(text)
-      ? "rtl"
-      : textDirection(text);
+  const labelDirection = (text: string) => fieldDirection(text, promptDirection);
   const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
 
   return (
