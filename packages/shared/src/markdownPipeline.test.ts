@@ -308,6 +308,7 @@ it.each([
     return urls;
   };
   expect(links(`Saved to ${path}.`)).toEqual([path]);
+  expect(links("See /tmp/app/[id]/page.tsx.")).toEqual(["/tmp/app/[id]/page.tsx"]);
   expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
   expect(links(`**${path}**`)).toEqual([path]);
   expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);

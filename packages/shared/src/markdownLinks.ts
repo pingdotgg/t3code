@@ -436,7 +436,7 @@ export function isWindowsDrivePathHref(href: string): boolean {
 
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
-  for (const match of text.matchAll(/(^|[\s("'])(\/[^\s<>"'`[\]]+)/g)) {
+  for (const match of text.matchAll(/(^|[\s("'])(\/[^\s<>"'`]+)/g)) {
     if (/(?:^|\/)(?:\.{3,}|…)(?:\/|[.,;!?:)]*$)/.test(match[2]!)) continue;
     const path = match[2]!.replace(/[.,;!?:)]+$/, "");
     if (!parseMarkdownFileLink(path)) continue;

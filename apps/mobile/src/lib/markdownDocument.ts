@@ -344,11 +344,13 @@ function transformNativeMarkdown(
       if (raw !== node.value) return;
       for (const { index, path } of absoluteFilePathMatches(raw)) {
         const escaped = path.replace(/[\\[\]&]/g, "\\$&");
-        edits.push({
+        const edit = {
           start: start + index,
           end: start + index + path.length,
           content: `[${escaped}](<${escaped}>)`,
-        });
+        };
+        edits.push(edit);
+        fileEdits.push(edit);
       }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
       node.children.forEach((child, index) => {

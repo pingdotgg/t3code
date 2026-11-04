@@ -72,6 +72,12 @@ describe("inline code that names a file", () => {
     const path =
       "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
     expect(rewrite(`Saved to ${path}.`)).toBe(`Saved to [${path}](<${path}>).`);
+    expect(
+      markdownForNativeRendering(
+        "Intro /tmp/notes.md\n| a | c |\n|---|---|\n| `./a\\|b.ts` | b |",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toContain("[/tmp/notes.md](</tmp/notes.md>)");
     const escaped = String.raw`See /tmp/a\_b.md.`;
     expect(rewrite(escaped)).toBe(escaped);
     expect(rewrite("See `/tmp/claude-1000/...`.")).toBe("See `/tmp/claude-1000/...`.");
