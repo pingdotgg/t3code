@@ -1673,12 +1673,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       attemptSettle(threadRef);
       return;
     }
-    const threads = threadKeys.flatMap((threadKey) => {
+    const settlingThreads = threadKeys.flatMap((threadKey) => {
       const thread = threadByKeyRef.current.get(threadKey);
-      return thread ? [thread] : [];
+      return thread && thread.settledOverride !== "settled" ? [thread] : [];
     });
-    if (!checkThreadOperations(threads)) return;
-    settleThreads(threadKeys);
+    if (!checkThreadOperations(settlingThreads)) return;
+    settleThreads(
+      settlingThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
     clearSelection();
   };
   const attemptUnsettle = (threadRef: ScopedThreadRef) => {
