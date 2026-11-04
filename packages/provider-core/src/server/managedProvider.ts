@@ -22,6 +22,7 @@ import {
   resolveUsageLimitsAfterProbe,
   UsagePolling,
   UsageAfterReset,
+  UsageAccountReset,
 } from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
@@ -157,6 +158,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
+    const accountReset = yield* UsageAccountReset;
+    if (accountReset) usageRefreshAfter = 0;
     const now = yield* Clock.currentTimeMillis;
     const current = (yield* Ref.get(snapshotStateRef)).snapshot;
     const pollingUsage =
@@ -184,6 +187,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
         const switchedAccount =
+          accountReset ||
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);

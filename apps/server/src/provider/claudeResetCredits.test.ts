@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -182,40 +185,69 @@ const consume = (
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
-  it.effect("blocks redemption until the account usage cooldown expires", () =>
+  it.effect("keeps a timed-out claim's request ID through a local usage cooldown", () =>
     Effect.gen(function* () {
-      let redemptions = 0;
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const login = yield* writeLogin;
+      const started = yield* Deferred.make<void>();
+      const requestIds: string[] = [];
       const client = HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (new URL(request.url).pathname === "/api/oauth/usage") {
             return HttpClientResponse.fromWeb(
               request,
               Response.json({}, { status: 429, headers: { "retry-after": "600" } }),
             );
           }
-          redemptions++;
+          const body =
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+          requestIds.push((yield* decodeClaimBody(body)).request_id);
+          if (requestIds.length === 1) {
+            yield* Deferred.succeed(started, undefined);
+            return yield* Effect.never;
+          }
           return HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }));
-        }),
+        }).pipe(Effect.orDie),
       );
       const usageHttpClient = yield* makeUsageHttpClient(client);
+      const claim = () =>
+        redeem(
+          login.configDir,
+          (requestId) =>
+            ClaudeResetCredits.consumeClaudeResetCredit({
+              ...login,
+              version: "2.1.0",
+              grantId: "grant_a",
+              requestId,
+              usageHttpClient,
+            }).pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(HttpClient.HttpClient, client),
+            ),
+          ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+        );
+      const pending = yield* claim().pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("25 seconds");
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "requestFailed" },
+      });
       yield* usageHttpClient.execute(
         HttpClientRequest.get("https://api.anthropic.com/api/oauth/usage").pipe(
           HttpClientRequest.bearerToken("oauth-token"),
         ),
       );
-      const ids = { grantId: "grant_a", requestId: "r-1", usageHttpClient };
       for (const elapsed of ["0 minutes", "9 minutes"] as const) {
         yield* TestClock.adjust(elapsed);
-        expect(yield* consume(client, ids)).toMatchObject({
-          _tag: "Failure",
-          failure: { reason: "coolingDown" },
-        });
-        expect(redemptions).toBe(0);
+        expect(yield* claim().pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+        expect(requestIds).toHaveLength(1);
       }
       yield* TestClock.adjust("1 minute");
-      expect(yield* consume(client, ids)).toMatchObject({ _tag: "Success", success: "reset" });
-      expect(redemptions).toBe(1);
-    }),
+      expect(yield* claim()).toBe("reset");
+      expect(requestIds).toHaveLength(2);
+      expect(requestIds[1]).toBe(requestIds[0]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
   it.effect("claims the grant for the organization", () =>

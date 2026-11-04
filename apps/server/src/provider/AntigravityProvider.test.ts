@@ -872,7 +872,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         const republished = yield* harness.nextPublish(
           (snapshot) => snapshot.usageLimits?.checkedAt === failed.checkedAt,
         );
-        yield* harness.provider.onSignedIn;
+        yield* harness.provider.onSignedIn.pipe(Effect.provideService(UsagePolling, false));
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
         yield* harness.provider.onSessionStarted(started);
         expect((yield* republished)?.usageLimits).toEqual(failed);

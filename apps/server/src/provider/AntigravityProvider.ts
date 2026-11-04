@@ -1,5 +1,6 @@
 import {
   UsagePolling,
+  UsageAccountReset,
   makeUnavailableUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -545,6 +546,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         Deferred.await(republish).pipe(
           Effect.flatten,
           Effect.provideService(PublishingUsage, true),
+          Effect.provideService(UsageAccountReset, true),
         ),
       ),
       Effect.asVoid,

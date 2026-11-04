@@ -65,6 +65,7 @@ const RESET_CREDIT_FAILURES = {
   signedOut: "Sign in to Claude again to redeem resets.",
   rateLimited: "Claude is rate limiting resets. Try again soon.",
   coolingDown: "Claude resets are cooling down. Try again later.",
+  usageCoolingDown: "Claude usage is cooling down. Try again later.",
   unconfirmed:
     "Claude could not confirm the reset. If you are still limited in a moment, try again.",
   requestFailed: "Claude could not redeem the reset.",
@@ -90,7 +91,8 @@ const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
   error.reason !== "requestFailed" &&
-  error.reason !== "unconfirmed";
+  error.reason !== "unconfirmed" &&
+  error.reason !== "usageCoolingDown";
 
 const isFutureTimestamp = (value: string, nowMs: number) => {
   if (!COMPLETE_TIMESTAMP.test(value)) return false;
@@ -234,7 +236,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
     input.usageHttpClient &&
     (yield* input.usageHttpClient.isCoolingDown(API_BASE, `Bearer ${token}`))
   ) {
-    return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
+    return yield* new ClaudeResetCreditError({ reason: "usageCoolingDown" });
   }
   const client = yield* HttpClient.HttpClient;
   const response = yield* client

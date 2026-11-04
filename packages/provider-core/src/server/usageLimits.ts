@@ -15,6 +15,10 @@ export const UsagePolling = Context.Reference<boolean>("t3/provider/UsagePolling
   defaultValue: () => false,
 });
 
+export const UsageAccountReset = Context.Reference<boolean>("t3/provider/UsageAccountReset", {
+  defaultValue: () => false,
+});
+
 export const UsageAfterReset = Context.Reference<boolean>("t3/provider/UsageAfterReset", {
   defaultValue: () => false,
 });
