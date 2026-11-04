@@ -1003,7 +1003,11 @@ function questionContextMessageIds(entries: ReadonlyArray<TimelineEntry>): Reado
   const ids = new Set<string>();
   let lastAssistantMessageId: string | null = null;
   for (const entry of entries) {
-    if (entry.kind === "message" && entry.message.role === "assistant") {
+    if (
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      (entry.message.text.trim().length > 0 || (entry.message.attachments?.length ?? 0) > 0)
+    ) {
       lastAssistantMessageId = entry.id;
     } else if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) {
       if (lastAssistantMessageId !== null) ids.add(lastAssistantMessageId);

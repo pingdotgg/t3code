@@ -2010,6 +2010,13 @@ describe("deriveMessagesTimelineRows", () => {
           streaming: false,
         },
         {
+          ...base("empty", 1, 1),
+          type: "assistant_message" as const,
+          messageId: MessageId.make("empty"),
+          text: "",
+          streaming: false,
+        },
+        {
           ...base("question", 2, 2),
           type: "user_input_request" as const,
           requestId,
@@ -2081,6 +2088,7 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant:intro",
       "work:before",
       "assistant:context",
+      "assistant:empty",
       "work:question",
       "work:after",
       "assistant:answer",
@@ -2091,6 +2099,7 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant:intro",
       "work:before",
       "assistant:context",
+      "assistant:empty",
       "work:question",
       "work-live:after + running",
     ]);
