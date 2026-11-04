@@ -278,7 +278,7 @@ it.effect(
 
 it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
   Effect.gen(function* () {
-    // Pi offers no Auto; a mode a provider lacks would run as Supervised.
+    // Pi offers no Auto, so an inherited Auto steps down to Auto-accept edits.
     const pi = ProviderInstanceId.make("pi");
     const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];

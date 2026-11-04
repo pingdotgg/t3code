@@ -62,7 +62,7 @@ T3 Code applies the composer permission mode through Pi's blocking tool hook:
 - **Full access** allows tools without T3 Code approval prompts.
 
 The **Auto** option is not shown for Pi because Pi does not expose an AI approval reviewer.
-Threads that already stored Auto before Pi support was added behave and display as Supervised.
+Threads that already stored Auto before Pi support was added behave and display as Auto-accept edits.
 
 Changing the mode restarts the Pi provider session and resumes the same native conversation. The
 policy covers Pi tool calls; it is not an operating-system sandbox, and code that a trusted Pi

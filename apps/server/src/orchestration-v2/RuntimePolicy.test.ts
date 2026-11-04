@@ -133,7 +133,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
       };
       const auto = yield* resolve("auto");
-      assert.equal(auto.runtimeMode, "approval-required");
+      assert.equal(auto.runtimeMode, "auto-accept-edits");
       assert.equal(acpPermissionDisposition(auto, request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
