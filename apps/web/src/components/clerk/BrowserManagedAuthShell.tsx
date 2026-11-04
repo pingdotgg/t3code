@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
+import { useOtpPasteNormalizer } from "./otpPaste";
 
 /** Lazy-load Clerk so cloudless local mode never downloads it. */
 export default function BrowserManagedAuthShell({
@@ -12,6 +13,7 @@ export default function BrowserManagedAuthShell({
   readonly publishableKey: string;
   readonly children: ReactNode;
 }) {
+  useOtpPasteNormalizer();
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey}>
       <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
