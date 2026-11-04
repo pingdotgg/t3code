@@ -468,7 +468,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                     type: "thread.created",
                     threadId: thread.id,
                     occurredAt: NOW,
-                    payload: { ...thread, lastVisitedAt: thread.lastVisitedAt ?? null },
+                    payload: {
+                      ...thread,
+                      sideChat: undefined,
+                      lastVisitedAt: thread.lastVisitedAt ?? null,
+                    },
                   });
                   const sql = yield* SqlClient.SqlClient;
                   yield* sql`INSERT INTO orchestration_events (
