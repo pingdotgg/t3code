@@ -228,7 +228,7 @@ export function resolveThreadLink(
   if (known) return known;
   return link.environmentId === null
     ? guessThreadLinkRef(link, read(environmentThreadShells.threadRefsAtom))
-    : null;
+    : scopeThreadRef(link.environmentId, link.threadId);
 }
 
 export function useThreadChipIcons(

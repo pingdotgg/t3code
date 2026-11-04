@@ -104,14 +104,16 @@ describe("thread links", () => {
     ).toBe("[There](t3-thread://v2/there/t1) and [Here](t3-thread://v2/local/t1)");
   });
 
-  it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
+  it("keeps links navigable when their thread is missing from the shell", () => {
     expect(
       relabelThreadLinks(
-        "<t3-thread://v2/there/t1>, <t3-thread://v2/local/t1>, [Old title](t3-thread://v2/there/t1)",
+        "<t3-thread://v2/there/t1>, <t3-thread://v2/local/t1>, [Old title](t3-thread://v2/there/t1), <t3-thread://v1/t1>",
         local,
         () => undefined,
       ),
-    ).toBe("Thread on another machine, Thread no longer available, Old title");
+    ).toBe(
+      "[Thread](t3-thread://v2/there/t1), [Thread](t3-thread://v2/local/t1), [Old title](t3-thread://v2/there/t1), [Thread](t3-thread://v1/t1)",
+    );
     expect(relabelThreadLinks("[Old](t3-thread://v1/t1)", local, () => undefined)).toBe(
       "[Old](t3-thread://v1/t1)",
     );
@@ -231,7 +233,7 @@ describe("hosted thread links", () => {
     );
     expect(
       relabelThreadLinks("https://app.t3.codes/threads/there/t1", local, () => undefined),
-    ).toBe("Thread on another machine");
+    ).toBe("[Thread](t3-thread://v2/there/t1)");
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
