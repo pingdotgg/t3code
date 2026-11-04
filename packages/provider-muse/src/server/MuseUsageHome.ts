@@ -6,6 +6,9 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+
 import { createMuseSdkHostEffect } from "./sdk.ts";
 
 export class MuseUsageHome extends Context.Service<
@@ -47,6 +50,11 @@ const make = Effect.gen(function* () {
   );
   const resolve: MuseUsageHome["Service"]["resolve"] = Effect.fn("MuseUsageHome.resolve")(
     function* ({ binaryPath, environment, awaitRefresh }) {
+      // Spawn failures surface asynchronously; without this a missing CLI would report as pending.
+      const resolveExecutable = yield* SpawnExecutableResolution;
+      if (resolveExecutable(binaryPath, yield* HostProcess.Platform, environment) === undefined) {
+        return Option.some(undefined);
+      }
       // Cache keys compare structurally. Omitted and undefined variables both
       // disappear from the child process environment and must share an entry.
       const key = {

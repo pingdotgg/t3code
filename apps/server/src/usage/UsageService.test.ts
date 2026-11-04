@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
@@ -1170,6 +1171,7 @@ describe("UsageService", () => {
           assert.closeTo(repriced?.costUsd ?? NaN, 0.000486, 1e-12);
         }).pipe(
           Effect.scoped,
+          Effect.provideService(SpawnExecutableResolution, (command: string) => command),
           Effect.provide(
             layerService({
               prefix: "usage-muse",
@@ -1234,6 +1236,7 @@ describe("UsageService", () => {
         return [pending, yield* Fiber.join(refresh)] as const;
       }).pipe(
         Effect.scoped,
+        Effect.provideService(SpawnExecutableResolution, (command: string) => command),
         Effect.provide(
           layerService({
             prefix: "usage-muse-pending",
