@@ -1,6 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -219,7 +219,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const rateLimiter = yield* HookRateLimiter;
   const inbox = yield* HookInbox.HookInbox;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const signDeliveryProof = Effect.fn("HookForwarder.signDeliveryProof")(
     function* (input: {
@@ -318,14 +318,14 @@ const make = Effect.gen(function* () {
 
     // Reuse one delivery ID so inbox retries cannot rerun requests that reached the environment before timeout.
     yield* Effect.annotateCurrentSpan({ "relay.hook.body_bytes": body.success.byteLength });
-    const deliveryId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const deliveryId = yield* random.uuidV4();
     // Sign once before storing held requests so the inbox needs no signing key.
     const proof = yield* signDeliveryProof({
       environmentId: endpoint.environmentId,
       deliveryId,
       receivedAt,
       hookId: parsed.hookId,
-      jti: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
+      jti: yield* random.uuidV4(),
     });
     const hook = {
       id: deliveryId,
