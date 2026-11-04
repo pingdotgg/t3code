@@ -84,12 +84,14 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
+    const launchId = yield* broker.launch;
     const authArgs = selfInvocationArgs(invocation, [
       "__managed-chatgpt-token",
       endpoint,
       options.instanceId,
       environmentId,
       profileKey,
+      launchId,
     ]);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),

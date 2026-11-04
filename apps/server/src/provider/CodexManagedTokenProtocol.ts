@@ -8,6 +8,8 @@ export const Request = Schema.Struct({
   instanceId: Schema.NonEmptyString,
   environmentId: Schema.NonEmptyString,
   profileKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  // One per Codex process, so a repeat request can name the token that launch was served.
+  launchId: Schema.String.check(Schema.isUUID(4)),
 });
 export const Response = Schema.Struct({ token: Schema.NonEmptyString });
 // Selectors are small; tokens can be larger JWTs. Never truncate either frame
@@ -16,7 +18,7 @@ export const REQUEST_BYTES = 1024;
 export const RESPONSE_BYTES = 64 * 1024;
 // Idle/incomplete peers and blocked response consumers must not retain sockets.
 export const SOCKET_IDLE_MS = 5_000;
-// Existing lock retry (40s), OAuth (20s), plus startup/store headroom (20s).
+// Lock retry (40s), rejected-token probe (10s), OAuth (20s), plus startup/store headroom (10s).
 export const COMMAND_TIMEOUT_MS = 80_000;
 class ProtocolError extends Schema.TaggedError<ProtocolError>()("ManagedTokenProtocolError", {}) {
   override get message(): string {
