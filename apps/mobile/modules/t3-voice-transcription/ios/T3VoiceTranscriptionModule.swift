@@ -17,8 +17,8 @@ public class T3VoiceTranscriptionModule: Module {
         mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
         mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
         mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
-      try check(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat,
-        UInt32(MemoryLayout.size(ofValue: format)), &format))
+      let formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+      try check(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, formatSize, &format))
       var pcm = Data()
       var chunk = [Int16](repeating: 0, count: 8192)
       try chunk.withUnsafeMutableBytes { bytes in
