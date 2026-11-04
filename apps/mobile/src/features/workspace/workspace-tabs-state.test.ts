@@ -213,7 +213,7 @@ vi.mock("./WorkspaceExtraTab", () => ({
 }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
 vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
-vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
+vi.mock("../layout/WorkspaceEmptyDetail", () => ({ WorkspaceEmptyDetail: () => null }));
 vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
