@@ -26,6 +26,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Statement from "effect/sql/Statement";
 import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -2399,6 +2400,73 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.include(
         queued.messages.find((message) => message.id === messageId)?.text ?? "",
         task.result!,
+      );
+    }),
+  );
+
+  // Finalizing a child reads, from its parent, only that child's tasks and the transfers it sent.
+  it.effect("finalizing a delegated child reads only that child's records from its parent", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:narrow-finalize-parent");
+      const projectId = ProjectId.make("project:narrow-finalize");
+      const runId = RunId.make("run:narrow-finalize-parent");
+      const rootNodeId = NodeId.make("node:narrow-finalize-parent");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:narrow-finalize-seed"),
+        deliveryState: "acknowledged",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "narrow-finalize-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      const parentReads: Array<string> = [];
+      const observe: Statement.Transformer = (statement) => {
+        const [query, params] = statement.compile();
+        if (
+          params.includes(threadId) &&
+          /FROM orchestration_v2_projection_(subagents|context_transfers)\b/.test(query)
+        ) {
+          parentReads.push(query);
+        }
+        return Effect.succeed(statement);
+      };
+      yield* orchestrator.recoverDelegatedTasks.pipe(
+        Effect.provideService(Statement.CurrentTransformer, observe),
+      );
+      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+        (candidate) => candidate.id === child.taskId,
+      );
+      assert.equal(task?.status, "completed");
+      // The finalize read names the child: its tasks by child thread, its transfers by source.
+      assert.isTrue(
+        parentReads.some(
+          (query) =>
+            query.includes("FROM orchestration_v2_projection_subagents") &&
+            /AND child_thread_id (=|IN)/.test(query),
+        ),
+        "the parent's subagent read is not narrowed to the child",
+      );
+      assert.isTrue(
+        parentReads.some(
+          (query) =>
+            query.includes("FROM orchestration_v2_projection_context_transfers") &&
+            /AND source_thread_id (=|IN)/.test(query),
+        ),
+        "the parent's context-transfer read is not narrowed to the child",
       );
     }),
   );
