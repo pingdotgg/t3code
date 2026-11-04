@@ -167,6 +167,10 @@
       "types": "./src/server/textGeneration.ts",
       "import": "./src/server/textGeneration.ts"
     },
+    "./server/nextPromptSuggestions": {
+      "types": "./src/server/nextPromptSuggestions.ts",
+      "import": "./src/server/nextPromptSuggestions.ts"
+    },
     "./server/textGenerationOperations": {
       "types": "./src/server/textGenerationOperations.ts",
       "import": "./src/server/textGenerationOperations.ts"

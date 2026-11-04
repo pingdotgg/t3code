@@ -8,6 +8,10 @@ import type {
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
+import type {
+  NextPromptSuggestionsInput,
+  NextPromptSuggestionsResult,
+} from "./nextPromptSuggestions.ts";
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
 
@@ -170,4 +174,9 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  /** Custom build: suggest the person's next messages. Optional, so other drivers need nothing. */
+  readonly suggestNextPrompts?: (
+    input: NextPromptSuggestionsInput,
+  ) => Effect.Effect<NextPromptSuggestionsResult, TextGenerationError>;
 }

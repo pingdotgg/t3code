@@ -3638,6 +3638,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
+  // Custom build: next-prompt suggestion buttons.
+  suggestNextPrompts: "orchestration.suggestNextPrompts",
 } as const;
 
 export const OrchestrationV2SubscribeCommandOutputInput = Schema.Struct({
@@ -3676,6 +3678,34 @@ export const OrchestrationV2PromptSuggestion = Schema.NullOr(
   Schema.Struct({ runId: RunId, text: Schema.String }),
 );
 export type OrchestrationV2PromptSuggestion = typeof OrchestrationV2PromptSuggestion.Type;
+
+// Custom build: next-prompt suggestion buttons.
+export const OrchestrationV2NextPromptCommand = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  kind: Schema.Literals(["skill", "command"]),
+});
+export type OrchestrationV2NextPromptCommand = typeof OrchestrationV2NextPromptCommand.Type;
+
+export const OrchestrationV2SuggestNextPromptsInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The completed run to suggest after; it also keys the client's cache. */
+  runId: RunId,
+  commands: Schema.Array(OrchestrationV2NextPromptCommand),
+});
+export type OrchestrationV2SuggestNextPromptsInput =
+  typeof OrchestrationV2SuggestNextPromptsInput.Type;
+
+export const OrchestrationV2NextPromptSuggestions = Schema.Struct({
+  runId: RunId,
+  suggestions: Schema.Array(
+    Schema.Struct({
+      text: Schema.String,
+      kind: Schema.Literals(["prompt", "skill", "command"]),
+    }),
+  ),
+});
+export type OrchestrationV2NextPromptSuggestions = typeof OrchestrationV2NextPromptSuggestions.Type;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
@@ -4359,6 +4389,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribePromptSuggestion: {
     input: OrchestrationV2SubscribePromptSuggestionInput,
     output: OrchestrationV2PromptSuggestion,
+  },
+  suggestNextPrompts: {
+    input: OrchestrationV2SuggestNextPromptsInput,
+    output: OrchestrationV2NextPromptSuggestions,
   },
 } as const;
 

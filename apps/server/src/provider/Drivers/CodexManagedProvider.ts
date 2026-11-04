@@ -273,6 +273,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           }),
       ),
     );
+  const nativeSuggestNextPrompts = nativeGeneration.suggestNextPrompts;
   const textGeneration: ProviderInstance["textGeneration"] = {
     generateCommitMessage: (value) =>
       protect("generateCommitMessage", nativeGeneration.generateCommitMessage(value)),
@@ -291,6 +292,13 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         "generateTranscriptionPostProcessing",
         nativeGeneration.generateTranscriptionPostProcessing(value),
       ),
+
+    ...(nativeSuggestNextPrompts === undefined
+      ? {}
+      : {
+          suggestNextPrompts: (value) =>
+            protect("suggestNextPrompts", nativeSuggestNextPrompts(value)),
+        }),
   };
   return {
     instanceId,

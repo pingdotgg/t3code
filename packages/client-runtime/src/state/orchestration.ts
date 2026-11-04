@@ -179,6 +179,14 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         tag: ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
         idleTtlMs: 0,
       }),
+      // Custom build: next-prompt suggestion buttons. A run's suggestions never change, and each
+      // read is a model call, so keep them for as long as the run is the latest one.
+      nextPromptSuggestions: createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:next-prompt-suggestions",
+        tag: ORCHESTRATION_V2_WS_METHODS.suggestNextPrompts,
+        staleTimeMs: 24 * 60 * 60_000,
+        timeout: "2 minutes",
+      }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",

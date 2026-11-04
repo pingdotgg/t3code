@@ -52,6 +52,7 @@ import * as ComputerViewBroker from "./desktopControl/ComputerViewBroker.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { ProviderAccountLoginRunner } from "./provider/ProviderAccountLoginRunner.ts";
 import * as PullRequestRanking from "./pullRequest/PullRequestRanking.ts";
+import * as NextPromptSuggestions from "./orchestration-v2/NextPromptSuggestions.ts";
 import * as UpstreamTake from "./pullRequest/UpstreamTake.ts";
 import * as VoiceSessionService from "./voice/VoiceSessionService.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -859,6 +860,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(ProviderAccountLoginRunner)({}),
   Layer.mock(PullRequestRanking.PullRequestRankingService)({}),
+  Layer.mock(NextPromptSuggestions.NextPromptSuggestionsService)({}),
   Layer.mock(UpstreamTake.UpstreamTakeService)({}),
   Layer.mock(VoiceSessionService.VoiceSessionService)({}),
 );

@@ -52,7 +52,8 @@ type TextGenerationOp =
   | "generateThreadTitle"
   | "generateReviewGuide"
   | "rankPullRequests"
-  | "generateTranscriptionPostProcessing";
+  | "generateTranscriptionPostProcessing"
+  | "suggestNextPrompts";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -222,6 +223,14 @@ export const make = Effect.gen(function* () {
               modelSelection,
             });
           }),
+      );
+    }),
+    // Custom build: next-prompt suggestion buttons. A driver without the operation suggests nothing.
+    suggestNextPrompts: Effect.fn("TextGeneration.suggestNextPrompts")(function (input) {
+      return generate("suggestNextPrompts", input.modelSelection, (service, modelSelection) =>
+        service.suggestNextPrompts === undefined
+          ? Effect.succeed({ suggestions: [] })
+          : service.suggestNextPrompts({ ...input, modelSelection }),
       );
     }),
     rankPullRequests: Effect.fn("TextGeneration.rankPullRequests")(function* (input) {

@@ -234,6 +234,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as UpstreamTake from "./pullRequest/UpstreamTake.ts";
 import * as PullRequestRanking from "./pullRequest/PullRequestRanking.ts";
+import * as NextPromptSuggestions from "./orchestration-v2/NextPromptSuggestions.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1507,6 +1508,7 @@ export const layerWsRpc = (
     const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const pullRequestRanking = yield* PullRequestRanking.PullRequestRankingService;
+    const nextPromptSuggestions = yield* NextPromptSuggestions.NextPromptSuggestionsService;
     const upstreamTake = yield* UpstreamTake.UpstreamTakeService;
     const review = yield* ReviewService.ReviewService;
     const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
@@ -2393,6 +2395,13 @@ export const layerWsRpc = (
         ),
       [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
         providerSessionManager.subscribePromptSuggestion(input.threadId),
+      [ORCHESTRATION_V2_WS_METHODS.suggestNextPrompts]: (input) =>
+        NextPromptSuggestions.suggestForThread(input, {
+          suggestions: nextPromptSuggestions,
+          threads: threadManagement,
+          projects: projectStore,
+          serverSettings,
+        }),
       [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
         scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
       [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

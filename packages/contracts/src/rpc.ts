@@ -2268,6 +2268,16 @@ const WsOrchestrationV2SubscribePromptSuggestionRpc = Rpc.make(
   },
 );
 
+// Custom build: next-prompt suggestion buttons. Never fails on a model error; it answers empty.
+const WsOrchestrationV2SuggestNextPromptsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.suggestNextPrompts,
+  {
+    payload: OrchestrationV2RpcSchemas.suggestNextPrompts.input,
+    success: OrchestrationV2RpcSchemas.suggestNextPrompts.output,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMetadata, {
   payload: Schema.Struct({}),
   success: TerminalMetadataStreamEvent,
@@ -2652,6 +2662,7 @@ export const WsRpcGroupSecond = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
+  WsOrchestrationV2SuggestNextPromptsRpc,
 ).middleware(RpcScopeAuthorization);
 
 export const WsRpcGroup = WsRpcGroupFirst.merge(WsRpcGroupSecond);
