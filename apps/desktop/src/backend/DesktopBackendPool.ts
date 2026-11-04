@@ -10,11 +10,14 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopAutoAttach from "./DesktopAutoAttach.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -33,6 +36,9 @@ export const BackendInstanceId = DesktopBackendManager.BackendInstanceId;
 export const PRIMARY_INSTANCE_ID = DesktopBackendManager.PRIMARY_INSTANCE_ID;
 export type DesktopBackendInstance = DesktopBackendManager.DesktopBackendInstance;
 export type BackendInstanceSpec = DesktopBackendManager.BackendInstanceSpec;
+
+const isWslConfig = (config: DesktopBackendManager.DesktopBackendStartConfig): boolean =>
+  config.runningDistro !== undefined || config.executablePath === "wsl.exe";
 
 export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedError<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
   "DesktopBackendPoolInstanceAlreadyRegisteredError",
@@ -71,6 +77,7 @@ export class DesktopBackendPool extends Context.Service<
 
 export type BackendInstanceFactoryRequirements =
   | FileSystem.FileSystem
+  | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
@@ -103,6 +110,7 @@ type UnregisterAction =
 export const layer = Layer.effect(
   DesktopBackendPool,
   Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -153,6 +161,8 @@ export const layer = Layer.effect(
       },
     );
 
+    let primaryInstance: DesktopBackendManager.DesktopBackendInstance =
+      null as unknown as DesktopBackendManager.DesktopBackendInstance;
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Resolve lazily: startup loads persisted settings after pool initialization.
@@ -173,14 +183,35 @@ export const layer = Layer.effect(
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
-      onStateDirOwned: () =>
-        electronDialog
-          .showErrorBox(
-            "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
-          )
-          .pipe(Effect.andThen(electronApp.quit)),
+      onStateDirOwned: (): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const currentConfig = yield* primaryInstance.currentConfig;
+          const isWsl = Option.match(currentConfig, {
+            onNone: () => false,
+            onSome: isWslConfig,
+          });
+
+          if (!isWsl) {
+            const attached = yield* DesktopAutoAttach.tryAutoAttachToRunningServer({
+              stateDir: environment.stateDir,
+              backendCwd: environment.backendCwd,
+              primary: primaryInstance,
+            }).pipe(Effect.provide(factoryContext));
+
+            if (attached) {
+              return;
+            }
+          }
+
+          const message = isWsl
+            ? "Another T3 Code server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `t3 update` in the distro. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI in the distro. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command."
+            : "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.";
+
+          yield* electronDialog.showErrorBox("This T3 home is unavailable", message);
+          yield* electronApp.quit;
+        }),
     });
+    primaryInstance = primary;
 
     const instancesRef = yield* SynchronizedRef.make<
       ReadonlyMap<BackendInstanceId, RegisteredInstance>

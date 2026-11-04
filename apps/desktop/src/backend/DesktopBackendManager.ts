@@ -1,5 +1,6 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
@@ -39,6 +40,7 @@ const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(3);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
+const EXTERNAL_LIVENESS_INTERVAL = Duration.seconds(1);
 // Match the service launcher's grace period so backends can stop provider sessions.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
@@ -48,6 +50,30 @@ const STARTUP_FAILURE_RESTART_ATTEMPTS = 3;
 const STARTUP_FAILURE_OUTPUT_CHARS = 4_000;
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
+
+const isExternalPidAlive = (pid: number): boolean => {
+  if (pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error.code === "EPERM" || error.code === "EACCES")
+    );
+  }
+};
+
+const ProcessLivenessProbe = Context.Reference<(pid: number) => Effect.Effect<boolean>>(
+  "@t3tools/desktop/backend/ProcessLivenessProbe",
+  {
+    defaultValue: () => (pid: number) => Effect.sync(() => isExternalPidAlive(pid)),
+  },
+);
 
 type BackendProcessLayerServices = ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient;
 
@@ -213,6 +239,7 @@ export interface DesktopBackendSnapshot {
   readonly activePid: Option.Option<number>;
   readonly restartAttempt: number;
   readonly restartScheduled: boolean;
+  readonly isExternal?: boolean;
 }
 
 export type BackendInstanceId = string & Brand.Brand<"BackendInstanceId">;
@@ -238,6 +265,10 @@ export interface DesktopBackendInstance {
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  readonly attachExternal: (
+    config: DesktopBackendStartConfig,
+    pid?: Option.Option<number>,
+  ) => Effect.Effect<void>;
 }
 
 export interface BackendInstanceSpec {
@@ -271,6 +302,9 @@ interface BackendManagerState {
   readonly preflightFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
+  readonly isExternal?: boolean;
+  readonly externalPid?: Option.Option<number>;
+  readonly externalWatcherFiber: Option.Option<Fiber.Fiber<void, never>>;
 }
 
 const initialState: BackendManagerState = {
@@ -282,6 +316,9 @@ const initialState: BackendManagerState = {
   preflightFailureAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
+  isExternal: false,
+  externalPid: Option.none(),
+  externalWatcherFiber: Option.none(),
 };
 
 const activePid = (active: Option.Option<ActiveBackendRun>): Option.Option<number> =>
@@ -655,9 +692,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     Effect.map((current): DesktopBackendSnapshot => ({
       desiredRunning: current.desiredRunning,
       ready: current.ready,
-      activePid: activePid(current.active),
+      activePid: current.isExternal
+        ? (current.externalPid ?? Option.none())
+        : activePid(current.active),
       restartAttempt: current.restartAttempt,
       restartScheduled: Option.isSome(current.restartFiber),
+      ...(current.isExternal ? { isExternal: true } : {}),
     })),
   );
   const currentConfig = SubscriptionRef.get(state).pipe(Effect.map((current) => current.config));
@@ -677,10 +717,35 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
+  const cancelExternalWatcher = Effect.gen(function* () {
+    const externalWatcherFiber = yield* SubscriptionRef.modify(state, (current) => [
+      current.externalWatcherFiber,
+      {
+        ...current,
+        externalWatcherFiber: Option.none(),
+      },
+    ]);
+
+    yield* Option.match(externalWatcherFiber, {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
+    });
+  });
+
   const start: Effect.Effect<void> = Effect.suspend(() =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
+        if (current.isExternal && current.ready) {
+          if (!current.desiredRunning) {
+            yield* SubscriptionRef.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: true,
+            }));
+          }
+          return;
+        }
+
         if (Option.isSome(current.active)) {
           if (!current.desiredRunning) {
             yield* SubscriptionRef.update(state, (latest) => ({
@@ -718,12 +783,16 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const resetFatalPreflightCounter =
           !current.desiredRunning && current.preflightFailureAttempt > 0;
         yield* cancelRestart;
+        yield* cancelExternalWatcher;
         yield* SubscriptionRef.update(state, (latest) => ({
           ...latest,
           desiredRunning: true,
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          isExternal: false,
+          externalPid: Option.none<number>(),
+          externalWatcherFiber: Option.none(),
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -1052,7 +1121,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
   }) {
-    const { active, restartFiber, notifyShutdown } = yield* mutex.withPermits(1)(
+    const { active, restartFiber, externalWatcherFiber, notifyShutdown } = yield* mutex.withPermits(
+      1,
+    )(
       Effect.gen(function* () {
         const result = yield* SubscriptionRef.modify(state, (latest) => {
           const active = Option.map(latest.active, (run) =>
@@ -1062,6 +1133,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             {
               active,
               restartFiber: latest.restartFiber,
+              externalWatcherFiber: latest.externalWatcherFiber,
               notifyShutdown: latest.ready,
             },
             {
@@ -1070,6 +1142,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ready: false,
               active,
               restartFiber: Option.none<Fiber.Fiber<void, never>>(),
+              externalWatcherFiber: Option.none<Fiber.Fiber<void, never>>(),
+              isExternal: false,
+              externalPid: Option.none<number>(),
             },
           ] as const;
         });
@@ -1081,6 +1156,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       yield* (spec.onShutdown?.() ?? Effect.void).pipe(Effect.ignore);
     }
     yield* Option.match(restartFiber, {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
+    });
+    yield* Option.match(externalWatcherFiber, {
       onNone: () => Effect.void,
       onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
     });
@@ -1141,6 +1220,120 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
+  const probeHttpReady = Effect.fn("desktop.backendInstance.probeHttpReady")(function* (
+    httpBaseUrl: URL,
+  ) {
+    const readinessUrl = new URL(BACKEND_READINESS_PATH, httpBaseUrl).toString();
+    const isReady = yield* httpClient.execute(HttpClientRequest.get(readinessUrl)).pipe(
+      Effect.timeoutOption(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
+      Effect.flatMap((responseOption) =>
+        Option.match(responseOption, {
+          onNone: () => Effect.succeed(false),
+          onSome: (res) => Effect.succeed(res.status >= 200 && res.status < 300),
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+    return isReady;
+  });
+
+  const watchExternal = Effect.fn("desktop.backendInstance.watchExternal")(function* (
+    config: DesktopBackendStartConfig,
+    pid: Option.Option<number>,
+  ) {
+    const isProcessAlive = yield* ProcessLivenessProbe;
+    while (true) {
+      yield* Effect.sleep(EXTERNAL_LIVENESS_INTERVAL);
+      const current = yield* SubscriptionRef.get(state);
+      if (!current.isExternal || !current.ready) {
+        return;
+      }
+
+      const pidAlive = yield* Option.match(pid, {
+        onSome: (p) => isProcessAlive(p),
+        onNone: () => Effect.succeed(true),
+      });
+
+      const isAlive = pidAlive ? yield* probeHttpReady(config.httpBaseUrl) : false;
+
+      if (!isAlive) {
+        yield* logInstanceWarning("attached external backend is no longer running");
+        yield* mutex.withPermits(1)(
+          Effect.gen(function* () {
+            const { shouldRecover, wasReady } = yield* SubscriptionRef.modify(
+              state,
+              (
+                latest,
+              ): readonly [
+                { readonly shouldRecover: boolean; readonly wasReady: boolean },
+                BackendManagerState,
+              ] => {
+                if (!latest.isExternal || !latest.ready) {
+                  return [{ shouldRecover: false, wasReady: false }, latest];
+                }
+                return [
+                  { shouldRecover: latest.desiredRunning, wasReady: latest.ready },
+                  {
+                    ...latest,
+                    ready: false,
+                    isExternal: false,
+                    externalPid: Option.none(),
+                    externalWatcherFiber: Option.none(),
+                  },
+                ];
+              },
+            );
+
+            if (wasReady) {
+              yield* (spec.onShutdown?.() ?? Effect.void).pipe(Effect.ignore);
+            }
+
+            if (shouldRecover) {
+              yield* scheduleRestart("attached external server exited");
+            }
+          }),
+        );
+        return;
+      }
+    }
+  });
+
+  const attachExternal = Effect.fn("desktop.backendInstance.attachExternal")(function* (
+    config: DesktopBackendStartConfig,
+    pid: Option.Option<number> = Option.none(),
+  ) {
+    yield* cancelRestart;
+    yield* cancelExternalWatcher;
+    yield* SubscriptionRef.update(state, (latest) => ({
+      ...latest,
+      desiredRunning: true,
+      ready: true,
+      config: Option.some(config),
+      active: Option.none(),
+      restartAttempt: 0,
+      isExternal: true,
+      externalPid: pid,
+      externalWatcherFiber: Option.none(),
+    }));
+    yield* (spec.onReady?.(config.httpBaseUrl) ?? Effect.void).pipe(Effect.ignore);
+
+    const watcherFiber = yield* Effect.forkIn(
+      watchExternal(config, pid).pipe(
+        Effect.catchCause((cause) =>
+          logInstanceError("desktop backend external watcher failed", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+      parentScope,
+    );
+    yield* SubscriptionRef.update(state, (latest) =>
+      latest.isExternal && Option.isNone(latest.externalWatcherFiber)
+        ? { ...latest, externalWatcherFiber: Option.some(watcherFiber) }
+        : latest,
+    );
+  });
+
   const waitForReady = Effect.fn("DesktopBackendManager.waitForReady")(
     (timeout: Duration.Duration) =>
       SubscriptionRef.changes(state).pipe(
@@ -1164,5 +1357,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    attachExternal,
   } satisfies DesktopBackendInstance;
 });

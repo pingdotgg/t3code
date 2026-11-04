@@ -171,6 +171,33 @@ describe("server ownership", () => {
     }).pipe(Effect.provide(layerOwnership)),
   );
 
+  it.effect("persists desktop bootstrap credentials for local auto-attach", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-secret-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const desktopBootstrapSecret = "0123456789abcdef0123456789abcdef";
+      const desktopBootstrapToken = "desktop-token";
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: {
+          host: "127.0.0.1",
+          devUrl: undefined,
+          desktopBootstrapSecret,
+          desktopBootstrapToken,
+        },
+        port: 3773,
+      });
+      yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
+
+      const persisted = Option.getOrThrow(
+        yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath),
+      );
+      assert.equal(persisted.desktopBootstrapSecret, desktopBootstrapSecret);
+      assert.equal(persisted.desktopBootstrapToken, desktopBootstrapToken);
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
   it.effect("refuses a second owner without touching its record, then allows a restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

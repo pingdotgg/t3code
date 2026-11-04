@@ -122,6 +122,7 @@ interface MakeInstanceInput {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
   readonly onReady?: Effect.Effect<void>;
+  readonly onReadyUrl?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
   readonly onStateDirOwned?: Effect.Effect<void>;
   readonly onStartupFailure?: (
@@ -182,7 +183,11 @@ function makeTestInstance(input: MakeInstanceInput) {
     id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
     configResolve: input.configResolve ?? Effect.succeed(input.config ?? baseConfig),
-    ...(input.onReady ? { onReady: () => input.onReady! } : {}),
+    ...(input.onReadyUrl
+      ? { onReady: input.onReadyUrl }
+      : input.onReady
+        ? { onReady: () => input.onReady! }
+        : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
@@ -587,6 +592,119 @@ describe("DesktopBackendManager", () => {
         const restarted = yield* instance.snapshot;
         assert.equal(restarted.desiredRunning, true);
         assert.deepEqual(restarted.activePid, Option.some(123));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("attaches to an external server without spawning or terminating a process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let spawnCount = 0;
+        let killCount = 0;
+        const readyUrls: URL[] = [];
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => {
+              spawnCount += 1;
+              return Effect.succeed(
+                makeProcess({
+                  kill: () =>
+                    Effect.sync(() => {
+                      killCount += 1;
+                    }),
+                }),
+              );
+            }),
+          ),
+          onReadyUrl: (httpBaseUrl) =>
+            Effect.sync(() => {
+              readyUrls.push(httpBaseUrl);
+            }),
+        });
+        const externalConfig = {
+          ...baseConfig,
+          httpBaseUrl: new URL("http://127.0.0.1:4545"),
+        };
+
+        yield* instance.attachExternal(externalConfig, Option.some(process.pid));
+
+        const attached = yield* instance.snapshot;
+        assert.isTrue(attached.ready);
+        assert.isTrue(attached.desiredRunning);
+        assert.isTrue(attached.isExternal);
+        assert.deepEqual(attached.activePid, Option.some(process.pid));
+        assert.deepEqual(yield* instance.currentConfig, Option.some(externalConfig));
+        assert.deepEqual(
+          readyUrls.map((url) => url.href),
+          ["http://127.0.0.1:4545/"],
+        );
+
+        yield* instance.start;
+        assert.equal(spawnCount, 0);
+
+        yield* instance.stop();
+        assert.equal(spawnCount, 0);
+        assert.equal(killCount, 0);
+        const stopped = yield* instance.snapshot;
+        assert.isFalse(stopped.ready);
+        assert.isFalse(stopped.desiredRunning);
+      }),
+    ),
+  );
+
+  it.effect("invalidates external attachment and recovers when the attached server stops", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let externalHealthy = true;
+        let spawnCount = 0;
+        let shutdownCount = 0;
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.sync(() => {
+                spawnCount += 1;
+                return makeProcess({ exitCode: Effect.never });
+              }),
+            ),
+          ),
+          httpClientLayer: layerHttpClient((request) =>
+            Effect.sync(() => {
+              if (request.url.startsWith("http://127.0.0.1:4545/")) {
+                return responseForRequest(request, externalHealthy ? 200 : 503);
+              }
+              return responseForRequest(request, 200);
+            }),
+          ),
+          onShutdown: Effect.sync(() => {
+            shutdownCount += 1;
+          }),
+        });
+        const externalConfig = {
+          ...baseConfig,
+          httpBaseUrl: new URL("http://127.0.0.1:4545"),
+        };
+
+        yield* instance.attachExternal(externalConfig, Option.some(process.pid));
+        assert.isTrue((yield* instance.snapshot).ready);
+        assert.isTrue((yield* instance.snapshot).isExternal);
+
+        externalHealthy = false;
+        yield* TestClock.adjust(Duration.seconds(1));
+
+        const afterLoss = yield* instance.snapshot;
+        assert.isFalse(afterLoss.ready);
+        assert.isUndefined(afterLoss.isExternal);
+        assert.deepEqual(afterLoss.activePid, Option.none());
+        assert.isTrue(afterLoss.restartScheduled);
+        assert.equal(shutdownCount, 1);
+
+        yield* TestClock.adjust(Duration.millis(500));
+        assert.equal(spawnCount, 1);
+        const recovered = yield* instance.snapshot;
+        assert.isTrue(recovered.ready);
+        assert.deepEqual(recovered.activePid, Option.some(123));
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

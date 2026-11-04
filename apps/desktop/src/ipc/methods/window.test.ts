@@ -74,6 +74,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartScheduled: false,
   }),
   waitForReady: () => Effect.succeed(true),
+  attachExternal: () => Effect.void,
 };
 
 const backendConfigurationLayer = Layer.succeed(
@@ -82,7 +83,7 @@ const backendConfigurationLayer = Layer.succeed(
     resolvePrimary: Effect.die("unexpected resolvePrimary"),
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),
-    currentBootstrapToken: Effect.succeed("current-window-token"),
+    bootstrapTokenForSecret: (secret: string) => Effect.succeed(`derived-${secret}`),
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 
@@ -90,7 +91,7 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
-  it.effect("hands out the current window's token to a backend launched with the secret", () =>
+  it.effect("derives each secret-backed backend's token from its own secret", () =>
     Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
 
@@ -101,7 +102,15 @@ describe("getLocalEnvironmentBootstraps", () => {
           runningDistro: "Ubuntu",
           httpBaseUrl: "http://127.0.0.1:3774/",
           wsBaseUrl: "ws://127.0.0.1:3774/",
-          bootstrapToken: "current-window-token",
+          bootstrapToken: "derived-desktop-secret",
+        },
+        {
+          id: "wsl:other",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          bootstrapToken: "derived-other-secret",
         },
       ]);
     }).pipe(
@@ -114,6 +123,17 @@ describe("getLocalEnvironmentBootstraps", () => {
               bootstrap: {
                 ...readyWslConfig.bootstrap,
                 desktopBootstrapSecret: "desktop-secret",
+              },
+            }),
+          },
+          {
+            ...defaultWslInstance,
+            id: DesktopBackendManager.BackendInstanceId("wsl:other"),
+            currentConfig: Effect.succeedSome({
+              ...readyWslConfig,
+              bootstrap: {
+                ...readyWslConfig.bootstrap,
+                desktopBootstrapSecret: "other-secret",
               },
             }),
           },

@@ -268,8 +268,35 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
         assert.equal(
-          yield* configuration.currentBootstrapToken,
+          yield* configuration.bootstrapTokenForSecret(
+            first.bootstrap.desktopBootstrapSecret ?? "",
+          ),
           first.bootstrap.desktopBootstrapToken,
+        );
+      }),
+    ),
+  );
+
+  it.effect("bootstrapTokenForSecret derives per secret without replacing the launch secret", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const attachedSecret = "0123456789abcdef0123456789abcdef";
+
+        assert.equal(
+          yield* configuration.bootstrapTokenForSecret(attachedSecret),
+          currentDesktopBootstrapToken(attachedSecret, yield* Clock.currentTimeMillis),
+        );
+
+        const resolved = yield* configuration.resolvePrimary;
+        assert.match(resolved.bootstrap.desktopBootstrapSecret ?? "", /^[0-9a-f]{64}$/i);
+        assert.notEqual(resolved.bootstrap.desktopBootstrapSecret, attachedSecret);
+        assert.equal(
+          resolved.bootstrap.desktopBootstrapToken,
+          currentDesktopBootstrapToken(
+            resolved.bootstrap.desktopBootstrapSecret ?? "",
+            yield* Clock.currentTimeMillis,
+          ),
         );
       }),
     ),
