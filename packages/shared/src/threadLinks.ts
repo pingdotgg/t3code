@@ -18,59 +18,61 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
   "g",
 );
 
-// Pair equal-length backtick runs once, then skip complete spans. Each label is scanned
-// linearly; a rejected label resumes at its unmatched opener so code outside it stays shielded.
-function unmatchedLabelBacktick(
-  label: string,
-  hasCloser: (position: number) => boolean,
-): number | undefined {
-  const runs = [...label.matchAll(/`+/g)];
+// Maps each backtick run to the start of its closer: the next run of the same length on its line.
+// A run without one is literal Markdown text.
+function backtickClosers(markdown: string): ReadonlyMap<number, number> {
+  const closers = new Map<number, number>();
   const next = new Map<number, number>();
-  const closing: Array<number | undefined> = [];
+  const runs = [...markdown.matchAll(/`+|\n/g)];
   for (let index = runs.length - 1; index >= 0; index--) {
-    const length = runs[index]![0].length;
-    closing[index] = next.get(length);
-    next.set(length, index);
+    const run = runs[index]!;
+    if (run[0] === "\n") next.clear();
+    else {
+      const closer = next.get(run[0].length);
+      if (closer !== undefined) closers.set(run.index, closer);
+      next.set(run[0].length, run.index);
+    }
   }
-  for (let index = 0; index < runs.length;) {
-    const end = closing[index];
-    if (end === undefined) {
-      if (hasCloser(runs[index]!.index)) return runs[index]!.index;
-      index++;
-    } else index = end + 1;
+  return closers;
+}
+
+// The opener of a code span that starts in the label but closes past it. Spans closing inside
+// the label are skipped whole, so each label is scanned once.
+function spanLeavingLabel(
+  markdown: string,
+  start: number,
+  end: number,
+  closers: ReadonlyMap<number, number>,
+): number | undefined {
+  const run = /`+/g;
+  run.lastIndex = start;
+  for (let found = run.exec(markdown); found && found.index < end; found = run.exec(markdown)) {
+    const closer = closers.get(found.index);
+    if (closer === undefined) continue;
+    if (closer >= end) return found.index;
+    run.lastIndex = closer + found[0].length;
   }
   return undefined;
 }
 
+// Such a span wins over the link, as in Markdown: scanning resumes at its opener, where the
+// span alternative shields its contents.
 function* threadLinkMatches(markdown: string) {
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  let spanOpeners: Set<number> | undefined;
+  let closers: ReadonlyMap<number, number> | undefined;
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
     const label = match.groups?.label;
-    const labelStart = match.index + 1;
-    const hasCloser = (position: number) => {
-      // Index possible closers once; a backtick without one is literal Markdown text.
-      if (spanOpeners === undefined) {
-        spanOpeners = new Set<number>();
-        const lengths = new Set<number>();
-        const runs = [...markdown.matchAll(/`+|\n/g)];
-        for (let index = runs.length - 1; index >= 0; index--) {
-          const run = runs[index]!;
-          if (run[0] === "\n") lengths.clear();
-          else {
-            if (lengths.has(run[0].length)) spanOpeners.add(run.index);
-            lengths.add(run[0].length);
-          }
-        }
-      }
-      return spanOpeners.has(labelStart + position);
-    };
-    const unmatched = label === undefined ? undefined : unmatchedLabelBacktick(label, hasCloser);
-    if (unmatched !== undefined) {
-      pattern.lastIndex = labelStart + unmatched;
-      continue;
-    }
-    yield match;
+    const start = match.index + 1;
+    const opener = label?.includes("`")
+      ? spanLeavingLabel(
+          markdown,
+          start,
+          start + label.length,
+          (closers ??= backtickClosers(markdown)),
+        )
+      : undefined;
+    if (opener === undefined) yield match;
+    else pattern.lastIndex = opener;
   }
 }
 
