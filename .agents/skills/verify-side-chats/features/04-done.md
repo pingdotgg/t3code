@@ -16,14 +16,15 @@ Done finishes an active side chat and leaves an outcome note; discard removes it
 
 ## Driving it with the Browser panel
 
-Preconditions: the side chat has at least one user message; keep a disposable chat for discard.
+Preconditions: an open side chat with at least one sent message and a finished reply.
 
-- **Finish.** Call `preview_click` `{role:"button", name:"Done", exact:true}`. `preview_wait_for` the panel, then `preview_snapshot`; it shows the finished state and a status such as `Writing note…`, `Goes with your next lesson message: …`, `Sent to lesson: …`, or `No note needed`.
-- **Server proof.** Reload the lesson with `preview_navigate` to its current URL and `preview_snapshot`. The finished state/status must persist; a transient click or toast is insufficient.
-- **Discard.** Open **More side chat actions** with `preview_click` `{role:"button", name:"More side chat actions"}`, then `preview_click` `{role:"menuitem", name:"Discard"}`. Snapshot shows the panel closed and the discarded mark absent from the map.
-- **Reopen.** Open the finished chat from its map row/mark, select a reply, and `preview_click` `{role:"button", name:"Ask in side chat"}`. Snapshot shows the same side-chat path with an open composer; this fails if Done was ignored.
+- **Finish.** `preview_click` `[aria-label="Side chat"] >> role=button[name='Done'] >> nth=0`. The tab closes; the panel moves to another chat or closes.
+- **Server proof.** `preview_navigate` to the lesson URL, `preview_click` `role=button[name='Side-chat map']`, then `preview_click` the chat's `role=treeitem[name=/^<label>/]`. `preview_wait_for` `[aria-label="Side chat"] >> text=/Goes with your next lesson message|No note needed|Couldn't write the note/` (30 s). This status line only shows for a chat the server marked done, so it fails when Done is ignored.
+- **Discard.** In a disposable chat, `preview_click` `role=button[name='More side chat actions']`, then `role=menuitem[name='Discard']`. Its treeitem disappears from the map.
+- **Reopen.** In the finished chat, send a message. The status line disappears and the reply arrives.
 
 ## Gotchas
 
-- Done closes the tab while its note is written in the background; wait for the status or reload before judging.
-- An empty, never-written chat may be deleted on close; use a message-bearing chat to prove Done.
+- Done closes the tab while the note is written in the background. Judge only after the reopen and the status line, never from the click.
+- An empty, never-written chat may be deleted on close. Use a chat with a message to prove Done.
+- Acceptance check (APP-4): with `dispatchSideChatDone` in `apps/server/src/orchestration-v2/Orchestrator.ts` returning early for non-discard Done, **Server proof** times out. Never commit that.

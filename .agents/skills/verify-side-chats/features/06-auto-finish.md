@@ -15,13 +15,12 @@ Sending a lesson message finishes open side chats that have messages, while a si
 
 ## Driving it with the Browser panel
 
-Preconditions: one open side chat with a user message and one side chat whose answer is visibly running.
+Preconditions: a second side chat left open with a sent message and a finished reply (not Done).
 
-- **Idle.** Call `preview_click` `{role:"textbox", name:"Lesson message"}`, `preview_type` `Next`, `preview_press` `Enter`; `preview_wait_for` the lesson run and `preview_snapshot`. The idle side chat no longer has an open state and its map row is done.
-- **Busy.** Before the answer settles, snapshot the busy `{role:"region", name:"Side chat"}`; after the same lesson send, it still shows its running composer/status. When it settles, snapshot again and require a finished state.
-- **Proof.** Reload with `preview_navigate` and snapshot the map; idle chat remains done, so the server-side auto-Done was applied.
+- **Idle.** Send a lesson message (feature 5's **Deliver** does this). Open the second chat from the map: it now shows a status line (`Goes with…`, `Sent to lesson…`, `No note needed` or `Couldn't write the note`), so the lesson send finished it.
+- **Busy.** Start a long Haiku turn in a side chat (feature 7 **Steer** prompt), and while it shows `Working`, send a lesson message. The busy chat keeps running with no status line, then finishes after its reply settles.
 
 ## Gotchas
 
-- An empty side chat with no user message can close without a note; use a message-bearing chat.
-- Replay streams quickly; take the busy snapshot before it reaches its terminal state.
+- An empty side chat with no user message can close without a note. Use a chat that has a message.
+- Replay turns finish in about 2 s, too fast to catch the busy case. Use Haiku for **Busy**.

@@ -16,13 +16,12 @@ A completed side chat writes a concise note that the next lesson message receive
 
 ## Driving it with the Browser panel
 
-Preconditions: a finished side chat with a generated note; use Haiku if Replay only produces `No note needed`/`Couldn't write the note`.
+Preconditions: feature 4 left a finished chat whose status reads `Goes with your next lesson message: <note>`.
 
-- **Ready.** `preview_click` `{role:"button", name:"Done", exact:true}`; `preview_wait_for` the side-chat status and `preview_snapshot`. It reads `Goes with your next lesson message: <note>`.
-- **Deliver.** `preview_click` the lesson composer `{role:"textbox", name:"Lesson message"}`, `preview_type` `Continue`, then `preview_press` `Enter`. Snapshot the lesson timeline; it shows the next run/context divider with the side-chat note or `Adding side-chat note…` while waiting. Expand `{role:"button", name:"Side chat context: show what the AI was given"}` to inspect the handoff text.
-- **Confirm.** Reopen the side chat via its map treeitem or mark and snapshot. Its status reads `Sent to lesson: <note>`; this second view proves delivery rather than a local draft.
+- **Deliver.** `preview_type` `Continue` into `role=textbox[name='Message <lesson title>']` (for example `Message Replay: showcase`), then `preview_press` `Enter`.
+- **Confirm.** `preview_wait_for` text `Sent to lesson` (30 s). Reopen the chat from the map after a reload and check that the status still reads `Sent to lesson: <note>`.
 
 ## Gotchas
 
-- Notes are optional and asynchronous; the 15-second `SIDE_CHAT_WAIT_CAP_MS` is a deadline, not a sleep to add to the recipe.
-- A failed note is visible as `Couldn't write the note`; record that reason instead of claiming delivery.
+- Notes are written even with Replay side chats; the note comes from the text-generation model. `Couldn't write the note` is a failure to record, not a pass.
+- The lesson composer is named after the thread title, not `Lesson message`.

@@ -1,47 +1,75 @@
 ---
 name: verify-side-chats
-description: Verify T3 Learn side chats through the web UI in T3's Browser panel after any PR that changes side-chat behaviour, or to check main.
+description: Verify T3 Learn side chats end to end in the web UI through T3's Browser panel. Use after any PR that changes side-chat behaviour, or to check that main still works.
 ---
 
 # Verify T3 Learn side chats
 
-Use this skill to prove T3 Learn side chats end to end in the real web UI. Read `features/README.md`, then run the features in order. The mobile app shows no side chats (D18); mobile is out of scope here.
+Drive the real web app the way a learner does and prove each side-chat feature in `features/`. Mobile lists no side chats (D18), so it is out of scope.
 
 ## Launch
 
-The parent verification thread owns the QA checkout and Browser panel. Never start a server in a child or run against `~/.t3/userdata`.
+Only App's own thread uses the QA checkout. Children never start servers. Never point a server at `~/.t3/userdata`.
 
-1. Read the Holder line in `/home/quokka/t3-learn-team/STATE.md`. In the QA checkout, load the SHA under test:
-   `git -C /home/quokka/.t3/projects/t3-sidechat-qa checkout --detach <sha>`.
-2. Restart the QA server: `systemctl --user restart t3learn-qa-dev.service`.
-   If it is not loaded, run `systemctl --user reset-failed t3learn-qa-dev.service`, then:
-   `systemd-run --user --collect --unit=t3learn-qa-dev -p MemoryMax=6G -p MemorySwapMax=0 -p WorkingDirectory=/home/quokka/.t3/projects/t3-sidechat-qa --setenv=T3CODE_DEV_SEED=0 --setenv=PATH="$PATH" /home/quokka/.local/share/vite-plus/bin/vp run dev`.
-3. Read the actual ports: `journalctl --user -u t3learn-qa-dev | grep dev-runner`.
-4. Pair from the QA checkout with:
-   `env -u T3CODE_HOME -u T3_BOOT_SERVICE_UNIT -u T3_SERVICE_LAUNCHER_CONTEXT node apps/server/src/bin.ts pair --base-dir /home/quokka/.t3/projects/t3-sidechat-qa/.t3`.
-   Put the resulting URL only into `preview_navigate`.
-5. Any other checkout may use `vp run dev` as documented by `test-t3-app`; never use the live userdata directory.
+1. Take the QA Holder line in `/home/quokka/t3-learn-team/STATE.md`, then load the commit:
+   `git -C /home/quokka/.t3/projects/t3-sidechat-qa checkout --detach <sha>`, and run `vp i` in that checkout.
+2. `systemctl --user restart t3learn-qa-dev.service`. If the unit isn't loaded, run `systemctl --user reset-failed t3learn-qa-dev.service`, then:
+   `systemd-run --user --collect --unit=t3learn-qa-dev -p MemoryMax=6G -p MemorySwapMax=0 -p WorkingDirectory=/home/quokka/.t3/projects/t3-sidechat-qa --setenv=T3CODE_DEV_SEED=0 --setenv=PATH="$PATH" /home/quokka/.local/share/vite-plus/bin/vp run dev`
+3. Ready when `journalctl --user -u t3learn-qa-dev | grep dev-runner` prints `serverPort=… webPort=…` and both ports answer `curl`.
+4. Pair from the QA checkout: `env -u T3CODE_HOME -u T3_BOOT_SERVICE_UNIT -u T3_SERVICE_LAUNCHER_CONTEXT node apps/server/src/bin.ts pair --base-dir /home/quokka/.t3/projects/t3-sidechat-qa/.t3`. Pass the `http://localhost:<webPort>/pair#token=…` URL only to `preview_open` or `preview_navigate`. Never write it anywhere.
 
-The free `Replay (dev)` provider is the default for agent turns: use `preview_evaluate` with `window.t3dev.replay("showcase")`, or the `thread start --provider devReplay --model showcase` command from `test-t3-app`. The showcase transcript has no side-chat opening-summary or note-writing scenario. For those assertions, use Claude Haiku only when the live run needs real text generation; otherwise record the visible fallback (`The lesson summary is unavailable.` / `No note needed` or `Couldn't write the note`) and why. `sideChatOpening.ts` and `SideChatOpeningService.ts` wait at most `SIDE_CHAT_WAIT_CAP_MS` (15 seconds); notes use the same cap after Done or send (`notes.ts`/`SideChatLifecycleService.ts`).
+Another checkout can use `vp run dev` instead, as described in [test-t3-app](../test-t3-app/SKILL.md).
 
 ## Doctor
 
-Run one read-only check before driving: `systemctl --user is-active t3learn-qa-dev.service; ss -H -ltnp; git -C /home/quokka/.t3/projects/t3-sidechat-qa rev-parse HEAD; read `/proc/<web-or-server-pid>/cwd`from the PIDs shown by`ss`and require the QA checkout and requested SHA. In the Browser panel,`preview_snapshot`must show the signed-in T3 Learn app. If any check fails, stop and record the reason in`result.md`.
+Read-only checks to run before the first drive and after anything surprising:
+
+- `systemctl --user is-active t3learn-qa-dev.service` prints `active`.
+- `ss -H -ltnp | grep -E ':(<serverPort>|<webPort>) '` shows both ports. `readlink /proc/<pid>/cwd` for each pid is inside the QA checkout.
+- `git -C /home/quokka/.t3/projects/t3-sidechat-qa rev-parse HEAD` is the sha under test, and `git status --short` is empty.
+- In the Browser panel the page title is `T3 Learn (Dev)` and the sidebar lists threads. A pairing page means you need a new token.
 
 ## Drive
 
-Call `preview_status` first. If no automation-capable tab is attached, call `preview_open`; navigate once with the complete pairing URL, then keep that tab. Use `preview_snapshot` to obtain current handles and `preview_click`, `preview_type`, `preview_press`, `preview_select`, `preview_evaluate`, `preview_wait_for`, `preview_hover`, `preview_drag`, and `preview_scroll` for actions. Prefer the exact ARIA handles in the feature files; do not use coordinates or internal setters.
+Use the Browser panel tools (`preview_open`, `preview_navigate`, `preview_click`, `preview_type`, `preview_press`, `preview_upload`, `preview_wait_for`, `preview_evaluate`, `preview_snapshot`). Prefer the role and `aria-label` handles in the feature files. `preview_evaluate` output is the quickest way to read state, because snapshots of this app run past 20 KB.
+
+Agent turns use the free `Replay (dev)` provider. The side-chat model picker offers its scenarios: `Showcase`, `Plan and reads`, `Write approval`, `Question` and `Multi turn`. Use Claude Haiku 4.5, chosen through Settings (feature 8), only for steer, the busy auto-finish case and HTML cards. Notes and summaries come from the text-generation model, so they work with Replay. The opening divider reads `Side chat context (summary unavailable)`.
+
+`select` snippet: the toolbar only appears for a sub-range of one paragraph text node, never for a whole element or list item:
+
+```js
+(async () => {
+  const m = document.querySelector(
+    '[data-assistant-citation-viewport="true"] [data-message-role="assistant"]',
+  );
+  const w = document.createTreeWalker(m, NodeFilter.SHOW_TEXT);
+  let t;
+  while ((t = w.nextNode()) && !t.data.includes(PHRASE));
+  const i = t.data.indexOf(PHRASE),
+    r = document.createRange();
+  r.setStart(t, i);
+  r.setEnd(t, i + PHRASE.length);
+  getSelection().removeAllRanges();
+  getSelection().addRange(r);
+  await new Promise((ok) => setTimeout(ok, 600));
+  return [...document.querySelectorAll("button")].some(
+    (b) => b.getAttribute("aria-label") === "Ask in side chat",
+  );
+})();
+```
+
+Replace `PHRASE` with a quoted string. To select inside a side chat, prefix the selector with `[aria-label="Side chat"] `.
 
 ## Evidence
 
-For every feature, capture one screenshot and one ARIA snapshot after the action and resulting state with `preview_snapshot`, under `~/side-chat-e2e/verify/<date>-<sha>/`. Record feature, entry point, pass/fail, and reason in `result.md`. A click alone is not proof: reopen or refresh to prove persistence, note delivery, finished state, or the rendered card/media. Keep evidence outside the repository.
+Write to `~/side-chat-e2e/verify/<date>-<sha>/`, outside the repo. For each feature, keep the `preview_evaluate` result that shows the end state and one `preview_snapshot` (`save: true`, then copy the PNG in). `result.md` has one row per feature: pass, fail or unreachable, plus what you observed. Clicks don't prove anything; reopen or reload and read the state.
 
 ## Cleanup
 
-Preserve the evidence directory. Stop only the QA unit you started with `systemctl --user stop t3learn-qa-dev.service`; never kill by process name and never delete evidence. Release the QA Holder line in `STATE.md`. The parent thread performs launch, doctor, live proof, and cleanup; this generated skill is the recipe it follows.
+Put back the settings you changed (feature 8 **Restore**). Run `systemctl --user stop t3learn-qa-dev.service`, release the Holder line, and leave the evidence directory alone. Kill only PIDs you started; never kill by name.
 
 ## Run it
 
-doctor → features 1→11 → `result.md`
+Doctor → features 1 to 11 in order (`features/README.md`) → `result.md`.
 
-Keeping it current: every PR that changes side-chat behaviour updates the matching feature file (pstack `maintain-verification-skill`).
+Keep it current: every PR that changes side-chat behaviour updates the matching feature file in the same PR. A periodic audit follows pstack's `maintain-verification-skill`.

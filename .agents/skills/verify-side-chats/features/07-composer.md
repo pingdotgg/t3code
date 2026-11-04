@@ -17,14 +17,14 @@ The side-chat composer sends a message, queues a message behind a running turn, 
 
 ## Driving it with the Browser panel
 
-Preconditions: an open side chat with a working provider.
+Preconditions: an open side chat. Pick a turn's scenario with `role=button[name='Choose side chat model']`; Replay offers `Showcase` (pauses on an approval), `Plan and reads`, `Write approval`, `Question` and `Multi turn`.
 
-- **Send.** `preview_click` `{role:"textbox", name:"Side chat message"}`, `preview_type` `Explain this`, `preview_press` `Enter`; `preview_wait_for` a new timeline item and snapshot. The prompt and reply appear in the side chat.
-- **Queue.** Start another turn, then `preview_type` a second prompt and `preview_click` `{role:"button", name:"Queue message"}` (or use the configured alternate key). Snapshot shows a queued item and `QueuedRunsControl` output.
-- **Steer.** During a running turn, `preview_click` `{role:"button", name:"Steer message"}` after typing a replacement. Snapshot shows the new prompt as the active dispatch.
-- **Stop.** During a running turn, `preview_click` `{role:"button", name:"Stop"}`. `preview_wait_for` the running indicator to disappear; snapshot shows the interrupted/settled turn and no Stop button.
+- **Send.** `preview_type` into `role=textbox[name='Side chat message']`, then `preview_click` `role=button[name='Send side chat message']`. The prompt and reply appear.
+- **Queue.** On `Showcase`, wait for `Approve` to show, type a second prompt and `preview_click` `role=button[name='Queue message']`. The panel shows `1 queued` with `Send now`, `Edit queued message`, `Remove queued message`. (Without an approval, Ctrl/⌘-click `Steer message` queues.)
+- **Stop.** With an empty draft during the run, `preview_click` `role=button[name='Stop']`. The timeline shows `Run interrupted · Stopped by user`; the queued message stays held until `Send now`.
+- **Steer.** Choose Haiku 4.5 (via Settings, feature 8; the picker only lists the chat's provider). Send `Write a 600-word essay on the history of the clamp function across programming languages.`, type `Actually stop and just reply OK.`, then click `role=button[name='Steer message']` as soon as it appears (`preview_evaluate` `document.querySelector('[aria-label="Side chat"] button[aria-label="Steer message"]')?.click()`). The timeline shows a `Steer` tag and the reply `OK.`.
 
 ## Gotchas
 
-- The send button changes its accessible name with run state; always snapshot immediately before clicking.
-- Queueing is disabled while starting or when a pending approval/input owns the composer.
+- The send button's name changes with run state (`Send side chat message`, `Steer message`, `Queue message`, `Stop`). Read it just before clicking.
+- A pending approval turns Steer into Queue. Replay scenarios end in under 2 s or stop at an approval, so steer needs Haiku.

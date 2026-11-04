@@ -6,26 +6,24 @@ Opening a side chat from a lesson highlight keeps the selected excerpt and its s
 
 - `opening-selection` opens from the text-selection toolbar.
 - `opening-shortcut` opens from the registered Ask-in-side-chat selection shortcut.
-- `opening-slash` opens `/side` or `/btw` from the lesson composer.
 - `opening-panel` shows the quoted excerpt and context divider.
 
 ## How to get to it (user POV)
 
 - Select words in an assistant lesson reply and choose **Ask in side chat**.
-- With the selection still live, press the configured Ask-in-side-chat shortcut (`Mod+Alt+S`, shown in onboarding/keybindings).
-- Type `/side` or `/btw` in the lesson composer and submit it.
+- With the selection still live, press the configured Ask-in-side-chat shortcut (`Mod+Alt+S`).
 
 ## Driving it with the Browser panel
 
-Preconditions: a signed-in lesson reply is visible and side chats are offered.
+Preconditions: a lesson with a finished assistant reply (the QA lesson `Replay: showcase` works).
 
-- **Selection.** Select text with `preview_evaluate` (`window.getSelection().selectAllChildren(document.querySelector('[data-assistant-citation-viewport="true"] [data-message-role="assistant"]'))`), then `preview_snapshot`; call `preview_click` on the button `{role:"button", name:"Ask in side chat"}`. A `{role:"region", name:"Side chat"}` opens, its `{role:"button", name:"Show this highlight where it was asked"}` contains the excerpt, and the timeline shows `Side chat context`; `preview_click` `{role:"button", name:"Side chat context: show what the AI was given"}` and snapshot the quoted opening context.
-- **Shortcut.** Re-select a shorter phrase with `preview_evaluate`, then `preview_press` `Meta+Alt+S` on macOS or `Control+Alt+S` elsewhere. `preview_snapshot` shows the same `Side chat` region and quoted excerpt.
-- **Slash entry.** `preview_click` `{role:"textbox", name:"Lesson message"}`, `preview_type` `/side`, `preview_press` `Enter`; snapshot shows a new `Side chat` panel with the prompt. Repeat with `/btw` if the first command is supported.
-- **Proof.** Call `preview_snapshot` with the feature screenshot and ARIA paths. The excerpt and divider must remain after `preview_wait_for` the panel, not only during the starting state.
+- **Selection.** Select a fresh phrase with the SKILL.md `select` snippet, then `preview_click` `role=button[name='Ask in side chat']`. The `Side chat` region opens; `[aria-label="Side chat path"]` reads `Lesson > <phrase>` and the panel asks `What do you want to know about “<phrase>”?`.
+- **Shortcut.** Select another fresh phrase, blur the composer (`document.activeElement.blur()` in the same snippet), then `preview_press` `s` with modifiers `["Control","Alt"]` (`Meta` on macOS). The path reads `Lesson > <new phrase>`.
+- **Proof.** `preview_snapshot` with `save: true`; copy the PNG into the evidence directory.
 
 ## Gotchas
 
-- The source selector must be a real assistant message; if `[data-assistant-citation-viewport="true"] [data-message-role="assistant"]` is absent, fail with the missing lesson-reply precondition.
-- A streaming reply blocks Ask; wait for the completed reply.
-- Opening summaries may show `The lesson summary is unavailable.` with Replay; use Haiku to prove generated opening text.
+- Selecting a whole element (`selectAllChildren`, triple-click) or list-item text shows no toolbar. Select part of one paragraph text node.
+- A phrase inside an existing side chat's highlight reopens that chat instead of opening a new one. Pick text nobody has asked about yet.
+- Upstream's `/side` and `/btw` are hidden in T3 Learn (APP-3), so they are not entry points.
+- With Replay the context divider reads `Side chat context (summary unavailable)`. That is expected, not a failure.

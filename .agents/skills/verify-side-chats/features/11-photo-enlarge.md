@@ -9,18 +9,17 @@ A photo in a side-chat reply opens in an enlarged viewer without distortion, and
 
 ## How to get to it (user POV)
 
-- Ask for or receive an image in a side-chat reply and choose its **Preview <alt>** control.
+- Send a photo in a side chat and choose its **Preview <filename>** control.
 - Attach an image with **Attach images**, then choose its **Preview <filename>** thumbnail.
 
 ## Driving it with the Browser panel
 
-Preconditions: a side chat with a rendered image and a disposable local image for the composer.
+Preconditions: an open side chat; fixture `~/side-chat-e2e/verify/fixtures/photo-480x300.png` (any 480×300 PNG).
 
-- **Reply photo.** `preview_click` `{role:"button", name:"Preview <alt>"}`. `preview_snapshot` shows dialog title `Expanded <alt> preview`, an image with the original aspect ratio, and a close button; record screenshot and ARIA snapshot.
-- **Return.** `preview_press` `Escape`; snapshot shows the side-chat reply and no expanded dialog.
-- **Composer thumbnail.** `preview_click` `{role:"button", name:"Attach images"}`, use `preview_evaluate` to set the file chooser only if the panel exposes it, then `preview_snapshot` and click `{role:"button", name:"Preview <filename>"}`. The same `Expanded <filename> preview` dialog opens; `preview_press` `Escape` returns to the draft.
+- **Composer thumbnail.** `preview_upload` with `locator` `[aria-label="Side chat"] input[type=file]` and the fixture path, then `preview_click` `role=button[name='Preview photo-480x300.png']`. In a 1280×800 tab the dialog's `img` measures about 1024×640 (filled, ratio 1.6 kept); before PR #39 it was 480×300. `preview_press` `Escape`.
+- **Sent photo.** Send the message, then `preview_click` `[aria-label="Side chat"] >> role=button[name='Preview photo-480x300.png']`. Same 1024×640.
 
 ## Gotchas
 
-- The exact Preview name comes from the image alt text or filename; obtain it from the ARIA snapshot instead of guessing.
-- If no image provider/scenario or file chooser is available, record the unmet precondition and do not claim photo enlargement.
+- Measure with `preview_evaluate` `document.querySelector('[role=dialog] img').getBoundingClientRect()`. A screenshot alone can't show the fill.
+- Markdown images in a user's own message text don't fill yet (APP-20). That is a known gap, not a regression.

@@ -18,14 +18,14 @@ HTML embeds support asking about selected text, asking about the whole embed fro
 
 ## Driving it with the Browser panel
 
-Preconditions: a newly generated HTML embed (embeds saved before APP-16/PR #32 have no bridge); wait for its iframe bridge.
+Preconditions: an HTML embed with readable text, made after PR #32 (QA has the `APP-16 QA embed lesson` lesson).
 
-- **Highlight.** `preview_evaluate` select text inside the iframe, `preview_snapshot`, then `preview_click` `{role:"button", name:"Ask in side chat"}` in `{role:"toolbar", name:"Selection actions"}`. The side chat opens with the embed title and selected text in its excerpt.
-- **Corner.** `preview_click` the iframe's corner `{role:"button", name:"Ask in side chat"}`. Snapshot shows a side chat excerpt containing the embed title and text.
-- **Full screen.** `preview_click` `{role:"button", name:"Open full screen"}`; snapshot shows the full-screen dialog/embed. Click its `{role:"button", name:"Ask in side chat"}` and require the dialog to close and the side chat excerpt to update.
-- **Nested.** In a side-chat reply, repeat the iframe selection and `preview_click` the toolbar Ask button. `preview_snapshot` shows the child breadcrumb and embed excerpt.
+- **Highlight.** `preview_click` with `locator` `role=region[name='Conversation'] >> iframe[title='<title>'] >> internal:control=enter-frame >> p >> nth=0` and `clickCount: 3`. A text button `Ask in side chat` appears over the selection; `preview_click` `role=button[name='Ask in side chat'] >> text=Ask in side chat`. The path reads `Lesson > <selected text…>`.
+- **Corner and full screen.** Hover an embed or card, `preview_click` `role=button[name='Open full screen']`, then the dialog's `role=dialog >> role=button[name='Ask in side chat']`. The dialog closes and a side chat opens quoting the embed title and its visible text.
+- **Nested.** Do **Corner and full screen** on a card inside a side chat (feature 10's card). The path gains a third crumb.
 
 ## Gotchas
 
-- Older published embeds lack the bridge and expose neither selection nor corner Ask; record the artifact age/build and fail that precondition.
-- There may be multiple `Ask in side chat` buttons; scope the click to `Selection actions`, the embed frame wrapper, or full-screen dialog from the snapshot.
+- Embeds published before PR #32 have no bridge, so they show no corner button and highlights in them do nothing. Record the embed's age instead of failing the feature.
+- Text in SVG does not select by clicking. Use an HTML text element.
+- The icon-only corner button and the text button share the name `Ask in side chat`. Scope the click with `text=` or `role=dialog`.

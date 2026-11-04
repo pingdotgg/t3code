@@ -6,7 +6,7 @@ This directory is the maintained source for proving T3 Learn side chats in the w
 
 - The parent thread has loaded the requested SHA in `/home/quokka/.t3/projects/t3-sidechat-qa` and paired the QA dev server.
 - `preview_snapshot` shows the signed-in T3 Learn web app and a lesson with an assistant reply; use `Replay (dev)` for ordinary turns.
-- Use Claude Haiku when opening summaries or notes need real text generation; Replay's `showcase` transcript has no such scenario, so record the visible fallback if Replay is used.
+- Haiku 4.5 is needed only for steer, busy auto-finish and HTML cards (see `../SKILL.md` Drive).
 - Evidence is `~/side-chat-e2e/verify/<date>-<sha>/`; retain it during cleanup.
 
 ## Driving conventions
@@ -17,7 +17,7 @@ This directory is the maintained source for proving T3 Learn side chats in the w
 
 ## Features
 
-- [1. Opening](./01-opening.md) — highlight a lesson reply and open a quoted side chat from every discovered entry point.
+- [1. Opening](./01-opening.md) — highlight a lesson reply and open a quoted side chat by button or shortcut.
 - [2. Nesting](./02-nesting.md) — open a nested side chat and walk the breadcrumb levels.
 - [3. Map](./03-map.md) — inspect and navigate the SideChatMap tree.
 - [4. Done](./04-done.md) — finish or discard, prove the note, and reopen a finished chat.

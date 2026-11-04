@@ -19,10 +19,10 @@ The side-chat map shows the lesson and all nested side chats as an accessible tr
 
 Preconditions: features 1–2 created a parent and child.
 
-- **Open.** Call `preview_click` `{role:"button", name:"Side-chat map"}`. `preview_snapshot` shows `{role:"tree", name:"Side chat map"}` and `{role:"treeitem"}` nodes for `Lesson`, parent, and child.
+- **Open.** `preview_click` `role=button[name='Side-chat map']`. `[aria-label="Side chat map"]` has `role=tree` with one `treeitem` for the lesson (its title) and one per side chat, nested ones included.
 - **Fit.** Call `preview_click` `{role:"button", name:"Fit map to panel"}`. Snapshot shows `aria-pressed="true"` and the tree remains visible.
 - **Command palette.** `preview_press` `Meta+K` on macOS or `Control+K` elsewhere, `preview_type` `Toggle side-chat map`, then `preview_click` `{role:"option", name:"Toggle side-chat map"}`. The same `Side chat map` tree appears.
-- **Open node.** Call `preview_click` on the child `{role:"treeitem", name:<child label>}`. The panel returns to chat with that child as the current breadcrumb; call `preview_snapshot` for proof.
+- **Open node.** `preview_click` `role=treeitem[name=/^<label>/]`. The panel returns to chat with that child as the current breadcrumb; call `preview_snapshot` for proof.
 
 ## Gotchas
 

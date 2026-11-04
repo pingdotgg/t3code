@@ -17,8 +17,8 @@ A question selected inside a side chat opens a child side chat, and the breadcru
 
 Preconditions: feature 1 has a side chat with a completed assistant reply.
 
-- **Child.** Use `preview_evaluate` with `window.getSelection().selectAllChildren(document.querySelector('[data-side-chat-panel] [data-message-role="assistant"]'))` to select text inside the side-chat reply, then `preview_click` `{role:"button", name:"Ask in side chat"}`. `preview_snapshot` shows `Side chat path` with `Lesson` → parent label → child label and a fresh quoted excerpt; the timeline has `Side chat context` with `{role:"button", name:"Side chat context: show what the AI was given"}`.
-- **Up and down.** Call `preview_click` on the parent breadcrumb `{role:"button", name:<parent label>}`; the child panel disappears. Call `preview_click` on `{role:"button", name:<child label>}`; the child composer and excerpt return.
+- **Child.** Run the SKILL.md `select` snippet scoped to `[aria-label="Side chat"] [data-message-role="assistant"]` on a paragraph phrase, then `preview_click` `role=button[name='Ask in side chat']`. `[aria-label="Side chat path"]` reads `Lesson > <parent> > <phrase>`.
+- **Up and down.** `preview_click` `[aria-label="Side chat path"] >> role=button >> nth=1`. The parent becomes the `aria-current` crumb and the child crumb stays; clicking the child crumb returns to it.
 - **Reveal.** Call `preview_click` `{role:"button", name:"Show this highlight where it was asked"}`. The lesson scrolls to the original highlight; snapshot the lesson and child state.
 
 ## Gotchas

@@ -10,19 +10,20 @@ Settings → Threads → Side chats controls the new-chat model, explanation ins
 
 ## How to get to it (user POV)
 
-- Open Settings, choose **Threads**, and scroll to **Side chats** (or use a side chat's **More side chat actions** → **Side chat settings**).
+- Open Settings, choose **Threads**, and scroll to **Side chats** .
 - Choose the model, edit instructions, and add a skill.
 
 ## Driving it with the Browser panel
 
-Preconditions: the environment advertises side-chat settings and at least one provider/model.
+Preconditions: none beyond Doctor.
 
-- **Open.** `preview_navigate` the current origin route `/settings/threads`, then `preview_snapshot`; it shows a `Side chats` section.
-- **Model.** `preview_click` `{role:"button", name:"Side chat model"}` and `preview_click` the desired `{role:"option", name:<model>}`. Snapshot shows the selected model; use `preview_wait_for` the settings save.
-- **Explanation.** `preview_click` `{role:"textbox", name:"Side chat instructions"}`, `preview_type` `Use one concrete example`, then `preview_press` `Tab`. Snapshot retains the text after the blur save.
-- **Skills.** `preview_click` `{role:"button", name:"Add a side chat skill"}`, `preview_click` `{role:"combobox", name:"Search or type a skill"}`, `preview_type` a listed skill, then `preview_click` its `{role:"option", name:<skill>}`. Snapshot shows a `$<skill>` badge and `{role:"button", name:"Remove <skill>"}`.
+- **Open.** `preview_navigate` to `/settings/threads` on the app origin. The page has a `Side chats` section with `Model for new side chats`, `How side chats explain things` and `Side chat skills`.
+- **Model.** `preview_click` `role=button[name='Side chat model']`, `preview_type` the model into `[placeholder='Search models...']`, then `preview_click` `role=option[name=/<model>/]`. Reload: the button still shows the model.
+- **Explanation.** `preview_type` into `role=textbox[name='Side chat instructions']`, then `preview_press` `Tab`. Reload: the text is still there.
+- **Skills.** `preview_click` `role=combobox[name='Add a side chat skill']`, type a listed skill and choose it. A `$<skill>` badge appears with `role=button[name='Remove <skill>']`.
+- **Restore.** Put every value back (QA's model is `Showcase`; reset instructions; `Reset side chat skills to default`).
 
 ## Gotchas
 
-- Older servers hide this section; record the capability mismatch rather than treating it as a UI failure.
-- Skills attach at side-chat start only when the selected provider exposes them.
+- An older server hides this section. Record that as a version mismatch, not as a UI failure.
+- Skills attach at side-chat start only when the provider has them.
