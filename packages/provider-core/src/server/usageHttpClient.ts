@@ -97,6 +97,8 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
         return yield* state.lock.withPermits(1)(
           Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
+            for (const [cachedKey, saved] of cached)
+              if (saved.expiresAt <= now) cached.delete(cachedKey);
             const previous = cached.get(key);
             if (previous && now < previous.expiresAt) {
               const saved = yield* previous.result;

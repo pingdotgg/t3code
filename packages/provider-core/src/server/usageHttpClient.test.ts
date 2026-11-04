@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -16,6 +16,7 @@ it.effect(
   "deduplicates concurrent surfaces and windows, isolates accounts, and caches failed reads",
   () =>
     Effect.gen(function* () {
+      using expiredReads = vi.spyOn(Map.prototype, "delete");
       let calls = 0;
       const client = yield* makeUsageHttpClient(
         HttpClient.make((input) =>
@@ -39,8 +40,14 @@ it.effect(
       assert.strictEqual(usageResponseCheckedAt(cached, "missing"), sampleAt);
       assert.strictEqual(calls, 2);
       yield* TestClock.adjust("1 minute");
-      yield* client.execute(request("a"));
+      yield* client.execute(request("renewed-token"));
       assert.strictEqual(calls, 3);
+      assert.isTrue(
+        expiredReads.mock.calls.some(
+          ([key]) =>
+            typeof key === "string" && key.includes("Bearer a") && key.includes("/api/oauth/usage"),
+        ),
+      );
     }),
 );
 
