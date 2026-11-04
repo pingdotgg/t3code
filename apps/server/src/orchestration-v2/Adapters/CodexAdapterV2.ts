@@ -7450,6 +7450,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
               }
 
+              // Settled targets keep their commands unless settleStop contained them.
+              const settledTargets = new Set(settledTurnContexts);
               const cleanupInterruptState = Effect.gen(function* () {
                 const waiters = yield* Ref.updateAndGet(turnWaiters, (current) => {
                   const updated = new Map(current);
@@ -7476,7 +7478,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   const updated = new Map(current);
                   for (const target of releasedTargets) {
-                    if (settledTurnContexts.includes(target.context)) continue;
+                    if (settledTargets.has(target.context)) continue;
                     updated.delete(target.context.nativeTurnId);
                   }
                   return updated;
@@ -7577,6 +7579,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         inLineage(context) &&
                         !trackedInterruptNativeTurnIds.has(context.nativeTurnId),
                     );
+                    for (const context of settledLineage) settledTargets.add(context);
                     for (const context of [...lineage, ...settledLineage]) {
                       const completion = yield* Deferred.make<void>();
                       if (settledLineage.includes(context)) {

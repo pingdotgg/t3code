@@ -2397,6 +2397,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               },
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 5,
+                  method: "thread/backgroundTerminals/terminate",
+                  params: { threadId: childThreadId, processId: "late-settled-child-process" },
+                },
+              },
+              { type: "emit_inbound", frame: { id: 5, result: { terminated: true } } },
             ],
           }),
           () => Effect.void,
@@ -2448,6 +2457,160 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("keeps tracking a late settled descendant's command when containing it fails", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "late-settled-root";
+      const nativeTurnId = "late-settled-root-turn";
+      const childThreadId = "late-settled-child";
+      const childTurnId = "late-settled-child-turn";
+      const prompt = "Keep working.";
+      const interruptSent = yield* Deferred.make<void>();
+      const terminated: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "late-settled-descendant-terminate-fails",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 4,
+                method: "turn/interrupt",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId },
+              },
+            },
+            { type: "emit_inbound", afterMs: 1_000, frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              afterMs: 12_000,
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622441000,
+                  item: {
+                    type: "subAgentActivity",
+                    id: "late-settled-spawn",
+                    kind: "started",
+                    agentThreadId: childThreadId,
+                    agentPath: "/root/late_settled_child",
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: childThreadId,
+                  turn: makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: childThreadId,
+                  turnId: childTurnId,
+                  startedAtMs: 1782622442000,
+                  item: {
+                    ...interruptCommandItem("inProgress"),
+                    id: "late-settled-child-command",
+                    processId: "late-settled-child-process",
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: childThreadId,
+                  turn: makeCodexReplayTurn({ id: childTurnId, status: "completed" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              afterMs: 3_000,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 5,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: childThreadId, processId: "late-settled-child-process" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: { id: 5, error: { code: -32603, message: "terminate failed" } },
+            },
+          ],
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.gen(function* () {
+            if (method === "turn/interrupt") yield* Deferred.succeed(interruptSent, undefined);
+            if (method === "thread/backgroundTerminals/terminate")
+              terminated.push((params as { processId: string }).processId);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("late-settled-fail-attempt"),
+          text: prompt,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some((event) => event.type === "provider_turn.updated"),
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId,
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(interruptSent);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(interrupt)));
+      yield* TestClock.adjust("5 seconds");
+      yield* harness.awaitTerminal(1);
+      const pending = yield* harness.hasPendingBackgroundWork;
+      assert.deepEqual(
+        { terminated, pending },
+        { terminated: ["late-settled-child-process"], pending: true },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   const assistantMessages = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
