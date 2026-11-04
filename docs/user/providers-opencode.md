@@ -27,6 +27,15 @@ plan appears as a plan card in the thread. A plan that was cut off by a failure 
 interruption is not offered for implementation. To implement a plan, switch the thread
 out of plan mode.
 
+## Compaction
+
+OpenCode compacts long conversations itself, and T3 Code has no setting for it. On
+OpenCode 2, change it under `compaction` in an OpenCode configuration file, such as
+`opencode.json`: `auto` turns
+automatic compaction on or off, `buffer` sets the token headroom, and `keep.tokens`
+sets how much recent context stays. OpenCode 1.x configures compaction differently.
+Send `/compact` to compact a thread yourself.
+
 ## Local or external server
 
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in

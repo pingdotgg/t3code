@@ -175,13 +175,15 @@ const make = Effect.gen(function* () {
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
       const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
+      // The initialized session outlives a tool request, including a long wait or cancellation.
+      if (existing === undefined) {
+        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
+      }
       let response = yield* callOnce(sessionId);
       if (response.status === 404) {
         const renewed = yield* openSession(resolved.url, resolved.token, limitHeader);
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
         response = yield* callOnce(renewed);
-      } else if (existing === undefined) {
-        yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
       }
       if (response.status === 401) {
         return yield* new OrchestratorMcpFailure({

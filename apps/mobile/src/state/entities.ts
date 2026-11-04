@@ -173,6 +173,11 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
+/** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
+export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);
+}
+
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }
@@ -196,6 +201,10 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
 
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
+}
+
+export function useSideChats(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
