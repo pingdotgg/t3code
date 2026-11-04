@@ -11,6 +11,7 @@ import { normalizeProjectPathForComparison, resolveWorkspaceFilePath } from "@t3
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -233,7 +234,9 @@ export function createFileMetadataAtoms<R, E>(
       query,
       (get) => {
         const result = get(query);
-        return AsyncResult.isSuccess(result) && result.value === null ? get(retry) : result;
+        return Option.exists(AsyncResult.value(result), (value) => value === null)
+          ? get(retry)
+          : result;
       },
       { initialValueTarget: query },
     ).pipe(Atom.setIdleTTL(0));

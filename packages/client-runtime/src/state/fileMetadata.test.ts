@@ -134,6 +134,13 @@ describe("file metadata", () => {
       h.values.set(path, { kind: "directory" });
       h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
       expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
+      h.failure.denied = true;
+      yield* TestClock.adjust(60_001);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId).pipe(Effect.flip)).toBeInstanceOf(
+        EnvironmentAuthorizationError,
+      );
+      h.failure.denied = false;
       yield* TestClock.adjust(60_001);
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
       expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toEqual({ kind: "directory" });
@@ -144,7 +151,7 @@ describe("file metadata", () => {
       });
       yield* TestClock.adjust(60_001);
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
-      expect(h.batches).toEqual([[path], ["/workspace/known"], [path]]);
+      expect(h.batches).toEqual([[path], ["/workspace/known"], [path], [path]]);
     }).pipe(Effect.scoped),
   );
 
