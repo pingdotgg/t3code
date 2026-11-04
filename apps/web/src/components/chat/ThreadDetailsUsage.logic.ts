@@ -16,7 +16,7 @@ import {
 
 export type ThreadDetailsLimits =
   | { readonly kind: "instance"; readonly limits: ServerProviderUsageLimits }
-  | { readonly kind: "hub"; readonly windows: readonly LimitPoolWindow[] };
+  | { readonly kind: "pool"; readonly windows: readonly LimitPoolWindow[] };
 
 // collectLimitAccounts keys its input by environment; the card reads one, so any id serves.
 const CARD_ENVIRONMENT = EnvironmentId.make("thread-details");
@@ -41,7 +41,7 @@ export function resolveThreadDetailsLimits(
     provider.usageLimits;
   if (!own) return null;
   if (limitsNotice(own) === null) return { kind: "instance", limits: own };
-  return hubPool(provider.driver, providers, sources, now) ?? { kind: "instance", limits: own };
+  return driverPool(provider.driver, providers, sources, now) ?? { kind: "instance", limits: own };
 }
 
 /** The reset the card names: the soonest for one account, the soonest that refills quota for a pool. */
@@ -52,12 +52,18 @@ export function nextPoolReset(window: LimitPoolWindow, now: number) {
   );
 }
 
-function hubPool(
+function driverPool(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
 ): ThreadDetailsLimits | null {
+  const hubReadsDriver = sources.some((source) =>
+    source.accounts.some(
+      (account) => account.driver === driver && limitsNotice(account.usageLimits) === null,
+    ),
+  );
+  if (!hubReadsDriver) return null;
   const presentations = new Map([
     [
       CARD_ENVIRONMENT,
@@ -71,13 +77,8 @@ function hubPool(
     (account) => account.driver === driver,
   );
   const [pool] = collectLimitPools(accounts, now);
-  const hubReadsDriver = sources.some((source) =>
-    source.accounts.some(
-      (account) => account.driver === driver && limitsNotice(account.usageLimits) === null,
-    ),
-  );
-  if (!pool || !hubReadsDriver) return null;
-  return { kind: "hub", windows: displayLimitWindows(pool) };
+  if (!pool) return null;
+  return { kind: "pool", windows: displayLimitWindows(pool) };
 }
 
 /** Where a pooled window's readings come from: the hubs holding its hub-only accounts, then signed-in accounts. */

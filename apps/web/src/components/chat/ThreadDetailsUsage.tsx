@@ -7,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   formatDuration,
-  formatResetsIn,
   type LimitPace,
   type LimitPoolWindow,
   limitsNotice,
@@ -26,6 +25,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+
+const MINUTE_MS = 60_000;
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -69,7 +70,7 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {resolved.kind === "hub" ? (
+        {resolved.kind === "pool" ? (
           resolved.windows.map((window) => <PoolRow key={window.id} window={window} now={now} />)
         ) : (
           <InstanceRows limits={resolved.limits} now={now} />
@@ -234,22 +235,16 @@ function PoolResetLine({
   const next = nextPoolReset(window, now);
   if (!next) return null;
   const resetsAt = next.member.window.resetsAt;
-  const resetsIn = formatResetsIn(next.member.window, now);
-  if (!resetsAt || !resetsIn) return null;
+  if (!resetsAt) return null;
+  const remaining = next.at - now;
+  const when = remaining < MINUTE_MS ? "momentarily" : `in ${formatDuration(remaining)}`;
   const restores = window.members.length > 1 ? next.restoresPercent : null;
+  const label = restores === null ? `Resets ${when}` : `+${restores}% ${when}`;
   return (
     <span className="text-muted-foreground">
-      {poolResetLabel(resetsIn, restores)} ·{" "}
-      {formatUpcomingTimestamp(resetsAt, timestampFormat, now)}
+      {label} · {formatUpcomingTimestamp(resetsAt, timestampFormat, now)}
     </span>
   );
-}
-
-/** "Resets in 5m" for one account; "+12% in 5m" when several share the pool. */
-function poolResetLabel(resetsIn: string, restoresPercent: number | null): string {
-  if (restoresPercent === null) return resetsIn.replace("resets in", "Resets in");
-  const when = resetsIn.replace("resets in", "in").replace("Resets momentarily", "momentarily");
-  return `+${restoresPercent}% ${when}`;
 }
 
 /** One label, hairline, and value row; the whole row opens the details tooltip. */

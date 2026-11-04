@@ -108,7 +108,7 @@ function shown(
     sources,
     now,
   );
-  if (resolved?.kind !== "hub") return resolved;
+  if (resolved?.kind !== "pool") return resolved;
   return {
     kind: resolved.kind,
     rows: resolved.windows.map((window) => ({
@@ -202,7 +202,7 @@ describe("resolveThreadDetailsLimits", () => {
       rows: [{ label: "Session", left: 60, accounts: 2, from: ["Hub", "Signed-in accounts"] }],
     },
   ])("pools $name when the instance reads no limits", ({ sources, natives, rows }) => {
-    expect(shown(unsupported, sources, natives)).toEqual({ kind: "hub", rows });
+    expect(shown(unsupported, sources, natives)).toEqual({ kind: "pool", rows });
   });
 
   it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {
@@ -219,7 +219,7 @@ describe("resolveThreadDetailsLimits", () => {
       ],
       now,
     );
-    if (resolved?.kind !== "hub") throw new Error("expected a hub pool");
+    if (resolved?.kind !== "pool") throw new Error("expected a pool");
     const [window] = resolved.windows;
     expect(window!.resets.map((reset) => reset.restoresPercent)).toEqual([0, 40]);
     expect(nextPoolReset(window!, now)).toMatchObject({
