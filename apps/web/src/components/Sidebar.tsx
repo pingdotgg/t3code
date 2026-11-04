@@ -70,6 +70,7 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -172,6 +173,7 @@ import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -186,6 +188,7 @@ import {
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
+  scopeSidebarProjectKeysToEnvironment,
   firstValidTimestampMs,
   belongsInSidebarWorkingShelf,
   isSidebarEnvironmentDisconnected,
@@ -843,8 +846,16 @@ function useSidebarLookups() {
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
   const projectScopeItems = [
-    { value: "all", label: "All projects" },
+    { kind: "machine" as const, value: "all-machines", label: "All machines", environmentId: null },
+    ...environments.map((environment) => ({
+      kind: "machine" as const,
+      value: `machine:${environment.environmentId}`,
+      label: environment.label,
+      environmentId: environment.environmentId,
+    })),
+    { kind: "project" as const, value: "all", label: "All projects" },
     ...pickableProjectGroups(projectGroups).map((project) => ({
+      kind: "project" as const,
       value: project.projectKey,
       label: project.displayName,
     })),
@@ -1026,6 +1037,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
+  const persistedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setPersistedEnvironmentScopeId = useUiStateStore(
+    (store) => store.setSidebarEnvironmentScopeId,
+  );
+  const chosenEnvironmentScope = lookupProjectScopeItems.find(
+    (item) => item.kind === "machine" && item.environmentId === persistedEnvironmentScopeId,
+  );
+  const chosenEnvironmentId =
+    chosenEnvironmentScope?.kind === "machine" ? chosenEnvironmentScope.environmentId : null;
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -1091,6 +1111,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setPersistedProjectScopeKeys(keys);
     scrollSidebarToTop(sidebarContentRef.current);
   };
+  const setEnvironmentScopeId = (environmentId: EnvironmentId | null) => {
+    clearSelection();
+    setPersistedEnvironmentScopeId(environmentId);
+    scrollSidebarToTop(sidebarContentRef.current);
+  };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
@@ -1107,7 +1132,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const chosenProjectGroups = scopeGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
-  const chosenScopeProjectKeys =
+  const chosenScopeProjectKeys = scopeSidebarProjectKeysToEnvironment(
     chosenProjectGroups.length === 0
       ? null
       : new Set(
@@ -1116,7 +1141,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
             ),
           ),
-        );
+        ),
+    chosenEnvironmentId,
+    projectGroups.flatMap((project) => project.memberProjectRefs),
+  );
   const threads = useQuietThreadShells();
   const routeRowThreadKey =
     routeThreadRef === null
@@ -1146,7 +1174,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
-  const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
+  const environmentScopeId = revealWidensScope ? null : chosenEnvironmentId;
+  const projectScopeKey =
+    projectScopeKeys.length === 0 && environmentScopeId === null
+      ? null
+      : JSON.stringify([environmentScopeId, projectScopeKeys]);
   const toggleProjectScopeKey = (key: string) =>
     setProjectScopeKeys(
       projectScopeKeys.includes(key)
@@ -1162,7 +1194,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (!revealWidensScope) return;
     clearSelection();
     setPersistedProjectScopeKeys([]);
-  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
+    setPersistedEnvironmentScopeId(null);
+  }, [
+    clearSelection,
+    revealWidensScope,
+    setPersistedProjectScopeKeys,
+    setPersistedEnvironmentScopeId,
+  ]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
@@ -1187,8 +1225,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const selectedProjectScopeItem =
     projectScopeKeys.length > 1
       ? null
-      : (projectScopeItems.find((item) => item.value === (projectScopeKeys[0] ?? "all")) ??
-        projectScopeItems[0]!);
+      : (projectScopeItems.find(
+          (item) =>
+            item.value ===
+            (projectScopeKeys[0] ??
+              (environmentScopeId === null ? "all" : `machine:${environmentScopeId}`)),
+        ) ?? null);
   const filteredProjectScopeItems = filterSidebarProjectScopeItems({
     items: projectScopeItems,
     query: projectScopeMenuState.query,
@@ -1196,10 +1238,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       projectScopeFilter.contains(item, query, (candidate) => candidate.label),
   });
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
-  const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
+  const scopedProjectRefs = scopedProjectGroups
+    .flatMap((project) => project.memberProjectRefs)
+    .filter((ref) => environmentScopeId === null || ref.environmentId === environmentScopeId);
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
+  const scopedEnvironmentIds = connectedEnvironmentIds.filter(
+    (environmentId) => environmentScopeId === null || environmentId === environmentScopeId,
+  );
   const threadSearch = useThreadSearch(
-    connectedEnvironmentIds,
+    scopedEnvironmentIds,
     threadSearchQuery,
     scopedProjectGroups.length === 0
       ? {}
@@ -1263,7 +1310,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
     if (isMobile) setOpenMobile(false);
-    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+    const project =
+      group.memberProjects.find((member) => member.environmentId === environmentScopeId) ?? group;
+    void handleNewThread(scopeProjectRef(project.environmentId, project.id));
   });
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
@@ -1347,16 +1396,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeKey,
     scopedProjectKeys,
     serverConfigs,
-    connectedEnvironmentIds,
+    connectedEnvironmentIds: scopedEnvironmentIds,
     optimisticDrop,
     threads,
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
-        ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-        : scopedProjectGroups
+      ? (scopedProjectGroups.length === 0
+          ? // An archived project keeps a folder for its active threads, below the rest.
+            [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+          : scopedProjectGroups
+        ).filter(
+          (group) =>
+            environmentScopeId === null ||
+            group.memberProjectRefs.some((ref) => ref.environmentId === environmentScopeId),
+        )
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
@@ -3016,7 +3070,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       return;
                     }
                     if (!item) return;
-                    if (item.value === "all") {
+                    if (item.kind === "machine") {
+                      setEnvironmentScopeId(item.environmentId);
+                    } else if (item.value === "all") {
                       setProjectScopeKeys([]);
                     } else if (
                       eventDetails.event instanceof MouseEvent &&
@@ -3033,11 +3089,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroups.length > 0
-                            ? `Filter threads by project: ${scopedProjectGroups.map((project) => project.displayName).join(", ")}`
-                            : "Filter threads by project"
-                        }
+                        label={`Filter threads by project or machine${
+                          environmentScopeId !== null || scopedProjectGroups.length > 0
+                            ? `: ${[
+                                environmentScopeId === null ? null : chosenEnvironmentScope?.label,
+                                ...scopedProjectGroups.map((project) => project.displayName),
+                              ]
+                                .filter(Boolean)
+                                .join(", ")}`
+                            : ""
+                        }`}
                       />
                     }
                   >
@@ -3055,6 +3116,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <span className="flex shrink-0">
                         <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
                       </span>
+                    ) : environmentScopeId !== null ? (
+                      <EnvironmentMachineIcon
+                        kind={environmentMachineById.get(environmentScopeId) ?? "server"}
+                        className="size-4"
+                      />
                     ) : (
                       <ListFilterIcon className="size-4" />
                     )}
@@ -3067,8 +3133,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
-                      aria-label="Search projects"
-                      placeholder="Search projects..."
+                      aria-label="Search projects or machines"
+                      placeholder="Search filters..."
                       value={projectScopeMenuState.query}
                       onKeyDown={(event) => {
                         if (
@@ -3113,65 +3179,94 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         })
                       }
                     />
-                    <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+                    <ComboboxEmpty>No matching projects or machines.</ComboboxEmpty>
                     <ComboboxList aria-multiselectable>
                       {(item: (typeof projectScopeItems)[number]) => {
-                        const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        const isSelected = project
-                          ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0;
+                        const project =
+                          item.kind === "project"
+                            ? (projectGroupByScopeKey.get(item.value) ?? null)
+                            : null;
+                        const isSelected =
+                          item.kind === "machine"
+                            ? item.environmentId === environmentScopeId
+                            : project
+                              ? projectScopeKeys.includes(item.value)
+                              : projectScopeKeys.length === 0;
+                        const startsGroup =
+                          filteredProjectScopeItems.find(
+                            (candidate) => candidate.kind === item.kind,
+                          )?.value === item.value;
                         return (
-                          <ComboboxItem
-                            key={item.value}
-                            hideIndicator
-                            value={item}
-                            aria-selected={isSelected}
-                            // The icon badge marks selection; Base UI's single value would shade one row.
-                            data-selected={undefined}
-                            onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
-                            }}
-                          >
-                            <ProjectScopeRowIcon isSelected={isSelected}>
-                              {project ? (
-                                <ProjectFavicon project={project} className="size-4 shrink-0" />
-                              ) : (
-                                <FolderIcon className="size-4 shrink-0" />
-                              )}
-                            </ProjectScopeRowIcon>
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && canPinProject(project) ? (
-                              <ProjectPinButton
-                                name={project.displayName}
-                                pinned={project.pinned}
-                                shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
-                                onToggle={() => toggleProjectGroupPin(project)}
-                              />
-                            ) : null}
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
-                            {project ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
-                                className={canPinProject(project) ? undefined : "ml-auto"}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  void handleProjectSettings(event, project);
-                                }}
+                          <Fragment key={item.value}>
+                            {startsGroup ? (
+                              <div
+                                className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+                                aria-hidden
                               >
-                                <SettingsIcon className="size-3.5" />
-                              </Button>
+                                {item.kind === "machine" ? "Machines" : "Projects"}
+                              </div>
                             ) : null}
-                          </ComboboxItem>
+                            <ComboboxItem
+                              hideIndicator
+                              value={item}
+                              aria-selected={isSelected}
+                              // The icon badge marks selection; Base UI's single value would shade one row.
+                              data-selected={undefined}
+                              onContextMenu={(event) => {
+                                if (project) handleProjectSettings(event, project);
+                              }}
+                            >
+                              <ProjectScopeRowIcon isSelected={isSelected}>
+                                {item.kind === "machine" ? (
+                                  <EnvironmentMachineIcon
+                                    kind={
+                                      item.environmentId === null
+                                        ? "desktop"
+                                        : (environmentMachineById.get(item.environmentId) ??
+                                          "server")
+                                    }
+                                    className="size-4 shrink-0"
+                                  />
+                                ) : project ? (
+                                  <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                ) : (
+                                  <FolderIcon className="size-4 shrink-0" />
+                                )}
+                              </ProjectScopeRowIcon>
+                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                              {project && canPinProject(project) ? (
+                                <ProjectPinButton
+                                  name={project.displayName}
+                                  pinned={project.pinned}
+                                  shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
+                                  onToggle={() => toggleProjectGroupPin(project)}
+                                />
+                              ) : null}
+                              {project && showProjectEnvironments ? (
+                                <ProjectEnvironmentBadge
+                                  group={project}
+                                  primaryEnvironmentId={primaryEnvironmentId}
+                                  machineByEnvironmentId={environmentMachineById}
+                                />
+                              ) : null}
+                              {project ? (
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost-muted"
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  title={`Project settings for ${project.displayName}`}
+                                  className={canPinProject(project) ? undefined : "ml-auto"}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    void handleProjectSettings(event, project);
+                                  }}
+                                >
+                                  <SettingsIcon className="size-3.5" />
+                                </Button>
+                              ) : null}
+                            </ComboboxItem>
+                          </Fragment>
                         );
                       }}
                     </ComboboxList>
