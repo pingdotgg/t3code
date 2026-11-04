@@ -8,6 +8,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
+import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
@@ -29,7 +30,11 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { KeyboardController, useKeyboardContext } from "react-native-keyboard-controller";
+import {
+  KeyboardController,
+  useKeyboardContext,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -312,15 +317,17 @@ function AdaptiveWorkspaceLayoutContent(
     !sidebarFloats &&
     (composerEditing || composerKeyboardActive);
   const keyboardProgress = useKeyboardContext().reanimated.progress;
+  // From the moment the keyboard starts showing until it has fully hidden. The detail pane keeps
+  // the sidebar's room for that whole span, so on the way back the sidebar pushes the wide pane
+  // aside instead of arriving beside one that already shrank.
+  const keyboardOnScreen = useKeyboardState((state) => state.isVisible);
   const shouldRenderNavigationRail =
     Platform.OS === "android" && baseLayout.usesSplitView && !floatingTabsEnabled;
   const enabledTabs = useEnabledNavigationTabs();
   const { scale, fabSize } = useAndroidControlSizing();
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
-  const navigationRailWidth =
-    shouldRenderNavigationRail && (showPrimarySidebar || workspacePage)
-      ? ANDROID_WORKSPACE_RAIL_WIDTH
-      : 0;
+  // The rail stays whether or not the sidebar shows; only the list pane comes and goes.
+  const navigationRailWidth = shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0;
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
   const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
@@ -655,9 +662,58 @@ function AdaptiveWorkspaceLayoutContent(
     : 0;
   // Android's split content is a rounded card: keep it off the screen edge like the list card.
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
-  const contentTargetWidth = layout.usesSplitView
-    ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth - contentEndGap)
-    : null;
+  // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
+  // sidebar never resizes; both slide by one offset, so together they always fill the width.
+  // The pane spans the sidebar's room too unless the sidebar has finished arriving: a sidebar on
+  // its way in pushes the wide pane past the edge, and one leaving uncovers it.
+  const stripSidebar =
+    Platform.OS === "android" &&
+    layout.usesSplitView &&
+    layout.listPaneWidth !== null &&
+    !workspacePage &&
+    !sidebarFloats;
+  const sidebarSlotWidth = (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0);
+  const sidebarTargetOpen = keyboardHoldsSidebar ? sidebarRestsOpen : panes.primarySidebarVisible;
+  const [sidebarMotion, setSidebarMotion] = useState({
+    strip: stripSidebar,
+    settledOpen: sidebarTargetOpen,
+  });
+  if (sidebarMotion.strip !== stripSidebar) {
+    // Entering or leaving the strip (a workspace page, a fold) snaps the sidebar into place.
+    setSidebarMotion({ strip: stripSidebar, settledOpen: sidebarTargetOpen });
+  } else if (sidebarMotion.settledOpen && !sidebarTargetOpen) {
+    setSidebarMotion({ strip: stripSidebar, settledOpen: false });
+  }
+  const sidebarSettledOpen =
+    sidebarMotion.strip === stripSidebar ? sidebarMotion.settledOpen : sidebarTargetOpen;
+  const markSidebarSettled = (open: boolean) =>
+    setSidebarMotion((current) =>
+      current.settledOpen === open ? current : { ...current, settledOpen: open },
+    );
+  // The keyboard covers the sidebar's share from the moment it starts showing until it is gone.
+  const contentSpansSidebar =
+    stripSidebar &&
+    (!sidebarSettledOpen || !sidebarTargetOpen || (keyboardHoldsSidebar && keyboardOnScreen));
+  const contentTargetWidth = !layout.usesSplitView
+    ? null
+    : Math.max(
+        0,
+        (contentSpansSidebar ? width : panes.contentPaneWidth) -
+          inspectorColumnTargetWidth -
+          contentEndGap,
+      );
+  // A workspace page (Usage) lays out at this width even while hidden behind another tab, so
+  // opening it widens nothing it measured.
+  const workspacePageWidth = !layout.usesSplitView
+    ? null
+    : workspacePage
+      ? contentTargetWidth
+      : Math.max(
+          0,
+          viewportWidth -
+            (shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0) -
+            contentEndGap,
+        );
   const [listPaneSizing, setListPaneSizing] = useState({
     viewportWidth,
     workspacePage,
@@ -773,7 +829,10 @@ function AdaptiveWorkspaceLayoutContent(
     // The content beside it already took its final width when the page closed.
     renderedSidebarWidth.set(
       withTiming(targetWidth, snap ? { duration: 0 } : WORKSPACE_PANE_TIMING, (finished) => {
-        if (finished && Platform.OS === "android") runOnJS(settleListPane)(listPaneRevision);
+        if (finished && Platform.OS === "android") {
+          runOnJS(settleListPane)(listPaneRevision);
+          runOnJS(markSidebarSettled)(targetWidth > 0);
+        }
       }),
     );
   }, [
@@ -789,6 +848,7 @@ function AdaptiveWorkspaceLayoutContent(
     renderedSidebarWidth,
     renderedRailWidth,
     settleListPane,
+    markSidebarSettled,
     listPaneRevision,
     workspacePage,
   ]);
@@ -819,24 +879,45 @@ function AdaptiveWorkspaceLayoutContent(
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
+  const keyboardSidebarRest = sidebarRestsOpen
+    ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+    : 0;
   const drawnSidebarWidth = useDerivedValue(
     () => renderedSidebarWidth.value * (keyboardHold.value ? 1 - keyboardProgress.value : 1),
   );
   const listPaneAnimatedStyle = useAnimatedStyle(() => ({
     width: Math.min(
       listPaneCeiling,
-      Math.max(listPaneFloor, drawnSidebarWidth.value - listPaneGap),
+      Math.max(
+        listPaneFloor,
+        (stripSidebar ? sidebarSlotWidth : drawnSidebarWidth.value) - listPaneGap,
+      ),
     ),
-    // Following the keyboard, the list rides the sidebar's edge like the content beside it,
-    // instead of being uncovered in place.
-    transform: [{ translateX: drawnSidebarWidth.value - renderedSidebarWidth.value }],
   }));
+  // How far the strip has slid: 0 with the sidebar shown, minus its width with it gone.
+  const stripOffset = useDerivedValue(() =>
+    stripSidebar ? drawnSidebarWidth.value - sidebarSlotWidth : 0,
+  );
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
     opacity:
-      Platform.OS === "ios" || floatingTabsEnabled ? 1 : Math.min(1, drawnSidebarWidth.value / 80),
-    width: drawnSidebarWidth.value,
+      stripSidebar || Platform.OS === "ios" || floatingTabsEnabled
+        ? 1
+        : Math.min(1, drawnSidebarWidth.value / 80),
+    width: stripSidebar ? sidebarSlotWidth : drawnSidebarWidth.value,
+    flexShrink: stripSidebar ? 0 : 1,
+    transform: [{ translateX: stripOffset.value }],
   }));
+  // The content keeps the width React laid it out at and rides the sidebar's edge, so a keyboard
+  // transition relays nothing out per frame, the way UIKit animates the iOS split view.
+  // Until React commits the wider layout, the detail card continues past its right edge, so the
+  // strip the narrower column leaves shows the card instead of the row behind it.
+  const contentOverhangStyle = useAnimatedStyle(() => ({
+    opacity: keyboardHold.value && keyboardProgress.value > 0 ? 1 : 0,
+  }));
+  const threadHeader = useToolbarLayout(false, composerKeyboardActive);
+  const threadHeaderHeight =
+    threadHeader.paddingTop + threadHeader.height + threadHeader.paddingBottom;
 
   // Clip the navigator at its settled width so native headers and markdown reflow only once per pane toggle.
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
@@ -851,13 +932,33 @@ function AdaptiveWorkspaceLayoutContent(
   );
   // Android can resize the native row before React removes its split panes on a fold.
   const androidSplit = Platform.OS === "android" && layout.usesSplitView;
-  const androidContentSlotStyle = useAnimatedStyle(() => ({
-    width: androidSplit ? renderedContentWidth.value : ("100%" as const),
-  }));
+  // In the strip the column itself slides with the sidebar: Android only delivers touches inside a
+  // parent's bounds, so content may not slide out of its column.
+  const androidContentSlotStyle = useAnimatedStyle(() =>
+    !androidSplit
+      ? { width: "100%" as const }
+      : stripSidebar
+        ? {
+            // Wide enough for the pane at either width; the margin gives the sidebar's share
+            // back to the row, so a column after it stays put while the strip slides.
+            width: Math.max(
+              0,
+              viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value,
+            ),
+            marginRight: -sidebarSlotWidth,
+            transform: [{ translateX: stripOffset.value }],
+          }
+        : { width: renderedContentWidth.value },
+  );
   // While the sidebar animates, clip the settled navigator instead of reflowing its text every frame.
+  // In the strip it lifts entirely: the content outgrows its column, and a cap that follows
+  // React's width would clip the wider layout for the frame it lands.
   const androidNavigatorLimit = useAnimatedStyle(() => ({
-    maxWidth:
-      androidSplit && contentTargetWidth !== null && renderedContentWidth.value < contentTargetWidth
+    maxWidth: stripSidebar
+      ? viewportWidth
+      : androidSplit &&
+          contentTargetWidth !== null &&
+          renderedContentWidth.value < contentTargetWidth
         ? contentTargetWidth
         : ("100%" as const),
   }));
@@ -902,8 +1003,10 @@ function AdaptiveWorkspaceLayoutContent(
         nativeInspectorColumnWidth(viewportWidth, width / viewportWidth) / viewportWidth,
       ),
     composerKeyboardActive,
+    keyboardHoldsSidebar,
     setComposerEditing,
     sidebarByOrientation,
+    workspacePageWidth,
   };
 
   const inspectorSheet = (
@@ -1009,18 +1112,15 @@ function AdaptiveWorkspaceLayoutContent(
         <Animated.View
           collapsable={false}
           style={[
-            // While the keyboard moves the sidebar, the content tracks its edge every frame so
-            // the two land together; a settled width would jump when React commits mid-slide.
-            keyboardHoldsSidebar
-              ? { flex: 1, marginRight: contentEndGap }
-              : contentTargetWidth !== null
-                ? {
-                    flex: 1,
-                    width: contentTargetWidth,
-                    alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
-                    marginRight: contentAnchor.end ? contentEndGap : 0,
-                  }
-                : { flex: 1 },
+            contentTargetWidth !== null
+              ? {
+                  flex: 1,
+                  width: contentTargetWidth,
+                  // The strip's column is wider than the pane; the pane sits at its start.
+                  alignSelf: contentAnchor.end && !stripSidebar ? "flex-end" : "flex-start",
+                  marginRight: contentAnchor.end && !stripSidebar ? contentEndGap : 0,
+                }
+              : { flex: 1 },
             Platform.OS === "android" ? androidNavigatorLimit : undefined,
           ]}
         >
@@ -1068,6 +1168,35 @@ function AdaptiveWorkspaceLayoutContent(
             </WorkspaceSettledContentWidthContext>
           </WorkspaceContentWidthContext>
         </Animated.View>
+        {keyboardHoldsSidebar && contentTargetWidth !== null ? (
+          <>
+            <Animated.View
+              pointerEvents="none"
+              className="absolute top-0 bg-header"
+              style={[
+                {
+                  left: contentTargetWidth,
+                  width: keyboardSidebarRest + contentEndGap,
+                  height: threadHeaderHeight,
+                },
+                contentOverhangStyle,
+              ]}
+            />
+            <Animated.View
+              pointerEvents="none"
+              className="absolute bottom-0 rounded-tr-[28px] bg-thread-canvas"
+              style={[
+                {
+                  // Starts under the card's rounded corner so the two read as one card.
+                  left: contentTargetWidth - 28,
+                  width: keyboardSidebarRest + 28,
+                  top: threadHeaderHeight,
+                },
+                contentOverhangStyle,
+              ]}
+            />
+          </>
+        ) : null}
       </Animated.View>
       {sidebarFloats ? (
         <Animated.View

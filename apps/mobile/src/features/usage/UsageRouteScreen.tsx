@@ -37,6 +37,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { AppText as Text } from "../../components/ui/AppText";
+import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -97,7 +98,9 @@ function UsageScreen(props: {
   }
   const { view } = selection;
   const setView = (view: UsageView) => setSelection({ params: props.tabParam, view });
-  const [width, setWidth] = useState(0);
+  const [measuredWidth, setWidth] = useState(0);
+  // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
+  const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
