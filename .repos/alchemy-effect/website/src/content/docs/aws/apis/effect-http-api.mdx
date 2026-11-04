@@ -122,7 +122,7 @@ phase and a public Function URL:
 
 ```typescript
 // src/JobFunction.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
@@ -279,7 +279,7 @@ Here's the complete `src/JobFunction.ts`:
 
 ```typescript
 // src/JobFunction.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -355,7 +355,7 @@ export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import JobFunction from "./src/JobFunction.ts";
 
@@ -407,8 +407,8 @@ end-to-end:
 
 ```typescript
 // test/api.test.ts
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";

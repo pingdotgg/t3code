@@ -1,11 +1,11 @@
-import * as Alchemy from "@/index.ts";
-import { Stage } from "@/Stage";
-import { Stack } from "@/Stack";
-import { InMemoryService, State, type ResourceState } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Alchemy from "@/index.ts";
+import { Stack } from "@/Stack";
+import { Stage } from "@/Stage";
+import { InMemoryService, State, type ResourceState } from "@/State";
 import { TestLayers, TestResource } from "./test.resources.ts";
 
 // Regression coverage for https://github.com/alchemy-run/alchemy/issues/961:
@@ -17,37 +17,31 @@ import { TestLayers, TestResource } from "./test.resources.ts";
 
 const { test } = Test.make({ providers: TestLayers() });
 
-describe(
-  "destroy clears the persisted stack output",
-  { tags: ["unit", "local"] },
-  () => {
-    test.provider("scratch stack destroy removes the output record", (stack) =>
-      Effect.gen(function* () {
-        const state = yield* yield* State;
-        const stk = yield* Stack;
+describe("destroy clears the persisted stack output", { tags: ["unit", "local"] }, () => {
+  test.provider("scratch stack destroy removes the output record", (stack) =>
+    Effect.gen(function* () {
+      const state = yield* yield* State;
+      const stk = yield* Stack;
 
-        const deployed = yield* Effect.gen(function* () {
-          const A = yield* TestResource("A", { string: "test-string" });
-          return { url: A.string };
-        }).pipe(stack.deploy);
-        expect(deployed).toEqual({ url: "test-string" });
+      const deployed = yield* Effect.gen(function* () {
+        const A = yield* TestResource("A", { string: "test-string" });
+        return { url: A.string };
+      }).pipe(stack.deploy);
+      expect(deployed).toEqual({ url: "test-string" });
 
-        expect(
-          yield* state.getOutput({ stack: stk.name, stage: stk.stage }),
-        ).toEqual({ url: "test-string" });
+      expect(yield* state.getOutput({ stack: stk.name, stage: stk.stage })).toEqual({
+        url: "test-string",
+      });
 
-        yield* stack.destroy();
+      yield* stack.destroy();
 
-        // The output record must be removed, not overwritten with `{}`.
-        expect(
-          yield* state.getOutput({ stack: stk.name, stage: stk.stage }),
-        ).toBeUndefined();
-        // ... and `listStages` must agree the stage is gone.
-        expect(yield* state.listStages(stk.name)).not.toContain(stk.stage);
-      }),
-    );
-  },
-);
+      // The output record must be removed, not overwritten with `{}`.
+      expect(yield* state.getOutput({ stack: stk.name, stage: stk.stage })).toBeUndefined();
+      // ... and `listStages` must agree the stage is gone.
+      expect(yield* state.listStages(stk.name)).not.toContain(stk.stage);
+    }),
+  );
+});
 
 // The same regression through the real `deploy`/`destroy` entry points
 // (`Destroy.ts`), which is what `alchemy destroy` and the test harness's
@@ -71,10 +65,7 @@ harness.test(
   "stack destroy removes the persisted stack output",
   Effect.gen(function* () {
     const { stage } = yield* harness.deploy(DestroyOutputStack);
-    expect(outputs.DestroyOutputStack?.[stage]).toEqual({
-      url: "test-string",
-      stage,
-    });
+    expect(outputs.DestroyOutputStack?.[stage]).toEqual({ url: "test-string", stage });
 
     yield* harness.destroy(DestroyOutputStack);
     expect(outputs.DestroyOutputStack?.[stage]).toBeUndefined();

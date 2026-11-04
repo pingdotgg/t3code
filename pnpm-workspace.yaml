@@ -174,7 +174,7 @@ minimumReleaseAgeExclude:
   - expo-sharing@58.0.19
   - expo-sqlite@58.0.13
   - expo-symbols@58.0.4
-  - electron@44.10.0
+  - electron@44.10.1
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
   - uniwind@1.13.0
@@ -410,6 +410,10 @@ patchedDependencies:
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   "@effect/platform-node-shared@4.1.2": patches/@effect__platform-node-shared@4.1.2.patch
+  # drizzle-kit fails on an absolute `out`: https://github.com/alchemy-run/alchemy/issues/2980
+  "@alchemy.run/drizzle@2.0.0-beta.85": patches/@alchemy.run__drizzle@2.0.0-beta.85.patch
+  # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
+  alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
 
 peerDependencyRules:
   allowAny:
