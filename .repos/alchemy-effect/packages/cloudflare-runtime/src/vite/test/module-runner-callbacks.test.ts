@@ -1,5 +1,5 @@
-import { CallbackRegistry } from "../module-runner/module-runner.worker.ts";
 import { describe, expect, test, vi } from "vitest";
+import { CallbackRegistry } from "../module-runner/module-runner.worker.ts";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
@@ -59,8 +59,6 @@ describe("module runner callback registry", () => {
 
   test("rejects an unknown id", async () => {
     const registry = new CallbackRegistry();
-    await expect(registry.execute(42)).rejects.toThrow(
-      "No pending callback with id 42",
-    );
+    await expect(registry.execute(42)).rejects.toThrow("No pending callback with id 42");
   });
 });
