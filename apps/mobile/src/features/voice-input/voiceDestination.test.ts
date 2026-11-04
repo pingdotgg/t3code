@@ -21,7 +21,10 @@ vi.mock("expo-file-system", () => ({
   Paths: { document: "file:///app/" },
   File: class {
     textSync = mocks.markerRead;
-    write = mocks.markerWrite;
+    writeSync = mocks.markerWrite;
+    write(id: string) {
+      return Promise.resolve().then(() => mocks.markerWrite(id));
+    }
   },
 }));
 vi.mock("expo-secure-store", () => ({
@@ -80,6 +83,7 @@ it.each(["secure store", "marker"])(
     const host = EnvironmentId.make("my-server");
     try {
       chooseVoiceDestination(host);
+      expect(marker).toBe(appAtomRegistry.get(voiceGrantAtom)?.id);
       expect((await readVoiceGrant())?.destination.environmentId).toBe(host);
       mocks.markerRead.mockReturnValueOnce("");
       expect(await readVoiceGrant()).toBeNull();
@@ -98,6 +102,7 @@ it.each(["secure store", "marker"])(
         throw new Error("storage unavailable");
       });
       expect(() => chooseVoiceDestination(EnvironmentId.make("other-host"))).toThrow();
+      expect(appAtomRegistry.get(voiceGrantAtom)).toBeNull();
       expect(await readVoiceGrant()).toBeNull();
     } finally {
       mocks.read.mockReset();

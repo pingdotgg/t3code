@@ -28,7 +28,7 @@ export async function readVoiceGrant() {
 
 export function writeVoiceGrant(grant: VoiceGrant | null) {
   try {
-    markerFile().write(grant?.id ?? "");
+    markerFile().writeSync(grant?.id ?? "");
   } catch (cause) {
     SecureStore.setItem(key, "null", deviceOnly);
     if (grant) throw cause;
