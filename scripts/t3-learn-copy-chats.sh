@@ -126,8 +126,9 @@ for dir in attachments browser-artifacts; do
 done
 
 say "Swapping the new copy into $UNIT..."
+# Restart on any failure, but not on a missing database: a rerun would then delete .previous.
+trap '[ ! -e "$LEARN/userdata/statev2.sqlite" ] || systemctl --user start "$UNIT"' EXIT
 systemctl --user stop "$UNIT"
-trap 'systemctl --user start "$UNIT"' EXIT
 rm -f "$LEARN"/userdata/statev2.sqlite.previous*
 for suffix in "" -wal -shm; do
   if [ -e "$LEARN/userdata/statev2.sqlite$suffix" ]; then
