@@ -260,19 +260,19 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   await userEvent.keyboard("{Control>}a{/Control}");
   await expect.element(ask).toBeVisible();
   {
-    const selectionUpdated = new Promise<void>((resolve) => {
-      const onMessage = (event: MessageEvent) => {
-        if (event.source !== frame.contentWindow || event.data?.params?.text !== "space") return;
-        window.removeEventListener("message", onMessage);
-        resolve();
-      };
-      window.addEventListener("message", onMessage);
-    });
+    let posted: unknown;
+    const listening = new AbortController();
+    using _listening = { [Symbol.dispose]: () => listening.abort() };
+    window.addEventListener(
+      "message",
+      (event) => {
+        if (event.source === frame.contentWindow) posted = event.data?.params?.text;
+      },
+      { signal: listening.signal },
+    );
     using _active = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(true);
     frame.contentWindow?.postMessage("handle-selection", "*");
-    await act(async () => {
-      await selectionUpdated;
-    });
+    await vi.waitFor(() => expect(posted).toBe("space"));
     await ask.click();
     expect(onAskInSideChat).toHaveBeenLastCalledWith("space");
     frame.contentWindow?.postMessage("restore-selection", "*");
