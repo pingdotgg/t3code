@@ -142,6 +142,7 @@ export function QuickUsagePopover({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const [open, setOpen] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<UsageProviderKind | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -262,7 +263,7 @@ export function QuickUsagePopover({
   };
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={<Button ref={triggerRef} variant="ghost" size="sm" aria-label="Usage" />}
       >
@@ -371,6 +372,7 @@ export function QuickUsagePopover({
                   variant="ghost"
                   size="sm"
                   onClick={() => {
+                    setOpen(false);
                     onOpenFull?.();
                   }}
                 >

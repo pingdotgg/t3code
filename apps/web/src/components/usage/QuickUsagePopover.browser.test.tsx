@@ -162,6 +162,19 @@ describe("QuickUsagePopover", () => {
     await expect.element(page.getByText("78% left", { exact: true })).toBeVisible();
   });
 
+  it("closes the quick view before opening the full Usage page", async () => {
+    const onOpenFull = vi.fn();
+    await using screen = await render(
+      view(envPresentations([provider("codex", { session: 22, weekly: 42 })]), onOpenFull),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await userEvent.click(page.getByRole("button", { name: "View more" }));
+
+    expect(onOpenFull).toHaveBeenCalledOnce();
+    await expect.element(page.getByText("Quick usage")).not.toBeInTheDocument();
+  });
+
   it("shows empty state when no provider has limits", async () => {
     const presentations = envPresentations([]);
     await using screen = await render(view(presentations));
