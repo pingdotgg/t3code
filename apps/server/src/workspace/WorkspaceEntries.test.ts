@@ -121,29 +121,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
         expect(root.entries).toEqual(
           expect.arrayContaining([
-            { path: ".env", kind: "file", ignored: true },
-            { path: "node_modules", kind: "directory", ignored: true },
-            { path: "src", kind: "directory" },
-            { path: "empty", kind: "directory" },
-            { path: "tracked.txt", kind: "file" },
+            { path: ".env", kind: "file", ignored: true, mtimeMs: expect.any(Number) },
+            { path: "node_modules", kind: "directory", ignored: true, mtimeMs: expect.any(Number) },
+            { path: "src", kind: "directory", mtimeMs: expect.any(Number) },
+            { path: "empty", kind: "directory", mtimeMs: expect.any(Number) },
+            { path: "tracked.txt", kind: "file", mtimeMs: expect.any(Number) },
           ]),
         );
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
         expect(root.entries.some((entry) => entry.path === ".git")).toBe(false);
         expect(root.truncated).toBe(false);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
-          entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
+          entries: [
+            {
+              path: "node_modules/pkg/index.js",
+              kind: "file",
+              ignored: true,
+              mtimeMs: expect.any(Number),
+            },
+          ],
           truncated: false,
         });
         // Git refuses pathspecs inside a submodule from the outer repository.
         expect((yield* workspaceEntries.list({ cwd, directoryPath: "sub" })).entries).toEqual(
           expect.arrayContaining([
-            { path: "sub/.gitignore", kind: "file" },
-            { path: "sub/dist", kind: "directory", ignored: true },
+            { path: "sub/.gitignore", kind: "file", mtimeMs: expect.any(Number) },
+            { path: "sub/dist", kind: "directory", ignored: true, mtimeMs: expect.any(Number) },
           ]),
         );
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "sub/dist" })).toEqual({
-          entries: [{ path: "sub/dist/out.js", kind: "file", ignored: true }],
+          entries: [
+            { path: "sub/dist/out.js", kind: "file", ignored: true, mtimeMs: expect.any(Number) },
+          ],
           truncated: false,
         });
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({
@@ -173,15 +182,62 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
         expect(root.entries.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
-          { path: "link.txt", kind: "file" },
-          { path: "linkdir", kind: "directory" },
-          { path: "real.txt", kind: "file" },
-          { path: "realdir", kind: "directory" },
+          { path: "link.txt", kind: "file", mtimeMs: expect.any(Number) },
+          { path: "linkdir", kind: "directory", mtimeMs: expect.any(Number) },
+          { path: "real.txt", kind: "file", mtimeMs: expect.any(Number) },
+          { path: "realdir", kind: "directory", mtimeMs: expect.any(Number) },
         ]);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "linkdir" })).toEqual({
-          entries: [{ path: "linkdir/nested.txt", kind: "file" }],
+          entries: [{ path: "linkdir/nested.txt", kind: "file", mtimeMs: expect.any(Number) }],
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("reports the modified time of each entry, following links to their target", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "file.txt");
+        yield* writeTextFile(cwd, "dir/nested.txt");
+        yield* writeTextFile(cwd, "unreadable.txt");
+        yield* fileSystem.symlink("file.txt", path.join(cwd, "link.txt"));
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const mtimes = () =>
+          workspaceEntries
+            .list({ cwd, directoryPath: "" })
+            .pipe(
+              Effect.map(({ entries }) =>
+                Object.fromEntries(entries.map((entry) => [entry.path, entry.mtimeMs])),
+              ),
+            );
+
+        const fileTime = 1_600_000_000;
+        const dirTime = 1_500_000_000;
+        yield* Effect.promise(() => NodeFSP.utimes(path.join(cwd, "file.txt"), fileTime, fileTime));
+        yield* Effect.promise(() => NodeFSP.utimes(path.join(cwd, "dir"), dirTime, dirTime));
+        const actual = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "unreadable.txt")));
+        expect(yield* mtimes()).toEqual({
+          "file.txt": 1_600_000_000_000,
+          "link.txt": 1_600_000_000_000,
+          dir: 1_500_000_000_000,
+          "unreadable.txt": actual.mtimeMs,
+        });
+
+        const stat = NodeFSP.stat;
+        vi.spyOn(NodeFSP, "stat").mockImplementation((async (target: string) => {
+          if (target.endsWith("unreadable.txt")) throw new Error("EACCES");
+          return stat(target);
+        }) as typeof NodeFSP.stat);
+        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(entries.find((entry) => entry.path === "unreadable.txt")).toEqual({
+          path: "unreadable.txt",
+          kind: "file",
+        });
+        expect(entries).toHaveLength(4);
       }),
     );
 
@@ -338,7 +394,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         expect(yield* workspaceEntries.list({ cwd: linked, directoryPath: "" })).toEqual({
-          entries: [{ path: "notes.md", kind: "file" }],
+          entries: [{ path: "notes.md", kind: "file", mtimeMs: expect.any(Number) }],
           truncated: false,
         });
         const up = yield* workspaceEntries.list({ cwd: parent, directoryPath: "" });

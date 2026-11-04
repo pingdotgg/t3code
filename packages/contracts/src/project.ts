@@ -249,6 +249,7 @@ export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
   ignored: Schema.optional(Schema.Boolean),
+  mtimeMs: Schema.optional(Schema.Number),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
