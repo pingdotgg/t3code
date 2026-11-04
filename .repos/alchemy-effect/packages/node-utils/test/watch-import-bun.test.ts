@@ -1,14 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { trackBunImports } from "../src/watch-import-bun.ts";
+import { trackBunImports } from "../src/watch/bun-import-tracker.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -39,10 +33,7 @@ describe("trackBunImports", () => {
       ].join("\n"),
     );
     writeFileSync(dependency, 'export const text: string = "original";\n');
-    writeFileSync(
-      external,
-      'export const externalText: string = "external";\n',
-    );
+    writeFileSync(external, 'export const externalText: string = "external";\n');
 
     // The project root is wider than the entrypoint directory, as it is in a
     // stack with `infra/alchemy.run.ts` importing from sibling `src/` trees.
@@ -58,14 +49,10 @@ describe("trackBunImports", () => {
         text: "original",
         externalText: "external",
       });
-      expect(tracker.dependencies).toEqual(
-        new Set([entry, dependency, external]),
-      );
+      expect(tracker.dependencies).toEqual(new Set([entry, dependency, external]));
 
       const unchanged: ReadonlySet<string>[] = [];
-      const unsubscribeUnchanged = tracker.subscribe(({ paths }) =>
-        unchanged.push(paths),
-      );
+      const unsubscribeUnchanged = tracker.subscribe(({ paths }) => unchanged.push(paths));
       // Give chokidar a moment to arm the file watchers before writing.
       await new Promise((resolve) => setTimeout(resolve, 200));
       writeFileSync(dependency, 'export const text: string = "original";\n');
@@ -94,11 +81,7 @@ describe("trackBunImports", () => {
       mkdtempSync(path.join(os.tmpdir(), "alchemy-import-bun-nm-")),
     );
     temporaryDirectories.push(temporaryDirectory);
-    const packageDirectory = path.join(
-      temporaryDirectory,
-      "node_modules",
-      "cjs-dep",
-    );
+    const packageDirectory = path.join(temporaryDirectory, "node_modules", "cjs-dep");
     mkdirSync(packageDirectory, { recursive: true });
     const dependency = path.join(packageDirectory, "index.js");
     writeFileSync(
@@ -107,17 +90,11 @@ describe("trackBunImports", () => {
     );
     // CommonJS: Bun cannot hand this back through `onLoad` without losing its
     // exports (oven-sh/bun#19279), so intercepting it breaks the import.
-    writeFileSync(
-      dependency,
-      'function hi() { return "hi"; }\nmodule.exports = hi;\n',
-    );
+    writeFileSync(dependency, 'function hi() { return "hi"; }\nmodule.exports = hi;\n');
     const entry = path.join(temporaryDirectory, "entry.ts");
     writeFileSync(
       entry,
-      [
-        'import hi from "cjs-dep";',
-        "export const greeting: string = hi();",
-      ].join("\n"),
+      ['import hi from "cjs-dep";', "export const greeting: string = hi();"].join("\n"),
     );
 
     const tracker = trackBunImports({
