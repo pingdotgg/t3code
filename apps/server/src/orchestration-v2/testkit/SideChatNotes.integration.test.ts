@@ -401,6 +401,9 @@ describe("side-chat notes", () => {
         yield* harness.send(lesson, "Next step.");
         assert.include(harness.prompts(lesson).at(-1), spaceLine);
         assert.equal(headerCount(harness.prompts(lesson).at(-1) ?? ""), 1);
+
+        yield* harness.send(lesson, "And after that.");
+        assert.equal(harness.prompts(lesson).at(-1), "And after that.");
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),
   );

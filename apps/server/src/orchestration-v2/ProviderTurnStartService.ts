@@ -438,9 +438,14 @@ export const layer: Layer.Layer<
           !(
             isSideChatNotesHandoff(handoff) &&
             handoff.targetRunId !== run.id &&
-            projection.contextHandoffs.some(
+            (projection.contextHandoffs.some(
               (current) => current.targetRunId === run.id && isSideChatNotesHandoff(current),
-            )
+            ) ||
+              (handoff.sideChatNoteDeliveries !== undefined &&
+                Object.entries(handoff.sideChatNoteDeliveries).every(
+                  ([threadId, requestId]) =>
+                    projection.thread.sideChatNoteDeliveries?.[threadId as ThreadId] === requestId,
+                )))
           ),
       );
       // Carried forward until a provider turn accepts it, also after a provider switch.
