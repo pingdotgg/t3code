@@ -786,9 +786,16 @@ describe("OpenCodeAdapterV2", () => {
           {
             status: "error",
             input: { command: "sleep 60" },
-            error: "Tool execution aborted",
+            error: "Interrupted",
             metadata: { interrupted: true },
             time: { start: 5, end: 6 },
+          },
+          // OpenCode 1.3 reports a stopped tool only through this message.
+          {
+            status: "error",
+            input: { command: "sleep 90" },
+            error: "Tool execution aborted",
+            time: { start: 6, end: 7 },
           },
         ] satisfies ReadonlyArray<ToolPart["state"]>;
         for (const state of states) {
@@ -938,19 +945,19 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed", "interrupted", "failed"],
+          ["pending", "running", "completed", "failed", "interrupted", "interrupted", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd", "sleep 60", "vp test"],
+          ["pwd", "pwd", "pwd", "pwd", "sleep 60", "sleep 90", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
-        assert.equal(commands[5]?.exitCode, 1);
+        assert.equal(commands[6]?.exitCode, 1);
         assert.equal(
           events
             .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
-            .findLast((node) => node.id === commands[5]?.nodeId)?.status,
+            .findLast((node) => node.id === commands[6]?.nodeId)?.status,
           "failed",
         );
         assert.deepEqual(
