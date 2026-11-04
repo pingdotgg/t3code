@@ -11,6 +11,7 @@ import type { Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { useDiffTextSelection } from "./useDiffTextSelection";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -224,6 +225,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   unsafeCSSExtra,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const onTextSelectionPostRender = useDiffTextSelection();
+  const onPostRender = options?.onPostRender;
   return (
     <DiffWorkerPoolProvider>
       <CodeView<LAnnotation>
@@ -236,6 +239,15 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
         }
         options={{
           ...options,
+          onPostRender: (...args) => {
+            const [node, instance, phase] = args;
+            if (node && instance && phase && "fileDiff" in instance) {
+              onTextSelectionPostRender(node, instance, phase);
+            }
+            return (onPostRender as ((...forwarded: typeof args) => unknown) | undefined)?.(
+              ...args,
+            );
+          },
           unsafeCSS: unsafeCSSExtra
             ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
             : DIFF_VIEW_UNSAFE_CSS,
