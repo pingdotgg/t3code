@@ -1055,7 +1055,9 @@ function CollapsedWorkingWindow({
         prependRef.current = {
           height: viewport.scrollHeight,
           top: viewport.scrollTop,
-          inSpacer: viewport.scrollTop < spacer.offsetHeight,
+          inSpacer:
+            viewport.scrollTop === 0 ||
+            viewport.scrollTop + viewport.clientHeight <= spacer.offsetHeight,
         };
         setStart((current) => Math.max(0, current - WORKING_HISTORY_BATCH));
       },

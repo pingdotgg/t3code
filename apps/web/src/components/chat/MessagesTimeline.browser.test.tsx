@@ -394,12 +394,16 @@ describe("MessagesTimeline work rows", () => {
     expect(fullHeight).toBeGreaterThan(2000 * 20);
     expect(fullHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(2);
     const tailSources = mountedSources();
+    const tailAnchor = history.querySelector<HTMLElement>("[data-assistant-citation-source]")!;
+    let tailAnchorTop = 0;
     await act(() => {
       viewport.scrollTop = fullHeight - viewport.clientHeight - 400;
       viewport.dispatchEvent(new Event("scroll"));
+      tailAnchorTop = tailAnchor.getBoundingClientRect().top;
     });
     await expect.element(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
     await vi.waitFor(() => expect(mountedSources()).toBeGreaterThan(tailSources));
+    expect(Math.abs(tailAnchor.getBoundingClientRect().top - tailAnchorTop)).toBeLessThanOrEqual(1);
     await expect.element(bar).toHaveAttribute("aria-expanded", "false");
     expect(Math.abs(viewport.scrollHeight - fullHeight)).toBeLessThan(fullHeight / 10);
     expect(mountedSources()).toBeLessThan(70);
