@@ -8059,9 +8059,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const promptWireSettled = yield* Deferred.make<void, never>();
             const promptDispatched = yield* Deferred.make<void, never>();
             const promptStarted = yield* Deferred.make<void, never>();
-            const settledContextUsage = yield* settleContextUsage(
-              requestedSessionId,
-              turnInput.modelSelection,
+            // Live session updates write the same maps under the callback permit.
+            const settledContextUsage = yield* runtimeCallbackPermit.withPermit(
+              settleContextUsage(requestedSessionId, turnInput.modelSelection),
             );
             const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
               requestedSessionId,
@@ -8654,7 +8654,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   }
-                  const settledContextUsage = yield* settleContextUsage(sessionId, nextSelection);
+                  const settledContextUsage = yield* runtimeCallbackPermit.withPermit(
+                    settleContextUsage(sessionId, nextSelection),
+                  );
                   const now = yield* DateTime.now;
                   return {
                     ...threadInput.providerThread,
