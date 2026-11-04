@@ -316,10 +316,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return yield* Effect.void;
     }
     const text = consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME);
+    // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+    const last = text.charCodeAt(MAX_CONSOLE_TEXT_CHARS - 1);
+    const end =
+      last >= 0xd800 && last <= 0xdbff ? MAX_CONSOLE_TEXT_CHARS - 1 : MAX_CONSOLE_TEXT_CHARS;
     page.consoleMessages.push({
       level: consoleMessage.level,
-      text:
-        text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, MAX_CONSOLE_TEXT_CHARS)}…` : text,
+      text: text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, end)}…` : text,
     });
     return yield* Effect.void;
   });
