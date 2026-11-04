@@ -14,6 +14,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import type { PluginToolGrant } from "../plugins/PluginTools.ts";
+
 const ALL_MCP_CAPABILITIES = [
   "preview",
   "orchestration",
@@ -129,6 +131,8 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  /** Tool plugins enabled when the session was prepared; see PluginTools.ts. */
+  readonly pluginToolGrants?: ReadonlyArray<PluginToolGrant>;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
 }
