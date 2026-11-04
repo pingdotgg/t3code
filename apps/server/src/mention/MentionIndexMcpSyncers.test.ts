@@ -76,6 +76,12 @@ url = "https://mcp.figma.com/mcp"
 bearer_token_env_var = "FIGMA_TOKEN"
 http_headers = { "X-Region" = "us" }
 
+[mcp_servers.figma.http_headers]
+X-Figma-Region = "us-east-1"
+
+[mcp_servers.figma.env_http_headers]
+"X-Api-Key" = "FIGMA_TOKEN"
+
 [profiles.default]
 command = "should-not-leak"
 
@@ -102,6 +108,8 @@ command = "should-not-overwrite-stdio-env"
         url: "https://mcp.figma.com/mcp",
         headers: {
           "X-Region": "us",
+          "X-Figma-Region": "us-east-1",
+          "X-Api-Key": "secret-token",
           Authorization: "Bearer secret-token",
         },
       });

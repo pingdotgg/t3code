@@ -1,5 +1,5 @@
 // Short-lived MCP sessions for mention indexing; JSON-RPC payloads stay opaque.
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalErrorInEffectFailure:off globalErrorInEffectCatch:off globalFetchInEffect:off tryCatchInEffectGen:off effectFnOpportunity:off
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalJsonInEffect:off globalErrorInEffectFailure:off globalErrorInEffectCatch:off globalFetchInEffect:off tryCatchInEffectGen:off effectFnOpportunity:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeReadline from "node:readline";
 
@@ -349,9 +349,9 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
       continue;
     }
     if (current === null) continue;
-    const field = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/u);
+    const field = line.match(/^("[^"]+"|'[^']+'|[A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/u);
     if (!field) continue;
-    const key = field[1]!;
+    const key = unquoteToml(field[1]!);
     const value = unquoteToml(field[2]!);
     if (current.activeTable !== null) {
       current.tables[current.activeTable] ??= {};
