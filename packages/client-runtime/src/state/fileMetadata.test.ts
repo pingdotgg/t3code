@@ -20,7 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -57,13 +57,21 @@ const makeHarness = Effect.fnUntraced(function* () {
     phase: "connected" as const,
   });
   const supervisor = {
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session,
     state,
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   const otherSupervisor = {
     ...supervisor,
-    target: { environmentId: OTHER_ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: OTHER_ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(Option.some(makeSession())),
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   const getSupervisor = (environmentId: EnvironmentId) =>
