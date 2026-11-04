@@ -3055,18 +3055,26 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
   }),
 );
 
-it.effect(
-  "reuses fresh detail checks without extending their refresh interval on detail cache hits",
-  () =>
+it.effect.each(["github", "azure-devops"])(
+  "reuses fresh %s detail checks without extending their refresh interval on detail cache hits",
+  (provider) =>
     Effect.gen(function* () {
       let reads = 0;
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const repository = provider === "azure-devops" ? "web" : "acme/web";
+      const reference = { projectId: "p1" as ProjectId, repository, number: 1 };
       const service = yield* makeService({
         projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository,
+            provider,
+            ...(provider === "azure-devops" ? { host: "dev.azure.com" } : {}),
+          }),
         ],
         providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          fakePullRequestProvider(SourceControlProviderKind.make(provider), {
             getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
             getChangeRequestChecks: () =>
               Effect.sync(() => {
