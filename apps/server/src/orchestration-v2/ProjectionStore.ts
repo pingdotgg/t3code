@@ -874,6 +874,10 @@ export function applyToProjection(
           ),
         ),
       });
+    // Milestones over state the run rows already hold.
+    case "run.finalized":
+    case "run.finalization-failed":
+      return projection;
     case "run.background-work-cancelled":
       return {
         ...base,
@@ -2107,6 +2111,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               break;
             }
+            case "run.finalized":
+            case "run.finalization-failed":
+              break;
             case "run.background-work-cancelled": {
               // Only this field changes, so a concurrent lifecycle write is never regressed.
               const workJson = yield* encodeRestartCancelledBackgroundWork(
@@ -2825,6 +2832,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
             event.type !== "thread.provider-switched" &&
+            event.type !== "run.finalized" &&
+            event.type !== "run.finalization-failed" &&
             event.type !== "thread.guest-share-updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
