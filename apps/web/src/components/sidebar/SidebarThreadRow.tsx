@@ -1,5 +1,6 @@
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { compactSessionModel, sessionMachineLabel } from "../../lib/sessionLabels";
+import { SessionUsageBadge } from "./SessionUsageBadge";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
@@ -310,7 +311,9 @@ function SidebarThreadTooltip({
         ) : null}
         {driverKind ? (
           <div className="flex min-w-0 items-center gap-2">
-            <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
+            <span aria-label={modelLabel} className="text-foreground/75">
+              {compactSessionModel(modelLabel)}
+            </span>
             <ProviderInstanceIcon
               driverKind={driverKind}
               displayName={
@@ -798,8 +801,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
 
-  const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
-
   const detailsTooltip = (
     <SidebarThreadTooltip
       thread={thread}
@@ -1122,20 +1123,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
-  const remoteMachineIcon = !showsScratchMachine ? (
-    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+  const remoteMachineIcon = (
+    <span className="inline-flex shrink-0 items-center">
       <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
-      <span className="ml-1">{sessionMachineLabel(props.environmentLabel)}</span>
+      <span>{sessionMachineLabel(props.environmentLabel)}</span>
     </span>
-  ) : null;
+  );
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
-    !thread.branch &&
-    !showsScratchMachine &&
-    prBadge === null &&
-    diff === null &&
-    runningTerminalIds.length === 0;
+    !thread.branch && prBadge === null && diff === null && runningTerminalIds.length === 0;
+  const sessionIndicators = (
+    <span className="inline-flex shrink-0 items-center gap-1 text-secondary-label text-xs">
+      <SessionUsageBadge environmentId={thread.environmentId} threadId={thread.id} />
+      {remoteMachineIcon}
+      <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
+      <SidebarProviderStack
+        thread={thread}
+        providerEntryByInstanceId={props.providerEntryByInstanceId}
+      />
+    </span>
+  );
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {thread.branch ? (
@@ -1143,17 +1151,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <ThreadWorktreeIndicator thread={thread} />
           <span className="flex min-w-0 flex-1">
             <MiddleTruncate value={thread.branch} showTitle={false} />
-          </span>
-        </>
-      ) : showsScratchMachine ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3 shrink-0"
-          />
-          <span className="min-w-0 flex-1 truncate">
-            {sessionMachineLabel(props.scratchMachineLabel)}
           </span>
         </>
       ) : (
@@ -1167,29 +1164,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
-        {remoteMachineIcon}
-        <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-        />
-      </span>
+      <span className="ml-auto inline-flex shrink-0">{sessionIndicators}</span>
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
-    <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
-      {remoteMachineIcon}
-      <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
-      <SidebarProviderStack
-        thread={thread}
-        providerEntryByInstanceId={props.providerEntryByInstanceId}
-      />
-    </span>
-  ) : null;
+  const titleLineIcons = metaLineEmpty ? sessionIndicators : null;
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
@@ -1200,7 +1178,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
+          "@container/session list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
         )}
@@ -1251,7 +1229,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : null}
+              {multiline ? titleLineIcons : sessionIndicators}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (
@@ -1396,7 +1374,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        "@container/session list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
         metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
         sortable?.isDragging && "relative z-20",
       )}

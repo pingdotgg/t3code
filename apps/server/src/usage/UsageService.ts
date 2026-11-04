@@ -26,6 +26,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
@@ -155,6 +157,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
+  const database = yield* SqlClient.SqlClient;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
@@ -715,7 +718,42 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    let threadIdsBySession: Map<string, readonly string[]> | undefined;
+    if (input.includeThreadUsage === true) {
+      const sql = database;
+      const links = yield* sql<{
+        readonly threadId: string;
+        readonly driver: string;
+        readonly sessionId: string;
+      }>`
+        SELECT DISTINCT thread_id AS threadId, driver,
+          json_extract(payload_json, '$.nativeThreadRef.nativeId') AS sessionId
+        FROM orchestration_v2_projection_provider_threads
+        WHERE json_extract(payload_json, '$.nativeThreadRef.nativeId') IS NOT NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Could not match native usage to sessions.",
+              cause,
+            }),
+        ),
+      );
+      threadIdsBySession = new Map();
+      for (const link of links) {
+        const provider = BUILT_IN_USAGE_DRIVERS.find((driver) => driver.driverKind === link.driver)
+          ?.usage?.provider;
+        if (!provider) continue;
+        const key = `${provider}:${link.sessionId}`;
+        const previous = threadIdsBySession.get(key) ?? [];
+        if (!previous.includes(link.threadId))
+          threadIdsBySession.set(key, [...previous, link.threadId]);
+      }
+    }
     const aggregator = new UsageAggregator({
+      ...(threadIdsBySession === undefined ? {} : { threadIdsBySession }),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -880,6 +918,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
+      ...(aggregated.threadUsage === undefined ? {} : { threadUsage: aggregated.threadUsage }),
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
@@ -900,6 +939,7 @@ export const make = Effect.gen(function* () {
       settings,
       input.awaitRefresh === true,
       input.modelFilter ?? null,
+      input.includeThreadUsage ?? false,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (

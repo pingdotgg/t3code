@@ -7,6 +7,7 @@ import type {
   UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
+  UsageThreadTotals,
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
@@ -63,6 +64,7 @@ interface MutableBucket {
 }
 
 export interface AggregateOptions {
+  readonly threadIdsBySession?: ReadonlyMap<string, readonly string[]>;
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -124,6 +126,7 @@ export function canonicalModelFilter(
 }
 
 export interface AggregateResult {
+  readonly threadUsage?: readonly UsageThreadTotals[];
   readonly buckets: readonly UsageBucket[];
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
@@ -131,6 +134,7 @@ export interface AggregateResult {
 
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
+  readonly #threadUsage = new Map<string, UsageThreadTotals>();
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
@@ -199,6 +203,34 @@ export class UsageAggregator {
     const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
+    for (const threadId of this.#options.threadIdsBySession?.get(
+      `${record.provider}:${record.sessionId}`,
+    ) ?? []) {
+      const previous = this.#threadUsage.get(threadId);
+      const costs = priced.categoryCostUsd;
+      const add = <K extends keyof UsageTokenTotals>(key: K) =>
+        (previous?.totals[key] ?? 0) + record.totals[key];
+      this.#threadUsage.set(threadId, {
+        threadId,
+        totals: {
+          uncachedInputTokens: add("uncachedInputTokens"),
+          cachedInputTokens: add("cachedInputTokens"),
+          cacheCreationTokens: add("cacheCreationTokens"),
+          outputTokens: add("outputTokens"),
+          reasoningTokens: add("reasoningTokens"),
+        },
+        costUsd: (previous?.costUsd ?? 0) + priced.costUsd,
+        categoryCostUsd: {
+          input: (previous?.categoryCostUsd.input ?? 0) + (costs?.input ?? 0),
+          cacheRead: (previous?.categoryCostUsd.cacheRead ?? 0) + (costs?.cacheRead ?? 0),
+          cacheWrite: (previous?.categoryCostUsd.cacheWrite ?? 0) + (costs?.cacheWrite ?? 0),
+          output: (previous?.categoryCostUsd.output ?? 0) + (costs?.output ?? 0),
+        },
+        unsplitCostUsd: (previous?.unsplitCostUsd ?? 0) + (costs === null ? priced.costUsd : 0),
+        unpricedRecords:
+          (previous?.unpricedRecords ?? 0) + (priced.costSource === "unpriced" ? 1 : 0),
+      });
+    }
 
     const totals = bucket.totals;
     totals.uncachedInputTokens += record.totals.uncachedInputTokens;
@@ -334,6 +366,9 @@ export class UsageAggregator {
 
     return {
       buckets,
+      ...(this.#options.threadIdsBySession === undefined
+        ? {}
+        : { threadUsage: [...this.#threadUsage.values()] }),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };
