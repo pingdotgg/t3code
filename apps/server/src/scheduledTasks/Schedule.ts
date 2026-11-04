@@ -58,7 +58,8 @@ function nextWindowStart(
   end: { readonly hour: number; readonly minute: number },
   weekdays: ReadonlyArray<number> | undefined,
 ): DateTime.DateTime | null {
-  for (let offset = 0; offset <= 8; offset += 1) {
+  // One skipped weekday still leaves the same weekday two weeks out.
+  for (let offset = 0; offset <= 14; offset += 1) {
     const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
       hour: start.hour,
       minute: start.minute,
