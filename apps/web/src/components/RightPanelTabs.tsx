@@ -866,10 +866,17 @@ function preventTabMiddleButtonDefault(event: ReactMouseEvent) {
   event.preventDefault();
 }
 
+const isThumbButton = (event: ReactMouseEvent) => event.button === 3 || event.button === 4;
+
+// A thumb press would otherwise focus the URL bar, which then stops tracking the page.
+function preventThumbButtonFocus(event: ReactMouseEvent) {
+  if (isThumbButton(event)) event.preventDefault();
+}
+
 // Chromium runs app-router history on a thumb-button mouseup unless it is cancelled.
 // Page content that already stepped its own history cancels it first.
 function routeThumbButtonToSurface(event: ReactMouseEvent, surface: RightPanelSurface | undefined) {
-  if ((event.button !== 3 && event.button !== 4) || event.defaultPrevented) return;
+  if (!isThumbButton(event) || event.defaultPrevented) return;
   event.preventDefault();
   if (surface?.kind === "preview") dispatchPreviewAction(event.button === 3 ? "back" : "forward");
 }
@@ -1339,6 +1346,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
       {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
+      onMouseDown={preventThumbButtonFocus}
       onMouseUp={(event) => routeThumbButtonToSurface(event, focusedSurface)}
     >
       <div

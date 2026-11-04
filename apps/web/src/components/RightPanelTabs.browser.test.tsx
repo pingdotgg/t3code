@@ -67,12 +67,20 @@ function panel(activeSurface: RightPanelSurface) {
   return <RightPanelTabs {...props} />;
 }
 
-// Chromium runs history back/forward on a button 3/4 mouseup unless it is default-prevented.
-function releaseThumbButton(target: Element, button: 3 | 4): { routerMoved: boolean } {
-  const event = new MouseEvent("mouseup", { bubbles: true, cancelable: true, button });
-  target.dispatchEvent(event);
-  return { routerMoved: !event.defaultPrevented };
+// Chromium focuses on an uncancelled mousedown and runs history back/forward on an
+// uncancelled button 3/4 mouseup.
+function releaseThumbButton(
+  target: Element,
+  button: 3 | 4,
+): { focusMoved: boolean; routerMoved: boolean } {
+  const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button });
+  const up = new MouseEvent("mouseup", { bubbles: true, cancelable: true, button });
+  target.dispatchEvent(down);
+  target.dispatchEvent(up);
+  return { focusMoved: !down.defaultPrevented, routerMoved: !up.defaultPrevented };
 }
+
+const STAYS_PUT = { focusMoved: false, routerMoved: false };
 
 describe("right panel thumb buttons", () => {
   it("keep the app router still over a surface that is not a browser", async () => {
@@ -80,10 +88,10 @@ describe("right panel thumb buttons", () => {
     const tabStrip = screen.container.querySelector("[data-right-panel-tabbar]")!;
     const content = screen.getByTestId("surface-content").element();
 
-    expect(releaseThumbButton(tabStrip, 3)).toEqual({ routerMoved: false });
-    expect(releaseThumbButton(tabStrip, 4)).toEqual({ routerMoved: false });
-    expect(releaseThumbButton(content, 3)).toEqual({ routerMoved: false });
-    expect(releaseThumbButton(content, 4)).toEqual({ routerMoved: false });
+    expect(releaseThumbButton(tabStrip, 3)).toEqual(STAYS_PUT);
+    expect(releaseThumbButton(tabStrip, 4)).toEqual(STAYS_PUT);
+    expect(releaseThumbButton(content, 3)).toEqual(STAYS_PUT);
+    expect(releaseThumbButton(content, 4)).toEqual(STAYS_PUT);
   });
 
   it("go back and forward in the active browser tab instead of the app router", async () => {
@@ -93,8 +101,8 @@ describe("right panel thumb buttons", () => {
     const tabStrip = screen.container.querySelector("[data-right-panel-tabbar]")!;
     const content = screen.getByTestId("surface-content").element();
 
-    expect(releaseThumbButton(tabStrip, 3)).toEqual({ routerMoved: false });
-    expect(releaseThumbButton(content, 4)).toEqual({ routerMoved: false });
+    expect(releaseThumbButton(tabStrip, 3)).toEqual(STAYS_PUT);
+    expect(releaseThumbButton(content, 4)).toEqual(STAYS_PUT);
     expect(actions).toEqual(["back", "forward"]);
 
     // The page canvas already went back in the tab; the panel must not go back a second time.
