@@ -421,7 +421,7 @@ describe("probeRemoteEditors PATH scan", () => {
     };
   });
 
-  const countingFileSystem = (counter: { stat: number }) =>
+  const countingFileSystem = (counter: { stat: number; reads: Map<string, number> }) =>
     Layer.effect(
       FileSystem.FileSystem,
       Effect.gen(function* () {
@@ -431,6 +431,10 @@ describe("probeRemoteEditors PATH scan", () => {
           stat: (target) => {
             counter.stat += 1;
             return fs.stat(target);
+          },
+          readDirectory: (target, options) => {
+            counter.reads.set(target, (counter.reads.get(target) ?? 0) + 1);
+            return fs.readDirectory(target, options);
           },
         });
       }),
@@ -469,8 +473,8 @@ describe("probeRemoteEditors PATH scan", () => {
     Effect.gen(function* () {
       const { env: baseEnv } = yield* makeFakePath();
       const delimiter = platform === "win32" ? ";" : ":";
-      const uncachedCounter = { stat: 0 };
-      const cachedCounter = { stat: 0 };
+      const uncachedCounter = { stat: 0, reads: new Map<string, number>() };
+      const cachedCounter = { stat: 0, reads: new Map<string, number>() };
       const uncachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
       const cachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
       const uncached = yield* serialReference(uncachedEnv).pipe(
@@ -485,7 +489,14 @@ describe("probeRemoteEditors PATH scan", () => {
         );
       assert.deepStrictEqual(cached, uncached);
       assert.isAbove(uncachedCounter.stat, 0);
-      assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
+      // On every platform the probe lists each PATH directory at most once.
+      assert.isAbove(cachedCounter.reads.size, 0);
+      assert.isAtMost(Math.max(...cachedCounter.reads.values()), 1);
+      // Without the listings, Windows stats every PATH entry x PATHEXT candidate for each editor;
+      // elsewhere there is no PATHEXT, so the stat count is about the same either way.
+      if (platform === "win32") {
+        assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
