@@ -111,27 +111,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
-  useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
-    const target = logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === loadBalancing.environmentId,
-    );
-    if (!target?.projectId) return;
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
-  }, [
-    needsLoadBalancing,
-    loadBalancing.pending,
-    loadBalancing.environmentId,
-    draftId,
-    logicalProjectEnvironments,
-    sendInFlightRef,
-    setDraftThreadContext,
-  ]);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId) return;
     if (composerHasAttachments) {
@@ -198,43 +177,40 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   } | null>(null);
   const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
 
-  const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
+  const moveDraft = (target: (typeof logicalProjectEnvironments)[number], automatic: boolean) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     const originalDraft = getDraftSession(draftId);
     if (!originalDraft || originalDraft.promotedTo) return;
-    const target = logicalProjectEnvironments.find(
-      (env) => env.environmentId === nextEnvironmentId,
-    );
-    if (!target) return;
+    const selection = automatic
+      ? { environmentSelection: "auto" as const, loadBalancedEnvironmentId: target.environmentId }
+      : { environmentSelection: "manual" as const, loadBalancedEnvironmentId: null };
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    const retarget = (project: (typeof allProjects)[number]) => {
+    const isCurrent = () => {
       const currentDraft = getDraftSession(draftId);
-      if (
-        environmentChangeRef.current !== request ||
-        environmentChangeScopeRef.current !== request.scope ||
-        sendInFlightRef.current ||
-        !currentDraft ||
-        currentDraft.promotedTo ||
-        currentDraft.environmentId !== originalDraft.environmentId ||
-        currentDraft.projectId !== originalDraft.projectId
-      )
-        return;
+      return (
+        environmentChangeRef.current === request &&
+        environmentChangeScopeRef.current === request.scope &&
+        !sendInFlightRef.current &&
+        currentDraft !== null &&
+        !currentDraft.promotedTo &&
+        currentDraft.environmentId === originalDraft.environmentId &&
+        currentDraft.projectId === originalDraft.projectId
+      );
+    };
+    const retarget = (project: (typeof allProjects)[number]) => {
+      if (!isCurrent()) return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
           draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+          selection,
         );
       } else {
-        setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "manual",
-          loadBalancedEnvironmentId: null,
-        });
+        setDraftThreadContext(draftId, { projectRef, ...selection });
       }
     };
     const finish = () => {
@@ -254,10 +230,35 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     void openScratchProject(target.environmentId, "Could not switch machine")
       .then((project) => {
         if (project) retarget(project);
+        // Settle on the current machine so balancing does not retry every render.
+        else if (automatic && isCurrent()) {
+          setDraftThreadContext(draftId, {
+            environmentSelection: "auto",
+            loadBalancedEnvironmentId: originalDraft.environmentId,
+          });
+        }
       })
       .finally(finish);
   };
+
+  const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
+    const target = logicalProjectEnvironments.find(
+      (env) => env.environmentId === nextEnvironmentId,
+    );
+    if (target) moveDraft(target, false);
+  };
   const onEnvironmentChangeStable = useStableCallback(onEnvironmentChange);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the draft to the load-balanced environment once the async pick settles
+  useEffect(() => {
+    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
+    if (readPendingEnvironmentChange() !== null) return;
+    const target = logicalProjectEnvironments.find(
+      (environment) => environment.environmentId === loadBalancing.environmentId,
+    );
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the picker busy while a missing scratch project opens on the picked machine
+    if (target) moveDraft(target, true);
+  });
 
   return {
     needsLoadBalancing,
