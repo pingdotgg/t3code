@@ -25,8 +25,7 @@ export const brandFonts = await Promise.all(
     {
       name: "Caveat",
       style: "normal",
-      file: import.meta
-        .resolve("@fontsource-variable/caveat/files/caveat-latin-wght-normal.woff2"),
+      file: import.meta.resolve("@fontsource-variable/caveat/files/caveat-latin-wght-normal.woff2"),
     },
   ].map(
     async ({ name, style, file }) =>

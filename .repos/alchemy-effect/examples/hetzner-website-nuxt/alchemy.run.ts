@@ -1,5 +1,5 @@
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
