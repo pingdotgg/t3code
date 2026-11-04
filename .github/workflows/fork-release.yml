@@ -1,7 +1,7 @@
 name: Fork release
 
 # Publishes installers for this fork as a GitHub Release on every push to main.
-# release.yml needs upstream's Blacksmith runners, signing identities, and
+# release.yml needs upstream's signing identities and
 # deploy secrets, so this reuses only its per-platform packaging
 # (release-desktop.yml) on GitHub-hosted runners.
 

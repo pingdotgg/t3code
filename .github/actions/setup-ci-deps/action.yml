@@ -86,10 +86,7 @@ runs:
 
     # Filtered installs prefer the current full store, which holds every package,
     # over an older store of their own.
-    # The pnpm store stays a cache tarball on the runner's own disk. A store on a
-    # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
-    # package across filesystems instead of hard-linking it: install took 28-49s
-    # against 9s plus an 11s restore.
+    # Keep the pnpm store on the workspace filesystem so installs can hard-link packages.
     - name: Restore pnpm store
       id: pnpm_cache
       if: inputs.install == 'true'
