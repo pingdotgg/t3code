@@ -171,6 +171,7 @@ export function buildScheduledTaskUpdateInput(
     // silently reverting that change.
   }
   if (draft.modelKey !== baseline.modelKey) patch.modelSelection = modelSelection;
+  if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
   if (draft.projectId !== baseline.projectId) {
     patch.nextProjectId = draft.projectId as ProjectId;
   }

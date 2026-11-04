@@ -181,7 +181,7 @@ describe("buildScheduledTaskUpdateInput", () => {
     expect(buildPatch(baseline, live, baseline)).toBeNull();
   });
 
-  it("sends enabled, thread, workspace, model, and project moves when changed", () => {
+  it("sends enabled, thread, workspace, model, runtime mode, and project moves when changed", () => {
     const bound: ScheduledTask = { ...task, threadId: "thread:1" as ScheduledTask["threadId"] };
     const baseline = taskToDraft(bound);
     const draft = {
@@ -190,6 +190,7 @@ describe("buildScheduledTaskUpdateInput", () => {
       threadId: "",
       workspaceMode: "root" as const,
       modelKey: "codex:gpt-5.2-codex",
+      runtimeMode: "auto-accept-edits" as const,
       projectId: "project:two",
     };
     expect(
@@ -207,6 +208,7 @@ describe("buildScheduledTaskUpdateInput", () => {
       threadId: null,
       workspaceStrategy: { type: "root" },
       modelSelection: { instanceId: "codex", model: "gpt-5.2-codex" },
+      runtimeMode: "auto-accept-edits",
       nextProjectId: "project:two",
     });
   });
