@@ -1,6 +1,11 @@
 import { expect, it } from "vite-plus/test";
 
-import { DEFAULT_SPEECH_MODEL_ID, getSpeechModel, SPEECH_MODELS } from "./model.ts";
+import {
+  DEFAULT_SPEECH_MODEL_ID,
+  effectiveSpeechLanguage,
+  getSpeechModel,
+  SPEECH_MODELS,
+} from "./model.ts";
 
 it("offers the full eligible catalog through one canonical registry", () => {
   expect(SPEECH_MODELS).toHaveLength(71);
@@ -21,7 +26,7 @@ it("offers the full eligible catalog through one canonical registry", () => {
   }
 });
 
-it("uses the refreshed default Canary and Multitalker files and the pinned Granite capabilities", () => {
+it("uses refreshed default files and preserves forced language choices", () => {
   expect(getSpeechModel("handy-computer/canary-180m-flash-gguf")).toMatchObject({
     revision: "46b86384d1db59108d6e060a0fc00924cb58499f",
     size: 218447648,
@@ -49,4 +54,9 @@ it("uses the refreshed default Canary and Multitalker files and the pinned Grani
     supportsLanguageDetection: false,
     supportsTranslation: false,
   });
+  const nemotron = getSpeechModel("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf")!;
+  expect(effectiveSpeechLanguage(nemotron, "fr")).toBe("fr");
+  expect(effectiveSpeechLanguage(nemotron, "en")).toBe("en");
+  expect(effectiveSpeechLanguage(nemotron, "auto")).toBe("auto");
+  expect(nemotron.languages.filter((language) => language === "fr")).toHaveLength(1);
 });
