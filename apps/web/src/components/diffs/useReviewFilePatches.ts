@@ -18,6 +18,23 @@ const filePathCollator = new Intl.Collator(undefined, {
 });
 const DEFAULT_INDICES = [0, 1, 2, 3];
 
+/** Comparison identity for lazy patches — not content hash, so mid-turn refreshes keep the same queries. */
+export function buildReviewFilePatchScope({
+  environmentId,
+  cwd,
+  source,
+  baseRef,
+  ignoreWhitespace,
+}: {
+  environmentId: EnvironmentId | undefined;
+  cwd: string | undefined;
+  source: Pick<ReviewDiffPreviewSource, "kind" | "id"> | null;
+  baseRef: string | null;
+  ignoreWhitespace: boolean;
+}) {
+  return JSON.stringify([environmentId, cwd, source?.kind, source?.id, baseRef, ignoreWhitespace]);
+}
+
 export function useReviewFilePatches({
   environmentId,
   cwd,
@@ -39,14 +56,13 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
+  const scope = buildReviewFilePatchScope({
     environmentId,
     cwd,
-    source?.kind,
-    source?.diffHash,
+    source,
     baseRef,
     ignoreWhitespace,
-  ]);
+  });
   const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
   const queries = reviewFileQueries({
     environmentId,

@@ -1,6 +1,6 @@
 import type { CodeViewDiffItem, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { StrictMode, type ComponentProps } from "react";
+import { StrictMode, useEffect, type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -19,13 +19,18 @@ type ViewerProps = Omit<ComponentProps<typeof StyledDiffCodeView<unknown>>, "opt
   };
 };
 
+const styledDiffMounts = vi.hoisted(() => ({ count: 0 }));
+
 // Replace only the virtualized viewer; comment editing and submission use the real components.
 vi.mock("./StyledDiffCodeView", () => ({
-  StyledDiffCodeView: (props: ViewerProps) =>
-    props.items
+  StyledDiffCodeView: (props: ViewerProps) => {
+    useEffect(() => {
+      styledDiffMounts.count += 1;
+    }, []);
+    return props.items
       ?.filter((item) => item.type === "diff")
       .map((item) => (
-        <section key={item.id}>
+        <section key={item.id} data-file-version={String(item.version)}>
           <button
             disabled={!props.options?.enableLineSelection || !props.options?.enableGutterUtility}
             onClick={() => {
@@ -44,7 +49,8 @@ vi.mock("./StyledDiffCodeView", () => ({
             </div>
           ))}
         </section>
-      )),
+      ));
+  },
 }));
 
 import { AnnotatableCodeView } from "./AnnotatableCodeView";
@@ -123,13 +129,31 @@ function typeComment(text: string) {
 }
 
 function setup(): Disposable {
-  const reset = () => useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  const reset = () => {
+    useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+    styledDiffMounts.count = 0;
+  };
   reset();
   container = document.createElement("div");
   return { [Symbol.dispose]: reset };
 }
 
 describe("diff comment drafts", () => {
+  it("keeps the viewer mounted when file content updates under a stable key", async () => {
+    using _drafts = setup();
+    const original = file("shared.ts", 1);
+    await using screen = await render(view([original], "stable"), { container });
+    const mountsAfterFirstRender = styledDiffMounts.count;
+    expect(mountsAfterFirstRender).toBeGreaterThan(0);
+    await click("Comment on shared.ts");
+    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
+
+    await screen.rerender(view([file("shared.ts", 2), file("extra.ts", 1)], "stable"));
+    expect(styledDiffMounts.count).toBe(mountsAfterFirstRender);
+    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
+    expect(container.textContent).toContain("Comment on extra.ts");
+  });
+
   it("keeps the text and selected line through refresh and a provisional lazy patch", async () => {
     using _drafts = setup();
     const original = file("shared.ts", 1, "rename-pure", "old.ts");
