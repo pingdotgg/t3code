@@ -1308,6 +1308,39 @@ function elicitationContent(
   return content;
 }
 
+function stringEnum(schema: Record<string, unknown> | undefined): ReadonlyArray<string> {
+  return Array.isArray(schema?.enum)
+    ? schema.enum.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+export function elicitationFormQuestion(
+  id: string,
+  property: unknown,
+  index: number,
+  message: string,
+): OrchestrationV2UserInputQuestion {
+  const record = unknownRecord(property);
+  const isArray = record?.type === "array";
+  const enumValues = stringEnum(isArray ? unknownRecord(record.items) : record);
+  const options =
+    enumValues.length > 0
+      ? enumValues.map((value) => ({ label: value, description: value }))
+      : record?.type === "boolean"
+        ? [
+            { label: "true", description: "Yes" },
+            { label: "false", description: "No" },
+          ]
+        : [];
+  return {
+    id,
+    header: nonEmptyText(record?.title, `Question ${index + 1}`),
+    question: nonEmptyText(record?.description, message),
+    options,
+    ...(isArray && options.length > 0 ? { multiSelect: true } : {}),
+  };
+}
+
 interface ActiveTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
@@ -6625,28 +6658,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
               const questions =
                 nativeForm?.questions ??
-                Object.entries(properties).map(
-                  ([id, property], index): OrchestrationV2UserInputQuestion => {
-                    const record = unknownRecord(property);
-                    const enumValues = Array.isArray(record?.enum)
-                      ? record.enum.filter((value): value is string => typeof value === "string")
-                      : [];
-                    const options =
-                      enumValues.length > 0
-                        ? enumValues.map((value) => ({ label: value, description: value }))
-                        : record?.type === "boolean"
-                          ? [
-                              { label: "true", description: "Yes" },
-                              { label: "false", description: "No" },
-                            ]
-                          : [];
-                    return {
-                      id,
-                      header: nonEmptyText(record?.title, `Question ${index + 1}`),
-                      question: nonEmptyText(record?.description, params.message),
-                      options,
-                    };
-                  },
+                Object.entries(properties).map(([id, property], index) =>
+                  elicitationFormQuestion(id, property, index, params.message),
                 );
               const userInput = yield* requestUserInputWithAdmission(
                 handlerGeneration,
