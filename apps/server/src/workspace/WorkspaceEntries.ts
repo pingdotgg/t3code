@@ -117,7 +117,7 @@ const IGNORED_FILES_LIMIT = 200;
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
 const IGNORE_CHECK_CHUNK_SIZE = 1000;
 
-/** Children classified at once when listing a folder; each symlink costs a realpath and a stat, and each child a stat when mtimes are requested. */
+/** Children classified at once when listing a folder; each symlink costs a realpath and a stat. */
 const SYMLINK_RESOLVE_BATCH_SIZE = 64;
 
 interface ListedChild {
@@ -365,7 +365,6 @@ export const make = Effect.gen(function* () {
                 ? undefined
                 : { kind: "directory", mtimeMs: stat.mtimeMs };
             };
-            // A failed stat only loses the timestamp, never the entry.
             const statMtime = async (name: string) =>
               (await NodeFSP.stat(path.join(directory, name)).catch(() => undefined))?.mtimeMs;
             // Bound filesystem work for directories such as pnpm node_modules.

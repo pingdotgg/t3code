@@ -26,7 +26,6 @@ export function useDirectoryEntries(
   const active = useRef(true);
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
-  // Read when a request starts so a queued follow-up refresh sees the latest value, not its render's.
   const includeModifiedTimesRef = useRef(includeModifiedTimes);
 
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {

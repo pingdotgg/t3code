@@ -52,7 +52,6 @@ function compareSegmentSortKeys(left: SegmentSortKey, right: SegmentSortKey): nu
   return 0;
 }
 
-// lookupMtime receives the entry path with any trailing "/" removed.
 export function createFileTreeSortComparator(
   order: FileTreeSortOrder,
   lookupMtime: (path: string) => number | undefined,

@@ -240,7 +240,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           expect(plain.entries.some((entry) => "mtimeMs" in entry)).toBe(false);
           expect(plain.entries).toHaveLength(4);
         }
-        // Only the symlink's existing target stat remains, once per listing.
         expect(statSpy).toHaveBeenCalledTimes(2);
       }),
     );
