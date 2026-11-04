@@ -487,7 +487,7 @@ export const make = Effect.gen(function* () {
     }
     const reference = referenceOf(group);
     // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    if (fingerprint !== null || holdsEdits(group)) yield* pullRequests.invalidate({ reference });
     const [detailRead, activityRead] = yield* Effect.all(
       [
         Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),

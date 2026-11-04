@@ -4188,6 +4188,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         }
         assert.lengthOf(yield* wakes, 0);
 
+        // Watching again keeps the edit the last watch was holding.
+        for (const watching of [false, true]) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-edit-settle-rewatch-${watching}`),
+            threadId,
+            ...key,
+            watching,
+          });
+        }
         yield* TestClock.adjust("2 minutes");
         yield* sweep;
         const told = yield* wakes;
