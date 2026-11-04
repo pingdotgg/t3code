@@ -3567,7 +3567,8 @@ export function ChatComposer(props: ChatComposerProps) {
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
-                    placeholderClassName="truncate"
+                    // The placeholder stays clear of the inline buttons, like typed text.
+                    placeholderClassName="composer-prompt-placeholder truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&
                       !activePendingProgress &&
