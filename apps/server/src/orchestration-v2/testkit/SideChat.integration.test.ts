@@ -721,6 +721,8 @@ describe("side chat opening context", () => {
             assert.include(prompt, LESSON_SUMMARY);
             assert.include(prompt, OBSERVATION_PARAGRAPH);
             assert.include(prompt, "User message:\nWhat is an observation space?");
+            assert.include(prompt, `From thread ${LESSON_THREAD_ID}`);
+            assert.notInclude(prompt, `From thread ${SIDE_CHAT_THREAD_ID}`);
             assert.notInclude(prompt, LESSON_TOPIC);
             assert.notInclude(prompt, OTHER_USER_MESSAGE);
             assert.notInclude(prompt, OTHER_ASSISTANT_REPLY);
@@ -830,6 +832,8 @@ describe("side chat opening context", () => {
           prompt,
           `Context from the side chat this one was opened from:\n${LESSON_SUMMARY}`,
         );
+        assert.include(prompt, `From thread ${LESSON_THREAD_ID}`);
+        assert.notInclude(prompt, `From thread ${nestedThreadId}`);
       }),
     ),
   );
