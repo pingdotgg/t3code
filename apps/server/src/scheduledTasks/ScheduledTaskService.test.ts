@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ScheduledTaskError,
   ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -414,7 +415,9 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");
     const promoted = ProjectId.make("project:promoted");
-    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string; mode: string }>>(
+      [],
+    );
     // Rebind lands first, then the promotion commits between the shell read and the retry.
     const shellProjects = yield* Ref.make([scratch, promoted]);
     const layer = ScheduledTaskService.layer.pipe(
@@ -426,7 +429,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
             sendToThread: (input) =>
               Ref.updateAndGet(sends, (all) => [
                 ...all,
-                { projectId: input.projectId, commandId: input.commandId },
+                { projectId: input.projectId, commandId: input.commandId, mode: input.mode },
               ]).pipe(
                 Effect.flatMap((all) =>
                   all.length < 3
@@ -458,7 +461,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const threadId = ThreadId.make("thread:promoted-during-run");
-      const { task } = yield* service.upsert({
+      const input: ScheduledTaskUpsertInput = {
         id: ScheduledTaskId.make("task:promoted-during-run"),
         title: "Check in",
         prompt: "Check progress",
@@ -470,7 +473,10 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      };
+      yield* service.upsert({ ...input, sendMode: "auto" });
+      // A save from a client or tool that predates the mode keeps it.
+      const { task } = yield* service.upsert(input);
 
       const result = yield* service.runNow({ id: task.id });
 
@@ -481,6 +487,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         [promoted, scratch, promoted],
       );
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+      assert.deepEqual(new Set(attempts.map((attempt) => attempt.mode)), new Set(["auto"]));
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
