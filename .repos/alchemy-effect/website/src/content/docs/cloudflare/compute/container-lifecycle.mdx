@@ -1,0 +1,250 @@
+---
+title: Container lifecycle
+description: Start, stop, wait for, and restore a Cloudflare Container from its Durable Object — and save its filesystem as a snapshot to restore later.
+---
+
+A [Container](/cloudflare/compute/containers) runs only when you start
+it. You start it, stop it, and restore it from the Durable Object that
+owns it.
+
+The examples use this container:
+
+```typescript
+// src/Sandbox.ts
+export class Sandbox extends Cloudflare.Container<Sandbox>()("Sandbox", {
+  schedulingPolicy: "durable_object",
+  image: "node:24-slim",
+}) {}
+```
+
+## Bind the container
+
+`yield* Sandbox` in a Durable Object's Construction phase gives you
+the container's handle:
+
+```typescript
+export default class Workspace extends Cloudflare.DurableObject<Workspace>()(
+  "Workspace",
+  Effect.gen(function* () {
+    const sandbox = yield* Sandbox;
+
+    return Effect.gen(function* () {
+      return {};
+    });
+  }),
+) {}
+```
+
+Binding does not start the container.
+
+## Start it before you use it
+
+Call `start` at the top of each operation that needs the container:
+
+```typescript
+const start = sandbox.start({
+  entrypoint: ["sleep", "infinity"],
+  enableInternet: false,
+});
+
+return {
+  run: (cmd: string[]) =>
+    Effect.gen(function* () {
+      yield* start;
+      // the container is running
+    }),
+};
+```
+
+`start` does nothing when the container is already running, and
+concurrent calls start it once. A container that stopped or crashed
+since the last request starts again on the next one.
+
+The options only apply when `start` actually starts the container.
+To run with different options, stop the container first.
+
+## Choose a size per start
+
+A container with `schedulingPolicy: "durable_object"` picks its size
+when it starts:
+
+```typescript
+yield* sandbox.start({
+  instance: "standard-1",
+  entrypoint: ["sleep", "infinity"],
+  enableInternet: false,
+});
+```
+
+`start` starts the Container's own image. To run another image in the
+same Durable Object, bind another Container — see
+[Several images in one Durable Object](/cloudflare/compute/containers#several-images-in-one-durable-object).
+An async Worker attaches Containers to a class with
+`Cloudflare.DurableObject(className, { containers })` — see
+[Several images on an async Worker](/cloudflare/compute/containers#several-images-on-an-async-worker).
+
+## Start it from a Layer
+
+A Layer that depends on the container starts it the same way:
+
+```typescript
+export const ShellLive = Layer.effect(
+  Shell,
+  Effect.gen(function* () {
+    const sandbox = yield* Sandbox;
+    const start = sandbox.start({ enableInternet: false });
+
+    return {
+      run: (cmd: string[]) =>
+        start.pipe(
+          Effect.andThen(sandbox.exec(cmd)),
+          Effect.flatMap((child) => child.output()),
+          Effect.scoped,
+        ),
+    };
+  }),
+);
+```
+
+Every Layer in the Durable Object shares one container, so a Layer
+never stops it.
+
+## Wait for a port
+
+`getTcpPort` waits until the server inside the container accepts
+connections:
+
+```typescript
+const { fetch } = yield* sandbox.getTcpPort(8080);
+
+const health = Effect.gen(function* () {
+  yield* start;
+  const response = yield* fetch(HttpClientRequest.get("http://container/health"));
+  return yield* response.text;
+});
+```
+
+A port never starts the container. If the container is stopped, the
+request fails with `ContainerNotRunningError`.
+
+## Run a command
+
+`exec` runs a command in a started container:
+
+```typescript
+const output = yield* Effect.scoped(
+  Effect.gen(function* () {
+    const child = yield* sandbox.exec(["npm", "test"]);
+    return yield* child.output();
+  }),
+);
+```
+
+`exec` runs the command without a shell. Pass `["sh", "-c", command]`
+when you need one. Closing the scope kills a process that is still
+running.
+
+## Check whether it is running
+
+```typescript
+if (yield* sandbox.running) {
+  // the process is up; its ports may not be ready yet
+}
+```
+
+## Stop it
+
+`destroy` stops the container immediately:
+
+```typescript
+yield* sandbox.destroy();
+```
+
+`signal` sends a signal to its main process instead, so it can shut
+down on its own:
+
+```typescript
+yield* sandbox.signal(15); // SIGTERM
+```
+
+## Let it sleep
+
+When nothing calls the Durable Object, it goes idle and its container
+stops. Change how long it waits with `setInactivityTimeout`:
+
+```typescript
+yield* sandbox.setInactivityTimeout(10 * 60 * 1000); // 10 minutes
+```
+
+The next operation that calls `start` starts the container again.
+
+## Watch for a crash
+
+`monitor` waits until the container exits:
+
+```typescript
+yield* sandbox.monitor().pipe(
+  Effect.catchTag("ContainerError", (error) =>
+    Effect.logError(`container exited: ${error.message}`),
+  ),
+);
+```
+
+A crash fails with `ContainerError`; a clean exit succeeds.
+
+## Save a snapshot
+
+`snapshotContainer` saves the container's filesystem:
+
+```typescript
+const snapshot = yield* sandbox.snapshotContainer({ name: "workspace" });
+yield* state.storage.put("snapshot", snapshot);
+```
+
+Store the snapshot in the Durable Object's storage so you can restore
+it after the container stops. A snapshot holds the writable root
+filesystem: files, installed packages, build caches. It does not hold
+memory, running processes, or mounted filesystems.
+
+Snapshots need `schedulingPolicy: "durable_object"`.
+
+## Restore a snapshot
+
+Pass the snapshot to `start` to begin from that filesystem:
+
+```typescript
+const snapshot = yield* state.storage.get<Cloudflare.Containers.ContainerSnapshot>("snapshot");
+
+yield* sandbox.start({
+  ...(snapshot ? { containerSnapshot: snapshot } : {}),
+  entrypoint: ["sleep", "infinity"],
+  enableInternet: false,
+});
+```
+
+Without a snapshot, `start` uses the Container's image. The entrypoint
+starts fresh. A snapshot can start any number of
+containers, and expires after 30 days without a restore.
+
+## Snapshot before you stop
+
+Save the filesystem, then stop the container, so the next start picks
+up where this one left off:
+
+```typescript
+const suspend = Effect.gen(function* () {
+  const snapshot = yield* sandbox.snapshotContainer({ name: "workspace" });
+  yield* state.storage.put("snapshot", snapshot);
+  yield* sandbox.destroy();
+});
+```
+
+## Where next
+
+- [Containers](/cloudflare/compute/containers) — declare a container
+  and its image.
+- [Run a Container](/cloudflare/compute/run-a-container) — build a
+  shell-running container end to end.
+- [Durable Objects](/cloudflare/compute/durable-objects) — the object
+  that owns each container.
+- [Container API reference](/providers/cloudflare/containers/container)
