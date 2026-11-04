@@ -84,7 +84,7 @@ capture workspace state without adding commits to the user's branch. A revert mu
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
 
-Checkpoints cover only the thread's own workspace. Repository worktrees attached to a thread (`thread.repoWorktrees`) are checkouts of other repositories, possibly shared with other threads or the user, so diffs and restore never read or rewrite them. Storage cleanup treats an attached one as in use and never removes it.
+Checkpoints cover only the thread's own workspace. Repository worktrees attached to a thread (`thread.repoWorktrees`) are checkouts of other repositories, possibly shared with other threads or the user, so diffs and restore never read or rewrite them. Storage cleanup and manual worktree removal treat an attached one as in use and never remove it. Both compare real paths, because Git reports a reused checkout by its real path while a thread may hold another spelling, and both check under the repository lease that attaching holds ([`workspaceLease.ts`](../../apps/server/src/workspace/workspaceLease.ts)), so nothing gets attached between the last check and the removal.
 
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
