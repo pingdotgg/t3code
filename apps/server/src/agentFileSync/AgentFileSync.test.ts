@@ -189,7 +189,15 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const windowsFs = FileSystem.FileSystem.of({
         ...fs,
-        chmod: (at, mode) => fs.chmod(at, mode & 0o200 ? 0o666 : 0o444),
+        // Windows keeps only a file's writable bit; the server's state directories stay traversable.
+        chmod: (at, mode) =>
+          fs
+            .stat(at)
+            .pipe(
+              Effect.flatMap((info) =>
+                fs.chmod(at, info.type === "Directory" ? mode : mode & 0o200 ? 0o666 : 0o444),
+              ),
+            ),
       });
       const f = yield* fixture.pipe(
         Effect.provideService(FileSystem.FileSystem, windowsFs),

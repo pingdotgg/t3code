@@ -87,6 +87,7 @@ query PullRequestCore(
       baseRefName
       headRefOid
       isCrossRepository
+      maintainerCanModify
       headRepositoryOwner {
         login
       }
@@ -242,9 +243,13 @@ query PullRequestActivity(
       commits(last: 100) @include(if: $head) {
         nodes {
           commit {
+            id
             oid
             messageHeadline
             committedDate
+            parents(first: 1) {
+              totalCount
+            }
             authors(first: 10) {
               nodes {
                 name
@@ -298,6 +303,18 @@ query PullRequestActivity(
           }
         }
       }
+    }
+  }
+}
+
+# Merge commits include upstream changes in their stats, which the timeline does not display.
+# Read only the non-merge commits named by the activity connection.
+query PullRequestCommitStats($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Commit {
+      oid
+      additions
+      deletions
     }
   }
 }

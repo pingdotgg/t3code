@@ -1,7 +1,4 @@
-/**
- * There are intentionally no per-driver Context tags because tags are
- * singleton-per-runtime and we need many instances of the same driver.
- */
+// Context tags are runtime singletons; drivers need multiple instances.
 import type {
   ProviderConsumeResetCreditOutcome,
   AcpRegistryListSessionsResult,
@@ -9,7 +6,7 @@ import type {
   AcpRegistryOperationError,
   AcpRegistrySetProviderInput,
   ProviderDriverKind,
-  ProviderInstanceEnvironment,
+  ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
@@ -27,11 +24,7 @@ import type { ProviderUsageReader } from "./usage.ts";
 
 export interface ProviderDriverMetadata {
   readonly displayName: string;
-  /**
-   * Defaults to `true`. Set to `false` for drivers that wrap a global
-   * resource (e.g. a single desktop app socket) — the registry then
-   * rejects multi-instance configurations with a clear error.
-   */
+  /** Defaults to true; false rejects multiple instances of a global resource. */
   readonly supportsMultipleInstances?: boolean;
   readonly hasDefaultInstance?: boolean;
 }
@@ -103,30 +96,19 @@ export interface ProviderDriverCreateInput<Config> {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
-  readonly environment: ProviderInstanceEnvironment;
+  readonly environment: ResolvedProviderInstanceEnvironment;
   readonly enabled: boolean;
   readonly config: Config;
 }
 
-/**
- * Two calls to `create` with different `instanceId` / `config` MUST yield
- * instances with no shared mutable state.
- */
+/** create calls with different instanceId/config must share no mutable state. */
 export interface ProviderDriver<Config, R = never, UsageR = never> {
   readonly driverKind: ProviderDriverKind;
   readonly metadata: ProviderDriverMetadata;
-  /**
-   * Using `Codec` rather than `Schema` pins `DecodingServices = never` — if
-   * we used `Schema<Config>`, the erased `any` in `AnyProviderDriver` would
-   * widen `DecodingServices` to `unknown` and poison the R channel of every
-   * caller of `decodeUnknownEffect`.
-   */
+  // Codec keeps DecodingServices = never; Schema would widen it through AnyProviderDriver.
   readonly configSchema: Schema.Codec<Config, unknown>;
   readonly defaultConfig: () => Config;
-  /**
-   * Failures become unavailable shadow snapshots — the driver MUST NOT throw
-   * defects.
-   */
+  /** Failures become unavailable snapshots; never throw defects. */
   readonly create: (
     input: ProviderDriverCreateInput<Config>,
   ) => Effect.Effect<ProviderInstance, ProviderDriverError, R | Scope.Scope>;

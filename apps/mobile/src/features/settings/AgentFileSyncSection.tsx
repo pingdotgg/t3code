@@ -7,7 +7,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { agentFileSync } from "../../state/agentFileSync";
 import { useEnvironmentQuery } from "../../state/query";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const syncErrorMessage = (cause: unknown) =>

@@ -34,7 +34,7 @@ import {
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
 import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
@@ -62,6 +62,13 @@ const USER_SEARCH_LIMIT = 50;
 const ForgejoUserSearch = Schema.Struct({
   data: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
 });
+
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+  unauthenticated:
+    "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+};
 
 const repoPath = (input: ProviderRepositoryRef) =>
   `repos/${input.repository.split("/").map(encodeURIComponent).join("/")}`;
@@ -148,7 +155,7 @@ export const make = Effect.gen(function* () {
       more: rows.length > 0 && (links === undefined || /rel="?next"?/i.test(links)),
     };
   });
-  // Use a stable, small page size that also works with Forgejo's default maximum of 50.
+  // Forgejo's default page limit is 50.
   const page = Effect.fn("ForgejoPullRequestProvider.page")(function* <A>(
     input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
@@ -259,6 +266,8 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("forgejo"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
+    readsPublicHostWithoutCheckout: true,
     getViewer,
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
@@ -299,22 +308,29 @@ export const make = Effect.gen(function* () {
         const firstIndex = Math.floor(offset / pageSize) + 1;
         let consumed = 0;
         let more = true;
-        for (let index = firstIndex; more && consumed < input.limit; index++) {
+        // Forgejo has no `merged` list state: `state=closed` returns merged and
+        // closed-unmerged rows alike, so rows are filtered by their mapped state and
+        // only matching rows count toward the requested limit.
+        for (let index = firstIndex; more && items.length < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
           const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
           for (const row of rows.slice(start)) {
-            if (consumed >= input.limit) break;
+            if (items.length >= input.limit) break;
             consumed++;
-            if (row) items.push(forgejoChangeRequest(row));
+            if (!row) continue;
+            const changeRequest = forgejoChangeRequest(row);
+            if (input.state !== "all" && changeRequest.state !== input.state) continue;
+            items.push(changeRequest);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
+    getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
@@ -364,7 +380,7 @@ export const make = Effect.gen(function* () {
               })),
             ),
             page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview),
-            // Without these, each commit lists its files and a big merge outgrows the output limit.
+            // Commit file lists can exceed the output limit on large merges.
             page(
               { ...input, path: `${pullPath(input)}/commits?files=false&verification=false` },
               ForgejoCommit,
@@ -593,12 +609,16 @@ export const make = Effect.gen(function* () {
     }),
     listReviewerCandidates: Effect.fn("ForgejoPullRequestProvider.listReviewerCandidates")(
       function* (input) {
+        // Unpaginated in Forgejo: paging it returns the full list on every page.
         const [pr, users] = yield* Effect.all(
-          [getPull(input), page({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser)],
+          [
+            getPull(input),
+            readArray({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser),
+          ],
           { concurrency: 2 },
         );
         return {
-          candidates: users.items
+          candidates: users
             .filter((user) => user.login !== pr.user?.login)
             .flatMap((user) => {
               const actor = forgejoActor(user);
@@ -615,7 +635,7 @@ export const make = Effect.gen(function* () {
                   ]
                 : [];
             }),
-          truncated: users.truncated,
+          truncated: false,
         };
       },
     ),

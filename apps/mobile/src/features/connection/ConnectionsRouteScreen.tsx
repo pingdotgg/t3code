@@ -3,14 +3,15 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
-import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 
 export function ConnectionsRouteScreen() {
   const {
@@ -23,14 +24,15 @@ export function ConnectionsRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
-  const handleToggle = useCallback((environmentId: EnvironmentId) => {
+  const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
-  }, []);
+  };
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title="Environments"
           onBack={() => navigation.goBack()}
           actions={[
@@ -69,7 +71,16 @@ export function ConnectionsRouteScreen() {
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={onUpdateEnvironment}
         />
-        <GitHubRoutingSettings />
+        {connectedEnvironments
+          .filter((environment) => environment.connectionState === "connected")
+          .map((environment) => (
+            <LinkedEnvironmentsSection
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
+          ))}
+        <PullRequestRoutingSettings />
       </ScrollView>
     </View>
   );

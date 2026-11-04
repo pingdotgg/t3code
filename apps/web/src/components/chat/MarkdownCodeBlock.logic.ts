@@ -8,7 +8,7 @@ const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 export function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
   const raw = match?.[1] ?? "text";
-  // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
+  // Shiki doesn't bundle a gitignore grammar; ini is a close match.
   return raw === "gitignore" ? "ini" : raw;
 }
 

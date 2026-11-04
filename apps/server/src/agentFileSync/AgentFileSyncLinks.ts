@@ -107,14 +107,13 @@ const make = Effect.gen(function* () {
       // Publish immutable baselines before the catalog so interrupted writes leave the prior state readable.
       for (const link of next) {
         if (oldKeys.has(baselineKey(link))) continue;
-        yield* secrets
-          .set(baselineKey(link), Buffer.from(encodeBundle(link.previous)))
-          .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+        yield* secrets.set(baselineKey(link), Buffer.from(encodeBundle(link.previous)));
       }
-      yield* secrets
-        .set(SECRET, Buffer.from(nextCatalog))
-        .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
-    }).pipe(Effect.result);
+      yield* secrets.set(SECRET, Buffer.from(nextCatalog));
+    }).pipe(
+      Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })),
+      Effect.result,
+    );
     if (result._tag === "Failure") {
       // Storage may report failure after rename. Confirm publication before rolling back files or metadata.
       const saved = yield* secrets.get(SECRET).pipe(

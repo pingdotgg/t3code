@@ -15,9 +15,11 @@ describe("pinned ACP wire schemas", () => {
 
   it("keeps v1 command inputs compatible with native agents", () => {
     const command = { name: "plan", description: "Make a plan", input: { hint: "Task" } };
-    expect(Schema.is(V1.AvailableCommand)(command)).toBe(true);
-    expect(
-      Schema.is(V2.AvailableCommand)({ ...command, input: { type: "text", hint: "Task" } }),
-    ).toBe(true);
+    const isAvailableCommand = Schema.is(V1.AvailableCommand);
+
+    expect(isAvailableCommand(command)).toBe(true);
+    const isAvailableCommand2 = Schema.is(V2.AvailableCommand);
+
+    expect(isAvailableCommand2({ ...command, input: { type: "text", hint: "Task" } })).toBe(true);
   });
 });

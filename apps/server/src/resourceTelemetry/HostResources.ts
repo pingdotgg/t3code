@@ -32,8 +32,7 @@ function darwinAvailableMemory(output: string): number | null {
   const inactive = /^Pages inactive:\s+(\d+)\./m.exec(output)?.[1];
   const speculative = /^Pages speculative:\s+(\d+)\./m.exec(output)?.[1];
   if (!pageSize || !free || !inactive || !speculative) return null;
-  // vm_stat subtracts speculative pages from its printed "Pages free" count.
-  // Adding them here counts each reclaimable page once; purgeable pages overlap.
+  // vm_stat excludes speculative from free; add it once, without overlapping purgeable pages.
   const available = (Number(free) + Number(inactive) + Number(speculative)) * Number(pageSize);
   return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
 }

@@ -22,8 +22,6 @@ import {
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
   pullRequestLabelChoices,
@@ -50,7 +48,7 @@ function entry(
 ) {
   return {
     environmentId: "env-1",
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     projectId: "project-1",
     projectTitle: "t3code",
@@ -350,69 +348,6 @@ describe("partitioning with the hosts' own priority reads", () => {
   });
 });
 
-describe("the list snapshot across a reload", () => {
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-  const data = {
-    entries: [entry({ number: 1 })],
-    viewers: { "github.com": "Bilal" },
-    providers: [],
-    errors: [{ projectId: "project-1", message: "boom" }],
-    truncated: true,
-    nextCursors: { "pingdotgg/t3code": "cursor-1" },
-  } as never;
-
-  it("carries neither stale failures nor stale cursors", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.errors).toEqual([]);
-    expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("caps the accumulated rows but keeps the whole host set", () => {
-    const storage = makeStorage();
-    const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
-    const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
-    const providers = [
-      {
-        host: "github.com",
-        kind: "github",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-      {
-        host: "gitlab.com",
-        kind: "gitlab",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-    ];
-    const accumulated = {
-      entries: manyEntries,
-      viewers,
-      providers,
-      errors: [],
-      truncated: true,
-      nextCursors: {},
-    } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.entries).toHaveLength(99);
-    expect(snapshot?.data.viewers).toEqual(viewers);
-    expect(snapshot?.data.providers).toEqual(providers);
-  });
-});
-
 describe("remembered pull request list controls", () => {
   const makeStorage = () => {
     const held = new Map<string, string>();
@@ -470,6 +405,20 @@ describe("merging the environments' own listings", () => {
       nextCursors: {},
       ...overrides,
     }) as Parameters<typeof mergePullRequestLists>[0][number][1];
+
+  it("orders host timestamps by instant across offsets and fractional seconds", () => {
+    const entries = [
+      entry({ number: 1, updatedAt: "2026-07-05T01:00:00+02:00" }),
+      entry({ number: 2, updatedAt: "2026-07-05T00:30:00Z" }),
+      entry({ number: 3, updatedAt: "2026-07-05T00:30:00.5Z" }),
+    ];
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: entries.slice(0, 2) })],
+      [ENV_2, answer({ entries: entries.slice(2) })],
+    ]);
+
+    expect(merged?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+  });
 
   it("tags every row with the environment that read it, newest first", () => {
     const merged = mergePullRequestLists([
@@ -701,10 +650,11 @@ describe("pull request quick actions", () => {
     ...(actions === undefined ? {} : { actions }),
   });
 
-  it("offers what each host reports, and GitHub's legacy set when a server reports none", () => {
+  it("offers what each host reports, and the host's own set when a server reports none", () => {
     const actionsOf = pullRequestHostActions([
       summary("bitbucket.org", "bitbucket", ["merge", "close"]),
       summary("github.com", "github"),
+      summary("gitlab.com", "gitlab"),
     ]);
     const bitbucket = actionsOf({
       host: "bitbucket.org",
@@ -719,6 +669,11 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+    const gitlab = actionsOf({
+      host: "gitlab.com",
+      provider: SourceControlProviderKind.make("gitlab"),
+    });
+    expect(pullRequestQuickActions({ state: "open", isDraft: false }, gitlab)).toEqual([]);
   });
 });
 
@@ -752,7 +707,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `dev.azure.com/${path}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         displayName: path,
         owner: "contoso",
         name: path.split("/").at(-1)!,
@@ -788,7 +743,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `github.com/${repository}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         displayName: repository,
       },
     });

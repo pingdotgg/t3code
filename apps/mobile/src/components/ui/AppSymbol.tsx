@@ -1,8 +1,5 @@
 import type { Icon } from "@tabler/icons-react-native/types";
-/*
- * Keep these as per-icon exports. Importing the package root eagerly registers
- * the entire Tabler icon set in Metro.
- */
+/* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
 import IconAlignLeft from "@tabler/icons-react-native/IconAlignLeft";
 import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
@@ -44,6 +41,8 @@ import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
+import IconMoodPlus from "@tabler/icons-react-native/IconMoodPlus";
+import IconTag from "@tabler/icons-react-native/IconTag";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
@@ -100,6 +99,7 @@ import IconPlug from "@tabler/icons-react-native/IconPlug";
 import IconPhoto from "@tabler/icons-react-native/IconPhoto";
 import IconPin from "@tabler/icons-react-native/IconPin";
 import IconPinnedOff from "@tabler/icons-react-native/IconPinnedOff";
+import IconPlayerPause from "@tabler/icons-react-native/IconPlayerPause";
 import IconPlayerPlay from "@tabler/icons-react-native/IconPlayerPlay";
 import IconPlayerStopFilled from "@tabler/icons-react-native/IconPlayerStopFilled";
 import IconPlus from "@tabler/icons-react-native/IconPlus";
@@ -184,6 +184,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "calendar.badge.clock": IconCalendarClock,
   clock: IconClock,
   timer: IconClock,
+  "face.smiling": IconMoodPlus,
+  tag: IconTag,
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,
@@ -239,6 +241,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   pin: IconPin,
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
+  pause: IconPlayerPause,
   plus: IconPlus,
   minus: IconMinus,
   "slash.circle": IconBan,

@@ -14,11 +14,7 @@
  * oversize and binary blobs render placeholder rows and never
  * fetch/parse.
  */
-import {
-  parseDiffFromFile,
-  type FileContents,
-  type FileDiffMetadata,
-} from "@pierre/diffs";
+import { parseDiffFromFile, type FileContents, type FileDiffMetadata } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { getBlob, type DiffEntry, type FileStatus } from "../client.ts";
@@ -59,25 +55,16 @@ const sizeLabel = (entry: DiffEntry): string | null => {
   return size == null ? null : formatBytes(size);
 };
 
-export const FileDiffCard = ({
-  context,
-  entry,
-}: {
-  context: RepoContext;
-  entry: DiffEntry;
-}) => {
+export const FileDiffCard = ({ context, entry }: { context: RepoContext; entry: DiffEntry }) => {
   const options = useFileDiffOptions();
   const { connection, repo } = context;
 
   // Cases that never fetch contents.
   const gitlink = entry.oldMode === "160000" || entry.newMode === "160000";
   const modeOnly =
-    entry.status === "modified" &&
-    entry.oldOid != null &&
-    entry.oldOid === entry.newOid;
+    entry.status === "modified" && entry.oldOid != null && entry.oldOid === entry.newOid;
   const oversize =
-    (entry.oldSize ?? 0) > MAX_RENDER_BYTES ||
-    (entry.newSize ?? 0) > MAX_RENDER_BYTES;
+    (entry.oldSize ?? 0) > MAX_RENDER_BYTES || (entry.newSize ?? 0) > MAX_RENDER_BYTES;
   const skip = gitlink || modeOnly || oversize;
 
   const [state, setState] = useState<FileState>({ kind: "loading" });
@@ -89,10 +76,7 @@ export const FileDiffCard = ({
     void blobLimiter(async () => {
       // Absent sides arrive as null over JSON (added/removed files) —
       // treat null and undefined alike or we fetch "blobs/null".
-      const side = (
-        oid: string | null | undefined,
-        size: number | null | undefined,
-      ) =>
+      const side = (oid: string | null | undefined, size: number | null | undefined) =>
         oid == null
           ? Promise.resolve(null)
           : getBlob(connection, repo.owner, repo.name, oid, {
@@ -106,10 +90,7 @@ export const FileDiffCard = ({
       const oldText = oldBytes === null ? null : decodeText(oldBytes);
       const newText = newBytes === null ? null : decodeText(newBytes);
       // A side that exists but doesn't decode as UTF-8 is binary.
-      if (
-        (oldBytes !== null && oldText === null) ||
-        (newBytes !== null && newText === null)
-      ) {
+      if ((oldBytes !== null && oldText === null) || (newBytes !== null && newText === null)) {
         setState({ kind: "binary" });
         return;
       }
@@ -118,9 +99,7 @@ export const FileDiffCard = ({
         text: string | null,
         oid: string | null | undefined,
       ): FileContents | null =>
-        text === null
-          ? null
-          : { name: entry.path, contents: text, cacheKey: oid ?? undefined };
+        text === null ? null : { name: entry.path, contents: text, cacheKey: oid ?? undefined };
       // The server guarantees ≥ 1 side, so this never sees (null, null).
       const fileDiff = parseDiffFromFile(
         contents(oldText, entry.oldOid),
@@ -138,9 +117,7 @@ export const FileDiffCard = ({
 
   const size = sizeLabel(entry);
   const modeChanged =
-    entry.oldMode !== undefined &&
-    entry.newMode !== undefined &&
-    entry.oldMode !== entry.newMode;
+    entry.oldMode !== undefined && entry.newMode !== undefined && entry.oldMode !== entry.newMode;
 
   return (
     <div className="overflow-hidden rounded-md border border-border-muted">
@@ -154,14 +131,11 @@ export const FileDiffCard = ({
             </span>
           )}
         </div>
-        {size !== null && (
-          <span className="shrink-0 text-fg-muted">{size}</span>
-        )}
+        {size !== null && <span className="shrink-0 text-fg-muted">{size}</span>}
       </div>
       {gitlink ? (
         <NoteRow>
-          Subproject commit{" "}
-          <code className="font-mono">{entry.newOid ?? entry.oldOid}</code>
+          Subproject commit <code className="font-mono">{entry.newOid ?? entry.oldOid}</code>
         </NoteRow>
       ) : modeOnly ? (
         <NoteRow>File mode changed — contents unchanged</NoteRow>
@@ -188,13 +162,7 @@ export const FileDiffCard = ({
 const PAGE_SIZE = 25;
 
 /** Paged list of file-diff cards (resets paging when `files` changes). */
-const FileDiffList = ({
-  context,
-  files,
-}: {
-  context: RepoContext;
-  files: DiffEntry[];
-}) => {
+const FileDiffList = ({ context, files }: { context: RepoContext; files: DiffEntry[] }) => {
   const [visible, setVisible] = useState(PAGE_SIZE);
   useEffect(() => {
     setVisible(PAGE_SIZE);
@@ -204,11 +172,7 @@ const FileDiffList = ({
     <div>
       <div className="flex flex-col gap-4">
         {files.slice(0, visible).map((entry) => (
-          <FileDiffCard
-            key={`${entry.status}:${entry.path}`}
-            context={context}
-            entry={entry}
-          />
+          <FileDiffCard key={`${entry.status}:${entry.path}`} context={context} entry={entry} />
         ))}
         {files.length === 0 && (
           <div className="rounded-md border border-border-muted px-4 py-8 text-center text-sm text-fg-muted">

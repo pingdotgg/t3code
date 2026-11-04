@@ -17,11 +17,6 @@ function sameInput(left: TimelineEntriesInput, right: TimelineEntriesInput): boo
   );
 }
 
-/**
- * Timeline entries for a thread, derived from the previous projection so
- * unchanged rows keep their identity and memoized rows skip rendering. A new
- * thread starts from scratch.
- */
 export function useIncrementalTimelineEntries(
   threadKey: string | null,
   input: TimelineEntriesInput,

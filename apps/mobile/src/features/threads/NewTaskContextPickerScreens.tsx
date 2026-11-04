@@ -1,3 +1,4 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { SearchField } from "../../components/ui/SearchField";
 import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -19,11 +20,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -41,6 +43,9 @@ import {
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+import { filterNewTaskBranches } from "./new-task-context-presentation";
+import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
+import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -50,6 +55,8 @@ import {
   useConnectionDiagnosis,
 } from "../connection/ConnectionDiagnosisDetails";
 import { environmentStatusText } from "../connection/environmentStatusText";
+
+const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
 function EnvironmentPickerRow(props: {
   environmentId: EnvironmentId;
@@ -188,11 +195,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Environment"
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AppBar embedded title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
       ) : null}
       <ScreenContent>
         <ScrollView
@@ -239,26 +242,22 @@ export function NewTaskBranchPickerRouteScreen() {
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
   const selectingBranchNameRef = useRef<string | null>(null);
-  const allowSelectionNavigationRef = useRef(false);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      flow.setBranchQuery("");
-    };
-  }, [flow.setBranchQuery]);
-
-  useEffect(
-    () =>
-      navigation.addListener("beforeRemove", (event) => {
-        if (selectingBranchNameRef.current !== null && !allowSelectionNavigationRef.current) {
-          event.preventDefault();
-        }
-      }),
-    [navigation],
-  );
+  const [branchQuery, setBranchQuery] = useState("");
+  const branchSearchQuery = sanitizeNewRefName(branchQuery);
+  const debouncedBranchQuery = useDebouncedValue(branchSearchQuery, BRANCH_SEARCH_DEBOUNCE_MS);
+  const branchState = usePaginatedBranches({
+    environmentId: flow.selectedProject?.environmentId ?? null,
+    cwd: flow.selectedProject?.workspaceRoot || null,
+    query: debouncedBranchQuery,
+  });
+  const branchesLoading =
+    branchSearchQuery !== debouncedBranchQuery ||
+    (branchState.isPending && branchState.data === null);
+  const refreshBranches = () => {
+    if (!flow.selectedProject) return;
+    setPendingConnectionError(null);
+    branchState.refresh();
+  };
 
   const selectBranch = async (branch: VcsRef) => {
     const needsCheckout = shouldCheckoutNewTaskBranch({
@@ -278,17 +277,22 @@ export function NewTaskBranchPickerRouteScreen() {
       return;
     }
     setSwitchingBranchName(branch.name);
+    // The guard belongs to this checkout: back actions are refused while it is
+    // in flight, and our own goBack runs after it is lifted.
+    const releaseRemovalGuard = navigation.addListener("beforeRemove", (event) => {
+      event.preventDefault();
+    });
     const result = await checkoutNewTaskBranch({
       branch,
       project,
       workspaceMode: flow.workspaceMode,
       readRefs,
       switchRef,
-    });
-    if (mountedRef.current) setSwitchingBranchName(null);
+    }).finally(releaseRemovalGuard);
+    setSwitchingBranchName(null);
     if (result._tag === "Failure") {
       selectingBranchNameRef.current = null;
-      if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
+      if (navigation.isFocused() && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
           "Could not switch branch",
@@ -298,19 +302,13 @@ export function NewTaskBranchPickerRouteScreen() {
       return;
     }
 
-    // The checkout has already changed the repository. Persist the matching
-    // draft selection even if the native sheet was dismissed while the
-    // command was in flight; only visible-screen work is focus-gated below.
+    // Checkout already changed Git; persist the draft selection even if the sheet dismissed mid-command.
     flow.selectBranch(result.value);
-    if (!mountedRef.current || !navigation.isFocused()) {
+    if (!navigation.isFocused()) {
       selectingBranchNameRef.current = null;
       return;
     }
-    flow.setBranchQuery("");
-    // beforeRemove blocks dismissal while a switch is in flight; this one is ours.
-    allowSelectionNavigationRef.current = true;
     navigation.goBack();
-    allowSelectionNavigationRef.current = false;
     selectingBranchNameRef.current = null;
   };
 
@@ -318,21 +316,21 @@ export function NewTaskBranchPickerRouteScreen() {
     <BranchPickerScreen
       title={flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}
       project={flow.selectedProject}
-      branches={flow.filteredBranches}
+      branches={filterNewTaskBranches(branchState.refs, branchQuery)}
       selectedBranchName={
         flow.selectedBranchName ??
         flow.availableBranches.find((branch) => branch.current)?.name ??
         flow.availableBranches.find((branch) => branch.isDefault)?.name ??
         null
       }
-      query={flow.branchQuery}
-      onQueryChange={flow.setBranchQuery}
-      loading={flow.branchesLoading}
-      error={flow.branchesError}
-      refreshing={flow.branchesFetchingNextPage}
-      hasMore={flow.hasMoreBranches}
-      onRefresh={flow.loadBranches}
-      onLoadMore={flow.loadMoreBranches}
+      query={branchQuery}
+      onQueryChange={setBranchQuery}
+      loading={branchesLoading}
+      error={branchState.error}
+      refreshing={branchState.isFetchingNextPage}
+      hasMore={branchState.data?.nextCursor !== null && branchState.data?.nextCursor !== undefined}
+      onRefresh={refreshBranches}
+      onLoadMore={branchState.loadNext}
       selectionDisabled={switchingBranchName !== null}
       onSelect={selectBranch}
       worktree={
@@ -451,6 +449,7 @@ export function BranchPickerScreen(props: {
       </ScrollView>
     ) : (
       <LegendList
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
         alwaysBounceVertical={false}
         automaticallyAdjustsScrollIndicatorInsets
         automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
@@ -482,11 +481,7 @@ export function BranchPickerScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader
-          title={props.title}
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
+        <AppBar embedded title={props.title} hideBottomBorder onBack={() => navigation.goBack()} />
         <View className="bg-header px-4 pb-3 pt-1">
           <SearchField
             inputRef={searchRef}
