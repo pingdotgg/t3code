@@ -136,6 +136,70 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("counts OpenCode 2 compaction requests alongside assistant replies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, data TEXT)",
+      );
+      const created = 1780000000000;
+      const model = { id: "big-pickle", providerID: "opencode" };
+      const insert = (seq: number, id: string, type: string, data: object) =>
+        db.unsafe("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)", [
+          id,
+          "session-1",
+          type,
+          seq,
+          created + seq,
+          JSON.stringify({ time: { created: created + seq }, ...data }),
+        ]);
+      yield* insert(1, "user-1", "user", { text: "hello" });
+      yield* insert(2, "assistant-1", "assistant", {
+        agent: "build",
+        model,
+        content: [],
+        cost: 0.02,
+        tokens: { input: 100, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+      });
+      yield* insert(3, "compaction-1", "compaction", {
+        status: "completed",
+        reason: "auto",
+        model,
+        summary: "Summary",
+        recent: "",
+        cost: 0.5,
+        tokens: { input: 40_000, output: 1_500, reasoning: 0, cache: { read: 0, write: 0 } },
+      });
+      yield* insert(4, "compaction-2", "compaction", {
+        status: "running",
+        reason: "manual",
+        summary: "",
+        recent: "",
+      });
+
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      const records = result.files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => [record.dedupeKey, record.model, record.reportedCostUsd]),
+        [
+          ["opencode:assistant-1", "big-pickle", 0.02],
+          ["opencode:compaction-1", "big-pickle", 0.5],
+        ],
+      );
+      assert.deepStrictEqual(records[1]?.totals, {
+        uncachedInputTokens: 40_000,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 1_500,
+        reasoningTokens: 0,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reads only legacy OpenCode messages written since the window opened", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
