@@ -1,0 +1,41 @@
+import type * as efs from "@distilled.cloud/aws/efs";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { FileSystem } from "./FileSystem.ts";
+
+/**
+ * Runtime binding for the `DescribeLifecycleConfiguration` operation (IAM
+ * action `elasticfilesystem:DescribeLifecycleConfiguration` on the file
+ * system ARN).
+ *
+ * Reads the bound {@link FileSystem}'s lifecycle management rules — when
+ * files transition between Standard, Infrequent Access, and Archive storage.
+ * A file system without lifecycle management returns an empty array.
+ * Provide the implementation with
+ * `Effect.provide(AWS.EFS.DescribeLifecycleConfigurationHttp)`.
+ * ### Lifecycle Management
+ * **Example:** Read the lifecycle policies
+ * ```typescript
+ * const describeLifecycleConfiguration =
+ *   yield* AWS.EFS.DescribeLifecycleConfiguration(files);
+ *
+ * const { LifecyclePolicies } = yield* describeLifecycleConfiguration();
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeLifecycleConfiguration extends Binding.Service<
+  DescribeLifecycleConfiguration,
+  "AWS.EFS.DescribeLifecycleConfiguration",
+  (
+    fileSystem: FileSystem,
+  ) => Effect.Effect<
+    () => Effect.Effect<
+      efs.LifecycleConfigurationDescription,
+      efs.DescribeLifecycleConfigurationError
+    >
+  >
+> {}
+export const DescribeLifecycleConfiguration = Binding.Service<DescribeLifecycleConfiguration>(
+  "AWS.EFS.DescribeLifecycleConfiguration",
+);

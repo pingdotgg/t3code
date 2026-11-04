@@ -1,3 +1,5 @@
+import type { AstroInlineConfig, AstroIntegration } from "astro";
+import type * as Effect from "effect/Effect";
 /**
  * The Astro-specific deploy-target contract.
  *
@@ -24,8 +26,6 @@ import {
   type DeployTargetServices,
   type ServerEntryChunk,
 } from "../core/index.ts";
-import type { AstroInlineConfig, AstroIntegration } from "astro";
-import type * as Effect from "effect/Effect";
 
 /**
  * The context an Astro target's wholesale `build` takeover receives: the
@@ -63,9 +63,7 @@ export interface AstroTarget<Config = unknown> extends DeployTarget<Config> {
    * `serverModules[0]` here. The Cloudflare target does not need it — its
    * vite plugin wraps the worker entry with a recognizable facade.
    */
-  readonly selectServerEntry?:
-    | ((chunk: ServerEntryChunk) => boolean)
-    | undefined;
+  readonly selectServerEntry?: ((chunk: ServerEntryChunk) => boolean) | undefined;
 }
 
 /**
@@ -74,19 +72,14 @@ export interface AstroTarget<Config = unknown> extends DeployTarget<Config> {
  * *project's* `node_modules` (whose `default` — or named `target` — export is
  * the value or factory).
  */
-export type AstroTargetInput<Config = unknown> = DeployTargetInput<
-  AstroTarget<Config>,
-  Config
->;
+export type AstroTargetInput<Config = unknown> = DeployTargetInput<AstroTarget<Config>, Config>;
 
 /**
  * The default target module: the Cloudflare implementation shipped by this
  * package, resolved from the project's own dependency tree.
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/astro/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/astro/cloudflare";
 
 /** Structural guard: a `DeployTarget` carrying the Astro `integration` hook. */
 export const isAstroTarget = (value: unknown): value is AstroTarget =>
-  isDeployTarget(value) &&
-  typeof (value as { integration?: unknown }).integration === "function";
+  isDeployTarget(value) && typeof (value as { integration?: unknown }).integration === "function";
