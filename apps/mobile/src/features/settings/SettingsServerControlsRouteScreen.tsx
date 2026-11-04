@@ -26,6 +26,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
+import { RepoWorktreeSettings } from "./components/RepoWorktreeSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -50,7 +51,13 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
-  "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
+  "new-threads": [
+    "defaultThreadEnvMode",
+    "worktreeSubmodules",
+    "repoWorktrees",
+    "repoWorktreeInstructions",
+    "defaultRuntimeMode",
+  ],
   "source-control": [
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
@@ -322,6 +329,15 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
+                  <RepoWorktreeSettings
+                    key={targets
+                      .map((target) => `${target.environment.environmentId}:${target.projectId}`)
+                      .join(",")}
+                    enabled={uniform("repoWorktrees")}
+                    instructions={uniform("repoWorktreeInstructions")}
+                    disabled={disabledFor("repoWorktrees")}
+                    onChange={write}
+                  />
                   <SettingsSection
                     title="Default permissions"
                     trailing={

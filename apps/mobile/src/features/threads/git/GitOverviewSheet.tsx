@@ -45,6 +45,7 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { RepoWorktreesGroup } from "./RepoWorktreesGroup";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -403,6 +404,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           ))}
         </View>
       ) : null}
+
+      <RepoWorktreesGroup environmentId={environmentId} threadId={threadId} />
 
       {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
     </ScrollView>
