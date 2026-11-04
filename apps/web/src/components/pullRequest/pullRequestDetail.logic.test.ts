@@ -869,7 +869,16 @@ describe("asking about a change rather than working on it", () => {
       reviewComments: [comment],
     });
     expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
-    expect(context?.records[0]).toMatchObject({ pullRequest: base });
+    expect(context?.records[0]).toMatchObject({
+      kind: "pull-request",
+      number: base.number,
+      title: base.title,
+      url: base.url,
+      headBranch: base.headBranch,
+      baseBranch: base.baseBranch,
+      state: base.state,
+      isDraft: base.isDraft,
+    });
   });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {
