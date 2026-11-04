@@ -1660,6 +1660,11 @@ it.effect.each([
             threadId,
             worktreePath,
           });
+        const stored = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamStoredEvents.pipe(
+            Stream.filter(({ event }) => predicate(event)),
+            Stream.runHead,
+          );
         yield* orchestrator.dispatch({
           type: "thread.create",
           commandId: CommandId.make("create"),
@@ -1674,36 +1679,19 @@ it.effect.each([
           createdBy: "user",
           creationSource: "web",
         });
-        const running = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
         yield* send("first");
         yield* switchTo(other, "switch");
         if (queueNext) yield* send("next");
         if (switchBack) yield* switchTo(cwd, "switch-back");
         yield* worker.drain();
-        yield* Fiber.join(running);
+        yield* stored(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
         const first = started[0]!;
         const ranIn = switchBack ? cwd : other;
         assert.equal(first.runtimePolicy.cwd, ranIn);
         yield* fs.writeFileString(path.join(ranIn, "edited-by-first.txt"), "first\n");
 
-        const stopped = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.id === first.runId &&
-              event.payload.status === "interrupted",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
         yield* orchestrator.dispatch({
           type: "run.interrupt",
           commandId: CommandId.make("stop"),
@@ -1711,7 +1699,12 @@ it.effect.each([
           runId: first.runId,
         });
         yield* worker.drain();
-        yield* Fiber.join(stopped);
+        yield* stored(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            event.payload.status === "interrupted",
+        );
         // The stopped run's capture is queued behind its interrupt.
         yield* worker.drain();
 
