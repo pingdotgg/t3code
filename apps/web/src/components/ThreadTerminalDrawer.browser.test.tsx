@@ -483,6 +483,16 @@ it("opens files on their owning environment with filesystem access and no editor
     relativePath: "/repo/src/example.ts",
   });
   expect(fixture.openEditor).not.toHaveBeenCalled();
+  fixture.scopes = new Set(["filesystem:read", "terminal:operate"]);
+  fixture.linkMetadata.set(
+    JSON.stringify([other.environmentId, "/repo/src"]),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "directory" }),
+    ),
+  );
+  await act(() => options.onLinkHover!("/repo/src"));
+  expect(options.canActivateLink?.("/repo/src")).toBe(false);
+  expect(await options.validateLink!("/repo/src")).toBe(false);
 });
 
 it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {

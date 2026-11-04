@@ -557,7 +557,11 @@ function TerminalSessionViewport({
       return false;
     if (text !== linkPath || !linkMetadataQuery) return false;
     const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
+    return (
+      metadata?.kind === "file" ||
+      (metadata?.kind === "directory" &&
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    );
   });
   const hasTerminalLinkAccess = useEffectEvent(
     (text: string) =>
@@ -585,7 +589,9 @@ function TerminalSessionViewport({
     return (
       latestTerminalLinkActivations.get(linkActivationScope) === activation &&
       result._tag === "Success" &&
-      (result.value?.kind === "file" || result.value?.kind === "directory")
+      (result.value?.kind === "file" ||
+        (result.value?.kind === "directory" &&
+          readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)))
     );
   });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
