@@ -103,6 +103,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 
 import ChatMarkdown from "./ChatMarkdown";
 import { AudioPreview } from "./files/AudioPreview";
+import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -427,6 +428,33 @@ describe("ChatMarkdown inline code selection", () => {
     const fenced = screen.container.querySelector("pre code")!;
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
+  });
+});
+
+describe("FileMarkdownPreview select all", () => {
+  it("selects only the preview's text, not the rest of the window", async () => {
+    setup();
+    await using screen = await render(
+      <div>
+        <p>Chat transcript outside the preview</p>
+        <FileMarkdownPreview
+          cwd="/tmp/project"
+          relativePath="notes/README.md"
+          text={"# Notes\n\nFirst paragraph."}
+          threadRef={{
+            environmentId: EnvironmentId.make("env-1"),
+            threadId: ThreadId.make("thread-1"),
+          }}
+          workspaceMutationId={null}
+        />
+      </div>,
+    );
+    await userEvent.click(screen.getByText("First paragraph."));
+    await userEvent.keyboard("{Control>}a{/Control}");
+    const selected = window.getSelection()?.toString() ?? "";
+    expect(selected).toContain("Notes");
+    expect(selected).toContain("First paragraph.");
+    expect(selected).not.toContain("Chat transcript outside the preview");
   });
 });
 
