@@ -14,7 +14,13 @@ export function isolatedCodexLoginCommand(
   if (platform === "windows") {
     const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
     const script = `$env:CODEX_HOME=${quote(homePath)}; $env:CODEX_SQLITE_HOME=${quote(`${homePath}\\sqlite`)}; & ${quote(executablePath)} login --device-auth`;
-    return `powershell -NoProfile -Command ${quote(script)}`;
+    // -EncodedCommand requires UTF-16LE and keeps cmd.exe from interpreting paths.
+    let utf16le = "";
+    for (let index = 0; index < script.length; index += 1) {
+      const codeUnit = script.charCodeAt(index);
+      utf16le += String.fromCharCode(codeUnit & 0xff, codeUnit >>> 8);
+    }
+    return `powershell -NoProfile -EncodedCommand ${btoa(utf16le)}`;
   }
   const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
   return `env CODEX_HOME=${quote(homePath)} CODEX_SQLITE_HOME=${quote(`${homePath}/sqlite`)} ${quote(executablePath)} login --device-auth`;
