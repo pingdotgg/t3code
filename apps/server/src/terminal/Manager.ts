@@ -527,8 +527,10 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped.
-  const command = trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
+  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped,
+  // and a quoted path is kept whole even when it contains " -".
+  const quoted = /^(['"])(.*?)\1(?:\s|$)/.exec(trimmed);
+  const command = quoted ? quoted[2] : trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
   return command || null;
 }
 
