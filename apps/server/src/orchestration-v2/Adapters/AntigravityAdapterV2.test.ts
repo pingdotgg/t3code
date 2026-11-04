@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   ChatFileAttachment,
   MessageId,
   NodeId,
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -40,6 +42,7 @@ import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -239,6 +242,172 @@ describe("AntigravityAdapterV2 session open", () => {
         error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
         requiresSignIn,
       );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
+describe("AntigravityAdapterV2 prompt recovery", () => {
+  it.live.each([
+    {
+      failure: "an opaque internal error",
+      code: -32603,
+      message: "Internal error",
+      restarts: true,
+    },
+    {
+      failure: "a missing session",
+      code: -32603,
+      message: "Session not found: antigravity-session",
+      restarts: true,
+    },
+    {
+      failure: "invalid prompt parameters",
+      code: -32602,
+      message: "Invalid params",
+      restarts: false,
+    },
+  ])("runs the next message after $failure", ({ code, message, restarts }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-recovery-",
+      });
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const request = (method: string, params: unknown = "<any>") => ({
+        type: "expect_outbound",
+        frame: { kind: "request", method, params },
+      });
+      const respond = (method: string, response: object) => ({
+        type: "emit_inbound",
+        frame: { kind: "response", method, ...response },
+      });
+      const initialize = [
+        request("initialize"),
+        respond("initialize", {
+          result: {
+            protocolVersion: 1,
+            agentCapabilities: { sessionCapabilities: { resume: {} } },
+          },
+        }),
+        request("authenticate"),
+        respond("authenticate", { result: {} }),
+      ];
+      const completedPrompt = [
+        request("session/prompt"),
+        respond("session/prompt", { result: { stopReason: "end_turn" } }),
+      ];
+      const failedPrompt = [
+        request("session/prompt"),
+        respond("session/prompt", { error: { code, message } }),
+      ];
+      const configureMode = [
+        request("session/set_config_option"),
+        respond("session/set_config_option", { result: { configOptions: [] } }),
+      ];
+      const processes = [
+        [
+          ...initialize,
+          request("session/new"),
+          respond("session/new", { result: { sessionId: "antigravity-session" } }),
+          ...configureMode,
+          ...completedPrompt,
+          ...failedPrompt,
+          ...(restarts ? failedPrompt : completedPrompt),
+        ],
+        [
+          ...initialize,
+          request("session/new"),
+          respond("session/new", { result: { sessionId: "replacement-session" } }),
+          request("session/resume", {
+            sessionId: "antigravity-session",
+            cwd: "<workspace>",
+            mcpServers: "<any>",
+            additionalDirectories: "<any>",
+          }),
+          respond("session/resume", { result: {} }),
+          ...configureMode,
+          ...completedPrompt,
+        ],
+      ];
+      let spawned = 0;
+      const instanceId = ProviderInstanceId.make("antigravity-recovery-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          Effect.gen(function* () {
+            const index = spawned++;
+            const transcriptPath = path.join(workspace, `transcript-${index}.json`);
+            yield* fileSystem
+              .writeFileString(
+                transcriptPath,
+                JSON.stringify({
+                  scenario: `antigravity-recovery-${index}`,
+                  entries: processes[index],
+                }),
+              )
+              .pipe(Effect.orDie);
+            return yield* makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [scriptPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_REPLAY_TRANSCRIPT_PATH: transcriptPath,
+                  T3_ACP_REPLAY_STATUS_PATH: path.join(workspace, `status-${index}.json`),
+                },
+              },
+            }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
+          }),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-recovery");
+      const modelSelection = { instanceId, model: ANTIGRAVITY_DEFAULT_MODEL } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-recovery"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      for (const [index, status] of ["completed", "failed", "completed"].entries()) {
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            now,
+            ordinal: index + 1,
+          }),
+        );
+        const terminal = yield* session.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrThrow(terminal).status, status);
+      }
+      assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
