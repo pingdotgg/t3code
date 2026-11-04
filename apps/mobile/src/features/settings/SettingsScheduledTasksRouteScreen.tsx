@@ -57,7 +57,6 @@ import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -67,7 +66,7 @@ import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentat
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -400,6 +399,7 @@ export function SettingsScheduledTasksRouteScreen() {
   const { startEditor, resetEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const insets = useSafeAreaInsets();
+  const environmentMenu = useSettingsEnvironmentMenu();
   const newTask = () => {
     if (visibleEnvironments.length === 0) return;
     resetEditor();
@@ -422,21 +422,19 @@ export function SettingsScheduledTasksRouteScreen() {
       />
       <SettingsScreen
         title="Scheduled tasks"
-        trailing={
-          <View className="flex-row items-center">
-            <AndroidSettingsEnvironmentFilter />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="New task"
-              accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
-              disabled={visibleEnvironments.length === 0}
-              onPress={newTask}
-              className="size-11 items-center justify-center rounded-full disabled:opacity-50"
-            >
-              <SymbolView name="plus" size={22} tintColorClassName="accent-icon" />
-            </Pressable>
-          </View>
+        actions={
+          Platform.OS === "android"
+            ? [
+                {
+                  accessibilityLabel: "New task",
+                  icon: "plus",
+                  disabled: visibleEnvironments.length === 0,
+                  onPress: newTask,
+                },
+              ]
+            : undefined
         }
+        menus={[environmentMenu]}
       >
         <ScrollView
           keyboardShouldPersistTaps="handled"
@@ -566,25 +564,27 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     ]);
   });
   return (
-    <SettingsScreen title={title}>
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          options={{
-            headerBackVisible: false,
-            gestureEnabled: !preventRemove,
-            // Native Back pops before removal guards; a bar action lets the guard run first.
-            unstable_headerLeftItems: () => [
-              withNativeGlassHeaderItem({
-                type: "button",
-                label: "",
-                accessibilityLabel: "Back",
-                icon: { type: "sfSymbol", name: "chevron.backward" },
-                onPress: () => navigation.goBack(),
-              }),
-            ],
-          }}
-        />
-      ) : null}
+    <SettingsScreen
+      title={title}
+      // Native Back pops before removal guards; a bar action lets the guard run first.
+      options={
+        Platform.OS === "ios"
+          ? {
+              headerBackVisible: false,
+              gestureEnabled: !preventRemove,
+              unstable_headerLeftItems: () => [
+                withNativeGlassHeaderItem({
+                  type: "button",
+                  label: "",
+                  accessibilityLabel: "Back",
+                  icon: { type: "sfSymbol", name: "chevron.backward" },
+                  onPress: () => navigation.goBack(),
+                }),
+              ],
+            }
+          : undefined
+      }
+    >
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"

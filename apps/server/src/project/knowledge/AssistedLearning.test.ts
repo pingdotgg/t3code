@@ -13,8 +13,9 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -62,7 +63,7 @@ const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSetting
         getEnvironmentId: Effect.succeed(EnvironmentId.make("learning-environment")),
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 /** A text generation double that records each call and replies from a script. */
@@ -196,8 +197,8 @@ const seedReplies = (count: number) =>
   );
 
 const sha256 = (text: string) =>
-  Effect.flatMap(Crypto.Crypto, (crypto) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(text)),
+  Effect.flatMap(Digest.Digest, (crypto) =>
+    crypto.digest(Digest.sha256, new TextEncoder().encode(text)),
   ).pipe(Effect.map(Hex.encode));
 
 const snakeCase = {

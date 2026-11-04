@@ -1,6 +1,29 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  readToolOutputImage,
+  type ToolOutputImage,
+} from "@t3tools/shared/toolOutput";
+
+export function openCodeToolOutput(
+  output: string | undefined,
+  files: ReadonlyArray<{ readonly uri: string; readonly mime: string }> = [],
+) {
+  const images: Array<ToolOutputImage & { type: "image" }> = [];
+  for (const file of files) {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(file.uri);
+    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) continue;
+    const image = readToolOutputImage({ type: "image", mimeType: file.mime, data: match?.[2] });
+    if (image === null) continue;
+    images.push({ type: "image", ...image });
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return images.length === 0
+    ? output
+    : { content: [...(output ? [{ type: "text", text: output }] : []), ...images] };
+}
 
 // Search results stay on the timeline wire, so keep their text a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
@@ -13,7 +36,7 @@ type ToolItemBase = Omit<
 function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
-  if (resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
+  if (toolName.startsWith("mcp__") || resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -81,6 +104,16 @@ function nativeReadOutput(output: string): string {
   return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
 }
 
+/** OpenCode's shell tool succeeds when the command exits non-zero. */
+export function openCodeCommandFailed(toolName: string, completedMetadata: unknown): boolean {
+  const exitCode = recordNumber(completedMetadata, "exit", "exitCode");
+  return (
+    openCodeToolProjectionKind(toolName) === "command_execution" &&
+    exitCode !== undefined &&
+    exitCode !== 0
+  );
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
@@ -88,6 +121,7 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }> | undefined;
   },
 ): OrchestrationV2TurnItem {
   const { input, output } = tool;
@@ -168,7 +202,9 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
+        ...(cleanedOutput === undefined && !tool.files?.length
+          ? {}
+          : { output: openCodeToolOutput(cleanedOutput, tool.files) }),
       };
     }
   }

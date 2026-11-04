@@ -38,6 +38,7 @@ const GrokUsageResponse = Schema.Struct({
     }),
   ),
 });
+const GrokErrorResponse = Schema.Struct({ error: Schema.String });
 
 function parsePeriodBoundary(value: string | undefined) {
   if (
@@ -182,6 +183,17 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
         HttpClientRequest.bearerToken(token),
       ),
     );
+    if (response.status === 403) {
+      const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
+      // xAI refuses Grok Build while the account's privacy setting is a legacy mode.
+      if (error.includes("WKE=privacy-mode:")) {
+        return makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Switch your xAI account to Privacy Mode to show Grok usage limits.",
+        });
+      }
+    }
     const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );

@@ -132,7 +132,7 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
   const session: RpcSession = {
     client,
     initialConfig: Effect.succeed(CONFIG),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),

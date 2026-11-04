@@ -468,8 +468,13 @@ const make = Effect.gen(function* () {
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const runSyncExit = Effect.runSyncExitWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
-  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
+  // sudo resets the environment, so the command has to name this server's home.
+  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
+    "--base-dir",
+    config.baseDir,
+  ]);
   const agentScope = yield* AgentScope;
   const launchersDir = NodePath.join(config.stateDir, "server-browser", "launchers");
 
@@ -780,12 +785,27 @@ const make = Effect.gen(function* () {
   };
 
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
+    const opened: Array<() => Promise<void>> = [];
+    try {
+      return await setUpTab(snapshot, opened);
+    } catch (cause) {
+      // An unpublished tab is in no list, so nothing else would ever close it.
+      for (const close of opened.reverse()) await close().catch(constVoid);
+      throw cause;
+    }
+  };
+
+  const setUpTab = async (
+    snapshot: PreviewSessionSnapshot,
+    opened: Array<() => Promise<void>>,
+  ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
         : null;
+    if (desktop) opened.push(desktop.close);
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
     if (!desktop && desktopChannel.available) {
       await runPromise(
@@ -806,9 +826,11 @@ const make = Effect.gen(function* () {
         snapshot.profileId ?? "default",
         isolatedContext ? tabKey(snapshot.threadId, snapshot.tabId) : undefined,
       ));
+    if (isolatedContext) opened.push(() => context.close());
     if (adopted?.page.isClosed()) throw new Error("The popup closed before it opened.");
     if (!desktop) await prepareContext(context);
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
+    if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
@@ -982,9 +1004,6 @@ const make = Effect.gen(function* () {
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       await control.close().catch(constVoid);
-      if (desktop) await desktop.close().catch(constVoid);
-      else await page.close().catch(constVoid);
-      if (isolatedContext) await context.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
     page.on("close", () => dropTab(tab, true));
@@ -2009,7 +2028,16 @@ const make = Effect.gen(function* () {
             if (existing) {
               if (url) await navigate(tab, url, "load", navigationTimeout);
             } else {
-              await tab.initialNavigation;
+              // A failed open returns no tabId; a leftover hidden tab would block later reuse.
+              await tab.initialNavigation?.catch(async (cause: unknown) => {
+                // Playwright rejects downloads too; their tab must survive to save the file.
+                if (cause instanceof Error && cause.message.includes("Download is starting")) {
+                  throw cause;
+                }
+                await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
+                dropTab(tab, false);
+                throw cause;
+              });
             }
             const reveal = open.open ?? open.show;
             if (reveal !== false) {
@@ -2502,7 +2530,7 @@ const make = Effect.gen(function* () {
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
         else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
-          const dropped = Effect.runSyncExit(Queue.clear(output));
+          const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
           // Without its latest size and control the viewer cannot map input at all.
@@ -2639,16 +2667,35 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = () => dispatchViewerInput(tab, session, viewer, message);
+              const dispatch = (input: Record<string, unknown>) =>
+                dispatchViewerInput(tab, session, viewer, input);
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
                 message.button === "none" &&
                 message.buttons === 0
               ) {
-                await tab.control.humanLatest(viewer.id, `hover:${modifiersOf(message)}`, dispatch);
+                await tab.control.humanLatest(
+                  viewer.id,
+                  `hover:${modifiersOf(message)}`,
+                  message,
+                  dispatch,
+                );
+              } else if (message.type === "wheel") {
+                // A reversal stays separate so scrolling clamped at an edge behaves as if unmerged.
+                await tab.control.humanLatest(
+                  viewer.id,
+                  `wheel:${num(message.x)}:${num(message.y)}:${modifiersOf(message)}:${Math.sign(num(message.deltaX))}:${Math.sign(num(message.deltaY))}`,
+                  message,
+                  dispatch,
+                  (waiting, next) => ({
+                    ...next,
+                    deltaX: num(waiting.deltaX) + num(next.deltaX),
+                    deltaY: num(waiting.deltaY) + num(next.deltaY),
+                  }),
+                );
               } else {
-                await tab.control.human(viewer.id, dispatch);
+                await tab.control.human(viewer.id, () => dispatch(message));
               }
             }
           } catch {

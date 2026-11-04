@@ -55,3 +55,22 @@ it("keeps remote media on the fetch path", async () => {
   expect(await readMediaPng("https://example.com/image.png")).toEqual(png);
   expect(fetch).toHaveBeenCalledWith("https://example.com/image.png");
 });
+
+it("reads media the renderer cannot fetch through the desktop main process", async () => {
+  using fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+  const readMedia = vi.fn().mockResolvedValue({
+    status: 200,
+    mimeType: "image/png",
+    data: new Uint8Array(PNG_BYTES),
+  });
+  vi.stubGlobal("window", { desktopBridge: { readMedia } });
+  try {
+    const png = await readMediaPng("https://example.com/image.png");
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(readMedia).toHaveBeenCalledWith("https://example.com/image.png");
+    expect([...new Uint8Array(await png.arrayBuffer())]).toEqual(PNG_BYTES);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

@@ -17,7 +17,8 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -126,7 +127,8 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const launchLocks = yield* KeyedLock.make<CommandId>();
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
@@ -391,9 +393,9 @@ const make = Effect.gen(function* () {
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
     function* (scope, input) {
-      const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+      const key = input.clientRequestId ?? (yield* random.uuidV4());
       const identity = yield* requestIdentity(scope, "remote-delegate", key).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, crypto),
       );
       const commandId = CommandId.make(`command:mcp:remote-delegate:${identity}`);
       return yield* launchLocks.withLock(
@@ -415,7 +417,7 @@ const make = Effect.gen(function* () {
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
   ) {
-    const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const attempt = yield* random.uuidV4();
     yield* threads
       .dispatch({
         type: "delegated_task.remote.complete",
@@ -468,7 +470,7 @@ const make = Effect.gen(function* () {
     reason?: string,
   ) {
     const identity = yield* requestIdentity(scope, `remote-stop:${remote.threadId}`, key).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, crypto),
     );
     yield* forwarding
       .interruptThread(scope, remote.environmentId, {
@@ -745,9 +747,9 @@ const make = Effect.gen(function* () {
       const { reason } = input;
       const there = followScope(scope.thread, remote);
       // A later cancel stops what started there since; a retry of this one, nothing new.
-      const requestId = input.clientRequestId ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+      const requestId = input.clientRequestId ?? (yield* random.uuidV4());
       const key = `cancel:${yield* requestIdentity(scope, "remote-cancel", requestId).pipe(
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, crypto),
       )}`;
       if (task.result !== null) {
         // A replayed cancel cannot acknowledge a later parent Stop; its follower owns that receipt.

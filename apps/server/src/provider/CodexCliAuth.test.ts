@@ -1,9 +1,11 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import { CodexSettings, ProviderInstanceId, type ProviderAuthState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -199,7 +201,7 @@ it.effect.each(["early", "after-response", "missing-id"])(
         "account/read",
       ]);
       expect(yield* fixture.children[0]!.isRunning).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["failure", "no-account"])("does not accept unverified sign-in %s", (mode) =>
@@ -218,7 +220,7 @@ it.effect.each(["failure", "no-account"])("does not accept unverified sign-in %s
     expect(
       yield* fixture.fs.readFileString(fixture.path.join(fixture.sharedHome, "auth.json")),
     ).toBe('{"global":"unchanged"}');
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each(["before-response", "waiting"])("cancels %s and closes its process", (mode) =>
@@ -243,7 +245,7 @@ it.effect.each(["before-response", "waiting"])("cancels %s and closes its proces
         : { method: "account/login/start", params: { type: "chatgpt" } },
     );
     expect(yield* fixture.fs.exists(fixture.path.join(fixture.homePath, "auth.json"))).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("keeps two accounts independent and logs out only the selected overlay", () =>
@@ -296,7 +298,7 @@ it.effect("keeps two accounts independent and logs out only the selected overlay
       yield* fixture.fs.readFileString(fixture.path.join(fixture.sharedHome, "auth.json")),
     ).toBe('{"global":"unchanged"}');
     expect((yield* fixture.auth.logout(Effect.void)).phase).toBe("idle");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("fails logout when Codex still reports an account", () =>
@@ -311,7 +313,7 @@ it.effect("fails logout when Codex still reports an account", () =>
       ),
     ).toBe("Could not sign out of Codex. Try again.");
     expect((yield* fixture.phase("failed")).message).toBe("Could not sign out. Try again.");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("releases the credential gate when Codex exits while waiting for sign-in", () =>
@@ -323,5 +325,5 @@ it.effect("releases the credential gate when Codex exits while waiting for sign-
     );
     expect(yield* fixture.auth.withAccess!(Effect.succeed("available"))).toBe("available");
     expect(yield* fixture.children[0]!.isRunning).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
