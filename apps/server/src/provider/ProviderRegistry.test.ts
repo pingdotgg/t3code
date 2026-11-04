@@ -43,10 +43,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, type ClaudeCapabilitiesProbe } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -178,6 +179,8 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly workspaceId?: ClaudeCapabilitiesProbe["workspaceId"];
+  readonly usage?: NonNullable<ClaudeCapabilitiesProbe["usage"]>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -3315,6 +3318,77 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps separate Claude logins that share a config directory apart in Limits", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-config-",
+        });
+        const storageDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-login-",
+        });
+        const login = (subscriptionType: string) =>
+          JSON.stringify({
+            claudeAiOauth: { accessToken: `token-${subscriptionType}`, subscriptionType },
+          });
+        yield* fileSystem.writeFileString(path.join(configDir, ".credentials.json"), login("max"));
+        yield* fileSystem.writeFileString(path.join(storageDir, ".credentials.json"), login("pro"));
+        const probe = (subscriptionType: string, utilization: number) =>
+          claudeCapabilities({
+            email: "account-b@example.com",
+            workspaceId: "11111111-1111-1111-1111-111111111111",
+            subscriptionType,
+            tokenSource: "claude.ai",
+            apiProvider: "firstParty",
+            usage: {
+              rate_limits_available: true,
+              rate_limits: { five_hour: { utilization, resets_at: null } },
+            },
+          });
+        const settings = { ...defaultClaudeSettings, homePath: configDir };
+        const separateStorage = { CLAUDE_SECURESTORAGE_CONFIG_DIR: storageDir };
+        const instances = [
+          ["claude-max", yield* checkClaudeProviderStatus(settings, probe("max", 10), {})],
+          [
+            "claude-pro",
+            yield* checkClaudeProviderStatus(settings, probe("pro", 70), separateStorage),
+          ],
+          [
+            "claude-pro-2",
+            yield* checkClaudeProviderStatus(settings, probe("pro", 70), separateStorage),
+          ],
+        ] as const;
+        const providers = instances.map(([instanceId, draft]) => ({
+          ...draft,
+          instanceId: ProviderInstanceId.make(instanceId),
+          driver: ProviderDriverKind.make("claudeAgent"),
+        }));
+
+        const accounts = collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("environment-local"),
+              { entry: { target: { label: "Local" } }, serverConfig: { providers } },
+            ],
+          ]),
+        );
+
+        assert.deepStrictEqual(
+          accounts.map((account) => account.limits.windows[0]?.usedPercent).toSorted(),
+          [10, 70],
+        );
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
