@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +9,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { PersistedServerRuntimeState } from "@t3tools/contracts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import type { DesktopBackendConfiguration } from "./DesktopBackendConfiguration.ts";
 import type { DesktopBackendInstance, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("desktop-auto-attach");
@@ -17,6 +17,7 @@ const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PROBE_TIMEOUT = Duration.millis(1500);
 const PROBE_RETRY_INTERVAL = Duration.millis(500);
 const MAX_PROBE_RETRIES = 3;
+const TOKEN_ONLY_BOOTSTRAP_TTL = Duration.hours(24);
 
 const isProcessAlive = (pid: number): boolean => {
   if (pid <= 0) {
@@ -58,7 +59,6 @@ export const tryAutoAttachToRunningServer = Effect.fn(
   readonly stateDir: string;
   readonly backendCwd: string;
   readonly primary: DesktopBackendInstance;
-  readonly configuration: DesktopBackendConfiguration["Service"];
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -97,12 +97,41 @@ export const tryAutoAttachToRunningServer = Effect.fn(
     return false;
   }
 
-  if (state.desktopBootstrapSecret === undefined && state.desktopBootstrapToken === undefined) {
+  const hasSecret =
+    state.desktopBootstrapSecret !== undefined && state.desktopBootstrapSecret.trim() !== "";
+  const hasToken =
+    state.desktopBootstrapToken !== undefined && state.desktopBootstrapToken.trim() !== "";
+
+  if (!hasSecret && !hasToken) {
     yield* logWarning(
       "server-runtime.json has no desktop bootstrap credentials; auto-attach skipped",
       { runtimeStatePath, pid: state.pid },
     );
     return false;
+  }
+
+  if (!hasSecret) {
+    const startedAt = DateTime.make(state.startedAt);
+    if (Option.isNone(startedAt)) {
+      yield* logWarning(
+        "server-runtime.json has an invalid startedAt timestamp; auto-attach skipped",
+        { runtimeStatePath, startedAt: state.startedAt },
+      );
+      return false;
+    }
+    const expiresAt = DateTime.addDuration(startedAt.value, TOKEN_ONLY_BOOTSTRAP_TTL);
+    const now = yield* DateTime.now;
+    if (DateTime.isGreaterThanOrEqualTo(now, expiresAt)) {
+      yield* logWarning(
+        "server-runtime.json token-only bootstrap credential has expired; auto-attach skipped",
+        {
+          runtimeStatePath,
+          startedAt: state.startedAt,
+          expiresAt: DateTime.formatIso(expiresAt),
+        },
+      );
+      return false;
+    }
   }
 
   if (!isProcessAlive(state.pid)) {
@@ -131,10 +160,6 @@ export const tryAutoAttachToRunningServer = Effect.fn(
       pid: state.pid,
     });
     return false;
-  }
-
-  if (state.desktopBootstrapSecret) {
-    yield* input.configuration.setBootstrapSecret(state.desktopBootstrapSecret);
   }
 
   const attachedConfig: DesktopBackendStartConfig = {

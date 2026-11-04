@@ -185,7 +185,6 @@ export const layer = Layer.effect(
           stateDir: environment.stateDir,
           backendCwd: environment.backendCwd,
           primary: primaryInstance,
-          configuration,
         }).pipe(
           Effect.provide(factoryContext),
           Effect.flatMap((attached) =>

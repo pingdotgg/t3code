@@ -268,31 +268,33 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
         assert.equal(
-          yield* configuration.currentBootstrapToken,
+          yield* configuration.bootstrapTokenForSecret(first.bootstrap.desktopBootstrapSecret ?? ""),
           first.bootstrap.desktopBootstrapToken,
         );
       }),
     ),
   );
 
-  it.effect("setBootstrapSecret makes derived tokens match the attached server", () =>
+  it.effect("bootstrapTokenForSecret derives per secret without replacing the launch secret", () =>
     withHarness(
       Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const attachedSecret = "0123456789abcdef0123456789abcdef";
 
-        yield* configuration.setBootstrapSecret(attachedSecret);
-
         assert.equal(
-          yield* configuration.currentBootstrapToken,
+          yield* configuration.bootstrapTokenForSecret(attachedSecret),
           currentDesktopBootstrapToken(attachedSecret, yield* Clock.currentTimeMillis),
         );
 
         const resolved = yield* configuration.resolvePrimary;
-        assert.equal(resolved.bootstrap.desktopBootstrapSecret, attachedSecret);
+        assert.match(resolved.bootstrap.desktopBootstrapSecret ?? "", /^[0-9a-f]{64}$/i);
+        assert.notEqual(resolved.bootstrap.desktopBootstrapSecret, attachedSecret);
         assert.equal(
           resolved.bootstrap.desktopBootstrapToken,
-          currentDesktopBootstrapToken(attachedSecret, yield* Clock.currentTimeMillis),
+          currentDesktopBootstrapToken(
+            resolved.bootstrap.desktopBootstrapSecret ?? "",
+            yield* Clock.currentTimeMillis,
+          ),
         );
       }),
     ),

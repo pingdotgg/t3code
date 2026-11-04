@@ -155,9 +155,13 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // Use the current window's derived token; the launch config's token may be stale.
+        // Derive a fresh token from this instance's own secret; the launch config's token may be stale.
         ...(bootstrap.desktopBootstrapSecret
-          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+          ? {
+              bootstrapToken: yield* configuration.bootstrapTokenForSecret(
+                bootstrap.desktopBootstrapSecret,
+              ),
+            }
           : bootstrap.desktopBootstrapToken
             ? { bootstrapToken: bootstrap.desktopBootstrapToken }
             : {}),

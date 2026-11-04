@@ -72,8 +72,7 @@ const layerBackendConfiguration = Layer.succeed(
     resolvePrimary: Effect.die("unexpected resolvePrimary"),
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),
-    currentBootstrapToken: Effect.die("unexpected currentBootstrapToken"),
-    setBootstrapSecret: () => Effect.void,
+    bootstrapTokenForSecret: () => Effect.die("unexpected bootstrapTokenForSecret"),
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 

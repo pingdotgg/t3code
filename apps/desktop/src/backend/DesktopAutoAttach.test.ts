@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -7,7 +9,6 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import type { DesktopBackendConfiguration } from "./DesktopBackendConfiguration.ts";
 import type { DesktopBackendInstance, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 import * as DesktopAutoAttach from "./DesktopAutoAttach.ts";
 
@@ -23,10 +24,6 @@ describe("DesktopAutoAttach", () => {
           }),
       } as unknown as DesktopBackendInstance;
 
-      const mockConfiguration = {
-        setBootstrapSecret: () => Effect.void,
-      } as unknown as DesktopBackendConfiguration["Service"];
-
       const testLayer = Layer.mergeAll(
         FileSystem.layerNoop({}),
         Path.layer,
@@ -40,7 +37,6 @@ describe("DesktopAutoAttach", () => {
         stateDir,
         backendCwd: "/repo",
         primary: mockPrimary,
-        configuration: mockConfiguration,
       }).pipe(Effect.provide(testLayer));
 
       assert.isFalse(result);
@@ -67,10 +63,6 @@ describe("DesktopAutoAttach", () => {
           }),
       } as unknown as DesktopBackendInstance;
 
-      const mockConfiguration = {
-        setBootstrapSecret: () => Effect.void,
-      } as unknown as DesktopBackendConfiguration["Service"];
-
       const fsLayer = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
@@ -92,7 +84,6 @@ describe("DesktopAutoAttach", () => {
         stateDir,
         backendCwd: "/repo",
         primary: mockPrimary,
-        configuration: mockConfiguration,
       }).pipe(Effect.provide(testLayer));
 
       assert.isFalse(result);
@@ -118,10 +109,6 @@ describe("DesktopAutoAttach", () => {
           }),
       } as unknown as DesktopBackendInstance;
 
-      const mockConfiguration = {
-        setBootstrapSecret: () => Effect.void,
-      } as unknown as DesktopBackendConfiguration["Service"];
-
       const fsLayer = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
@@ -143,7 +130,109 @@ describe("DesktopAutoAttach", () => {
         stateDir: "/tmp/t3-state-no-credentials",
         backendCwd: "/repo",
         primary: mockPrimary,
-        configuration: mockConfiguration,
+      }).pipe(Effect.provide(testLayer));
+
+      assert.isFalse(result);
+      assert.isFalse(attached);
+    }),
+  );
+
+  it.effect("returns false when token-only runtime record is older than 24 hours", () =>
+    Effect.gen(function* () {
+      const stateDir = "/tmp/t3-state-expired-token";
+      const currentPid = process.pid;
+      const now = yield* DateTime.now;
+      const expiredStartedAt = DateTime.formatIso(
+        DateTime.subtractDuration(now, Duration.hours(25)),
+      );
+      const runtimeContent = JSON.stringify({
+        version: 1,
+        pid: currentPid,
+        origin: "http://127.0.0.1:4545",
+        port: 4545,
+        startedAt: expiredStartedAt,
+        desktopBootstrapToken: "expired-token",
+      });
+
+      let attached = false;
+      const mockPrimary = {
+        attachExternal: () =>
+          Effect.sync(() => {
+            attached = true;
+          }),
+      } as unknown as DesktopBackendInstance;
+
+      const fsLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          exists: () => Effect.succeed(true),
+          readFileString: () => Effect.succeed(runtimeContent),
+        } as unknown as FileSystem.FileSystem),
+      );
+
+      const mockHttpClient = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 }))),
+      );
+
+      const testLayer = Layer.mergeAll(
+        fsLayer,
+        Path.layer,
+        Layer.succeed(HttpClient.HttpClient, mockHttpClient),
+      );
+
+      const result = yield* DesktopAutoAttach.tryAutoAttachToRunningServer({
+        stateDir,
+        backendCwd: "/repo",
+        primary: mockPrimary,
+      }).pipe(Effect.provide(testLayer));
+
+      assert.isFalse(result);
+      assert.isFalse(attached);
+    }),
+  );
+
+  it.effect("returns false when token-only runtime record has an invalid startedAt", () =>
+    Effect.gen(function* () {
+      const stateDir = "/tmp/t3-state-invalid-timestamp";
+      const runtimeContent = JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        origin: "http://127.0.0.1:4545",
+        port: 4545,
+        startedAt: "invalid-timestamp",
+        desktopBootstrapToken: "some-token",
+      });
+
+      let attached = false;
+      const mockPrimary = {
+        attachExternal: () =>
+          Effect.sync(() => {
+            attached = true;
+          }),
+      } as unknown as DesktopBackendInstance;
+
+      const fsLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          exists: () => Effect.succeed(true),
+          readFileString: () => Effect.succeed(runtimeContent),
+        } as unknown as FileSystem.FileSystem),
+      );
+
+      const mockHttpClient = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 }))),
+      );
+
+      const testLayer = Layer.mergeAll(
+        fsLayer,
+        Path.layer,
+        Layer.succeed(HttpClient.HttpClient, mockHttpClient),
+      );
+
+      const result = yield* DesktopAutoAttach.tryAutoAttachToRunningServer({
+        stateDir,
+        backendCwd: "/repo",
+        primary: mockPrimary,
       }).pipe(Effect.provide(testLayer));
 
       assert.isFalse(result);
@@ -169,10 +258,6 @@ describe("DesktopAutoAttach", () => {
           }),
       } as unknown as DesktopBackendInstance;
 
-      const mockConfiguration = {
-        setBootstrapSecret: () => Effect.void,
-      } as unknown as DesktopBackendConfiguration["Service"];
-
       const fsLayer = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.FileSystem.of({
@@ -194,7 +279,6 @@ describe("DesktopAutoAttach", () => {
         stateDir: "/tmp/t3-state-invalid",
         backendCwd: "/repo",
         primary: mockPrimary,
-        configuration: mockConfiguration,
       }).pipe(Effect.provide(testLayer));
 
       assert.isFalse(result);
@@ -202,7 +286,7 @@ describe("DesktopAutoAttach", () => {
     }),
   );
 
-  it.effect("successfully auto-attaches to live server and updates bootstrap credentials", () =>
+  it.effect("successfully auto-attaches to live server with secret", () =>
     Effect.gen(function* () {
       const stateDir = "/tmp/t3-state-live";
       const currentPid = process.pid; // Guarantee a live PID
@@ -213,13 +297,12 @@ describe("DesktopAutoAttach", () => {
         origin: "http://127.0.0.1:4545",
         port: 4545,
         host: "127.0.0.1",
-        startedAt: "2026-01-01T00:00:00.000Z",
+        startedAt: "2020-01-01T00:00:00.000Z",
         desktopBootstrapSecret: testSecret,
       });
 
       const attachedConfigRef = Ref.makeUnsafe<DesktopBackendStartConfig | null>(null);
       const attachedPidRef = Ref.makeUnsafe<number | null>(null);
-      const updatedSecretRef = Ref.makeUnsafe<string | null>(null);
 
       const mockPrimary = {
         attachExternal: (config: DesktopBackendStartConfig, pid: Option.Option<number>) =>
@@ -228,10 +311,6 @@ describe("DesktopAutoAttach", () => {
             yield* Ref.set(attachedPidRef, Option.getOrNull(pid));
           }),
       } as unknown as DesktopBackendInstance;
-
-      const mockConfiguration = {
-        setBootstrapSecret: (secret: string) => Ref.set(updatedSecretRef, secret),
-      } as unknown as DesktopBackendConfiguration["Service"];
 
       const fsLayer = Layer.succeed(
         FileSystem.FileSystem,
@@ -256,7 +335,6 @@ describe("DesktopAutoAttach", () => {
         stateDir,
         backendCwd: "/repo",
         primary: mockPrimary,
-        configuration: mockConfiguration,
       }).pipe(Effect.provide(testLayer));
 
       assert.isTrue(result);
@@ -268,9 +346,71 @@ describe("DesktopAutoAttach", () => {
 
       const attachedPid = yield* Ref.get(attachedPidRef);
       assert.strictEqual(attachedPid, currentPid);
+    }),
+  );
 
-      const updatedSecret = yield* Ref.get(updatedSecretRef);
-      assert.strictEqual(updatedSecret, testSecret);
+  it.effect("successfully auto-attaches to live server with recent token-only record", () =>
+    Effect.gen(function* () {
+      const stateDir = "/tmp/t3-state-recent-token";
+      const currentPid = process.pid;
+      const now = yield* DateTime.now;
+      const recentStartedAt = DateTime.formatIso(now);
+      const testToken = "recent-token-123";
+      const runtimeContent = JSON.stringify({
+        version: 1,
+        pid: currentPid,
+        origin: "http://127.0.0.1:4545",
+        port: 4545,
+        host: "127.0.0.1",
+        startedAt: recentStartedAt,
+        desktopBootstrapToken: testToken,
+      });
+
+      const attachedConfigRef = Ref.makeUnsafe<DesktopBackendStartConfig | null>(null);
+      const attachedPidRef = Ref.makeUnsafe<number | null>(null);
+
+      const mockPrimary = {
+        attachExternal: (config: DesktopBackendStartConfig, pid: Option.Option<number>) =>
+          Effect.gen(function* () {
+            yield* Ref.set(attachedConfigRef, config);
+            yield* Ref.set(attachedPidRef, Option.getOrNull(pid));
+          }),
+      } as unknown as DesktopBackendInstance;
+
+      const fsLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          exists: () => Effect.succeed(true),
+          readFileString: () => Effect.succeed(runtimeContent),
+        } as unknown as FileSystem.FileSystem),
+      );
+
+      const mockHttpClient = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 }))),
+      );
+
+      const testLayer = Layer.mergeAll(
+        fsLayer,
+        Path.layer,
+        Layer.succeed(HttpClient.HttpClient, mockHttpClient),
+      );
+
+      const result = yield* DesktopAutoAttach.tryAutoAttachToRunningServer({
+        stateDir,
+        backendCwd: "/repo",
+        primary: mockPrimary,
+      }).pipe(Effect.provide(testLayer));
+
+      assert.isTrue(result);
+
+      const attachedConfig = yield* Ref.get(attachedConfigRef);
+      assert.isNotNull(attachedConfig);
+      assert.strictEqual(attachedConfig?.httpBaseUrl.origin, "http://127.0.0.1:4545");
+      assert.strictEqual(attachedConfig?.bootstrap.desktopBootstrapToken, testToken);
+      assert.isUndefined(attachedConfig?.bootstrap.desktopBootstrapSecret);
+
+      const attachedPid = yield* Ref.get(attachedPidRef);
+      assert.strictEqual(attachedPid, currentPid);
     }),
   );
 });
