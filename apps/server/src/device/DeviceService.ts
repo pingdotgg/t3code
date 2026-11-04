@@ -557,7 +557,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           hosts: hostSummaries,
           ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
           devices: [
-            ...state.devices.filter((device) => device.hostId !== ready.hostId),
+            ...state.devices.filter(
+              (device) =>
+                device.hostId !== ready.hostId ||
+                (androidDiscoveryIncomplete &&
+                  device.platform === "android" &&
+                  device.physical &&
+                  !devices.some((listed) => listed.id === device.id)),
+            ),
             ...devices,
           ],
           // A host that ends devices itself (EAS stops sessions at their limits)

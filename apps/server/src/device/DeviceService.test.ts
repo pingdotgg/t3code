@@ -143,6 +143,7 @@ it.effect.each(["devices", "getprop"])(
       });
       const result = yield* operations.list;
       expect(result.devices).toEqual([]);
+      expect(result.androidDiscoveryIncomplete).toBe(true);
       expect(result.detail).toContain(operation);
       expect(result.detail).toContain("exit code 1");
       expect(result.detail).not.toContain("private command output");
@@ -1245,11 +1246,19 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         { id: "phone", name: "Pixel", platform: "android", physical: true },
         { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
       ].map((device) => ({ ...device, booted: true, version: "test" }));
+      let omitPhysical = false;
       const http = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
-            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
+            Response.json({
+              simulators: hubDevices.slice(0, 1),
+              emulators: hubDevices.slice(1).filter((device) => !omitPhysical || !device.physical),
+              errors:
+                omitPhysical && enumeration.code !== 0
+                  ? [{ message: "[android-utils] Failed to list devices:" }]
+                  : [],
+            }),
           ),
         ),
       );
@@ -1301,6 +1310,12 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
       }
 
+      omitPhysical = true;
+      const failedAdb = yield* service.list;
+      expect(failedAdb.devices).toContainEqual({ ...hubDevices[1], hostId });
+      expect(failedAdb.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
+      omitPhysical = false;
+
       enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
       const recovered = yield* service.retryHost(hostId);
       expect(recovered.devices).toEqual([
@@ -1317,6 +1332,10 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       ]);
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
+      omitPhysical = true;
+      const disconnected = yield* service.list;
+      expect(disconnected.devices.some((device) => device.id === "phone")).toBe(false);
+      expect(disconnected.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBeUndefined();
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 

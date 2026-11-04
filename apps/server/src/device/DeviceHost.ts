@@ -108,7 +108,7 @@ export interface DeviceOperations {
     {
       readonly devices: ReadonlyArray<HostDevice>;
       readonly detail: string | undefined;
-      /** Some Android virtual devices could not be listed; the rest are. */
+      /** Some Android devices could not be listed; the rest are. */
       readonly androidDiscoveryIncomplete?: boolean;
     },
     DeviceOperationError
