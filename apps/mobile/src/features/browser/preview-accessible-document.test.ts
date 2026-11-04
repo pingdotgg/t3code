@@ -2,7 +2,7 @@ import { createAccessibleDocumentView } from "@t3tools/client-runtime/preview/ac
 import type { PreviewAccessibilityAction, PreviewAccessibilityDocument } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-it("keeps an unsent field edit through unrelated page updates and cancels it on Escape", () => {
+it("preserves drafts and submits only values the viewer edited", () => {
   const container = document.createElement("div");
   document.body.append(container);
   const onAction = vi.fn(() => true);
@@ -35,6 +35,35 @@ it("keeps an unsent field edit through unrelated page updates and cancels it on 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(input.value).toBe("Server");
     expect(onAction).not.toHaveBeenCalled();
+
+    view.update(
+      { ...page, version: 3, root: { id: "secret", role: "textbox", protected: true } },
+      true,
+    );
+    const secret = container.querySelector("input")!;
+    secret.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(onAction).toHaveBeenLastCalledWith({
+      type: "accessibilityAction",
+      document: "page",
+      node: "secret",
+      action: "setValue",
+      submit: true,
+    });
+    for (const value of ["Replacement", ""]) {
+      secret.value = value;
+      secret.dispatchEvent(new Event("input", { bubbles: true }));
+      if (value)
+        secret.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      else secret.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(onAction).toHaveBeenLastCalledWith({
+        type: "accessibilityAction",
+        document: "page",
+        node: "secret",
+        action: "setValue",
+        ...(value ? { submit: true } : {}),
+        value,
+      });
+    }
   } finally {
     view.destroy();
     container.remove();

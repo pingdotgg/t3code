@@ -250,6 +250,14 @@ export function buildAccessibilityTree(
     ] as const) {
       if (truthy(properties.get(flag))) node[flag] = true;
     }
+    if (
+      editable &&
+      !hidden &&
+      typeof raw.value?.value === "string" &&
+      raw.value.value.length > PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS
+    ) {
+      node.readonly = true;
+    }
     const invalid = properties.get("invalid");
     if (invalid !== undefined && invalid !== "false" && invalid !== false) node.invalid = true;
     if (editable) node.editable = true;
@@ -464,11 +472,13 @@ export class ServerBrowserAccessibility {
         assertCurrent();
         await session.send("DOM.focus", { backendNodeId });
         assertCurrent();
-        await callOn(session, backendNodeId, SELECT_CONTENTS_FUNCTION, assertCurrent);
-        assertCurrent();
-        // Real input events keep framework-controlled fields in sync.
-        if (action.value) await main.send("Input.insertText", { text: action.value });
-        else await pressKey(main, "Backspace", 8, undefined, isCurrent);
+        if (action.value !== undefined) {
+          await callOn(session, backendNodeId, SELECT_CONTENTS_FUNCTION, assertCurrent);
+          assertCurrent();
+          // Real input events keep framework-controlled fields in sync.
+          if (action.value) await main.send("Input.insertText", { text: action.value });
+          else await pressKey(main, "Backspace", 8, undefined, isCurrent);
+        }
         assertCurrent();
         if (action.submit) await pressKey(main, "Enter", 13, "\r", isCurrent);
       }

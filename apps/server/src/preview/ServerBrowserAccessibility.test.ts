@@ -282,8 +282,8 @@ it("redelivers the newest document to a viewer whose queue was full", async () =
   }
 });
 
-it("sends editable values exactly as typed, even when they match the field's name", () => {
-  const { root } = buildAccessibilityTree([
+it("preserves editable values and makes truncated values read-only", () => {
+  const { root, targets } = buildAccessibilityTree([
     frame("0", [
       node("1", "RootWebArea", { childIds: ["2", "3", "4"] }),
       node("2", "textbox", {
@@ -304,6 +304,9 @@ it("sends editable values exactly as typed, even when they match the field's nam
     "Word",
     " ".repeat(10_000),
   ]);
+  expect(root!.children![2]!.readonly).toBe(true);
+  expect(targets.get("0.4")!.readonly).toBe(true);
+  expect(targets.get("0.3")!.readonly).toBe(false);
 });
 
 type Listener = (...args: Array<unknown>) => void;
@@ -418,49 +421,61 @@ it.each([
   }
 });
 
-it.each(["activate", "setValue"] as const)("allows %s to navigate the page", async (action) => {
-  const main = fakeSession(
-    () => [
-      node("1", "RootWebArea", { childIds: ["2"] }),
-      node("2", action === "activate" ? "link" : "textbox", { backendDOMNodeId: 9 }),
-    ],
-    { id: "main" },
-  );
-  const page = fakePage(main, new Map());
-  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
-  try {
-    await mirror.subscribe("viewer", () => true);
-    const send = main.send.getMockImplementation()!;
-    const navigatingMethod =
-      action === "activate" ? "Runtime.callFunctionOn" : "Input.dispatchKeyEvent";
-    main.send.mockImplementation(async (method, input) => {
-      const result = await send(method, input);
-      if (method === navigatingMethod) page.events.emit("framenavigated", page);
-      return result;
-    });
-    main.send.mockClear();
+it.each(["activate", "setValue", "submit"] as const)(
+  "allows %s to navigate the page",
+  async (action) => {
+    const main = fakeSession(
+      () => [
+        node("1", "RootWebArea", { childIds: ["2"] }),
+        node("2", action === "activate" ? "link" : "textbox", { backendDOMNodeId: 9 }),
+      ],
+      { id: "main" },
+    );
+    const page = fakePage(main, new Map());
+    const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+    try {
+      await mirror.subscribe("viewer", () => true);
+      const send = main.send.getMockImplementation()!;
+      const navigatingMethod =
+        action === "activate" ? "Runtime.callFunctionOn" : "Input.dispatchKeyEvent";
+      main.send.mockImplementation(async (method, input) => {
+        const result = await send(method, input);
+        if (method === navigatingMethod) page.events.emit("framenavigated", page);
+        return result;
+      });
+      main.send.mockClear();
 
-    expect(
-      await mirror.act({
-        type: "accessibilityAction",
-        document: "1:main-loader",
-        node: "0.2",
-        action,
-        value: "Draft",
-        submit: true,
-      }),
-    ).toBeNull();
-    expect(main.send).toHaveBeenCalledWith(navigatingMethod, expect.anything());
-    if (action === "setValue") {
-      expect(main.send).toHaveBeenCalledWith("Input.insertText", { text: "Draft" });
-      expect(main.send.mock.calls.filter(([method]) => method === navigatingMethod)).toHaveLength(
-        1,
-      );
+      expect(
+        await mirror.act({
+          type: "accessibilityAction",
+          document: "1:main-loader",
+          node: "0.2",
+          action: action === "submit" ? "setValue" : action,
+          ...(action === "setValue" ? { value: "Draft" } : {}),
+          submit: true,
+        }),
+      ).toBeNull();
+      expect(main.send).toHaveBeenCalledWith(navigatingMethod, expect.anything());
+      if (action === "setValue") {
+        expect(main.send).toHaveBeenCalledWith("Input.insertText", { text: "Draft" });
+        expect(main.send.mock.calls.filter(([method]) => method === navigatingMethod)).toHaveLength(
+          1,
+        );
+      } else if (action === "submit") {
+        expect(main.send.mock.calls.map(([method]) => method)).not.toContain("Input.insertText");
+        expect(main.send.mock.calls.map(([method]) => method)).not.toContain(
+          "Runtime.callFunctionOn",
+        );
+        expect(main.send).toHaveBeenCalledWith(
+          "Input.dispatchKeyEvent",
+          expect.objectContaining({ key: "Enter" }),
+        );
+      }
+    } finally {
+      await mirror.close();
     }
-  } finally {
-    await mirror.close();
-  }
-});
+  },
+);
 
 it("follows semantic changes inside out-of-process frames and releases their sessions", async () => {
   vi.useFakeTimers();

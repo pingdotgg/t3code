@@ -446,12 +446,13 @@ export function createAccessibleDocumentView(
   };
   const commit = (element: HTMLInputElement | HTMLTextAreaElement, submit: boolean) => {
     const hit = nodeOf(element);
-    if (!hit || (!submit && element.value === element.dataset.serverValue)) return;
+    const edited = element.dataset.dirty !== undefined;
+    if (!hit || (!submit && !edited)) return;
     delete element.dataset.dirty;
     act({
       node: hit.node.id,
       action: "setValue",
-      value: element.value,
+      ...(edited ? { value: element.value } : {}),
       ...(submit ? { submit } : {}),
     });
   };
