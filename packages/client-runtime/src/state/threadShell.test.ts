@@ -415,12 +415,6 @@ describe("v2 thread shell lists", () => {
     expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
 
-    // A task whose parent is gone there is listed on its own, as is one whose
-    // parent's environment is switched off.
-    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
-    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
-    // Archiving the parent removes it from the live snapshot. Its task stays under it, as a
-    // local subagent does, while the archive is older than the removal or still loading.
     const archive = (
       snapshotSequence: number,
       archived: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -429,6 +423,16 @@ describe("v2 thread shell lists", () => {
         archivedSnapshotAtom(environmentId),
         AsyncResult.success({ ...emptyArchive, snapshotSequence, threads: archived }),
       );
+    // A task whose parent is gone there is listed on its own, as is one whose
+    // parent's environment is switched off. An archive answer cached before the parent went
+    // missing is read again first.
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
+    expect(listed()).toEqual([]);
+    expect(archiveRefreshes).toEqual([environmentId]);
+    archive(0, []);
+    expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    // Archiving the parent removes it from the live snapshot. Its task stays under it, as a
+    // local subagent does, while the archive is older than the removal or still loading.
     archive(10, []);
     registry.set(
       snapshotAtom(environmentId),
@@ -442,7 +446,7 @@ describe("v2 thread shell lists", () => {
       AsyncResult.success({ ...EMPTY_SHELL_STATE, removedAt: new Map([[parent.id, 11]]) }),
     );
     expect(listed()).toEqual([]);
-    expect(archiveRefreshes).toEqual([environmentId]);
+    expect(archiveRefreshes).toHaveLength(2);
     registry.set(archivedSnapshotAtom(environmentId), AsyncResult.initial(true));
     expect(listed()).toEqual([]);
     archive(12, [{ ...parent, archivedAt: v2Now }]);
@@ -455,7 +459,7 @@ describe("v2 thread shell lists", () => {
       AsyncResult.success({ ...EMPTY_SHELL_STATE, generation: 1 }),
     );
     expect(listed()).toEqual([]);
-    expect(archiveRefreshes).toEqual([environmentId, environmentId]);
+    expect(archiveRefreshes).toHaveLength(3);
     archive(13, [{ ...parent, archivedAt: v2Now }]);
     expect(listed()).toEqual([]);
     // A current archive without the parent means it was deleted, and an unreadable archive

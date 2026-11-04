@@ -673,9 +673,9 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
-  // The archive has no live updates, so a removal or a new authoritative shell snapshot rereads it,
-  // and the answer from before counts as loading. Kept outside the family so a swept node still
-  // sees a change it missed.
+  // The archive has no live updates. An answer cached before this atom first read it, a removal, or
+  // a new authoritative shell snapshot rereads it, and the answer from before counts as loading.
+  // Kept outside the family so a swept node still sees a change it missed.
   const archiveReads = new Map<
     EnvironmentId,
     WeakMap<
@@ -698,9 +698,11 @@ export function createEnvironmentThreadShellAtoms(input: {
       const previous = reads.get(get.registry);
       const generation = shell?.generation ?? previous?.generation ?? 0;
       const removedAt = shell?.removedAt ?? previous?.removedAt ?? new Map();
+      const settled = !result.waiting && !AsyncResult.isInitial(result);
       if (
-        previous !== undefined &&
-        (previous.generation !== generation || previous.removedAt !== removedAt)
+        previous === undefined
+          ? settled
+          : previous.generation !== generation || previous.removedAt !== removedAt
       ) {
         reads.set(get.registry, { generation, removedAt, stale: result });
         get.refresh(archiveAtom);
