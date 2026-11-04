@@ -151,11 +151,34 @@ function makeWindow(
   };
 }
 
+interface UnifiedWindow {
+  readonly utilization?: number;
+  readonly resetsAt?: number;
+}
+
+/**
+ * Newer CLIs put each window's 0-1 utilization under `unifiedWindows` and omit the
+ * event's own `utilization`. The pinned SDK typings do not declare it yet.
+ */
+function readUnifiedWindows(info: SDKRateLimitInfo): ServerProviderUsageWindow[] {
+  const unified = (
+    info as { readonly unifiedWindows?: Readonly<Record<string, UnifiedWindow | undefined>> }
+  ).unifiedWindows;
+  return Object.keys(WINDOWS).flatMap((id) => {
+    const window = unified?.[id];
+    return typeof window?.utilization === "number"
+      ? [makeWindow(id, window.utilization * 100, isoFromEpochSeconds(window.resetsAt))]
+      : [];
+  });
+}
+
 /** Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows. */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const unifiedWindows = readUnifiedWindows(info);
+  if (unifiedWindows.length > 0) return { windows: unifiedWindows };
   const type: string | undefined = info.rateLimitType;
   if (!type || typeof info.utilization !== "number") {
     return undefined;

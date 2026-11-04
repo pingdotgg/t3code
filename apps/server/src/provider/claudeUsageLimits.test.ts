@@ -249,6 +249,53 @@ describe("claudeRateLimitEventToUpdate", () => {
     });
   });
 
+  it("reads every window from unifiedWindows when the event carries no utilization", () => {
+    // Shape captured from Claude Code 2.1.318.
+    const info = {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      resetsAt: 1_784_000_000,
+      unifiedWindows: {
+        five_hour: { utilization: 0.5, resetsAt: 1_784_000_000, status: "allowed" },
+        seven_day: { utilization: 0.25, resetsAt: 1_784_100_000, status: "allowed" },
+        seven_day_opus: { utilization: 0.9, resetsAt: 1_784_100_000 },
+      },
+    } as const;
+    expect(claudeRateLimitEventToUpdate(info, noNames)).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 50,
+          windowDurationMins: 300,
+          resetsAt: "2026-07-14T03:33:20.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 25,
+          windowDurationMins: 10080,
+          resetsAt: "2026-07-15T07:20:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("ignores unifiedWindows that carry no utilization", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          unifiedWindows: { five_hour: {} },
+        } as never,
+        noNames,
+      ),
+    ).toBeUndefined();
+  });
+
   it("lands the streamed overage-included bucket on the row the probe named", () => {
     const event = {
       status: "allowed",
