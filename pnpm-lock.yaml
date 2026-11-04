@@ -909,9 +909,6 @@ importers:
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
-      jose:
-        specifier: 'catalog:'
-        version: 6.2.2
       node-pty:
         specifier: 1.2.0-beta.15
         version: 1.2.0-beta.15(patch_hash=f1e680afec85f650699ea756f91f469844ec4c976f4f168492a45c6b3f67d651)
@@ -1165,9 +1162,6 @@ importers:
       html-url-attributes:
         specifier: ^3.0.1
         version: 3.0.1
-      jose:
-        specifier: 'catalog:'
-        version: 6.2.2
       jsonc-parser:
         specifier: 3.3.1
         version: 3.3.1
@@ -2048,9 +2042,6 @@ importers:
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
-      jose:
-        specifier: 'catalog:'
-        version: 6.2.2
       mdast-util-directive:
         specifier: 'catalog:'
         version: 3.1.0(supports-color@8.1.1)
