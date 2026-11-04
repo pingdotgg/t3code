@@ -683,12 +683,11 @@ export const make = Effect.gen(function* () {
         // Before anything is typed the repository's own people stand in; a search reaches
         // contributors from forks, who are never assignable.
         if (query.length === 0) {
-          const users = yield* page(
+          const users = yield* readArray(
             { ...input, path: `${repoPath(input)}/assignees` },
             ForgejoUser,
-            100,
           );
-          return { items: actors(users.items), truncated: users.truncated };
+          return { items: actors(users), truncated: false };
         }
         const found = yield* readLinked(
           {
