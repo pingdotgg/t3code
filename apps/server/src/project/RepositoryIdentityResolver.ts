@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -142,12 +143,15 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
     const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
 
     // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
-    const isFolder = yield* fileSystem.stat(cwd).pipe(
+    const isFolder = yield* ioGate.run(cwd, fileSystem.stat(cwd)).pipe(
       Effect.map((info) => info.type === "Directory"),
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      // A folder that does not answer would also hang every git probe below.
+      Effect.catchReason("PlatformError", "TimedOut", () => Effect.succeed(false)),
       Effect.orElseSucceed(() => true),
     );
     if (!isFolder) return null;
@@ -179,11 +183,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       // An explicit --git-dir fails unless the folder has this entry; a symlink counts even
       // when its target is missing, as git reads a symlinked HEAD's target text.
       const target = path.join(cwd, entry);
-      const hasEntry = yield* fileSystem.exists(target).pipe(
+      const hasEntry = yield* ioGate.run(target, fileSystem.exists(target)).pipe(
         Effect.flatMap((exists) =>
           exists
             ? Effect.succeed(true)
-            : fileSystem.readLink(target).pipe(
+            : ioGate.run(target, fileSystem.readLink(target)).pipe(
                 Effect.as(true),
                 Effect.orElseSucceed(() => false),
               ),

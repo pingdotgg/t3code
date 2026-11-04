@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
 
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
@@ -45,6 +48,10 @@ const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   ProjectFaviconResolver.make.pipe(
     Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(
+      WorkspaceIoGate.WorkspaceIoGate,
+      WorkspaceIoGate.makeWorkspaceIoGate({ maxInFlight: 2, timeout: "10 seconds" }),
+    ),
   );
 
 it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
@@ -284,6 +291,38 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
       }),
+    );
+
+    it.effect("gives up on a folder that stops answering without taking every fs thread", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        const gateFull = yield* Deferred.make<void>();
+        let inFlight = 0;
+        let peakInFlight = 0;
+        // Like a stat on a dead mount, which never returns.
+        const hungStat = Effect.suspend(() => {
+          inFlight += 1;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          return inFlight === 2 ? Deferred.succeed(gateFull, undefined) : Effect.void;
+        }).pipe(Effect.andThen(Effect.never));
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) =>
+              filePath !== cwd && filePath.startsWith(cwd) ? hungStat : fileSystem.stat(filePath),
+          }),
+        );
+
+        const resolving = yield* resolver.resolvePath(cwd).pipe(Effect.flip, Effect.forkChild);
+        yield* Deferred.await(gateFull);
+        yield* TestClock.adjust("10 seconds");
+        const error = yield* Fiber.join(resolving);
+
+        expect(error.operation).toBe("stat-candidate");
+        expect(error.cause).toMatchObject({ reason: { _tag: "TimedOut" } });
+        expect(peakInFlight).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
     );
 
     it.effect("skips icon metadata paths outside the workspace", () =>

@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 
@@ -170,7 +171,34 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
-  const get: ServerSecretStore["Service"]["get"] = (name) =>
+  // Requests read secrets on every call, so serve them from memory: a disk read there queues
+  // behind any stuck call on libuv's shared pool. Caching stays on only while the directory
+  // watch runs, which picks up writes from other processes such as the CLI.
+  const cached = new Map<string, Option.Option<Uint8Array>>();
+  let watching = false;
+  let generation = 0;
+  const forget = (name?: string) => {
+    generation += 1;
+    if (name === undefined) cached.clear();
+    else cached.delete(name);
+  };
+  yield* fileSystem.watch(serverConfig.secretsDir).pipe(
+    Stream.onStart(Effect.sync(() => (watching = true))),
+    Stream.runForEach(() => Effect.sync(() => forget())),
+    Effect.ignoreCause({ log: true }),
+    Effect.ensuring(
+      Effect.sync(() => {
+        watching = false;
+        forget();
+      }),
+    ),
+    // Starting now turns the cache on before the first request can read a secret.
+    Effect.forkScoped({ startImmediately: true }),
+  );
+
+  const copy = Option.map((bytes: Uint8Array) => Uint8Array.from(bytes));
+
+  const read = (name: string) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
       Effect.catch((cause) =>
@@ -185,6 +213,20 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("ServerSecretStore.get"),
     );
+
+  const get: ServerSecretStore["Service"]["get"] = (name) =>
+    Effect.suspend(() => {
+      const hit = cached.get(name);
+      if (hit !== undefined) return Effect.succeed(copy(hit));
+      const readGeneration = generation;
+      return read(name).pipe(
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            if (watching && generation === readGeneration) cached.set(name, copy(value));
+          }),
+        ),
+      );
+    });
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
@@ -204,6 +246,7 @@ export const make = Effect.gen(function* () {
           yield* fileSystem.rename(tempPath, secretPath);
           yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
+          Effect.ensuring(Effect.sync(() => forget(name))),
           Effect.catch((cause) =>
             fileSystem.remove(tempPath).pipe(
               Effect.ignore,
@@ -248,6 +291,7 @@ export const make = Effect.gen(function* () {
           yield* fileSystem.chmod(tempPath, 0o600);
           yield* fileSystem.link(tempPath, secretPath);
         }).pipe(
+          Effect.ensuring(Effect.sync(() => forget(name))),
           Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
           Effect.mapError(
             (cause) =>
@@ -305,6 +349,7 @@ export const make = Effect.gen(function* () {
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
     fileSystem.remove(resolveSecretPath(name)).pipe(
+      Effect.ensuring(Effect.sync(() => forget(name))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.void

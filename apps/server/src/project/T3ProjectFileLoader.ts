@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
 import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
+
 const decodeT3ProjectFileJson = Schema.decodeEffect(T3ProjectFileFromJson);
 
 export class T3ProjectFileLoadError extends Schema.TaggedError<T3ProjectFileLoadError>()(
@@ -47,11 +49,12 @@ const logT3ProjectFileLoadError = (error: T3ProjectFileLoadError) =>
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
 
   const load: T3ProjectFileLoader["Service"]["load"] = Effect.fn("T3ProjectFileLoader.load")(
     function* (workspaceRoot) {
       const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
+      const raw = yield* ioGate.run(filePath, fileSystem.readFileString(filePath)).pipe(
         Effect.asSome,
         Effect.catchTags({
           PlatformError: (error) =>
