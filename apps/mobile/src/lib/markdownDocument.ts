@@ -203,7 +203,7 @@ export function markdownHtmlContent(
     result += nextText(content.slice(end, match.index));
     const replacement = htmlTagMarkdown(match[0], anchors, options);
     if (replacement) dropSpace = false;
-    else if (/^<img\b/i.test(match[0])) dropSpace = /[\s*_[(]/.test(result.at(-1) ?? "\n");
+    else if (/^<img\b/i.test(match[0])) dropSpace = endsWithOpener(result);
     if (replacement === "[" && bangBefore(result, result.length))
       result = `${result.slice(0, -1)}\\!`;
     result +=
@@ -230,13 +230,19 @@ function iconSized(tag: string): boolean {
 
 // Alt text can land at the start of a line, so a leading block marker must stay literal.
 function markdownText(text: string): string {
+  if (!text.trim()) return "";
   return text
     .replace(/\s+/g, " ")
-    .trim()
     .replace(/[\\`*_[\]<>&|~]/g, "\\$&")
-    .replace(/^(?:([#+=-])|(\d+)([.)]))/, (_, marker, digits, delimiter) =>
-      marker ? `\\${marker}` : `${digits}\\${delimiter}`,
+    .replace(/^( ?)(?:([#+=-])|(\d+)([.)]))/, (_, space, marker, digits, delimiter) =>
+      marker ? `${space}\\${marker}` : `${space}${digits}\\${delimiter}`,
     );
+}
+
+/** An escaped `\_` is literal text; only an unescaped delimiter or whitespace makes the next space removable. */
+function endsWithOpener(text: string): boolean {
+  const delimiter = /(\\*)[*_]$/.exec(text);
+  return delimiter ? delimiter[1]!.length % 2 === 0 : text === "" || /\s$/.test(text);
 }
 
 function htmlTagMarkdown(
@@ -317,7 +323,7 @@ export function markdownWithHtml(markdown: string): string {
       if (content) {
         previous = content;
         dropSpace = false;
-      } else if (/^<img\b/i.test(child.value)) dropSpace = /[\s*_[(]$/.test(previous);
+      } else if (/^<img\b/i.test(child.value)) dropSpace = endsWithOpener(previous);
       if (start === undefined || end === undefined) continue;
       // Text before an outermost link is never edited, so this edit cannot overlap another.
       if (content.startsWith("[") && !linkLabel && bangBefore(markdown, start))
@@ -508,8 +514,15 @@ function markdownWithInlineSvgAsText(markdown: string): string {
         child.type === "image" ? child.url : definitions.get(child.identifier.toUpperCase());
       const start = child.position?.start.offset;
       const end = child.position?.end.offset;
-      if (!standalone && url && SVG_URL.test(url) && start !== undefined && end !== undefined)
-        edits.push({ start, end, content: markdownText(child.alt ?? "") });
+      if (!standalone && url && SVG_URL.test(url) && start !== undefined && end !== undefined) {
+        const content = markdownText(child.alt ?? "");
+        // A removed image would leave `** Title**`, which is not bold.
+        const dropSpace =
+          !content &&
+          /^[ \t]/.test(markdown.slice(end, end + 1)) &&
+          endsWithOpener(markdown.slice(Math.max(0, start - 16), start));
+        edits.push({ start, end: dropSpace ? end + 1 : end, content });
+      }
     }
   };
   visit(root, true);

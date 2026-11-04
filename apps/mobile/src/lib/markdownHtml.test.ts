@@ -99,6 +99,29 @@ describe("HTML in native Markdown", () => {
     expect(result).not.toContain("![Passed]");
   });
 
+  it("keeps the spaces that separate a replaced image from its neighbors", () => {
+    const svg = "[badge]: https://example.com/status.svg";
+    expect(
+      markdownForNativeRendering(`a![ b ][badge]c\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
+    ).toContain("a b c");
+    expect(
+      markdownWithHtml('foo\\_<img src="https://example.com/i.png" width="16" alt=""> bar'),
+    ).toBe("foo\\_ bar");
+  });
+
+  it("keeps emphasis around an SVG image that is removed", () => {
+    const svg = "[icon]: https://example.com/icon.svg";
+    expect(
+      markdownForNativeRendering(`**![][icon] Title**\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
+    ).toContain("**Title**");
+    expect(
+      markdownForNativeRendering(
+        "**![](https://example.com/icon.svg) Title**",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("**Title**");
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
