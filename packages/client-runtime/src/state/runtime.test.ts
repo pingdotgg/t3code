@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   type ReviewDiffPreviewInput,
@@ -92,6 +95,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   execute: Effect.Effect<A, E>,
   {
     refreshTrigger,
+    refreshIntervalMs,
     idleTtlMs,
     persistence,
     initialState,
@@ -100,6 +104,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     onAnswer,
   }: {
     readonly refreshTrigger?: Atom.Atom<unknown>;
+    readonly refreshIntervalMs?: number;
     readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
     readonly idleTtlMs?: number;
@@ -147,6 +152,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     ...(persistence === undefined ? {} : { persistence }),
     execute: () => execute,
     ...(refreshTrigger === undefined ? {} : { refreshTrigger: () => refreshTrigger }),
+    ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
     ...(idleTtlMs === undefined ? {} : { idleTtlMs }),
     ...(isFinal === undefined ? {} : { isFinal }),
     ...(onAnswer === undefined ? {} : { onAnswer }),
@@ -154,6 +160,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
 
   return {
     runtime,
+    family,
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
     supervisorSession,
     supervisorState,
@@ -1014,6 +1021,116 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect("refetches when mounted again after its stale time, while still cached", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let now = 0;
+        using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+        let contents = "before edit";
+        let fetches = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return contents;
+          }),
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const read = readEnvironmentQuery(registry, harness.atom);
+        const remount = Effect.gen(function* () {
+          const unmount = registry.mount(harness.atom);
+          yield* Effect.yieldNow;
+          const value = yield* read;
+          unmount();
+          yield* Effect.yieldNow;
+          return value;
+        });
+
+        expect(yield* remount).toBe("before edit");
+        contents = "after edit";
+
+        // Inside the harness's 60s stale time: the cached value stands.
+        now = 30_000;
+        expect(yield* remount).toBe("before edit");
+        expect(fetches).toBe(1);
+
+        // Past the stale time, well inside the default 5 minute idle TTL.
+        now = 61_000;
+        expect(yield* remount).toBe("after edit");
+        expect(fetches).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("keeps refreshing on its interval while cached with no reader", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Only timers: the registry's interval and TTL sweep. Effect's scheduler uses setImmediate.
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        let fetches = 0;
+        const answered = yield* Queue.unbounded<number>();
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return fetches;
+          }).pipe(Effect.tap((value) => Queue.offer(answered, value))),
+          { refreshIntervalMs: 30_000 },
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const unmount = registry.mount(harness.atom);
+        expect(yield* Queue.take(answered)).toBe(1);
+        unmount();
+        yield* Effect.yieldNow;
+
+        // A signed asset URL renews this way; one left to expire would reach the next reader.
+        vi.advanceTimersByTime(30_000);
+        expect(yield* Queue.take(answered)).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("keeps its cache when collected while unmounted, inside its stale time", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        NodeV8.setFlagsFromString("--expose-gc");
+        const gc = NodeVM.runInNewContext("gc") as () => void;
+        using _now = vi.spyOn(Date, "now").mockReturnValue(0);
+        let fetches = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.sync(() => {
+            fetches += 1;
+            return fetches;
+          }),
+        );
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        // `Atom.family` holds members weakly, so the test must hold none: another environment
+        // than `harness.atom`'s, which the harness holds.
+        const environmentId = EnvironmentId.make("unheld-environment");
+        const query = () => harness.family({ environmentId, input: undefined });
+        const first = new WeakRef(query());
+        const remount = Effect.gen(function* () {
+          const unmount = registry.mount(query());
+          yield* Effect.yieldNow;
+          const value = yield* readEnvironmentQuery(registry, query());
+          unmount();
+          return value;
+        });
+        // A WeakRef target survives until the current job ends, so collect after it.
+        const collect = Effect.yieldNow.pipe(Effect.andThen(Effect.sync(gc)));
+
+        expect(yield* remount).toBe(1);
+        yield* collect;
+        expect(yield* remount).toBe(1);
+        yield* collect;
+        expect(first.deref()).toBe(query());
+        expect(fetches).toBe(1);
       }),
     ),
   );
