@@ -374,4 +374,26 @@ describe("getProviderUpdateRunToastView", () => {
       })?.description,
     }).toEqual({ toast: message, sidebarPill: message });
   });
+
+  it("keeps the generic description when the update result only says it updated", () => {
+    const codex = provider({
+      driver: driver("codex"),
+      version: "1.2.0",
+      latestVersion: "1.2.0",
+      advisoryStatus: "current",
+      updateState: updateState("succeeded", "Provider updated."),
+    });
+
+    expect({
+      toast: getProviderUpdateRunToastView([
+        run("Mac Studio", "codex", AsyncResult.success({ providers: [codex] })),
+      ])?.description,
+      sidebarPill: getProviderUpdateSidebarPillView([codex], {
+        visibleAfterIso: sessionStartedAt,
+      })?.description,
+    }).toEqual({
+      toast: "New sessions will use the updated provider.",
+      sidebarPill: "New sessions will use the updated provider.",
+    });
+  });
 });

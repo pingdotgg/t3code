@@ -89,9 +89,11 @@ function getProviderUpdatedDescription(
   providerCount: number,
   message: string | null | undefined,
 ): string {
-  return providerCount === 1
-    ? (message ?? "New sessions will use the updated provider.")
-    : "New sessions will use the updated providers.";
+  if (providerCount !== 1) return "New sessions will use the updated providers.";
+  // The server's plain success message only repeats the title.
+  return message && message !== "Provider updated."
+    ? message
+    : "New sessions will use the updated provider.";
 }
 
 function getProviderFailedUpdateTitle(
