@@ -147,10 +147,11 @@ To keep them in view on web and desktop, turn on **Usage limits** in **Settings 
 The bottom of the thread details card then shows how much is left in each limit window of the
 current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
 row to see when it resets and your pace. A provider that sends requests through a CLIProxyAPI hub
-reports no limits of its own, so the card shows that provider's accounts pooled, as
-**Usage → Limits** does: the hub's accounts and any signed-in ones. Turn on **Context window** to
-also show the thread's context use against the model's limit. A tick on the bar marks where the
-provider compacts automatically, when it reports that point.
+reports no limits of its own, so the card shows that provider's accounts pooled, the hub's and
+any signed-in ones, from this environment only. **Usage → Limits** pools every connected
+environment. Turn on **Context window** to also show the thread's context use against the
+model's limit. A tick on the bar marks where the provider compacts automatically, when it reports
+that point.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
