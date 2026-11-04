@@ -466,6 +466,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
   },
   {
+    id: "repo-worktrees",
+    title: "Repository worktrees",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: [
+      "multiple repositories repos folder monorepo nested git worktree submodule guidance base branch",
+    ],
+  },
+  {
     id: "start-from-origin",
     title: "Start from origin",
     to: "/settings/general",
