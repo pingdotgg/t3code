@@ -55,6 +55,7 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
         initializationResult: async () => ({
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
           commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+          models: [{ value: "gateway/claude-relay", displayName: "Relay", description: "" }],
         }),
         usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
           new Promise((_, reject) => reject(new Error("usage unavailable"))),
@@ -77,7 +78,10 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
       yield* decodeClaudeSettings({ binaryPath: "claude" }),
       { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: configDir },
     );
-    assert.equal(capabilities.email, "dev@example.com");
+    assert.deepEqual(
+      capabilities.models?.map((model) => model.value),
+      ["gateway/claude-relay"],
+    );
     assert.equal(abortSignal?.aborted, false);
     yield* TestClock.adjust("3 seconds");
     assert.equal(abortSignal?.aborted, true);
