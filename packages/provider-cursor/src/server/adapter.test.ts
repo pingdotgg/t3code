@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
+  CheckpointId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -14,7 +15,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1594,6 +1597,221 @@ describe("CursorAdapterV2", () => {
         })
         .pipe(Effect.flip);
       assert.equal(makeProviderFailure({ cause: sendFailure }).message, expected);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("advertises Cursor conversation rollback and replaces the agent", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-rollback-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-rollback-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      let createCount = 0;
+      const closedAgents: Array<string> = [];
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.sync(() => {
+              createCount += 1;
+              const agentId = `native-cursor-rollback-${createCount}`;
+              return {
+                agentId,
+                listMessages: Effect.succeed([]),
+                close: Effect.sync(() => {
+                  closedAgents.push(agentId);
+                }),
+                send: () => Effect.die("unexpected Cursor run during rollback"),
+              };
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const capabilities = yield* adapter.getCapabilities();
+      assert.isTrue(capabilities.threads.canRollbackThread);
+      assert.isTrue(capabilities.checkpointing.providerCanRollbackConversation);
+      assert.isTrue(capabilities.checkpointing.providerRollbackReturnsSnapshot);
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-rollback-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal(providerThread.nativeThreadRef?.nativeId, "native-cursor-rollback-1");
+
+      const snapshot = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("cursor-rollback-checkpoint"),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns: [],
+      });
+      assert.equal(snapshot.providerThread.id, providerThread.id);
+      assert.equal(snapshot.providerThread.nativeThreadRef?.nativeId, "native-cursor-rollback-2");
+      assert.isNull(snapshot.providerThread.nativeConversationHeadRef);
+      assert.deepEqual(snapshot.providerTurns, []);
+      assert.deepEqual(snapshot.messages, []);
+      assert.equal(createCount, 2);
+      assert.deepEqual(closedAgents, ["native-cursor-rollback-1"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("rejects Cursor rollback while a turn is active", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-rollback-busy-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-rollback-busy-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const holdTurn = yield* Deferred.make<void>();
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-rollback-busy",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-rollback-busy",
+                  runId: "native-cursor-rollback-busy-run",
+                  wait: Deferred.await(holdTurn).pipe(
+                    Effect.as({
+                      id: "native-cursor-rollback-busy-run",
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                  ),
+                  cancel: Deferred.succeed(holdTurn, undefined).pipe(Effect.asVoid),
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-rollback-busy-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turnFiber = yield* runtime
+        .startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-rollback-busy-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-rollback-busy-attempt"),
+          rootNodeId: NodeId.make("cursor-rollback-busy-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-rollback-busy-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor rollback busy",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-rollback-busy-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Busy turn.",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        ),
+        Stream.runCollect,
+      );
+
+      const activeFailure = yield* runtime
+        .rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("cursor-rollback-busy-checkpoint"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        })
+        .pipe(Effect.flip);
+      assert.equal(activeFailure._tag, "ProviderAdapterRollbackThreadError");
+
+      yield* Deferred.succeed(holdTurn, undefined);
+      yield* Fiber.join(turnFiber);
     }).pipe(
       Effect.scoped,
       Effect.provide(
