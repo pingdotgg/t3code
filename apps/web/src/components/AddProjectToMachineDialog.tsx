@@ -295,6 +295,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                     <span className="truncate">{target?.label ?? "No machine available"}</span>
                   </span>
                 )}
+                {targets.length === 1 && target ? (
+                  <EnvironmentHostSummary
+                    environmentId={target.environmentId}
+                    className="whitespace-normal text-muted-foreground text-xs"
+                  />
+                ) : null}
                 <span className="flex min-w-0 font-mono text-muted-foreground text-xs">
                   <MiddleTruncate value={destinationPath} />
                 </span>
