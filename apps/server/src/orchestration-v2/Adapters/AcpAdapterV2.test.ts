@@ -4189,6 +4189,62 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("publishes a live reading that arrives while a turn is starting", () =>
+    Effect.gen(function* () {
+      let settled = false;
+      let liveReading: Fiber.Fiber<void> | undefined;
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "turn-start-reading",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: () => {
+            settled = true;
+            return { usedTokens: 100, maxTokens: 1_000 };
+          },
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.usage === true
+              ? { usedTokens: 500, maxTokens: 1_000 }
+              : undefined,
+        });
+      const services = yield* Effect.context<never>();
+      const startingThread: OrchestrationV2ProviderThread = {
+        ...providerThread,
+        get nativeMetadata() {
+          if (settled && liveReading === undefined) {
+            // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Turn start reads this between settling usage and publishing, where nothing yields; only a synchronous fork lands there.
+            liveReading = Effect.runForkWith(services)(
+              update({
+                sessionId: "persisted-session",
+                update: { sessionUpdate: "session_info_update", _meta: { usage: true } },
+              }).pipe(Effect.orDie),
+            );
+          }
+          return null;
+        },
+      };
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: startingThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      const events = yield* collectUntilTerminal(runtime);
+      assert.isDefined(liveReading);
+      yield* Fiber.join(liveReading!);
+      const usages = events.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.deepEqual(usages.at(-1), { usedTokens: 500, maxTokens: 1_000 });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("creates a fresh ACP identity when recovering an exhausted target", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

@@ -8059,119 +8059,126 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const promptWireSettled = yield* Deferred.make<void, never>();
             const promptDispatched = yield* Deferred.make<void, never>();
             const promptStarted = yield* Deferred.make<void, never>();
-            // Live session updates write the same maps under the callback permit.
-            const settledContextUsage = yield* runtimeCallbackPermit.withPermit(
-              settleContextUsage(requestedSessionId, turnInput.modelSelection),
-            );
-            const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
-              requestedSessionId,
-            );
-            const rememberedNativeMetadata = (yield* Ref.get(nativeMetadataBySessionId)).get(
-              requestedSessionId,
-            );
-            const initialNativeMetadata =
-              rememberedNativeMetadata === undefined
-                ? (turnInput.providerThread.nativeMetadata ?? null)
-                : {
-                    ...turnInput.providerThread.nativeMetadata,
-                    ...rememberedNativeMetadata,
+            // A live reading must land on the published turn, so it waits for the first publication.
+            const { context, rehydratedCarryoverSubagents } =
+              yield* runtimeCallbackPermit.withPermit(
+                Effect.gen(function* () {
+                  const settledContextUsage = yield* settleContextUsage(
+                    requestedSessionId,
+                    turnInput.modelSelection,
+                  );
+                  const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
+                    requestedSessionId,
+                  );
+                  const rememberedNativeMetadata = (yield* Ref.get(nativeMetadataBySessionId)).get(
+                    requestedSessionId,
+                  );
+                  const initialNativeMetadata =
+                    rememberedNativeMetadata === undefined
+                      ? (turnInput.providerThread.nativeMetadata ?? null)
+                      : {
+                          ...turnInput.providerThread.nativeMetadata,
+                          ...rememberedNativeMetadata,
+                        };
+                  if (initialNativeMetadata !== null) {
+                    yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                      new Map(current).set(requestedSessionId, initialNativeMetadata),
+                    );
+                  }
+                  const context: ActiveAcpTurn = {
+                    input: turnInput,
+                    providerTurnId,
+                    nativeThreadId: requestedSessionId,
+                    nativeTurnId,
+                    startedAt,
+                    completed,
+                    itemOrdinals: new Map(),
+                    outgoingPrompt:
+                      (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
+                        ? promptParts?.prompt
+                        : undefined,
+                    user: { current: null, nextSegment: 0 },
+                    assistant: { current: null, nextSegment: 0 },
+                    reasoning: { current: null, nextSegment: 0 },
+                    contextUsage:
+                      settledContextUsage !== undefined
+                        ? settledContextUsage
+                        : (rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null),
+                    nativeMetadata: initialNativeMetadata,
+                    tools: new Map(),
+                    toolUpdatesSkipped: new Map(),
+                    toolStartedAt: new Map(),
+                    subagents: new Map(),
+                    subagentsBySessionId: new Map(),
+                    pendingSubagentNotifications: new Map(),
+                    toolCallIdsByBackgroundTaskId: new Map(),
+                    backgroundCommands: new Map(),
+                    persistentBackgroundTaskIds: new Set(),
+                    awaitingBackgroundHydration: new Set(),
+                    pendingInjectedReport: new Set(),
+                    earlyInjectedReportObserved: false,
+                    plans: new Map(),
+                    interrupted: false,
+                    finalized: false,
+                    finalizedStatus: null,
+                    promptSettled: false,
+                    promptSettledStatus: null,
+                    workAccepted: false,
+                    promptWireSettled,
+                    promptDispatched,
+                    promptSentAt: null,
+                    promptStarted,
+                    promptUsage: undefined,
+                    backgroundFinalizeGeneration: 0,
+                    nativePromptId: undefined,
                   };
-            if (initialNativeMetadata !== null) {
-              yield* Ref.update(nativeMetadataBySessionId, (current) =>
-                new Map(current).set(requestedSessionId, initialNativeMetadata),
+                  const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
+                  let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
+                  if (carryover !== null && carryover.sessionId === requestedSessionId) {
+                    rehydratedCarryoverSubagents = carryover.subagents;
+                    for (const subagent of carryover.subagents) {
+                      const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
+                      if (nativeId !== null) {
+                        context.subagents.set(nativeId, subagent);
+                      }
+                      if (subagent.childSessionId !== null) {
+                        context.subagentsBySessionId.set(subagent.childSessionId, subagent);
+                      }
+                    }
+                  }
+                  yield* Ref.set(activeTurn, context);
+                  yield* Ref.set(stoppedRunQuarantine, false);
+                  const runningTurn = providerTurnPayload(context, "running", null);
+                  yield* Ref.update(providerTurns, (current) => {
+                    const updated = new Map(current);
+                    updated.set(String(runningTurn.id), runningTurn);
+                    return updated;
+                  });
+                  yield* emitProviderEvent({
+                    type: "provider_turn.updated",
+                    driver,
+                    threadId: turnInput.threadId,
+                    providerTurn: runningTurn,
+                  });
+                  const activeProviderThread: OrchestrationV2ProviderThread = {
+                    ...turnInput.providerThread,
+                    providerSessionId: input.providerSessionId,
+                    status: "active",
+                    contextUsage: context.contextUsage,
+                    nativeMetadata: context.nativeMetadata,
+                    updatedAt: startedAt,
+                  };
+                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                    new Map(current).set(requestedSessionId, activeProviderThread),
+                  );
+                  yield* emitProviderEvent({
+                    type: "provider_thread.updated",
+                    driver,
+                    providerThread: activeProviderThread,
+                  });
+                  return { context, rehydratedCarryoverSubagents };
+                }),
               );
-            }
-            const context: ActiveAcpTurn = {
-              input: turnInput,
-              providerTurnId,
-              nativeThreadId: requestedSessionId,
-              nativeTurnId,
-              startedAt,
-              completed,
-              itemOrdinals: new Map(),
-              outgoingPrompt:
-                (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
-                  ? promptParts?.prompt
-                  : undefined,
-              user: { current: null, nextSegment: 0 },
-              assistant: { current: null, nextSegment: 0 },
-              reasoning: { current: null, nextSegment: 0 },
-              contextUsage:
-                settledContextUsage !== undefined
-                  ? settledContextUsage
-                  : (rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null),
-              nativeMetadata: initialNativeMetadata,
-              tools: new Map(),
-              toolUpdatesSkipped: new Map(),
-              toolStartedAt: new Map(),
-              subagents: new Map(),
-              subagentsBySessionId: new Map(),
-              pendingSubagentNotifications: new Map(),
-              toolCallIdsByBackgroundTaskId: new Map(),
-              backgroundCommands: new Map(),
-              persistentBackgroundTaskIds: new Set(),
-              awaitingBackgroundHydration: new Set(),
-              pendingInjectedReport: new Set(),
-              earlyInjectedReportObserved: false,
-              plans: new Map(),
-              interrupted: false,
-              finalized: false,
-              finalizedStatus: null,
-              promptSettled: false,
-              promptSettledStatus: null,
-              workAccepted: false,
-              promptWireSettled,
-              promptDispatched,
-              promptSentAt: null,
-              promptStarted,
-              promptUsage: undefined,
-              backgroundFinalizeGeneration: 0,
-              nativePromptId: undefined,
-            };
-            const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
-            let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
-            if (carryover !== null && carryover.sessionId === requestedSessionId) {
-              rehydratedCarryoverSubagents = carryover.subagents;
-              for (const subagent of carryover.subagents) {
-                const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
-                if (nativeId !== null) {
-                  context.subagents.set(nativeId, subagent);
-                }
-                if (subagent.childSessionId !== null) {
-                  context.subagentsBySessionId.set(subagent.childSessionId, subagent);
-                }
-              }
-            }
-            yield* Ref.set(activeTurn, context);
-            yield* Ref.set(stoppedRunQuarantine, false);
-            const runningTurn = providerTurnPayload(context, "running", null);
-            yield* Ref.update(providerTurns, (current) => {
-              const updated = new Map(current);
-              updated.set(String(runningTurn.id), runningTurn);
-              return updated;
-            });
-            yield* emitProviderEvent({
-              type: "provider_turn.updated",
-              driver,
-              threadId: turnInput.threadId,
-              providerTurn: runningTurn,
-            });
-            const activeProviderThread: OrchestrationV2ProviderThread = {
-              ...turnInput.providerThread,
-              providerSessionId: input.providerSessionId,
-              status: "active",
-              contextUsage: context.contextUsage,
-              nativeMetadata: context.nativeMetadata,
-              updatedAt: startedAt,
-            };
-            yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-              new Map(current).set(requestedSessionId, activeProviderThread),
-            );
-            yield* emitProviderEvent({
-              type: "provider_thread.updated",
-              driver,
-              providerThread: activeProviderThread,
-            });
             yield* rememberSnapshotMessage({
               createdBy: turnInput.message.createdBy,
               creationSource: turnInput.message.creationSource,
