@@ -239,6 +239,7 @@ function layerTest(input: {
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+    setAutoUpdate: () => Effect.die("unexpected auto update change"),
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
     setMainWindowBounds: (bounds, isMaximized) =>

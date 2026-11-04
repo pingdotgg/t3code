@@ -737,6 +737,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     releaseChannelOnly: true,
   },
   {
+    id: "auto-update",
+    title: "Update automatically",
+    to: "/settings/about",
+    searchTerms: ["background updates restart launch"],
+    desktopOnly: true,
+  },
+  {
     id: "cli-command",
     title: "t3-learn command",
     to: "/settings/about",

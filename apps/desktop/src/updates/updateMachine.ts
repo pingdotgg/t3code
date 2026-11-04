@@ -22,6 +22,7 @@ export function createInitialDesktopUpdateState(
 ): DesktopUpdateState {
   return {
     enabled: false,
+    autoUpdate: false,
     status: "disabled",
     channel,
     currentVersion,

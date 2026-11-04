@@ -58,6 +58,7 @@ const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
 } satisfies ElectronDialog.ElectronDialog["Service"]);
 
 const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
+  setAutoUpdate: () => Effect.die("unexpected auto update change"),
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),

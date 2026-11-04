@@ -7,6 +7,7 @@ import { createDesktopUpdateStateAtom } from "./desktopUpdate";
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  autoUpdate: false,
   status: "idle",
   channel: "latest",
   currentVersion: "1.0.0",

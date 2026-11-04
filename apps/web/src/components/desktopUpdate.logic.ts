@@ -3,6 +3,33 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import { APP_BASE_NAME } from "../branding";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
+export type DesktopUpdatePrompt = "available" | "ready" | null;
+
+export function getDesktopUpdatePrompt(
+  state: Pick<
+    DesktopUpdateState,
+    "enabled" | "status" | "autoUpdate" | "availableVersion" | "downloadedVersion"
+  > | null,
+  dismissedVersion?: string | null,
+): DesktopUpdatePrompt {
+  if (!state?.enabled) return null;
+  // A background check keeps the versions, so the open prompt survives it instead of blinking.
+  const status =
+    state.status !== "checking"
+      ? state.status
+      : state.downloadedVersion
+        ? "downloaded"
+        : state.availableVersion
+          ? "available"
+          : state.status;
+  if (status === "downloaded" && state.autoUpdate) {
+    return state.downloadedVersion !== dismissedVersion ? "ready" : null;
+  }
+  if (status === "available" && !state.autoUpdate) {
+    return state.availableVersion !== dismissedVersion ? "available" : null;
+  }
+  return null;
+}
 
 const DEFAULT_DESKTOP_RELEASE_REPOSITORY = "pingdotgg/t3code";
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
