@@ -1,3 +1,4 @@
+import { UsageLimitDisplaySelect } from "./UsageLimitDisplaySelect";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -514,6 +515,11 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            {showingLimits ? (
+              <div className="mb-4 flex justify-end">
+                <UsageLimitDisplaySelect />
+              </div>
+            ) : null}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0

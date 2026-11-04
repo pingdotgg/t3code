@@ -33,6 +33,7 @@ function SubscriptionUsage(
   // The extension evaluates this function without the app's module scope.
   const family = widgetEnvironment.widgetFamily;
   // Gallery snapshots can render an old timeline entry after it has expired.
+  const used = props.usageLimitDisplay === "used";
   const now = Math.max(widgetEnvironment.date?.getTime() ?? 0, Date.now());
   const accessory = family === "accessoryRectangular";
   const compact =
@@ -93,7 +94,9 @@ function SubscriptionUsage(
       ? "Open T3 to refresh"
       : period !== "auto" && windows.length === 0 && provider.windows.length > 0
         ? `No ${period} limit reported`
-        : provider.detail;
+        : used && provider.detail === "Subscription remaining"
+          ? "Subscription limits"
+          : provider.detail;
     const barModifiers = [
       progressViewStyle("linear"),
       frame({ height: 4 }),
@@ -109,7 +112,7 @@ function SubscriptionUsage(
             accessibilityElement("ignore"),
             accessibilityLabel(
               tightest
-                ? `${provider.name}, ${tightest.label}, ${tightest.remaining} percent remaining. ${tightest.reset}. ${provider.detail}.`
+                ? `${provider.name}, ${tightest.label}, ${used ? 100 - tightest.remaining : tightest.remaining} percent ${used && tightest.blockedByWeekly ? "unavailable" : used ? "used" : "remaining"}. ${tightest.reset}. ${detail}.`
                 : `${provider.name}. ${detail}.`,
             ),
           ]}
@@ -135,14 +138,17 @@ function SubscriptionUsage(
               ]}
             >
               {tightest
-                ? `${tightest.remaining}% left`
+                ? `${used ? 100 - tightest.remaining : tightest.remaining}% ${tightest.blockedByWeekly && used ? "unavailable" : used ? "used" : "left"}`
                 : period !== "auto" && !stale && provider.windows.length > 0
                   ? "N/A"
                   : "Open T3"}
             </Text>
           </HStack>
           {tightest ? (
-            <ProgressView value={tightest.remaining / 100} modifiers={barModifiers} />
+            <ProgressView
+              value={(used ? 100 - tightest.remaining : tightest.remaining) / 100}
+              modifiers={barModifiers}
+            />
           ) : null}
         </VStack>
       );
@@ -170,7 +176,7 @@ function SubscriptionUsage(
           <Text
             modifiers={[font({ textStyle: "caption2" }), foregroundStyle(secondary), lineLimit(1)]}
           >
-            {detail === "Subscription remaining" ? " " : detail}
+            {detail === "Subscription remaining" || detail === "Subscription limits" ? " " : detail}
           </Text>
         ) : null}
         {shown.map((window) => (
@@ -181,7 +187,7 @@ function SubscriptionUsage(
             modifiers={[
               accessibilityElement("ignore"),
               accessibilityLabel(
-                `${provider.name}, ${window.label}, ${window.remaining} percent remaining. ${window.reset}. ${provider.detail}.`,
+                `${provider.name}, ${window.label}, ${used ? 100 - window.remaining : window.remaining} percent ${used && window.blockedByWeekly ? "unavailable" : used ? "used" : "remaining"}. ${window.reset}. ${detail}.`,
               ),
             ]}
           >
@@ -212,10 +218,14 @@ function SubscriptionUsage(
                   ),
                 ]}
               >
-                {window.remaining}% left
+                {used ? 100 - window.remaining : window.remaining}%{" "}
+                {used && window.blockedByWeekly ? "unavailable" : used ? "used" : "left"}
               </Text>
             </HStack>
-            <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
+            <ProgressView
+              value={(used ? 100 - window.remaining : window.remaining) / 100}
+              modifiers={barModifiers}
+            />
             {!compact ? (
               <Text modifiers={[font({ size: 10 }), foregroundStyle(secondary), lineLimit(1)]}>
                 {window.reset}
