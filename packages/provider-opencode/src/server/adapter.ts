@@ -80,7 +80,7 @@ import {
   makeSubagentChildThread,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
-import { openCodeToolTurnItem } from "./toolItems.ts";
+import { openCodeCommandFailed, openCodeToolOutput, openCodeToolTurnItem } from "./toolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
@@ -446,7 +446,8 @@ export function makeOpenCodeProtocolLogger(input: {
 }): (event: OpenCodeProtocolLogEvent) => Effect.Effect<void, never> {
   return (event) =>
     Effect.gen(function* () {
-      if (!input.nativeEventLogger) return;
+      // Per-token deltas; the part's final message.part.updated is still logged.
+      if (!input.nativeEventLogger || event.method === "message.part.delta") return;
       const observedAt = DateTime.formatIso(yield* DateTime.now);
       const method = structuralProtocolMethod(event.method);
       yield* input.nativeEventLogger.write(
@@ -741,7 +742,9 @@ function toolStatus(part: ToolPart): {
     case "running":
       return { node: "running", item: "running" };
     case "completed":
-      return { node: "completed", item: "completed" };
+      return openCodeCommandFailed(part.tool, part.state.metadata)
+        ? { node: "failed", item: "failed" }
+        : { node: "completed", item: "completed" };
     case "error":
       return { node: "failed", item: "failed" };
   }
@@ -1602,6 +1605,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
                   title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
                 });
+          const files =
+            part.state.status === "completed"
+              ? part.state.attachments?.map((file) => ({ uri: file.url, mime: file.mime }))
+              : undefined;
           const turnItem: OrchestrationV2TurnItem = matchingServers?.length
             ? {
                 ...base,
@@ -1609,12 +1616,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ...presentation,
                 toolName: part.tool,
                 input,
-                ...(output === undefined ? {} : { output }),
+                ...(output === undefined && !files?.length
+                  ? {}
+                  : { output: openCodeToolOutput(output, files) }),
               }
             : openCodeToolTurnItem(base, {
                 name: part.tool,
                 input,
                 output,
+                files,
                 completedMetadata:
                   part.state.status === "completed" ? part.state.metadata : undefined,
               });
@@ -2943,6 +2953,25 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           };
         });
 
+        // OpenCode runs each step with the agent and system prompt of the latest
+        // user message, so every prompt in a turn, steers included, repeats them.
+        const turnPromptOptions = (turn: ActiveOpenCodeTurn) => {
+          const agent =
+            getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
+            (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
+          const variant = getModelSelectionStringOptionValue(turn.modelSelection, "variant");
+          return {
+            ...(agent === undefined ? {} : { agent }),
+            ...(variant === undefined ? {} : { variant }),
+            system: [
+              orchestrationSystemPrompt,
+              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          };
+        };
+
         // Native commands await generation; user-message receipts admit their background requests.
         const submitPrompt = Effect.fn("OpenCode.submitPrompt")(function* (
           state: OpenCodeThreadState,
@@ -2958,7 +2987,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             .map((part) => part.text)
             .join("\n")
             .trim();
-          const match = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+          const match = text?.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
             ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
                 Effect.timeout("10 seconds"),
@@ -3265,22 +3294,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
                 return;
               }
-              const systemPrompt = [
-                orchestrationSystemPrompt,
-                buildRuntimeInstructions({
-                  harness: "OpenCode",
-                  model: turnInput.modelSelection.model,
-                }),
-              ]
-                .filter(Boolean)
-                .join("\n\n");
-              const agent =
-                getModelSelectionStringOptionValue(turnInput.modelSelection, "agent") ??
-                (turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
-              const variant = getModelSelectionStringOptionValue(
-                turnInput.modelSelection,
-                "variant",
-              );
               yield* submitPrompt(
                 state,
                 turn,
@@ -3288,9 +3301,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId!,
                   model: parsedModel,
-                  ...(agent === undefined ? {} : { agent }),
-                  ...(variant === undefined ? {} : { variant }),
-                  system: systemPrompt,
+                  ...turnPromptOptions(turn),
                   parts,
                 },
                 admissionAbortController!,
@@ -3401,6 +3412,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId,
                   model: parsedModel,
+                  ...turnPromptOptions(turn),
                   parts,
                 },
                 admissionAbortController!,

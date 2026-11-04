@@ -782,6 +782,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     | ((method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>)
     | undefined;
   let negotiatedProtocolGeneration: 1 | 2 | undefined;
+  let sessionDeleteSupported = false;
 
   const runNotificationHandlers = <A>(
     registration: BufferedNotificationHandler<A>,
@@ -1081,12 +1082,14 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2
             // with the v1 agentInfo/agentCapabilities response shape.
-            if (isV2InitializeResponse(response)) {
-              negotiatedProtocolGeneration = 2;
-              return normalizeInitializeResponse(response);
-            }
-            negotiatedProtocolGeneration = 1;
-            return response as AcpSchema.InitializeResponse;
+            const isV2 = isV2InitializeResponse(response);
+            negotiatedProtocolGeneration = isV2 ? 2 : 1;
+            const normalized = isV2
+              ? normalizeInitializeResponse(response)
+              : (response as AcpSchema.InitializeResponse);
+            sessionDeleteSupported =
+              normalized.agentCapabilities?.sessionCapabilities?.delete != null;
+            return normalized;
           }),
         ),
       authenticate: (payload) =>
@@ -1182,9 +1185,11 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => response as AcpSchema.CloseSessionResponse),
         ),
       deleteSession: (payload) =>
-        negotiatedProtocolGeneration === 1
-          ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete))
-          : callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload)),
+        Effect.suspend(() =>
+          sessionDeleteSupported
+            ? callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload))
+            : Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete)),
+        ),
       listProviders: (payload) =>
         negotiatedProtocolGeneration === 1
           ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.providers_list))
