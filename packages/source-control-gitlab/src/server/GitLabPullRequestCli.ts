@@ -1242,6 +1242,19 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A read GitLab could not answer (an older host, a field it rejects) is not worth failing the
+  // surrounding operation for. An unusable CLI or account still reaches the caller.
+  const isOptionalReadFailure = (cause: GitLabPullRequestCliError) =>
+    cause._tag !== "GitLabCliUnavailableError" &&
+    cause._tag !== "GitLabCliAuthenticationError" &&
+    cause._tag !== "GitLabCliRateLimitError";
+
+  const orWhenUnanswered = <A>(
+    read: Effect.Effect<A, GitLabPullRequestCliError>,
+    fallback: A,
+  ): Effect.Effect<A, GitLabPullRequestCliError> =>
+    read.pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(fallback)));
+
   const mergeRequestStats = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1286,18 +1299,12 @@ export const make = Effect.gen(function* () {
               return stat === undefined ? [] : [{ repository: read.repository, number, ...stat }];
             }),
           ),
-          // One read GitLab could not answer costs its own rows their counts, not every other
-          // read's on the same page. An unusable CLI or account still reaches the caller.
-          Effect.catchIf(
-            (cause) =>
-              cause._tag !== "GitLabCliUnavailableError" &&
-              cause._tag !== "GitLabCliAuthenticationError" &&
-              cause._tag !== "GitLabCliRateLimitError",
-            (cause) =>
-              Effect.logWarning("GitLab merge request line count read failed", {
-                repository: read.repository,
-                reason: cause._tag,
-              }).pipe(Effect.as([])),
+          // One failed read costs its own rows their counts, not every other read's on the page.
+          Effect.catchIf(isOptionalReadFailure, (cause) =>
+            Effect.logWarning("GitLab merge request line count read failed", {
+              repository: read.repository,
+              reason: cause._tag,
+            }).pipe(Effect.as([])),
           ),
         ),
       { concurrency: STAT_REQUEST_CONCURRENCY },
@@ -1432,14 +1439,17 @@ export const make = Effect.gen(function* () {
         const [read, viewerCanEditLabels] = yield* Effect.all(
           [
             mergeRequestDetail(input),
-            graphqlRead({
-              cwd: input.cwd,
-              host: input.host,
-              operation: "getLabelPermission",
-              query: LABEL_PERMISSION_GRAPHQL_QUERY,
-              variables: { fullPath: input.repository, iid: String(input.number) },
-              decode: decodeLabelPermissionJson,
-            }),
+            orWhenUnanswered(
+              graphqlRead({
+                cwd: input.cwd,
+                host: input.host,
+                operation: "getLabelPermission",
+                query: LABEL_PERMISSION_GRAPHQL_QUERY,
+                variables: { fullPath: input.repository, iid: String(input.number) },
+                decode: decodeLabelPermissionJson,
+              }),
+              false,
+            ),
           ],
           { concurrency: 2 },
         );
@@ -1721,14 +1731,18 @@ export const make = Effect.gen(function* () {
           [
             mergeRequestDetail(input),
             projectUsers(input),
-            graphqlRead({
-              cwd: input.cwd,
-              host: input.host,
-              operation: "getReviewerLimit",
-              query: REVIEWER_LIMIT_GRAPHQL_QUERY,
-              variables: { fullPath: input.repository, iid: String(input.number) },
-              decode: decodeReviewerLimitJson,
-            }),
+            // GitLab before 16.8 rejects the field; keep the default of many reviewers.
+            orWhenUnanswered(
+              graphqlRead({
+                cwd: input.cwd,
+                host: input.host,
+                operation: "getReviewerLimit",
+                query: REVIEWER_LIMIT_GRAPHQL_QUERY,
+                variables: { fullPath: input.repository, iid: String(input.number) },
+                decode: decodeReviewerLimitJson,
+              }),
+              true,
+            ),
           ],
           { concurrency: 3 },
         ).pipe(

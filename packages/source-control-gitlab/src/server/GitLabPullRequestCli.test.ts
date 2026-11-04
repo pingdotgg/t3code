@@ -1145,6 +1145,23 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(detail.viewerCanMerge).toBe(false);
       expect(detail.viewerCanEditLabels).toBe(true);
       expect(mockedExecute).toHaveBeenCalledTimes(2);
+
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify({ errors: [{ message: "Field 'userPermissions' doesn't exist" }] })
+              : mergeRequestJson({}),
+          ),
+        ),
+      );
+      const withoutPermission = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
+      expect(withoutPermission.viewerCanEditLabels).toBe(false);
     }),
   );
 
@@ -1283,6 +1300,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ]);
         assert.isFalse(list.truncated);
         assert.isFalse(list.multiple);
+
+        // GitLab before 16.8 rejects the field; the list still loads and keeps many reviewers.
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                JSON.stringify({
+                  errors: [{ message: "Field 'allowsMultipleReviewers' doesn't exist" }],
+                }),
+              ),
+            ),
+          );
+        const olderHost = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+        expect(olderHost.candidates.map((candidate) => candidate.id)).toEqual(["5"]);
+        assert.isTrue(olderHost.multiple);
       }),
   );
 
