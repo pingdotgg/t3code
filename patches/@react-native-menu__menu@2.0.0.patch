@@ -178,10 +178,10 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f552fa35828 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723b67b69c5 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,17 +60,46 @@ public class MenuViewImplementation: UIButton {
+@@ -60,17 +60,69 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -222,15 +222,38 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +            pendingMenu = nil
 +            self.setup()
 +        }
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return tapTriggerPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
      }
  
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return tapTriggerPreview() ?? super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
++    }
++
++    // The button is a transparent overlay: morph from the whole trigger, in the
++    // window, so the menu hides the React content instead of lensing over it
++    // inside a clipping scroll view.
++    private func tapTriggerPreview() -> UITargetedPreview? {
++        guard !shouldOpenOnLongPress, let host = self.superview, let window = host.window else {
++            return nil
++        }
++        let bounds = host.bounds
++        let parameters = UIPreviewParameters()
++        parameters.backgroundColor = .clear
++        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(bounds.height / 2, 22))
++        let center = host.convert(CGPoint(x: bounds.midX, y: bounds.midY), to: window)
++        return UITargetedPreview(view: host, parameters: parameters, target: UIPreviewTarget(container: window, center: center))
++    }
++
 +    private var isMenuPresented = false
 +    private var pendingMenu: UIMenu?
 +
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +115,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +138,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -333,7 +356,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +247,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +270,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
