@@ -451,6 +451,13 @@ it("opens files on their owning environment with filesystem access and no editor
     fixture.pendingSurfaces.shift()?.();
   });
   const options = fixture.surfaceOptions[0]!;
+  fixture.linkMetadata.set(
+    JSON.stringify([other.environmentId, "/repo/src/example.ts"]),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  await act(() => options.onLinkHover!("/repo/src/example.ts:42"));
   expect(options.canActivateLink?.("/repo/src/example.ts:42")).toBe(true);
   await act(() => {
     options.onLinkActivate("/repo/src/example.ts:42", new MouseEvent("click"));
@@ -542,11 +549,14 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   const pressedValidation = validate("src/main.ts:12:7");
   await hover("src/main.ts:12:7");
   expect(canActivate("src/main.ts:12:7")).toBe(false);
+  await act(() => {
+    fixture.surfaceOptions.at(-1)!.onLinkActivate("https://example.com", new MouseEvent("click"));
+  });
   await act(async () => {
     appAtomRegistry.set(pending, AsyncResult.success({ kind: "file" }));
   });
   expect(canActivate("src/main.ts:12:7")).toBe(true);
-  expect(await pressedValidation).toBe(true);
+  expect(await pressedValidation).toBe(false);
   expect(canActivate("missing/file.ts")).toBe(false);
   await hover("missing/file.ts");
   expect(canActivate("missing/file.ts")).toBe(false);

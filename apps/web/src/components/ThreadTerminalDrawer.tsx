@@ -559,7 +559,15 @@ function TerminalSessionViewport({
     const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
     return metadata?.kind === "file" || metadata?.kind === "directory";
   });
+  const hasTerminalLinkAccess = useEffectEvent(
+    (text: string) =>
+      isTerminalUrl(text) ||
+      (openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) ||
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+  );
   const validateTerminalLink = useEffectEvent(async (text: string) => {
+    const activation = Symbol();
+    latestTerminalLinkActivations.set(linkActivationScope, activation);
     if (isTerminalUrl(text)) return true;
     if (
       (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
@@ -575,6 +583,7 @@ function TerminalSessionViewport({
     if (!query) return false;
     const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
     return (
+      latestTerminalLinkActivations.get(linkActivationScope) === activation &&
       result._tag === "Success" &&
       (result.value?.kind === "file" || result.value?.kind === "directory")
     );
@@ -1079,12 +1088,7 @@ function TerminalSessionViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
-        if (
-          !isTerminalUrl(text) &&
-          !(openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) &&
-          !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-        )
-          return;
+        if (!hasTerminalLinkAccess(text)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         latestTerminalLinkActivations.delete(linkActivationScope);
