@@ -2135,13 +2135,14 @@ export class GhosttyTerminalSurface {
     void validation.then(
       (valid) => {
         if (
-          valid &&
-          !this.disposed &&
-          this.visible &&
-          requestId === this.linkActivationRequestId &&
-          isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
+          this.disposed ||
+          !this.visible ||
+          requestId !== this.linkActivationRequestId ||
+          !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
         )
-          this.options.onLinkActivate(link.text, event);
+          return;
+        if (valid) this.options.onLinkActivate(link.text, event);
+        else this.clearSelection();
       },
       () => {},
     );

@@ -554,6 +554,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       });
       surface.write("src/main.ts");
       harness.flushFrame();
+      surface.selectAll();
+      expect(surface.getSelection()).toBe("src/main.ts");
       harness.pointer("pointerdown", 5, 1);
       expect(validateLink).toHaveBeenCalledWith("src/main.ts");
       if (scenario === "dragged") harness.pointer("pointermove", 45, 1);
@@ -568,9 +570,15 @@ describe("GhosttyTerminalSurface visibility", () => {
         surface.setVisible(false);
         surface.setVisible(true);
       }
-      resolveValidation(scenario !== "missing");
+      resolveValidation(
+        scenario !== "missing" && scenario !== "hidden" && scenario !== "superseded",
+      );
       await validation;
       expect(onLinkActivate).toHaveBeenCalledTimes(scenario === "file" ? 1 : 0);
+      if (scenario === "missing") expect(surface.getSelection()).toBe("");
+      if (scenario === "file" || scenario === "hidden" || scenario === "superseded") {
+        expect(surface.getSelection()).not.toBe("");
+      }
     },
   );
 
