@@ -9,6 +9,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronNotifications from "../electron/ElectronNotifications.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
@@ -277,6 +278,7 @@ const startup = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const notifications = yield* ElectronNotifications.ElectronNotifications;
 
   yield* shellEnvironment.installIntoProcess;
   const hasCommandLinePasswordStore =
@@ -333,6 +335,7 @@ const startup = Effect.gen(function* () {
   }
   yield* appIdentity.configure;
   yield* previewPasskeys.configure;
+  yield* notifications.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;

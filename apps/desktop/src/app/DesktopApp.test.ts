@@ -37,6 +37,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronNotifications from "../electron/ElectronNotifications.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
@@ -133,6 +134,10 @@ it.effect(
           Effect.provideService(PreviewPasskeys.PreviewPasskeys, {
             configure: Effect.void,
           } as PreviewPasskeys.PreviewPasskeys["Service"]),
+          Effect.provideService(
+            ElectronNotifications.ElectronNotifications,
+            ElectronNotifications.makeWith(undefined),
+          ),
           Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
             configure: Effect.void,
           }),
