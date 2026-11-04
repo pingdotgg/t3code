@@ -32,6 +32,7 @@ it("ignores composing keys in the address bar", async () => {
   ]) {
     const event = new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true });
     await act(() => input.element().dispatchEvent(event));
+    if (composition.key === "Enter") expect(event.defaultPrevented).toBe(true);
     await expect.element(input).toHaveValue("東京");
     await expect.element(input).toHaveFocus();
   }
