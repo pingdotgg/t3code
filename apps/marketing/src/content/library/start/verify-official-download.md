@@ -3,6 +3,8 @@ title: "How to verify you have the official T3 Code"
 description: "Verify an official T3 Code download through t3.codes, the release repository, mobile store listings, and documented signing and checksum checks."
 updated: 2026-11-04
 sources:
+  - label: "Install T3 Code, npx option (docs/user/install.md)"
+    url: "https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md"
   - label: "Official download page"
     url: "https://github.com/pingdotgg/t3code/blob/main/apps/marketing/src/pages/download.astro"
   - label: "Release selection and official repository"
@@ -46,6 +48,7 @@ Use these destinations to establish the source of your installation:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Desktop downloads and installer commands | [T3 Code downloads](/download)                                                                    |
 | Published release assets                 | [pingdotgg/t3code releases](https://github.com/pingdotgg/t3code/releases)                         |
+| Run without installing                   | [`t3` on npm](https://www.npmjs.com/package/t3), as `npx t3@latest`                               |
 | iPhone and iPad app                      | [T3 Code on the App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) |
 | Android app                              | [T3 Code on Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code)        |
 
