@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - The filename event must finish synchronously before updater relaunch.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -154,7 +158,28 @@ export const make = ElectronUpdater.of({
     return Effect.suspend(() => {
       const channel = autoUpdater.channel;
       return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+        try: () => {
+          const appImagePath = process.env.APPIMAGE;
+          const preserveAppImagePath = (destination: string) => {
+            const filename = NodePath.basename(destination);
+            // Only bridge to a name the updater will keep, avoiding growing alias chains.
+            if (appImagePath === undefined || /\d+\.\d+\.\d+/.test(filename)) return;
+            try {
+              // 6.8.9 emits synchronously after moving the file, before relaunch/exit.
+              NodeFS.symlinkSync(filename, appImagePath);
+            } catch {
+              autoUpdater.logger?.warn("Could not preserve the previous AppImage launch path.");
+            }
+          };
+          if (appImagePath !== undefined) {
+            autoUpdater.on("appimage-filename-updated", preserveAppImagePath);
+          }
+          try {
+            autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+          } finally {
+            autoUpdater.removeListener("appimage-filename-updated", preserveAppImagePath);
+          }
+        },
         catch: (cause) =>
           new ElectronUpdaterQuitAndInstallError({
             channel,
