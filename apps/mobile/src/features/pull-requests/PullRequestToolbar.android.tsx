@@ -1,18 +1,16 @@
 import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useRef } from "react";
-import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { SearchField } from "../../components/ui/SearchField";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { useEffect } from "react";
+import { BackHandler, Keyboard } from "react-native";
+import { AppBar } from "../../components/ui/AppBar";
+import { appBarMenuItemsFromActions } from "../../components/ui/menuActionItems";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
+import { WorkspaceBrandTitle } from "../workspace/WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "./PullRequestListFilters";
 import { openSettings } from "../settings/settings-navigation";
 
-/** PR search shares the thread list's Android header row. */
+/** PR search shares the thread list's Android header. */
 export function PullRequestToolbar(props: {
   readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
@@ -24,7 +22,6 @@ export function PullRequestToolbar(props: {
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const { onRequestVisibility } = props;
   const tab = workspace.state.tabs.pullRequests;
-  const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
   const openSearch = () => {
     onRequestVisibility?.();
@@ -34,7 +31,6 @@ export function PullRequestToolbar(props: {
       offset: getScrollOffset("pullRequests"),
     });
     dispatch({ type: "search", tab: "pullRequests" });
-    input.current?.focus();
     return true;
   };
   useHardwareKeyboardCommand("focusSearch", openSearch);
@@ -58,47 +54,36 @@ export function PullRequestToolbar(props: {
     });
     return () => subscription.remove();
   }, [searching, closeSearch, navigation, isTabActive]);
-  const { paddingTop, paddingBottom } = useToolbarLayout();
   return (
-    <View className="bg-header px-2" style={{ paddingTop, paddingBottom }}>
-      <WorkspaceListToolbarRow
-        searching={searching}
-        searchField={
-          <SearchField
-            inputRef={input}
-            accessibilityLabel={`Search ${terms.plural}`}
-            clearAccessibilityLabel="Clear search"
-            placeholder={`Search ${terms.plural}`}
-            value={tab.query}
-            onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
-          />
-        }
-        onCloseSearch={closeSearch}
-        onOpenSearch={openSearch}
-        searchAccessibilityLabel={`Search ${terms.plural}`}
-        titleAccessibilityLabel={`T3 Code, ${terms.plural}`}
-        onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
-        filter={
-          filters ? (
-            <AndroidAnchoredMenu
-              actions={filters.actions}
-              onPressAction={({ nativeEvent }) => filters.onSelect(nativeEvent.event)}
-            >
-              {(open) => (
-                <AndroidHeaderIconButton
-                  accessibilityLabel={`Filter ${terms.plural}`}
-                  icon={
-                    filters.customized
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease.circle"
-                  }
-                  onPress={open}
-                />
-              )}
-            </AndroidAnchoredMenu>
-          ) : null
-        }
-      />
-    </View>
+    <AppBar
+      title="T3 Code"
+      titleContent={
+        <WorkspaceBrandTitle
+          accessibilityLabel={`T3 Code, ${terms.plural}`}
+          onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
+        />
+      }
+      search={{
+        value: tab.query,
+        onChangeText: (query) => dispatch({ type: "query", tab: "pullRequests", query }),
+        placeholder: `Search ${terms.plural}`,
+        active: searching,
+        onOpen: openSearch,
+        onClose: closeSearch,
+      }}
+      menus={
+        filters
+          ? [
+              {
+                title: `Filter ${terms.plural}`,
+                icon: filters.customized
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle",
+                items: appBarMenuItemsFromActions(filters.actions, filters.onSelect),
+              },
+            ]
+          : undefined
+      }
+    />
   );
 }
