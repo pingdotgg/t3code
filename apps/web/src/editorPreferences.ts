@@ -4,6 +4,7 @@ import {
   EditorId,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  isTerminalEditor,
 } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
@@ -17,6 +18,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
+import { openInTerminalEditor } from "./terminalEditorHost";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -103,7 +105,19 @@ export function useOpenInPreferredEditor(
         ),
       );
     }
-    const editor = resolveAndPersistPreferredEditor(availableEditors);
+    const preferredEditor = resolveAndPersistPreferredEditor(availableEditors);
+    if (
+      preferredEditor &&
+      isTerminalEditor(preferredEditor) &&
+      (await openInTerminalEditor(environmentId, preferredEditor, targetPath))
+    ) {
+      return AsyncResult.success(preferredEditor);
+    }
+    // Settings has no thread terminal, so a terminal preference borrows a launchable editor.
+    const editor =
+      preferredEditor && isTerminalEditor(preferredEditor)
+        ? availableEditors.find((id) => !isTerminalEditor(id))
+        : preferredEditor;
     if (!editor) {
       return AsyncResult.failure(
         Cause.fail(

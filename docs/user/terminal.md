@@ -28,3 +28,12 @@ To preserve those flags or enable queries with `query-term`, include them in
 `fish_features` in the environment that launches T3 Code. A shell export applies
 when you launch T3 Code from that shell; it does not configure a desktop app
 launched from the Dock or Finder. Enabling queries can restore the startup wait.
+
+## Neovim
+
+If `nvim` is installed on a macOS or Linux environment, choose Neovim in the Open
+in editor menu to open projects and file links in the thread's terminal. This also
+works when you are connected to that environment remotely.
+
+Screens without a thread terminal, such as Settings, use your next installed
+editor instead. Neovide appears as a separate editor when it is installed.

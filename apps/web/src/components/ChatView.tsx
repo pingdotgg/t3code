@@ -278,6 +278,7 @@ import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
 import { useRemoteOpenState } from "~/remoteOpen";
+import { registerTerminalEditorHost } from "../terminalEditorHost";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -1907,6 +1908,20 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalUiLaunchContext,
     setThreadError,
   });
+  const terminalEditorEnvironmentId =
+    !backgroundThread && activeThread && activeProject ? activeThread.environmentId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this thread's terminal to openers outside its tree, such as the persistent drawer
+  useEffect(() => {
+    if (terminalEditorEnvironmentId === null) return;
+    return registerTerminalEditorHost({
+      environmentId: terminalEditorEnvironmentId,
+      open: (command) =>
+        runProjectScriptStable(
+          { id: "terminal-editor", name: "editor", command },
+          { rememberAsLastInvoked: false },
+        ),
+    });
+  }, [terminalEditorEnvironmentId, runProjectScriptStable]);
   const {
     saveProjectScript: saveProjectScriptStable,
     updateProjectScript: updateProjectScriptStable,

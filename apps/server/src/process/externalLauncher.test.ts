@@ -513,47 +513,128 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
 );
 
 it.effect.each([
-  { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
-  { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
-] as const)(
-  "discovers and launches $editor from a versioned macOS bundle",
-  ({ editor, installPath }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
-      const executable = path.join(home, installPath);
-      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
-      yield* fs.chmod(executable, 0o755);
+  {
+    editor: "webstorm",
+    installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm",
+    args: ["--line", "12", "--column", "3", "/workspace with spaces/file.ts"],
+  },
+  {
+    editor: "idea",
+    installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea",
+    args: ["--line", "12", "--column", "3", "/workspace with spaces/file.ts"],
+  },
+  {
+    editor: "neovide",
+    installPath: "Applications/Neovide.app/Contents/MacOS/neovide",
+    args: ["/workspace with spaces/file.ts", "--", "+call cursor(12,4)"],
+  },
+] as const)("discovers and launches $editor from a macOS bundle", ({ editor, installPath, args }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
+    const executable = path.join(home, installPath);
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
 
-      let spawned: ChildProcess.StandardCommand | undefined;
-      yield* Effect.gen(function* () {
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), editor);
+      yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { HOME: home, PATH: path.join(home, "empty") },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, executable);
+    assert.deepEqual(spawned.args, args);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)("neovide roots folders and positions files", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-neovide-" });
+    const executable = path.join(binDir, "neovide");
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+
+    const argsFor = (cwd: string) =>
+      Effect.gen(function* () {
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "neovide", cwd });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { PATH: binDir },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        return spawned?.args;
+      });
+
+    assert.deepEqual(yield* argsFor(binDir), ["--chdir", binDir, binDir]);
+    assert.deepEqual(yield* argsFor(executable), [executable]);
+    assert.deepEqual(yield* argsFor(`${executable}:12`), [executable, "--", "+call cursor(12,1)"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)("neovim is offered on POSIX but never spawned by the server", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-neovim-" });
+    const executable = path.join(binDir, "nvim");
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+
+    const editorsOn = (platform: NodeJS.Platform) =>
+      Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
-        assert.include(yield* launcher.resolveAvailableEditors(), editor);
-        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { HOME: home, PATH: path.join(home, "empty") },
-            onSpawn: (command) => {
-              spawned = command;
-            },
-          }),
-        ),
-      );
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(Effect.provide(layerTest({ platform, env: { PATH: binDir } })));
 
-      assert.ok(spawned);
-      assert.equal(spawned.command, executable);
-      assert.deepEqual(spawned.args, [
-        "--line",
-        "12",
-        "--column",
-        "3",
-        "/workspace with spaces/file.ts",
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    assert.include(yield* editorsOn("linux"), "neovim");
+    assert.notInclude(yield* editorsOn("win32"), "neovim");
+
+    let spawned = false;
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({ editor: "neovim", cwd: "/workspace" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: () => {
+            spawned = true;
+          },
+        }),
+      ),
+      Effect.exit,
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    assert.isFalse(spawned);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("matches macOS bundles on the name boundary only", () =>

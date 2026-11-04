@@ -199,7 +199,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     focusActiveDrawerTerminal(activeThreadRef);
   };
   const runProjectScript = async (
-    script: ProjectScript,
+    script: Pick<ProjectScript, "id" | "name" | "command" | "autoOpenPreview" | "previewUrl">,
     options?: {
       cwd?: string;
       env?: Record<string, string>;
@@ -314,8 +314,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         id: "chat-code-block",
         name: "Chat code block",
         command,
-        icon: "play",
-        runOnWorktreeCreate: false,
       },
       { rememberAsLastInvoked: false, shellHistory: "preserve" },
     );

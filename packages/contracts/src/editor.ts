@@ -1,7 +1,13 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "neovim",
+  "terminal",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -54,6 +60,7 @@ export const EDITORS = [
     launchStyle: "direct-path",
     remoteScheme: "zed",
   },
+  { id: "neovide", label: "Neovide", commands: ["neovide"], launchStyle: "neovim" },
   {
     id: "antigravity",
     label: "Antigravity",
@@ -146,10 +153,33 @@ export const EDITORS = [
     jetbrainsProductCode: "WS",
   },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  // Last so it only becomes the default editor when nothing the server can launch exists.
+  { id: "neovim", label: "Neovim", commands: ["nvim"], launchStyle: "terminal" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
 export type EditorId = typeof EditorId.Type;
+
+export const isTerminalEditor = (id: EditorId): boolean =>
+  EDITORS.some((editor) => editor.id === id && editor.launchStyle === "terminal");
+
+export const EDITOR_TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+// A PTY acts on these before the shell parses the line, so quoting cannot contain them.
+const TERMINAL_UNSAFE_TARGET_PATTERN = /[\u0000-\u001f\u007f]/;
+
+const quotePosixArgument = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/** A POSIX shell line; servers do not offer terminal editors on Windows. */
+export const buildTerminalEditorCommand = (id: EditorId, target: string): string | undefined => {
+  const editor = EDITORS.find((candidate) => candidate.id === id);
+  if (editor?.launchStyle !== "terminal" || TERMINAL_UNSAFE_TARGET_PATTERN.test(target)) {
+    return undefined;
+  }
+  const match = EDITOR_TARGET_WITH_POSITION_PATTERN.exec(target);
+  const path = match?.[1] || target;
+  const position = match?.[2] ? [`'+call cursor(${match[2]},${match[3] ?? "1"})'`] : [];
+  return [editor.commands[0], ...position, "--", quotePosixArgument(path)].join(" ");
+};
 
 export const FileManagerRevealKind = Schema.Literals(["finder", "file-explorer", "files"]);
 export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;
