@@ -24,7 +24,7 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -217,8 +217,13 @@ import {
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
+  measureSidebarPinnedGrid,
+  sidebarPinnedGridCell,
+  type SidebarPinnedGrid,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
+  restrictSidebarDrag,
+  resolveSidebarDragSourceRect,
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
@@ -1069,6 +1074,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     readonly activationY: number | null;
     readonly targetSection: SidebarSection | null;
     readonly contextDrag: boolean;
+    readonly pinnedGrid: SidebarPinnedGrid | undefined;
+    readonly pinnedTargetIndex: number | null;
+    readonly grabOffsetX: number;
+    readonly sourceWidth: number;
   } | null>(null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
@@ -1694,12 +1703,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
   const restrictBelowPins: Modifier = (args) =>
-    restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
-  const dndModifiers = [
-    restrictToVerticalAxis,
-    restrictBelowPins,
-    restrictToFirstScrollableAncestor,
-  ];
+    restrictBelowSidebarLabel(
+      args,
+      dragLabelOffsetRef.current,
+      threadListRef.current?.getBoundingClientRect().top,
+    );
   const attachListMotionRef = (node: HTMLUListElement) => {
     threadListRef.current = node;
     const motion = createSidebarListMotion(node);
@@ -1728,11 +1736,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const isContextDrag = dragState?.contextDrag === true || dragState?.activeSection === "working";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
   const finishThreadDrag = (started: boolean) => {
+    const activeKey = contextDragKeyRef.current ?? undefined;
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
     endThreadContextDrag();
     if (started) {
-      listMotionRef.current?.release();
+      listMotionRef.current?.release(activeKey);
       setDragState(null);
     }
   };
@@ -1902,9 +1911,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     listMotionRef.current?.suspend();
     const list = threadListRef.current;
     const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
-    if (list && header) {
-      const listRect = list.getBoundingClientRect();
-      const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+    const grid = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-grid"]');
+    const listRect = list?.getBoundingClientRect();
+    const sourceRect = resolveSidebarDragSourceRect(
+      event.activatorEvent,
+      event.active.rect.current.initial,
+    );
+    const scale = list && listRect && list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+    if (listRect && header) {
       dragLabelOffsetRef.current =
         header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
     } else {
@@ -1915,6 +1929,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeSection,
       targetSection: activeSection,
       contextDrag: false,
+      pinnedGrid: grid
+        ? measureSidebarPinnedGrid(grid, scale, SIDEBAR_DRAG_LABEL_HEIGHT * scale)
+        : undefined,
+      pinnedTargetIndex: activeSection === "pinned" ? pinnedKeys.indexOf(activeKey) : null,
+      grabOffsetX:
+        event.activatorEvent instanceof PointerEvent
+          ? event.activatorEvent.clientX - (sourceRect?.left ?? event.activatorEvent.clientX)
+          : 0,
+      sourceWidth: sourceRect?.width ?? listRect?.width ?? 0,
       occurredAt: new Date().toISOString(),
       activationY:
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
@@ -2013,10 +2036,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const target = event.over
       ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
       : null;
+    const pinnedTargetIndex =
+      target?.section === "pinned" ? target.pinnedOrder.indexOf(String(event.active.id)) : null;
     setDragState((current) =>
-      current === null || current.activeKey !== String(event.active.id)
+      current === null ||
+      current.activeKey !== String(event.active.id) ||
+      (current.targetSection === (target?.section ?? null) &&
+        current.pinnedTargetIndex === pinnedTargetIndex)
         ? current
-        : { ...current, targetSection: target?.section ?? null },
+        : { ...current, targetSection: target?.section ?? null, pinnedTargetIndex },
     );
   };
   const sortableIds = sidebarListItems.map(sidebarListItemId);
@@ -2041,10 +2069,33 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
     snoozedThreadCount: snoozedThreads.length,
+    pinnedGrid: dragState?.pinnedGrid,
   });
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
+  const pinnedDragPreview = (() => {
+    const grid = dragState?.pinnedGrid;
+    if (!grid || dragState.targetSection !== "pinned" || dragState.pinnedTargetIndex === null)
+      return undefined;
+    const from = pinnedKeys.indexOf(dragState.activeKey);
+    if (dragState.pinnedTargetIndex < 0) return undefined;
+    const sourceWidth =
+      from < 0 ? dragState.sourceWidth : sidebarPinnedGridCell(grid, from, pinnedKeys.length).width;
+    if (sourceWidth <= 0) return undefined;
+    const width = sidebarPinnedGridCell(
+      grid,
+      dragState.pinnedTargetIndex,
+      pinnedKeys.length + (from < 0 ? 1 : 0),
+    ).width;
+    const widthRatio = width / sourceWidth;
+    return { width, widthRatio, offsetX: dragState.grabOffsetX * (1 - widthRatio) };
+  })();
+  const restrictPreview: Modifier = (args) => restrictSidebarDrag(args, pinnedDragPreview);
+  const dndModifiers =
+    dragState?.activeSection === "pinned"
+      ? [restrictBelowPins, restrictPreview]
+      : [restrictToVerticalAxis, restrictBelowPins, restrictPreview];
   const dndCollisionDetection = (() => {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
@@ -2075,6 +2126,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       {
         items: sidebarListItems,
         activationY: dragActivationY ?? null,
+        pinnedGrid: dragState?.pinnedGrid,
       },
     );
   })();
@@ -3295,6 +3347,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachTreeRef}
+                    data-sidebar-dragging={dragState === null ? undefined : ""}
                     // Presentation flattens VoiceOver's list interaction boundary while preserving descendant
                     // controls.
                     role="presentation"
@@ -3314,20 +3367,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
-                        const isCard =
-                          section === "active" || section === "pinned" || section === "working";
+                        const isCard = section === "active" || section === "working";
                         const rowVariant = folderRow
                           ? folderRowsMultiline
                             ? "folder-multiline"
                             : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                          : section === "pinned" ||
+                              (threadKey === draggedThreadKey && dragTargetSection === "pinned")
+                            ? "tile"
+                            : isCard
+                              ? "card"
+                              : "slim";
                         return (
                           <SortableThreadRow
                             key={threadKey}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
+                            pinnedDragPreview={
+                              threadKey === draggedThreadKey ? pinnedDragPreview : undefined
+                            }
                             sortableDisabled={
                               projectFolders !== null ||
                               renamingThreadKey === threadKey ||
@@ -3437,10 +3495,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      const pinnedTiles = sidebarListItems.flatMap((item) =>
+                        item.kind === "thread" && item.section === "pinned"
+                          ? [renderThreadRow(threadByKey.get(item.key)!, item.section)]
+                          : [],
+                      );
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          // Folders draw active rows in their own place below.
-                          if (projectFolders !== null && item.section === "active") continue;
+                          // Pins render in their grid; folders draw active rows in their own place below.
+                          if (
+                            item.section === "pinned" ||
+                            (projectFolders !== null && item.section === "active")
+                          )
+                            continue;
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
                           continue;
                         }
@@ -3482,13 +3549,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "pinned-divider":
+                            // Stays mounted while empty so a drag can measure the grid it would open.
                             items.push(
+                              <ul
+                                key="pinned-grid"
+                                role="group"
+                                aria-label="Pinned threads"
+                                data-testid="sidebar-pinned-grid"
+                                data-sidebar-motion-group=""
+                                className="sidebar-pinned-grid"
+                              >
+                                {pinnedTiles}
+                              </ul>,
                               <SidebarDragBoundary
                                 key="pinned-divider"
                                 marker="pinned-divider"
                                 label="Active"
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
+                                rule={pinnedTiles.length > 0}
                               />,
                             );
                             break;
