@@ -17,6 +17,7 @@ describe("groupModelPickerVendors", () => {
         model("anthropic/claude-opus", "Anthropic"),
       ],
       (candidate) => candidate.slug === "anthropic/claude-opus",
+      undefined,
     );
 
     expect(grouped).toEqual({
@@ -26,7 +27,21 @@ describe("groupModelPickerVendors", () => {
         { vendor: "openai", models: [model("openai/gpt", "openai")] },
         { vendor: "OpenCode Zen", models: [model("zen/big-pickle", "OpenCode Zen")] },
       ],
+      defaultVendor: "Anthropic",
     });
+  });
+
+  it("keeps the preferred vendor open after its model is pinned", () => {
+    const models = [
+      model("a/sonnet", "Anthropic"),
+      model("o/pro", "OpenAI"),
+      model("o/mini", "OpenAI"),
+    ];
+
+    expect(
+      groupModelPickerVendors(models, (candidate) => candidate.slug === "o/pro", "OpenAI")
+        ?.defaultVendor,
+    ).toBe("OpenAI");
   });
 
   it("leaves a single-vendor catalog as a plain list", () => {
@@ -34,6 +49,7 @@ describe("groupModelPickerVendors", () => {
       groupModelPickerVendors(
         [model("a", "Anthropic"), model("b", "Anthropic"), model("c")],
         () => false,
+        "Anthropic",
       ),
     ).toBeNull();
   });
