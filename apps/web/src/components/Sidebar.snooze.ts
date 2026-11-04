@@ -3,7 +3,6 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
   resolveSnoozePresets as resolveSharedSnoozePresets,
-  snoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -12,7 +11,7 @@ import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
 import { toastManager } from "./ui/toast";
 
-export { snoozeWakeLabel, type SnoozePreset };
+export type { SnoozePreset };
 
 /** The snooze menu for a thread, from its environment's presets, read when the menu opens. */
 export function resolveSnoozePresets(

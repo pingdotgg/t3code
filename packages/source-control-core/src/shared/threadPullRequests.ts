@@ -366,22 +366,28 @@ function chainKeyOf(chain: ThreadPullRequestChain): string {
 
 export function pullRequestListLines(
   chains: ReadonlyArray<ThreadPullRequestChain>,
+  limit = Infinity,
 ): ReadonlyArray<PullRequestListLine> {
   const ordered = [...chains].sort(
     (left, right) =>
       Math.max(...right.layers.map(latestUpdatedAt)) -
       Math.max(...left.layers.map(latestUpdatedAt)),
   );
-  return ordered.flatMap((chain) => {
+  const lines: PullRequestListLine[] = [];
+  for (const chain of ordered) {
+    if (lines.length >= limit) break;
     const chainKey = chainKeyOf(chain);
-    return chain.layers.map((link, index) => ({
-      link,
-      depth: chain.depths[index]!,
-      chainKey,
-      stack:
-        index === 0 && chain.layers.length > 1
-          ? { kind: chain.kind, size: chain.layers.length }
-          : null,
-    }));
-  });
+    for (let index = 0; index < chain.layers.length && lines.length < limit; index += 1) {
+      lines.push({
+        link: chain.layers[index]!,
+        depth: chain.depths[index]!,
+        chainKey,
+        stack:
+          index === 0 && chain.layers.length > 1
+            ? { kind: chain.kind, size: chain.layers.length }
+            : null,
+      });
+    }
+  }
+  return lines;
 }

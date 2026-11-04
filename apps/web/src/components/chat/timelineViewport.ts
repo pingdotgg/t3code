@@ -1,4 +1,5 @@
 import { isInSideChatPane } from "../../lib/sideChatPane";
+import { openLayerMatches } from "../../lib/openLayers";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import {
   eventPathContainsSelector,
@@ -103,7 +104,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       event.metaKey ||
       event.shiftKey ||
       eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR) ||
-      document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) ||
+      openLayerMatches(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) ||
       (scrollNode.contains(event.target) &&
         !isTimelineScrollTarget(event.target, scrollNode, direction === "up" ? -1 : 1))
     ) {

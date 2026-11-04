@@ -1,47 +1,19 @@
-const THREAD_DETAILS_PANEL_RESTING_BUTTON_SURFACE_CLASS = "bg-transparent shadow-none";
+import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "../ui/menu";
 
-const THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS =
-  "hover:!bg-black/[0.035] data-pressed:!bg-black/[0.035] dark:hover:!bg-white/[0.08] dark:data-pressed:!bg-white/[0.08]";
+/** Compact workspace rows shared by the details cards. */
+const PANEL_ROW_INTERACTION_CLASS =
+  "relative w-full min-w-0 text-left hover:surface-selected-soft data-pressed:surface-selected-soft data-popup-open:surface-selected-soft hover:text-strong-foreground data-popup-open:text-strong-foreground hover:[&>svg:not([class*='text-'])]:text-foreground data-popup-open:[&>svg:not([class*='text-'])]:text-foreground disabled:pointer-events-none disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
-const THREAD_DETAILS_PANEL_HALF_HOVER_SURFACE_CLASS =
-  "hover:bg-black/[0.035] dark:hover:bg-white/[0.08]";
+export const THREAD_DETAILS_PANEL_ROW_CLASS = `${MENU_ITEM_ROW_CLASS} ${PANEL_ROW_INTERACTION_CLASS} min-h-7 sm:min-h-7 gap-2.5 ps-2.5 pe-1 text-meta`;
+export const THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS = `${MENU_SUB_TRIGGER_ROW_CLASS} ${PANEL_ROW_INTERACTION_CLASS} min-h-7 sm:min-h-7 gap-2.5 ps-2.5 pe-1 text-meta`;
 
-const THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_RESTING_BUTTON_SURFACE_CLASS} ${THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS}`;
-const THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS} data-popup-open:!bg-black/[0.035] dark:data-popup-open:!bg-white/[0.08]`;
-const THREAD_DETAILS_PANEL_SPLIT_GROUP_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS} has-[[data-popup-open]]:bg-black/[0.035] dark:has-[[data-popup-open]]:bg-white/[0.08]`;
-
-export const THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS = "gap-2.5 px-2.5 text-left";
-
-export const THREAD_DETAILS_PANEL_LABEL_CLASS =
-  "[text-box:trim-both_cap_alphabetic] overflow-x-clip overflow-y-visible";
-
-const THREAD_DETAILS_PANEL_CONTROL_CLASS = `h-8 min-w-0 rounded-lg border-transparent ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-[13px] font-medium text-foreground/80`;
-
-export const THREAD_DETAILS_PANEL_ROW_CLASS = `${THREAD_DETAILS_PANEL_CONTROL_CLASS} w-full justify-start ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_SELECT_ROW_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} gap-0 px-0 [&_[data-slot=select-icon]]:-me-px [&_[data-slot=select-icon]]:relative [&_[data-slot=select-icon]]:flex [&_[data-slot=select-icon]]:h-full [&_[data-slot=select-icon]]:w-8 [&_[data-slot=select-icon]]:shrink-0 [&_[data-slot=select-icon]]:items-center [&_[data-slot=select-icon]]:justify-center [&_[data-slot=select-icon]]:before:absolute [&_[data-slot=select-icon]]:before:-left-px [&_[data-slot=select-icon]]:before:top-1/2 [&_[data-slot=select-icon]]:before:h-4 [&_[data-slot=select-icon]]:before:w-px [&_[data-slot=select-icon]]:before:-translate-y-1/2 [&_[data-slot=select-icon]]:before:bg-transparent hover:[&_[data-slot=select-icon]]:before:bg-border/65 data-popup-open:[&_[data-slot=select-icon]]:before:bg-border/65 [&_[data-slot=select-icon]>svg]:me-0 [&_[data-slot=select-icon]>svg]:size-4 [&_[data-slot=select-icon]>svg]:text-muted-foreground [&_[data-slot=select-icon]>svg]:opacity-100`;
-
-// The row keeps its soft fill while each half stacks a second one, like the split controls nearby.
-export const THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS = `flex h-full min-w-0 flex-1 items-center rounded-s-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} ${THREAD_DETAILS_PANEL_HALF_HOVER_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_SELECT_ICON_CLASS = `rounded-e-lg ${THREAD_DETAILS_PANEL_HALF_HOVER_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS = `h-8 w-full min-w-0 justify-start rounded-lg border border-transparent ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-[13px] font-medium text-foreground/80 sm:h-8 sm:text-[13px]`;
-
+export const THREAD_DETAILS_PANEL_LABEL_CLASS = "min-w-0 truncate";
+export const THREAD_DETAILS_PANEL_META_CLASS =
+  "ms-auto flex shrink-0 items-center gap-1.5 text-caption tabular-nums text-dim-foreground";
 export const THREAD_DETAILS_PANEL_ICON_CLASS = "size-4 shrink-0 text-muted-foreground";
-
-export const THREAD_DETAILS_PANEL_CHEVRON_CLASS = "size-4 shrink-0 text-muted-foreground";
-
-export const THREAD_DETAILS_PANEL_ICON_ACTION_CLASS = `size-6 justify-center rounded-md border-transparent bg-transparent p-0 sm:size-6 ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_META_ACTION_CLASS = `h-6 gap-1 rounded-md border-transparent px-1.5 text-xs font-medium text-muted-foreground ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS = `group/details-split flex w-full items-center rounded-lg ${THREAD_DETAILS_PANEL_SPLIT_GROUP_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS = `${THREAD_DETAILS_PANEL_CONTROL_CLASS} flex-1 justify-start rounded-e-none ${THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS}`;
-
-export const THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS = `${THREAD_DETAILS_PANEL_CONTROL_CLASS} w-8 justify-center rounded-s-none px-0 ${THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS}`;
-
-// The split hairline shows only while the pair is in use, so resting rows read as plain rows.
-export const THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS =
-  "h-4 w-px shrink-0 bg-transparent group-hover/details-split:bg-border/65 group-has-[[data-popup-open]]/details-split:bg-border/65";
+export const THREAD_DETAILS_PANEL_CHEVRON_CLASS =
+  "-me-1 ms-auto size-3 shrink-0 text-dim-foreground";
+export const THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} cursor-default hover:bg-transparent hover:text-foreground`;
+export const THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS = "flex w-full min-w-0 items-center";
+export const THREAD_DETAILS_PANEL_ICON_ACTION_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} size-6 min-h-6 w-6 justify-center p-0 sm:min-h-6`;
+export const THREAD_DETAILS_PANEL_META_ACTION_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} h-6 min-h-6 w-auto gap-1 px-1.5 text-meta text-muted-foreground sm:min-h-6`;

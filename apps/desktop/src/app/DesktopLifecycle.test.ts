@@ -62,7 +62,9 @@ function layerElectronApp(
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
+  shouldUseDarkChrome: Effect.succeed(false),
   setSource: () => Effect.void,
+  setBlackChrome: () => Effect.void,
   onUpdated: () => Effect.void,
 });
 

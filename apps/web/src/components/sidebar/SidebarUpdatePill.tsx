@@ -83,12 +83,14 @@ function resolveSidebarUpdatePresentation({
   showsEverything,
   run,
   isDownloading,
+  isFailed,
   showCheckIcon,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
   readonly showsEverything: boolean;
   readonly run: UpdateEverythingRun | null;
   readonly isDownloading: boolean;
+  readonly isFailed: boolean;
   readonly showCheckIcon: boolean;
 }) {
   const showUpdateDetails = action !== "none" || showsEverything || run !== null || isDownloading;
@@ -104,9 +106,11 @@ function resolveSidebarUpdatePresentation({
           ? "everything"
           : action === "install"
             ? "downloaded"
-            : action === "download"
-              ? "available"
-              : "idle";
+            : isFailed
+              ? "failed"
+              : action === "download"
+                ? "available"
+                : "idle";
 
   return {
     iconStatus,
@@ -243,6 +247,7 @@ function SidebarUpdateControl() {
     showsEverything: runsEverything,
     run,
     isDownloading,
+    isFailed: state?.status === "error",
     showCheckIcon,
   });
   const idleTooltip =
@@ -455,17 +460,12 @@ function SidebarUpdateControl() {
       aria-label={idleTooltip?.detail ? `${tooltip}: ${idleTooltip.detail}` : tooltip}
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+        // The footer's 28px control height, so the row keeps its center line.
+        "inline-flex size-7 items-center justify-center rounded-control text-sidebar-foreground outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState
-          ? cn(
-              "bg-sidebar-control-surface text-sidebar-foreground",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
-            )
-          : cn(
-              "text-(--sidebar-icon-color)",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            ),
+        // Checking and ready-to-install drop the well so the spin and the check badge read alone.
+        iconStatus !== "checking" && iconStatus !== "downloaded" && "surface-sidebar-row-selected",
+        !isInteractionDisabled && "hover:surface-ghost-hover",
         disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}
@@ -535,11 +535,11 @@ function SidebarUpdateControl() {
             <TooltipPopup
               align="center"
               side="top"
-              variant={showUpdateDetails ? "glass" : "default"}
+              variant={showUpdateDetails ? "popover" : "default"}
             >
               {idleTooltip?.detail ? (
                 <div className="text-left">
-                  <div className="font-medium">{idleTooltip.title}</div>
+                  <div className="text-meta">{idleTooltip.title}</div>
                   <div className="text-muted-foreground">{idleTooltip.detail}</div>
                 </div>
               ) : (

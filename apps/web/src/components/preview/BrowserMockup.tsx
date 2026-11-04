@@ -5,7 +5,7 @@ export function BrowserMockup({ className }: { className?: string }) {
     <div
       aria-hidden
       className={cn(
-        "relative flex flex-col gap-0.5 overflow-hidden rounded-sm border border-border/60 bg-card p-1 shadow-xs/5",
+        "relative flex flex-col gap-0.5 overflow-hidden rounded-kbd surface-raised p-1",
         className,
       )}
     >

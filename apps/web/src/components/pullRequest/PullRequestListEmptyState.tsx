@@ -110,11 +110,11 @@ export function PullRequestListEmptyState({
           </EmptyDescription>
         </EmptyHeader>
         <div className="flex flex-wrap justify-center gap-2">
-          <Button size="sm" variant="outline" onClick={onClearQuery}>
+          <Button size="sm" variant="secondary" onClick={onClearQuery}>
             <SearchIcon className="size-3.5" />
             Clear search
           </Button>
-          <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
+          <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
             <RefreshIcon size="sm" refreshing={refreshing} />
             {refreshing ? "Checking..." : "Check again"}
           </Button>
@@ -136,11 +136,11 @@ export function PullRequestListEmptyState({
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         {canLoadMore ? (
-          <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
+          <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
             {loadingMore ? "Loading..." : "Load more pull requests"}
           </Button>
         ) : null}
-        <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
+        <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
           <RefreshIcon size="sm" refreshing={refreshing} />
           {refreshing ? "Checking..." : "Check again"}
         </Button>

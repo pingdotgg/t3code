@@ -2,6 +2,7 @@ import { definePlugin } from "@oxlint/plugins";
 
 import namespaceNodeImports from "./rules/namespace-node-imports.ts";
 import noDomTestEnvironment from "./rules/no-dom-test-environment.ts";
+import noDotSeparatedText from "./rules/no-dot-separated-text.ts";
 import noEmDashCopy from "./rules/no-em-dash-copy.ts";
 import noFrameWaitsInBrowserTests from "./rules/no-frame-waits-in-browser-tests.ts";
 import noGlobalProcessRuntime from "./rules/no-global-process-runtime.ts";
@@ -22,6 +23,9 @@ import noPollingLoopInTests from "./rules/no-polling-loop-in-tests.ts";
 import noRawMcpRegistration from "./rules/no-raw-mcp-registration.ts";
 import noRawResizeObserver from "./rules/no-raw-resize-observer.ts";
 import noRealTimeWaitInTests from "./rules/no-real-time-wait-in-tests.ts";
+import noRawTypeClasses from "./rules/no-raw-type-classes.ts";
+import noSpacedCaps from "./rules/no-spaced-caps.ts";
+import noStyledRawControls from "./rules/no-styled-raw-controls.ts";
 import noTestInLoop from "./rules/no-test-in-loop.ts";
 import noTestTimeoutOrUnreasonedSkip from "./rules/no-test-timeout-or-unreasoned-skip.ts";
 import noRpcPermissionBypass from "./rules/no-rpc-permission-bypass.ts";
@@ -40,6 +44,7 @@ export default definePlugin({
   rules: {
     "namespace-node-imports": namespaceNodeImports,
     "no-dom-test-environment": noDomTestEnvironment,
+    "no-dot-separated-text": noDotSeparatedText,
     "no-em-dash-copy": noEmDashCopy,
     "no-frame-waits-in-browser-tests": noFrameWaitsInBrowserTests,
     "no-global-process-runtime": noGlobalProcessRuntime,
@@ -60,6 +65,9 @@ export default definePlugin({
     "no-raw-mcp-registration": noRawMcpRegistration,
     "no-raw-resize-observer": noRawResizeObserver,
     "no-real-time-wait-in-tests": noRealTimeWaitInTests,
+    "no-raw-type-classes": noRawTypeClasses,
+    "no-spaced-caps": noSpacedCaps,
+    "no-styled-raw-controls": noStyledRawControls,
     "no-test-in-loop": noTestInLoop,
     "no-test-timeout-or-unreasoned-skip": noTestTimeoutOrUnreasonedSkip,
     "no-rpc-permission-bypass": noRpcPermissionBypass,

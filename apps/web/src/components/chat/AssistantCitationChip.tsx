@@ -127,7 +127,7 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-kbd text-inherit no-underline focus-visible:outline-2 focus-visible:outline-ring"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
@@ -145,10 +145,10 @@ export function AssistantCitationChip({
         accessibleLabel={`Quoted assistant text: ${label}`}
         copyMarkdown={serializeAssistantCitation(citation)}
       >
-        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
+        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-body">
           <AssistantCitationQuote citation={citation} />
           <PopoverClose
-            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
+            render={<Button variant="secondary" size="sm" render={<Link {...sourceLinkProps} />} />}
           >
             <ArrowUpRightIcon aria-hidden="true" />
             Go to source
