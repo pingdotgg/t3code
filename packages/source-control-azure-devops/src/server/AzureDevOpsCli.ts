@@ -565,8 +565,6 @@ export const make = Effect.gen(function* () {
           "pr",
           "checkout",
           "--only-show-errors",
-          "--detect",
-          "true",
           "--id",
           normalizeChangeRequestId(input.reference),
           "--remote-name",
