@@ -1,5 +1,11 @@
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { useEffect } from "react";
-import { type ComposerContextRecord, ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ComposerContextRecord,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
@@ -186,3 +192,72 @@ it.each([
       : [],
   );
 });
+
+it.each(["same", "renamed", "other-environment"] as const)(
+  "preserves thread identity across repeated pastes: %s",
+  async (variant) => {
+    const otherEnvironment = variant === "other-environment";
+    const target = DraftId.make(`thread-collision-${variant}`);
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const environmentId = EnvironmentId.make("thread-source");
+    const otherEnvironmentId = EnvironmentId.make("other-thread-source");
+    const first = threadContextRecord(
+      { environmentId, threadId: ThreadId.make("same-id") },
+      "First",
+    );
+    const pasted = otherEnvironment
+      ? threadContextRecord(
+          { environmentId: otherEnvironmentId, threadId: first.threadId },
+          "Second",
+        )
+      : variant === "renamed"
+        ? threadContextRecord({ environmentId, threadId: first.threadId }, "Renamed")
+        : first;
+    store.addThreadContexts(target, [first], { appendReference: false });
+    let importer!: Importer;
+    await using _screen = await render(
+      <Harness
+        input={{
+          environmentId,
+          linkedEnvironments: new Map([[otherEnvironmentId, "Other machine"]]),
+          activeThread: undefined,
+          activeThreadId: null,
+          composerDraftTarget: target,
+          attachmentDraftTarget: target,
+          attachmentTargetKey: target,
+          attachmentTargetKeyRef: { current: target },
+          questionAttachmentTarget: null,
+          pendingUserInputs: [],
+          composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
+          composerImages: [],
+          composerFilesRef: { current: [] },
+          pendingThreadImportsRef: { current: new Map() },
+          promptRef: { current: "" },
+          addComposerFilesToDraft: () => [],
+        }}
+        ready={(value) => {
+          importer = value;
+        }}
+      />,
+    );
+    let importedId: string | undefined;
+    await act(() => {
+      importedId = importer
+        .importContextRecords([pasted], pasted.environmentId)
+        .get(pasted.contextId);
+    });
+    const records = store.getComposerDraft(target)!.threadContexts;
+    expect(records.find((record) => record.contextId === importedId)).toMatchObject({
+      environmentId: pasted.environmentId,
+      threadId: pasted.threadId,
+    });
+    expect(records).toHaveLength(otherEnvironment ? 2 : 1);
+    expect(records[0]).toEqual(first);
+    await act(() => {
+      const repeated = importer.importContextRecords([pasted], pasted.environmentId);
+      expect(repeated.get(pasted.contextId)).toBe(importedId);
+    });
+    expect(store.getComposerDraft(target)!.threadContexts).toEqual(records);
+  },
+);

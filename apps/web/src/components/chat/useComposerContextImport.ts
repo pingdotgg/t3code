@@ -345,7 +345,7 @@ export function useComposerContextImport(input: {
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
-        (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
+        record.kind !== "thread"
       ) {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
@@ -398,10 +398,20 @@ export function useComposerContextImport(input: {
             !linkedEnvironments.has(record.environmentId)
           )
             break;
-          addComposerDraftThreadContexts(threadDraftTarget, [record], {
+          const threads = getComposerDraft(threadDraftTarget)?.threadContexts ?? [];
+          const attached = threads.find(
+            (thread) =>
+              thread.environmentId === record.environmentId && thread.threadId === record.threadId,
+          );
+          const imported =
+            attached ??
+            (conflicts || threads.some((thread) => thread.contextId === record.contextId)
+              ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
+              : record);
+          addComposerDraftThreadContexts(threadDraftTarget, [imported], {
             appendReference: false,
           });
-          rewritten.set(record.contextId, record.contextId);
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "environment": {
