@@ -8,6 +8,7 @@ export interface OfflineMessage {
   readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
   readonly error?: string;
   readonly inheritedBootstrap?: boolean;
+  readonly modeChanges?: { readonly runtime: boolean; readonly interaction: boolean };
 }
 
 export function createOfflineOutbox(options: {

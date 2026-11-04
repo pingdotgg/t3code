@@ -64,6 +64,9 @@ const storedMessage = Schema.Struct({
   ),
   error: Schema.optional(Schema.String),
   inheritedBootstrap: Schema.optional(Schema.Boolean),
+  modeChanges: Schema.optional(
+    Schema.Struct({ runtime: Schema.Boolean, interaction: Schema.Boolean }),
+  ),
 });
 const isOfflineMessage = (value: unknown): value is OfflineMessage =>
   Schema.is(storedMessage)(value);

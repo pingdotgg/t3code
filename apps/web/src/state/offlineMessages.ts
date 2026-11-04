@@ -32,15 +32,15 @@ export const offlineMessages = createOfflineOutbox({
     appAtomRegistry.get(environmentShell.statusAtom(environmentId)) === "live" &&
     readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
   prepare: (message) => {
-    if (!message.inheritedBootstrap) return message;
+    if (!message.inheritedBootstrap && message.modeChanges) return message;
     const { bootstrap: queuedBootstrap, ...turnInput } = message.input;
     let bootstrap = queuedBootstrap;
-    if (bootstrap) {
-      const existing = appAtomRegistry.get(
-        environmentThreadShells.threadShellAtom(
-          scopeThreadRef(message.environmentId, message.input.threadId),
-        ),
-      );
+    const existing = appAtomRegistry.get(
+      environmentThreadShells.threadShellAtom(
+        scopeThreadRef(message.environmentId, message.input.threadId),
+      ),
+    );
+    if (message.inheritedBootstrap && bootstrap) {
       if (existing) {
         const { createThread: _, ...remaining } = bootstrap;
         bootstrap = existing.latestRun === null ? remaining : undefined;
@@ -49,6 +49,10 @@ export const offlineMessages = createOfflineOutbox({
     return {
       ...message,
       inheritedBootstrap: false,
+      modeChanges: message.modeChanges ?? {
+        runtime: existing?.runtimeMode !== message.input.runtimeMode,
+        interaction: existing?.interactionMode !== message.input.interactionMode,
+      },
       input: { ...turnInput, ...(bootstrap ? { bootstrap } : {}) },
     };
   },
@@ -71,11 +75,7 @@ export const offlineMessages = createOfflineOutbox({
     );
     const { bootstrap, ...turnInput } = message.input;
     if (!bootstrap?.createThread) {
-      const threadRef = scopeThreadRef(message.environmentId, message.input.threadId);
-      if (
-        appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.runtimeMode !==
-        message.input.runtimeMode
-      ) {
+      if (message.modeChanges?.runtime) {
         const runtimeResult = await runAtomCommand(
           appAtomRegistry,
           threadEnvironment.setRuntimeMode,
@@ -91,10 +91,7 @@ export const offlineMessages = createOfflineOutbox({
         );
         if (runtimeResult._tag === "Failure") throw squashAtomCommandFailure(runtimeResult);
       }
-      if (
-        appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.interactionMode !==
-        message.input.interactionMode
-      ) {
+      if (message.modeChanges?.interaction) {
         const interactionResult = await runAtomCommand(
           appAtomRegistry,
           threadEnvironment.setInteractionMode,
