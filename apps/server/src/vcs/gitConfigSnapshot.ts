@@ -154,9 +154,10 @@ export const gitConfigEnvironmentSignature = (env: NodeJS.ProcessEnv): string | 
 export interface GitConfigDependency {
   readonly path: string;
   /**
-   * content: any change. identity: a directory's identity (a file's content), for the `.git` Git
-   * rewrites often. presence: whether it exists. absent: the snapshot holds only while it is missing,
-   * for the markers that would make Git find another repository on the way up.
+   * content: any change. identity: a directory's identity, mode and owners (a file's content), for
+   * the `.git` Git rewrites often. presence: whether it exists, with its mode and owners. absent: the
+   * snapshot holds only while it is missing, for the markers that would make Git find another
+   * repository on the way up.
    */
   readonly kind: "content" | "identity" | "presence" | "absent";
 }
@@ -165,31 +166,38 @@ const dependencyKey = (dependency: GitConfigDependency) => `${dependency.kind}:$
 
 // Git replaces config files by rename, which changes the inode. An in-place edit of the same size can
 // go unseen when it lands within the filesystem's timestamp granularity (Linux stamps from a coarse
-// clock, ~4 ms) or behind NFS attribute caching. Ownership counts only on the read directory and the
-// found `.git`, so a chown elsewhere that trips safe.directory is not seen.
-const statFingerprint = (dependency: GitConfigDependency) =>
-  new Promise<string>((resolve) => {
+// clock, ~4 ms) or behind NFS attribute caching. Every kind counts the type, permission bits and
+// owners, which discovery and safe.directory read; an ACL-only change is not seen.
+const describeStats = (kind: GitConfigDependency["kind"], stats: NodeFS.BigIntStats) => {
+  const access = `${stats.mode}:${stats.uid}:${stats.gid}`;
+  if (kind === "presence" || kind === "absent") return access;
+  const identity = `${stats.dev}:${stats.ino}:${access}`;
+  return kind === "identity" && stats.isDirectory()
+    ? identity
+    : `${identity}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`;
+};
+
+const statOf = (path: string, follow: boolean) =>
+  new Promise<NodeFS.BigIntStats | string>((resolve) => {
+    const done = (error: NodeJS.ErrnoException | null, stats: NodeFS.BigIntStats) =>
+      resolve(error ? `!${error.code ?? "error"}` : stats);
     try {
-      NodeFS.stat(dependency.path, { bigint: true }, (error, stats) => {
-        if (error) {
-          resolve(`!${error.code ?? "error"}`);
-          return;
-        }
-        if (dependency.kind === "presence" || dependency.kind === "absent") {
-          resolve(stats.isDirectory() ? "directory" : "file");
-          return;
-        }
-        const identity = `${stats.dev}:${stats.ino}:${stats.mode}:${stats.uid}`;
-        resolve(
-          dependency.kind === "identity" && stats.isDirectory()
-            ? identity
-            : `${identity}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
-        );
-      });
+      if (follow) NodeFS.stat(path, { bigint: true }, done);
+      else NodeFS.lstat(path, { bigint: true }, done);
     } catch {
       resolve("!invalid");
     }
   });
+
+// Git reads owners with lstat, so an identity that is a link counts as itself and as its target.
+const statFingerprint = async ({ path, kind }: GitConfigDependency) => {
+  const describe = (stats: NodeFS.BigIntStats | string) =>
+    typeof stats === "string" ? stats : describeStats(kind, stats);
+  if (kind !== "identity") return describe(await statOf(path, true));
+  const link = await statOf(path, false);
+  if (typeof link === "string" || !link.isSymbolicLink()) return describe(link);
+  return `${describe(link)}>${describe(await statOf(path, true))}`;
+};
 
 const fingerprintDependencies = (dependencies: ReadonlyArray<GitConfigDependency>) =>
   Effect.promise(() => Promise.all(dependencies.map(statFingerprint)));
@@ -341,8 +349,18 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
     ) {
       return null;
     }
-    const [toplevel, , config, configWorktree, commondir, remotes, branches, head, objects, refs] =
-      paths as [string, string, string, string, string, string, string, string, string, string];
+    const [
+      toplevel,
+      gitDir,
+      config,
+      configWorktree,
+      commondir,
+      remotes,
+      branches,
+      head,
+      objects,
+      refs,
+    ] = paths as [string, string, string, string, string, string, string, string, string, string];
     const segments = prefix.split("/").filter((segment) => segment.length > 0);
     const [locations, listResult, remoteFiles, branchFiles, insideTopLevel] = yield* Effect.all(
       [
@@ -363,8 +381,9 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
     if (locations === null || !insideTopLevel) return null;
 
     // Discovery: the directory, what would make Git stop below the top level (a `.git`, or HEAD of a
-    // bare repository), the `.git` it found, and what keeps that a repository. The prefix comes from
-    // Git, cased as on disk like the top level, whatever case the directory was given in.
+    // bare repository), the `.git` it found, what keeps that a repository, and the top level and git
+    // dir whose owners safe.directory checks. The prefix comes from Git, cased as on disk like the
+    // top level, whatever case the directory was given in.
     const dependencies: GitConfigDependency[] = [{ path: cwd, kind: "identity" }];
     for (let depth = segments.length; depth > 0; depth--) {
       const directory = path.join(toplevel, ...segments.slice(0, depth));
@@ -375,6 +394,8 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
     }
     dependencies.push(
       { path: path.join(toplevel, ".git"), kind: "identity" },
+      { path: toplevel, kind: "identity" },
+      { path: gitDir, kind: "identity" },
       { path: head, kind: "content" },
       { path: objects, kind: "presence" },
       { path: refs, kind: "presence" },

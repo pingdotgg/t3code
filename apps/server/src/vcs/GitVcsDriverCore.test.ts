@@ -7,6 +7,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -44,6 +45,32 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
+
+// A test cannot chown without root, so stat reports another owner for this path instead.
+const statOwner = vi.hoisted(() => ({ path: null as string | null }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const reportingOwner = <Stat extends typeof actual.stat | typeof actual.lstat>(stat: Stat) =>
+    ((path: NodeFS.PathLike, ...rest: Array<unknown>) => {
+      const run = stat as (...args: Array<unknown>) => void;
+      const callback = rest.at(-1);
+      if (path !== statOwner.path || typeof callback !== "function") return run(path, ...rest);
+      run(
+        path,
+        ...rest.slice(0, -1),
+        (error: unknown, stats?: NodeFS.Stats | NodeFS.BigIntStats) => {
+          if (stats) {
+            Object.assign(stats, {
+              uid: typeof stats.uid === "bigint" ? stats.uid + 1n : stats.uid + 1,
+            });
+          }
+          callback(error, stats);
+        },
+      );
+    }) as Stat;
+  return { ...actual, stat: reportingOwner(actual.stat), lstat: reportingOwner(actual.lstat) };
+});
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
@@ -416,7 +443,10 @@ describe("config reads", () => {
     readonly name: string;
     // Prepares the repository at `cwd` and returns the directory to read from.
     readonly setup: (cwd: string) => Effect.Effect<string, TestError, Scope.Scope | TestServices>;
-    readonly change: (cwd: string, readCwd: string) => Effect.Effect<void, TestError, TestServices>;
+    readonly change: (
+      cwd: string,
+      readCwd: string,
+    ) => Effect.Effect<void, TestError, Scope.Scope | TestServices>;
     readonly read: (
       driver: GitVcsDriver.GitVcsDriver["Service"],
       cwd: string,
@@ -430,19 +460,39 @@ describe("config reads", () => {
     driver.readConfigValue(cwd, key);
   const readPrimaryRemote = (driver: GitVcsDriver.GitVcsDriver["Service"], cwd: string) =>
     driver.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
-  const setGlobalConfig = (file: string) =>
+  const setEnv = (name: string, value: string) =>
     Effect.acquireRelease(
       Effect.sync(() => {
-        const previous = process.env.GIT_CONFIG_GLOBAL;
-        process.env.GIT_CONFIG_GLOBAL = file;
+        const previous = process.env[name];
+        process.env[name] = value;
         return previous;
       }),
       (previous) =>
         Effect.sync(() => {
-          if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-          else process.env.GIT_CONFIG_GLOBAL = previous;
+          if (previous === undefined) Reflect.deleteProperty(process.env, name);
+          else process.env[name] = previous;
         }),
     );
+  const setGlobalConfig = (file: string) => setEnv("GIT_CONFIG_GLOBAL", file);
+  // An empty safe.directory drops any configured exception, so Git checks owners.
+  const trustNoOtherOwner = Effect.all([
+    setEnv("GIT_CONFIG_COUNT", "1"),
+    setEnv("GIT_CONFIG_KEY_0", "safe.directory"),
+    setEnv("GIT_CONFIG_VALUE_0", ""),
+  ]);
+  const changeOwner = (file: string) =>
+    Effect.all([
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          statOwner.path = file;
+        }),
+        () =>
+          Effect.sync(() => {
+            statOwner.path = null;
+          }),
+      ),
+      setEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"),
+    ]).pipe(Effect.asVoid);
   const writeInclude = (file: string, value: string) =>
     Effect.sync(() => NodeFS.writeFileSync(file, `[t3]\n\tvalue = ${value}\n`));
   const changes: ReadonlyArray<ConfigChange> = [
@@ -591,6 +641,62 @@ describe("config reads", () => {
       name: "the repository losing its HEAD",
       setup: (cwd) => git(cwd, ["config", "t3.value", "first"]).pipe(Effect.as(cwd)),
       change: (cwd) => Effect.sync(() => NodeFS.rmSync(NodePath.join(cwd, ".git", "HEAD"))),
+      read: readValue("t3.value"),
+      before: "first",
+      after: null,
+      reused: true,
+    },
+    // Windows has no search permission, and root keeps it whatever the mode says.
+    ...(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0
+      ? []
+      : (["objects", "refs"] as const).map((directory): ConfigChange => ({
+          name: `the repository's ${directory} losing search permission`,
+          setup: (cwd) =>
+            Effect.gen(function* () {
+              const file = NodePath.join(cwd, ".git", directory);
+              const mode = NodeFS.statSync(file).mode & 0o7777;
+              yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(file, mode)));
+              yield* git(cwd, ["config", "t3.value", "first"]);
+              return cwd;
+            }),
+          change: (cwd) =>
+            Effect.sync(() => {
+              const file = NodePath.join(cwd, ".git", directory);
+              NodeFS.chmodSync(file, NodeFS.statSync(file).mode & 0o7666);
+            }),
+          read: readValue("t3.value"),
+          before: "first",
+          after: null,
+          reused: true,
+        }))),
+    {
+      name: "a new owner of the top level above the directory read from",
+      setup: (cwd) =>
+        Effect.gen(function* () {
+          yield* git(cwd, ["config", "t3.value", "first"]);
+          yield* trustNoOtherOwner;
+          NodeFS.mkdirSync(NodePath.join(cwd, "sub"));
+          return NodePath.join(cwd, "sub");
+        }),
+      change: (_cwd, sub) =>
+        git(sub, ["rev-parse", "--show-toplevel"]).pipe(Effect.flatMap(changeOwner)),
+      read: readValue("t3.value"),
+      before: "first",
+      after: null,
+      reused: true,
+    },
+    {
+      name: "a new owner of a linked worktree's git dir",
+      setup: (cwd) =>
+        Effect.gen(function* () {
+          const worktree = NodePath.join(yield* makeTmpDir("git-worktrees-"), "linked");
+          yield* git(cwd, ["config", "t3.value", "first"]);
+          yield* git(cwd, ["worktree", "add", "-b", "linked", worktree]);
+          yield* trustNoOtherOwner;
+          return worktree;
+        }),
+      change: (_cwd, worktree) =>
+        git(worktree, ["rev-parse", "--absolute-git-dir"]).pipe(Effect.flatMap(changeOwner)),
       read: readValue("t3.value"),
       before: "first",
       after: null,
