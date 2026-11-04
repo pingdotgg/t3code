@@ -489,9 +489,13 @@ describe("probeRemoteEditors PATH scan", () => {
         );
       assert.deepStrictEqual(cached, uncached);
       assert.isAbove(uncachedCounter.stat, 0);
-      // On every platform the probe lists each PATH directory at most once.
-      assert.isAbove(cachedCounter.reads.size, 0);
-      assert.isAtMost(Math.max(...cachedCounter.reads.values()), 1);
+      // On every platform the probe lists each PATH directory at most once. Only PATH entries count:
+      // resolveEditorCommand also reads app folders such as /Applications on macOS.
+      const pathReads = cachedEnv.PATH.split(delimiter)
+        .filter((entry) => entry.length > 0)
+        .map((entry) => cachedCounter.reads.get(entry) ?? 0);
+      assert.isAbove(Math.max(...pathReads), 0);
+      assert.isAtMost(Math.max(...pathReads), 1);
       // Without the listings, Windows stats every PATH entry x PATHEXT candidate for each editor;
       // elsewhere there is no PATHEXT, so the stat count is about the same either way.
       if (platform === "win32") {
