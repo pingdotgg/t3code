@@ -123,10 +123,13 @@ export class GitLabRevertUnavailableError extends Schema.TaggedError<GitLabRever
     command: Schema.Literal("glab"),
     cwd: Schema.String,
     number: Schema.Int,
+    reason: Schema.Literals(["not-merged", "several-commits"]),
   },
 ) {
   get detail(): string {
-    return "This merge request landed as several commits, so there is no single commit to revert.";
+    return this.reason === "not-merged"
+      ? "Only a merged merge request can be reverted."
+      : "This merge request landed as several commits, so there is no single commit to revert.";
   }
 
   override get message(): string {
@@ -989,12 +992,21 @@ export const make = Effect.gen(function* () {
         });
       }
       const target = decoded.success;
+      if (!target.merged) {
+        return yield* new GitLabRevertUnavailableError({
+          command: "glab",
+          cwd: input.cwd,
+          number: input.number,
+          reason: "not-merged",
+        });
+      }
       const commitSha = target.commitSha ?? (yield* soleCommitSha(input));
       if (commitSha === null) {
         return yield* new GitLabRevertUnavailableError({
           command: "glab",
           cwd: input.cwd,
           number: input.number,
+          reason: "several-commits",
         });
       }
       const branch = `revert-${commitSha.slice(0, 8)}`;

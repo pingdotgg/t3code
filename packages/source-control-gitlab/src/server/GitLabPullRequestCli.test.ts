@@ -478,6 +478,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           Effect.succeed(
             output(
               mergeRequestJson({
+                state: "merged",
                 merge_commit_sha: mergeCommit,
                 squash_commit_sha: "cb2d9f660ebe946e5056ae98993db5ea72b9bad1",
               }),
@@ -536,7 +537,13 @@ layer("GitLabPullRequestCli.layer", (it) => {
               }),
             )
           : Effect.succeed(
-              output(mergeRequestJson({ merge_commit_sha: null, squash_commit_sha: "abc12345ff" })),
+              output(
+                mergeRequestJson({
+                  state: "merged",
+                  merge_commit_sha: null,
+                  squash_commit_sha: "abc12345ff",
+                }),
+              ),
             ),
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -571,7 +578,13 @@ layer("GitLabPullRequestCli.layer", (it) => {
       mockedExecute
         .mockReturnValueOnce(
           Effect.succeed(
-            output(mergeRequestJson({ merge_commit_sha: null, squash_commit_sha: null })),
+            output(
+              mergeRequestJson({
+                state: "merged",
+                merge_commit_sha: null,
+                squash_commit_sha: null,
+              }),
+            ),
           ),
         )
         .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(commits))))
@@ -593,6 +606,40 @@ layer("GitLabPullRequestCli.layer", (it) => {
       } else {
         expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({ branch: expected, ref: "main" });
       }
+    }),
+  );
+
+  it.effect("refuses to revert a merge request that is not merged before any write", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                state: "opened",
+                merge_commit_sha: null,
+                squash_commit_sha: null,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output(JSON.stringify([commitJson("1111111122")]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* Effect.result(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "GitLabRevertUnavailableError", reason: "not-merged" },
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 

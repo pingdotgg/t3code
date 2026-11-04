@@ -137,6 +137,7 @@ const RawDiffRefsSchema = Schema.Struct({
 
 const RawRevertTargetSchema = Schema.Struct({
   title: Schema.String,
+  state: Schema.String,
   target_branch: Schema.String,
   merge_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
   squash_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
@@ -591,6 +592,7 @@ export function decodeDiffRefsJson(
 }
 
 export interface GitLabRevertTarget {
+  readonly merged: boolean;
   readonly title: string;
   readonly targetBranch: string;
   /** Null for a fast-forward merge without squash, which records neither SHA. */
@@ -604,6 +606,7 @@ export function decodeRevertTargetJson(
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const mr = decoded.success;
   return Result.succeed({
+    merged: mr.state === "merged",
     title: mr.title,
     targetBranch: mr.target_branch,
     commitSha: trimmed(mr.merge_commit_sha) ?? trimmed(mr.squash_commit_sha),
