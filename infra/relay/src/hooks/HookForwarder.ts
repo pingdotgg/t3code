@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -220,6 +221,7 @@ const make = Effect.gen(function* () {
   const rateLimiter = yield* HookRateLimiter;
   const inbox = yield* HookInbox.HookInbox;
   const random = yield* SecureRandom.SecureRandom;
+  const signature = yield* Signature.Signature;
 
   const signDeliveryProof = Effect.fn("HookForwarder.signDeliveryProof")(
     function* (input: {
@@ -245,7 +247,7 @@ const make = Effect.gen(function* () {
           receivedAt: input.receivedAt,
           hookId: input.hookId,
         } satisfies RelayHookDeliveryProofPayload,
-      });
+      }).pipe(Effect.provideService(Signature.Signature, signature));
     },
     (effect, _input) => effect.pipe(Effect.orDie),
   );

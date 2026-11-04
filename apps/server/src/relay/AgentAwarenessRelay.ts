@@ -24,6 +24,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -247,17 +248,6 @@ function deliveryStats(
   };
 }
 
-function signRelayAgentActivityPublishProof(input: {
-  readonly privateKey: string;
-  readonly payload: RelayAgentActivityPublishProofPayload;
-}) {
-  return signRelayJwt({
-    privateKey: input.privateKey,
-    typ: RELAY_ACTIVITY_PUBLISH_TYP,
-    payload: input.payload,
-  });
-}
-
 const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly privateKey: string;
   readonly relayIssuer: string;
@@ -279,7 +269,11 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     threadId: input.threadId,
     state: input.state,
   } satisfies RelayAgentActivityPublishProofPayload;
-  return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
+  return yield* signRelayJwt({
+    privateKey: input.privateKey,
+    typ: RELAY_ACTIVITY_PUBLISH_TYP,
+    payload,
+  });
 });
 
 function describeThreadShellForAwareness(
@@ -378,6 +372,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
+  const signature = yield* Signature.Signature;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
@@ -491,7 +486,7 @@ export const make = Effect.gen(function* () {
         threadId,
         state: input.state,
         jti: yield* random.uuidV4(),
-      });
+      }).pipe(Effect.provideService(Signature.Signature, signature));
 
       yield* Effect.logInfo("publishing agent activity for thread", {
         environmentId,

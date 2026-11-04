@@ -65,7 +65,6 @@
     "hast-util-to-jsx-runtime": "^2.3.6",
     "heic-to": "^1.5.2",
     "html-url-attributes": "^3.0.1",
-    "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
     "katex": "^0.16.47",

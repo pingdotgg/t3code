@@ -16,6 +16,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Context from "effect/Context";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -57,9 +58,6 @@ export type RelayDpopAccessTokenClaims = Omit<typeof RelayDpopAccessTokenClaims.
   readonly scope: ReadonlyArray<RelayDpopAccessTokenScope>;
 };
 
-const decodeLinkChallengeClaims = Schema.decodeUnknownEffect(LinkChallengeClaims);
-const decodeDpopAccessTokenClaims = Schema.decodeUnknownEffect(RelayDpopAccessTokenClaims);
-
 const allowedScopesByClientId: Record<
   RelayPublicClientId,
   ReadonlySet<RelayDpopAccessTokenScope>
@@ -97,7 +95,6 @@ export class RelayTokens extends Context.Service<
       readonly token: string;
       readonly userId: string;
       readonly request: RelayEnvironmentLinkChallengeRequest;
-      readonly nowEpochSeconds: number;
     }) => Effect.Effect<LinkChallengeClaims | null>;
     readonly issueDpopAccessToken: (input: {
       readonly userId: string;
@@ -110,7 +107,6 @@ export class RelayTokens extends Context.Service<
     }) => Effect.Effect<string, RelayJwtError>;
     readonly verifyDpopAccessToken: (input: {
       readonly token: string;
-      readonly nowEpochSeconds: number;
     }) => Effect.Effect<RelayDpopAccessTokenClaims | null>;
   }
 >()("t3code-relay/auth/RelayTokens") {}
@@ -118,6 +114,7 @@ export class RelayTokens extends Context.Service<
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const issuer = normalizeRelayIssuer(config.relayIssuer);
+  const signature = yield* Signature.Signature;
 
   const issueLinkChallenge: RelayTokens["Service"]["issueLinkChallenge"] = Effect.fn(
     "relay.tokens.issue_link_challenge",
@@ -135,21 +132,20 @@ const make = Effect.gen(function* () {
         exp: input.expiresAtEpochSeconds,
         ...input.request,
       },
-    });
+    }).pipe(Effect.provideService(Signature.Signature, signature));
   });
 
   const verifyLinkChallenge: RelayTokens["Service"]["verifyLinkChallenge"] = Effect.fn(
     "relay.tokens.verify_link_challenge",
   )((input) =>
-    verifyRelayJwt({
+    verifyRelayJwt(LinkChallengeClaims, {
       publicKey: config.cloudMintPublicKey,
       token: input.token,
       typ: LINK_CHALLENGE_TYP,
       issuer,
       audience: issuer,
-      nowEpochSeconds: input.nowEpochSeconds,
     }).pipe(
-      Effect.flatMap(decodeLinkChallengeClaims),
+      Effect.provideService(Signature.Signature, signature),
       Effect.map((claims) => {
         if (
           claims.sub !== input.userId ||
@@ -182,28 +178,27 @@ const make = Effect.gen(function* () {
         scope: encodeOAuthScope(input.scopes),
         cnf: { jkt: input.proofKeyThumbprint },
       },
-    });
+    }).pipe(Effect.provideService(Signature.Signature, signature));
   });
 
   const verifyDpopAccessToken: RelayTokens["Service"]["verifyDpopAccessToken"] = Effect.fn(
     "relay.tokens.verify_dpop_access_token",
   )((input) =>
-    verifyRelayJwt({
+    verifyRelayJwt(RelayDpopAccessTokenClaims, {
       publicKey: config.cloudMintPublicKey,
       token: input.token,
       typ: ACCESS_TOKEN_TYP,
       issuer,
       audience: issuer,
-      nowEpochSeconds: input.nowEpochSeconds,
       maxTokenAge: RELAY_DPOP_ACCESS_TOKEN_TTL,
     }).pipe(
+      Effect.provideService(Signature.Signature, signature),
       Effect.tapError((error) =>
         Effect.annotateCurrentSpan(
           "relay.tokens.verification_failure",
           RelayJwtError.diagnosticCode(error),
         ),
       ),
-      Effect.flatMap(decodeDpopAccessTokenClaims),
       Effect.map((claims): RelayDpopAccessTokenClaims | null => {
         const scopes = resolveDpopAccessTokenScopes({
           clientId: claims.client_id,

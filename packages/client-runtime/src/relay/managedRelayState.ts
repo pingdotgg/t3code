@@ -85,15 +85,16 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
         cachedToken = null;
         return null;
       }
-      try {
-        const expiresAtSeconds = decodeRelayJwt(token).exp;
-        cachedToken =
-          typeof expiresAtSeconds === "number"
-            ? { token, expiresAtMillis: expiresAtSeconds * 1_000 }
-            : null;
-      } catch {
-        cachedToken = null;
-      }
+      const expiresAtSeconds = Effect.runSync(
+        decodeRelayJwt(token).pipe(
+          Effect.map((claims) => claims.exp),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      );
+      cachedToken =
+        typeof expiresAtSeconds === "number"
+          ? { token, expiresAtMillis: expiresAtSeconds * 1_000 }
+          : null;
       return token;
     });
     pendingToken = operation;

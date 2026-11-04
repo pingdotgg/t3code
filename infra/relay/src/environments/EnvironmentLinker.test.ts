@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or sign.
 import * as NodeCrypto from "node:crypto";
+import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayEnvironmentLinkRequest,
@@ -153,6 +154,7 @@ function layerTest(input?: {
         }),
       ),
     ),
+    Layer.provideMerge(EffectNodeCrypto.layerSignature),
   );
 }
 
