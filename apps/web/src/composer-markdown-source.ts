@@ -291,7 +291,9 @@ function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takes
     let next = pos;
     for (const { at, length, closing } of insertions) {
       const inside = typed && selection.empty && (closing ? takesBefore : !takesBefore);
-      if (at < pos || (at === pos && closing !== inside)) next += length;
+      if (at < pos || (at === pos && (selection instanceof NodeSelection || closing !== inside))) {
+        next += length;
+      }
     }
     return next;
   };

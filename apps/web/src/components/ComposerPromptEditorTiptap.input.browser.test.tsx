@@ -10,6 +10,7 @@ import {
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
+import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -351,6 +352,27 @@ async function focusAt(editor: Editor, position: number | "end") {
 }
 
 describe("Markdown markers around styled text", () => {
+  it.each([
+    { keys: "{Backspace}", expected: "**** after" },
+    { keys: "X", expected: "**X** after" },
+  ])("keeps a styled chip selected for $keys when showing source", async ({ keys, expected }) => {
+    await using screen = await mountEditor("$babysit after", true, [babysit]);
+    const { editor } = screen;
+    await focusAt(editor, "end");
+    await act(async () => {
+      editor.view.dispatch(editor.state.tr.addMark(1, 2, editor.schema.marks.bold!.create()));
+    });
+    expect(editor.state.doc.nodeAt(1)?.type.name).toBe("composer-skill");
+    await act(async () => {
+      editor.commands.setNodeSelection(1);
+    });
+    expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+    expect((editor.state.selection as NodeSelection).node.type.name).toBe("composer-skill");
+    await userEvent.keyboard(keys);
+    await userEvent.keyboard("{End}");
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+  });
+
   it.each([
     {
       name: "deleting the opening markers removes bold",
