@@ -8,13 +8,16 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
-  if (!environment || environment.length === 0) {
-    return baseEnv;
-  }
+  const sanitized = Object.fromEntries(
+    Object.entries(baseEnv).filter(
+      ([name]) => name.toUpperCase() !== "T3CODE_EXTERNAL_TOOL_TARGETS",
+    ),
+  );
+  if (!environment || environment.length === 0) return sanitized;
 
   const home = yield* HostProcess.HomeDirectory;
   const windows = (yield* HostProcess.Platform) === "win32";
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  const next: NodeJS.ProcessEnv = { ...sanitized };
   for (const variable of environment) {
     // An unresolved secret reference carries no value; the registry resolves it for the provider.
     if (typeof variable.value !== "string") continue;
@@ -27,6 +30,7 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
         if (inherited.toUpperCase() === name) delete next[inherited];
       }
     }
+    if (name.toUpperCase() === "T3CODE_EXTERNAL_TOOL_TARGETS") continue;
     next[name] =
       name === "CODEX_HOME" || name === "CLAUDE_CONFIG_DIR"
         ? expandHomePath(variable.value, home)

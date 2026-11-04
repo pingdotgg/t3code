@@ -1,3 +1,4 @@
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1769,9 +1770,9 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
   }),
 );
 
-it.effect(
+it.effect.each([false, true])(
   "ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close",
-  () =>
+  (enabled) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const mcpConfigs = yield* Ref.make<
@@ -1793,6 +1794,12 @@ it.effect(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
         });
+        const outdated = yield* registry.issue({
+          threadId,
+          providerInstanceId: modelSelection.instanceId,
+          externalToolAttestationEnabled: !enabled,
+        });
+        yield* mcpSessions.set(outdated.config);
         yield* manager.open({
           threadId,
           providerSessionId,
@@ -1802,7 +1809,10 @@ it.effect(
 
         const captured = (yield* Ref.get(mcpConfigs))[0];
         assert.isDefined(captured);
+        assert.notEqual(captured?.providerSessionId, outdated.config.providerSessionId);
+        assert.isUndefined(yield* registry.resolve(outdated.config.authorizationHeader.slice(7)));
         assert.equal(captured?.threadId, threadId);
+        assert.equal(captured?.externalToolAttestationEnabled, enabled);
         assert.equal(captured?.providerInstanceId, modelSelection.instanceId);
         assert.equal(captured?.endpoint, "http://127.0.0.1:43123/mcp");
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -1825,7 +1835,21 @@ it.effect(
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
-          }),
+          }).pipe(
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    T3CODE_EXTERNAL_TOOL_TARGETS: enabled
+                      ? JSON.stringify({
+                          sample: { endpoint: "https://example.com/tool", operations: ["run"] },
+                        })
+                      : "{}",
+                  },
+                }),
+              ),
+            ),
+          ),
         ),
       );
     }),
