@@ -93,7 +93,7 @@ in the receiving app. Connection settings are under **Settings → Environments*
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
-On a computer with the desktop app, you can open the printed `t3code://pair`
+On a computer with the desktop app, you can open the printed `t3learn://pair`
 app link instead. The desktop app asks you to confirm the server address, then
 adds it.
 
