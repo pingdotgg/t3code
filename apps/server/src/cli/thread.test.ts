@@ -183,18 +183,10 @@ const git = Effect.fn("test.git")(function* (cwd: string, args: ReadonlyArray<st
   assert.strictEqual(Number(exitCode), 0, `git ${args.join(" ")}`);
 });
 
-it.live("resolves a path inside a git worktree of the project's repository to that project", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-worktree-" });
-    const repo = path.join(root, "sample");
-    const worktree = path.join(root, "worktrees", "sample", "t3-8ff64c24");
-    yield* fileSystem.makeDirectory(path.join(repo, "pkg"), { recursive: true });
-    yield* fileSystem.writeFileString(path.join(repo, "pkg", "index.ts"), "export {};\n");
-    yield* git(repo, ["init", "--quiet", "-b", "main"]);
-    yield* git(repo, ["add", "."]);
-    yield* git(repo, [
+const commitAll = (cwd: string) =>
+  Effect.andThen(
+    git(cwd, ["add", "."]),
+    git(cwd, [
       "-c",
       "user.name=Test",
       "-c",
@@ -203,16 +195,66 @@ it.live("resolves a path inside a git worktree of the project's repository to th
       "--quiet",
       "-m",
       "initial",
-    ]);
+    ]),
+  );
+
+it.live("resolves a path inside a git worktree of the project's repository to that project", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-worktree-" });
+    const repo = path.join(root, "sample");
+    const worktree = path.join(root, "worktrees", "sample", "t3-8ff64c24");
+    const feature = path.join(root, "wt", "feature");
+    const featureWorktree = path.join(root, "worktrees", "feature", "t3-1a2b3c4d");
+    const separate = path.join(root, "separate");
+    const separateWorktree = path.join(root, "worktrees", "separate", "t3-5e6f7a8b");
+    yield* fileSystem.makeDirectory(path.join(repo, "pkg"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(repo, "pkg", "index.ts"), "export {};\n");
+    yield* git(repo, ["init", "--quiet", "-b", "main"]);
+    yield* commitAll(repo);
     yield* git(repo, ["worktree", "add", "--quiet", "-b", "t3/8ff64c24", worktree]);
-    const project = { id: ProjectId.make("project-sample"), title: "sample", workspaceRoot: repo };
-    const resolveFrom = (workingDirectory: string, identifier: string) =>
+    yield* git(repo, ["worktree", "add", "--quiet", "-b", "feature", feature]);
+    yield* git(feature, ["worktree", "add", "--quiet", "-b", "t3/1a2b3c4d", featureWorktree]);
+    yield* fileSystem.makeDirectory(separate);
+    yield* fileSystem.writeFileString(path.join(separate, "README.md"), "separate\n");
+    yield* git(separate, [
+      "init",
+      "--quiet",
+      "-b",
+      "main",
+      `--separate-git-dir=${path.join(root, "separate.git")}`,
+    ]);
+    yield* commitAll(separate);
+    yield* git(separate, ["worktree", "add", "--quiet", "-b", "t3/5e6f7a8b", separateWorktree]);
+
+    const project = (id: string, workspaceRoot: string) => ({
+      id: ProjectId.make(id),
+      title: path.basename(workspaceRoot),
+      workspaceRoot,
+    });
+    const sample = project("project-sample", repo);
+    const featureProject = project("project-feature", feature);
+    const separateProject = project("project-separate", separate);
+    const resolveFrom = (
+      projects: ReadonlyArray<ReturnType<typeof project>>,
+      workingDirectory: string,
+    ) =>
       resolveProject(
-        scriptedTools({ t3_project_list: [{ projects: [project], nextCursor: null }] }).tools,
-        identifier,
+        scriptedTools({ t3_project_list: [{ projects, nextCursor: null }] }).tools,
+        ".",
       ).pipe(Effect.provideService(HostProcess.WorkingDirectory, workingDirectory));
 
-    assert.deepStrictEqual(yield* resolveFrom(worktree, "."), project);
-    assert.deepStrictEqual(yield* resolveFrom(path.join(worktree, "pkg"), "."), project);
+    assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
+    assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
+    assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
+    assert.deepStrictEqual(
+      yield* resolveFrom([separateProject], separateWorktree),
+      separateProject,
+    );
+    const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
+    assert.strictEqual(ambiguous._tag, "ThreadUsageError");
+    assert.include(ambiguous.message, "sample (project-sample)");
+    assert.include(ambiguous.message, "feature (project-feature)");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -273,33 +273,25 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/**
- * The same path in the repository's main checkout, when `target` is inside a
- * linked git worktree of a non-bare repository.
- */
-const mainCheckoutPath = Effect.fn("cli.thread.mainCheckoutPath")(function* (target: string) {
-  const path = yield* Path.Path;
+/** The checkouts of the git repository at `directory`, or none outside a repository. */
+const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (directory: string) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const result = yield* processRunner
-    .run({
-      command: "git",
-      args: ["rev-parse", "--show-toplevel", "--git-common-dir"],
-      cwd: target,
-    })
+    .run({ command: "git", args: ["worktree", "list", "--porcelain", "-z"], cwd: directory })
     .pipe(Effect.option);
-  if (Option.isNone(result) || result.value.code !== 0) return undefined;
-  // A newline inside either path breaks the line framing, so that repository never matches.
-  const lines = result.value.stdout.split(/\r?\n/u);
-  const [topLevel = "", commonDir = ""] = lines;
-  if (lines.length !== 3 || lines[2] !== "") return undefined;
-  const gitDir = path.resolve(target, commonDir);
-  if (path.basename(gitDir) !== ".git") return undefined;
-  return path.join(path.dirname(gitDir), path.relative(topLevel, target));
+  if (Option.isNone(result) || result.value.code !== 0) return [];
+  return result.value.stdout.split("\0\0").flatMap((record) => {
+    const [first = "", ...attributes] = record.split("\0");
+    return first.startsWith("worktree ") && !attributes.includes("bare")
+      ? [first.slice("worktree ".length)]
+      : [];
+  });
 });
 
 /**
  * A project id, or a path inside a project's folder (deepest project wins).
- * A path inside a git worktree resolves as the same path in the main checkout.
+ * A path inside a git worktree resolves as the same path in the repository's
+ * other checkouts.
  */
 export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
@@ -319,25 +311,63 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
+  const contains = (root: string, candidate: string) => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
+  };
   const deepestContaining = (candidate: string) =>
     roots
-      .filter(({ root }) => {
-        const relative = path.relative(root, candidate);
-        return (
-          relative === "" ||
-          (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-        );
-      })
+      .filter(({ root }) => contains(root, candidate))
       .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
 
   const containing = deepestContaining(target);
   if (containing !== undefined) return containing;
-  const inMainCheckout = yield* mainCheckoutPath(target).pipe(Effect.provide(ProcessRunner.layer));
-  const fromWorktree = inMainCheckout === undefined ? undefined : deepestContaining(inMainCheckout);
-  if (fromWorktree === undefined) {
+  const listed = yield* listGitCheckouts(target).pipe(
+    Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
+    Effect.provide(ProcessRunner.layer),
+  );
+  // Git lists a `--separate-git-dir` main checkout as its git dir; only the
+  // checkout's own `.git` file says where it is.
+  const separateMainCheckouts = yield* Effect.forEach(roots, ({ root }) =>
+    fileSystem.readFileString(path.join(root, ".git")).pipe(
+      Effect.flatMap((gitFile) =>
+        gitFile.startsWith("gitdir: ")
+          ? realPath(path.resolve(root, gitFile.slice("gitdir: ".length).trim()))
+          : Effect.succeed(""),
+      ),
+      Effect.map((gitDir) => (gitDir === listed[0] ? [root] : [])),
+      Effect.orElseSucceed(() => []),
+    ),
+  );
+  const separateMain = separateMainCheckouts.flat();
+  const checkouts = separateMain.length > 0 ? [...separateMain, ...listed.slice(1)] : listed;
+  const ownCheckout = checkouts
+    .filter((checkout) => contains(checkout, target))
+    .toSorted((left, right) => right.length - left.length)[0];
+  if (ownCheckout === undefined) {
     return yield* new ThreadProjectNotFoundError({ identifier });
   }
-  return fromWorktree;
+  const relative = path.relative(ownCheckout, target);
+  const matches = new Map<ProjectId, (typeof projects)[number]>();
+  for (const checkout of checkouts) {
+    if (checkout === ownCheckout) continue;
+    const project = deepestContaining(path.join(checkout, relative));
+    if (project !== undefined) matches.set(project.id, project);
+  }
+  const [match, ...others] = matches.values();
+  if (match === undefined) {
+    return yield* new ThreadProjectNotFoundError({ identifier });
+  }
+  if (others.length > 0) {
+    const names = [match, ...others].map((project) => `${project.title} (${project.id})`);
+    return yield* new ThreadUsageError({
+      detail: `'${identifier}' is in a git worktree shared by several projects: ${names.join(", ")}. Pass a project id instead.`,
+    });
+  }
+  return match;
 });
 
 /** Every item on a timeline view, oldest first. */
