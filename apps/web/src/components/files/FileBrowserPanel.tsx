@@ -492,12 +492,17 @@ export default function FileBrowserPanel({
       return;
     }
     if (resort) {
-      // A reset rebuilds the store with every folder closed unless told which stay open.
       const expandedDirectoryPaths = directoryPaths.filter((path) => {
         const item = model.getItem(path);
-        return item?.isDirectory() && "isExpanded" in item && item.isExpanded();
+        return item !== null && "isExpanded" in item && item.isExpanded();
       });
-      model.resetPaths(treePaths, { initialExpandedPaths: expandedDirectoryPaths });
+      model.resetPaths(treePaths);
+      // A reset closes every folder, and `initialExpandedPaths` assumes default sibling order, so
+      // under a custom sort it misses folders. Reopening through item handles works in any order.
+      for (const path of expandedDirectoryPaths) {
+        const item = model.getItem(path);
+        if (item && "expand" in item) item.expand();
+      }
       return;
     }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);

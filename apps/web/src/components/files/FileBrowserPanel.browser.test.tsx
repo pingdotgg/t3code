@@ -199,6 +199,7 @@ describe("FileBrowserPanel sorting", () => {
     await expect.element(sortKeyButton("Sort by name")).toBeVisible();
     await expect.element(sortDirectionButton("Sort descending")).toBeVisible();
 
+    await userEvent.unhover(sortKeyButton("Sort by name"));
     await userEvent.hover(sortKeyButton("Sort by name"));
     await vi.waitFor(() => expect(tooltipTexts()).toContain("Sort by name"));
   });
