@@ -145,6 +145,27 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("rejects model mutations outside the offered registry", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    for (const id of [
+      "handy-computer/canary-1b-gguf",
+      "handy-computer/granite-speech-5.0-470m-turboctc-nc-gguf",
+      "unknown-model",
+    ]) {
+      for (const mutation of [speech.downloadModel, speech.selectModel, speech.removeModel]) {
+        const result = yield* Effect.result(mutation(id));
+        expect(Result.isFailure(result) && result.failure).toMatchObject({
+          _tag: "SpeechModelNotFoundError",
+          modelId: id,
+        });
+      }
+    }
+    expect(download).not.toHaveBeenCalled();
+    expect((yield* speech.models).models.find((model) => model.active)?.id).toBe("test-model");
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("keeps a detached download exclusive until the transfer finishes", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
