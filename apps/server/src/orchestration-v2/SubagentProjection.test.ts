@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 
 import {
   makeSubagentChildThread,
+  delegatedRunOwners,
   delegatedTaskProgress,
   subagentResultForRun,
   makeSubagentConversationArtifacts,
@@ -233,6 +234,43 @@ it("reports the run that ended last, not the highest ordinal", () => {
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.ordinal, 3);
+});
+
+it("credits a restarted completion wake to the task whose run caused the wake", () => {
+  const original = NodeId.make("task:original");
+  const first = NodeId.make("task:first-followup");
+  const later = NodeId.make("task:later-followup");
+  const run = (id: string, ordinal: number, minute: number, fields: object = {}) => ({
+    id: RunId.make(id),
+    ordinal,
+    startedAt: DateTime.makeUnsafe(`2026-07-24T10:${String(minute).padStart(2, "0")}:00.000Z`),
+    ...fields,
+  });
+  const owners = delegatedRunOwners(
+    {
+      runs: [
+        run("first", 2, 1, { delegatedTaskId: first }),
+        run("later", 3, 3, { delegatedTaskId: later }),
+        run("wake", 4, 5),
+        run("wake-continuation", 5, 6, { restartContinuationOfRunId: RunId.make("wake") }),
+        run("user-turn", 6, 7),
+      ],
+      messages: [
+        {
+          runId: RunId.make("wake"),
+          delegatedCompletion: {
+            parentRunId: RunId.make("first"),
+            generation: 1,
+            taskIds: [NodeId.make("task:grandchild")],
+          },
+        },
+      ],
+    },
+    original,
+  );
+  assert.equal(owners.get(RunId.make("wake")), first);
+  assert.equal(owners.get(RunId.make("wake-continuation")), first);
+  assert.equal(owners.get(RunId.make("user-turn")), later);
 });
 
 it("waits for nested work and retains the report across monitor acknowledgements", () => {

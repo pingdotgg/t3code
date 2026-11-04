@@ -230,6 +230,57 @@ export function subagentResultForRun(
   };
 }
 
+type TaskRun = Pick<
+  OrchestrationV2Run,
+  "id" | "ordinal" | "startedAt" | "delegatedTaskId" | "restartContinuationOfRunId"
+>;
+
+/**
+ * Each run's task: its bound task; for a delegated-completion wake or a restart continuation, the
+ * task owning the run that caused it; otherwise (a user turn) the task whose bound run most recently
+ * started before it. A queued bound run owns nothing else yet.
+ */
+export function delegatedRunOwners(
+  child: {
+    readonly runs: ReadonlyArray<TaskRun>;
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "delegatedCompletion">
+    >;
+  },
+  originalTaskId: NodeId,
+): ReadonlyMap<TaskRun["id"], NodeId> {
+  const wokenBy = new Map(
+    child.messages.flatMap((message) =>
+      message.runId === null || message.delegatedCompletion === undefined
+        ? []
+        : [[message.runId, message.delegatedCompletion.parentRunId] as const],
+    ),
+  );
+  const start = (run: TaskRun) =>
+    run.startedAt === null ? Number.POSITIVE_INFINITY : DateTime.toEpochMillis(run.startedAt);
+  const owners = new Map<TaskRun["id"], NodeId>();
+  let owner = originalTaskId;
+  for (const run of child.runs.toSorted((a, b) => start(a) - start(b) || a.ordinal - b.ordinal)) {
+    if (run.delegatedTaskId !== undefined && run.startedAt !== null) owner = run.delegatedTaskId;
+    const cause = wokenBy.get(run.id) ?? run.restartContinuationOfRunId;
+    owners.set(
+      run.id,
+      run.delegatedTaskId ?? (cause === undefined ? undefined : owners.get(cause)) ?? owner,
+    );
+  }
+  return owners;
+}
+
+export function delegatedTaskRuns<Run extends TaskRun>(
+  runs: ReadonlyArray<Run>,
+  taskId: NodeId,
+  owners: ReadonlyMap<TaskRun["id"], NodeId>,
+): Array<Run> {
+  return runs
+    .filter((run) => owners.get(run.id) === taskId)
+    .toSorted((a, b) => a.ordinal - b.ordinal);
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
