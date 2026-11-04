@@ -16,11 +16,12 @@ interface Env extends BaseEnv {
 /**
  * Asset worker that integrates with the Vite dev server.
  *
- * - {@link unstable_exists} delegates HTML lookups to Vite so that virtual
- *   HTML routes and files in `publicDir` are discoverable even though they
- *   are not in the on-disk manifest at startup.
- * - {@link unstable_getByETag} streams the HTML body back through Vite so
- *   `transformIndexHtml` runs (enabling HMR, script injection, etc.).
+ * - {@link unstable_exists} delegates lookups to Vite so that HTML routes
+ *   and files in `publicDir` are discoverable even though they are not in
+ *   the on-disk manifest at startup.
+ * - {@link unstable_getByETag} streams the body back through Vite so
+ *   `transformIndexHtml` runs on HTML (enabling HMR, script injection, etc.)
+ *   and keeps the content type Vite answered with.
  * - {@link fetch} strips `ETag` / `Cache-Control` (Vite has its own caching
  *   semantics during dev) and appends any custom headers configured via
  *   `server.headers` in the Vite config.
@@ -56,7 +57,7 @@ export default class ViteAssetWorker extends AssetWorkerInner<Env> {
     }
     return {
       readableStream: response.body,
-      contentType: "text/html",
+      contentType: response.headers.get("content-type") ?? "text/html",
       cacheStatus: "MISS",
     } as const;
   }

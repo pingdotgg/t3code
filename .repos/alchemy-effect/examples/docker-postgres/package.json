@@ -14,6 +14,7 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
+    "@alchemy.run/docker": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   }
