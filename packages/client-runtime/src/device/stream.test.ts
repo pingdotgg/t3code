@@ -241,6 +241,10 @@ describe("native device stream transport", () => {
       "up e0",
       "up e2",
     ]);
+    // A Mac browser sends no keyup for the letter.
+    client.sendKey(keyEvent("KeyQ", "a", { metaKey: true }), "down");
+    client.sendKey(keyEvent("MetaLeft", "Meta"), "up");
+    expect(take()).toEqual(["down e3", "down 4", "up 4", "up e3"]);
     client.stop();
   });
 });

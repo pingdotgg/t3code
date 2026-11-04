@@ -33,6 +33,7 @@ const NO_AX_ATOM = Atom.make(AsyncResult.initial<ReadonlyArray<DeviceAxElement>,
   Atom.withLabel("device-ax-elements:none"),
 );
 const CONTROLS_RAIL_WIDTH = 56;
+const SIMULATOR_COMMAND_KEYS = new Set(["a", "c", "r", "x", "z"]);
 
 function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
   if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
@@ -325,7 +326,7 @@ export function DeviceStreamView(props: {
         aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.metaKey && !["r", "R"].includes(event.key)) return;
+          if (event.metaKey && !SIMULATOR_COMMAND_KEYS.has(event.key.toLowerCase())) return;
           // Let browser paste chords fire the paste event.
           if (
             (event.ctrlKey && (event.key === "v" || event.key === "V")) ||

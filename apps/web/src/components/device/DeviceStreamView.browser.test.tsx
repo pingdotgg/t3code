@@ -19,6 +19,7 @@ const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, creden
 function setup() {
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
+  const keys: string[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
@@ -45,6 +46,10 @@ function setup() {
         if (typeof message !== "string" && message[0] === 0x03) {
           touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
         }
+        if (typeof message !== "string" && message[0] === 0x06) {
+          const { type, usage } = JSON.parse(new TextDecoder().decode(message.subarray(1)));
+          keys.push(`${type} ${usage.toString(16)}`);
+        }
       }
       close() {}
     },
@@ -63,6 +68,7 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
+    keys,
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -205,4 +211,23 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
   ]);
+});
+
+it("sends Mac editing shortcuts to the simulator and leaves the rest to the browser", async () => {
+  using input = setup();
+  Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+  using _platform = { [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "platform") };
+  const { configure, keys } = input;
+  await using screen = await render(input.view(), options);
+  await act(async () => configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.getByRole("application").element() as HTMLElement;
+  const press = (code: string, key: string) =>
+    host.dispatchEvent(
+      new KeyboardEvent("keydown", { code, key, metaKey: true, bubbles: true, cancelable: true }),
+    );
+  expect(press("KeyL", "l")).toBe(true);
+  expect(keys).toEqual([]);
+  expect(press("KeyA", "a")).toBe(false);
+  expect(keys).toEqual(["down e3", "down 4", "up 4"]);
 });

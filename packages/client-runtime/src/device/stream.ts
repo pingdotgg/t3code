@@ -1538,8 +1538,13 @@ export function createDeviceStreamClient(
           hidUsageForCode(event.code);
         if (usage === null) return;
         syncIosModifiers(event);
-        iosPressedKeys.set(event.code, usage);
         sendIosKey("down", usage);
+        // macOS browsers fire no keyup for a key pressed while Cmd is held.
+        if (event.metaKey) {
+          sendIosKey("up", usage);
+          return;
+        }
+        iosPressedKeys.set(event.code, usage);
         return;
       }
       if (phase !== "down") return;
