@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
+  modelState: "ready" as "ready" | "missing-model",
+  download: vi.fn<() => Promise<void>>(),
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
@@ -95,7 +97,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       mocks.statusRequests.push(prepared.environmentId);
       return {
         supported: true,
-        state: "ready",
+        state: mocks.modelState,
         modelId: "test-model",
         model: "Test",
         size: 1,
@@ -106,6 +108,8 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
         gpuDevices: [],
       };
     }),
+  downloadEnvironmentSpeechModel: () => Effect.promise(mocks.download),
+  getEnvironmentSpeechModels: () => Effect.succeed({ models: [] }),
   postProcessEnvironmentTranscript: (
     prepared: PreparedConnection,
     transcript: string,
@@ -169,6 +173,8 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.canDictate = new Set(mocks.voiceCapable);
   mocks.prepared.clear();
   mocks.statusRequests = [];
+  mocks.modelState = "ready";
+  mocks.download.mockReset();
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
@@ -269,6 +275,7 @@ it.each([
 it.each([
   ["revoked", null],
   ["moved to another environment", "env-b"],
+  ["renewed for the same environment", "env-a"],
 ])("abandons an in-progress recording when consent is %s", async (_, next) => {
   setup({ destination: "env-a" });
   await using screen = await render(<Probe />);
@@ -293,6 +300,36 @@ it("retries a failed transcription on the same chosen environment", async () => 
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
+  setup({ destination: "env-a" });
+  mocks.modelState = "missing-model";
+  let finishDownload!: () => void;
+  mocks.download.mockReturnValue(
+    new Promise<void>((resolve) => {
+      finishDownload = resolve;
+    }),
+  );
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  let done: Promise<void> | undefined;
+  await act(() => {
+    done = mocks.voice.setup.download();
+  });
+  expect(mocks.voice.setup.downloading).toBe(true);
+  mocks.connected.delete("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.setup.open).toBe(false);
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.setup).toMatchObject({ open: true, downloading: false, step: 0 });
+  finishDownload();
+  await act(async () => {
+    await done;
+  });
+  expect(mocks.voice.setup.error).toBeNull();
 });
 
 it("does not resend a failed recording after consent is revoked", async () => {
