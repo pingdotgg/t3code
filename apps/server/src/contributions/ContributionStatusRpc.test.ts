@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -187,6 +188,7 @@ describe("subscribeContributionStatus", () => {
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             PortScanner.layerTest,
             Layer.succeed(
               ProviderEventLoggers.ProviderEventLoggers,

@@ -18,7 +18,7 @@ import {
   PluginInstallationId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import * as Deferred from "effect/Deferred";
@@ -163,7 +163,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 ) {
   const sql = yield* SqlClient.SqlClient;
   const supervisor = yield* PluginSupervisor;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const scope = yield* Effect.scope;
@@ -431,9 +431,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         `${directory} is already installed.`,
         existing.record.installationId,
       );
-    const installationId = PluginInstallationId.make(
-      yield* crypto.randomUUIDv4().pipe(Effect.orDie),
-    );
+    const installationId = PluginInstallationId.make(yield* crypto.uuidV4().pipe(Effect.orDie));
     const at = yield* now;
     const record: PluginInstallationRecord = {
       installationId,
