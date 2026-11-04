@@ -90,11 +90,12 @@ const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment d
  */
 const CACHE_RESUME_MAX_AGE_MILLIS = 12 * 60 * 60 * 1000;
 
-function canResumeFromCache(
-  vouch: Persistence.ShellCacheVouch,
+function canResume(
+  vouch: Persistence.ShellCacheVouch | undefined,
   subscription: { readonly omissionKey: string; readonly serverVersion: string | null },
   now: number,
 ): boolean {
+  if (vouch === undefined) return false;
   const age = now - vouch.authoritativeAt;
   return (
     vouch.omissionKey === subscription.omissionKey &&
@@ -138,22 +139,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: shellStatusForSnapshot(cachedSnapshot),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  // The omission options of the subscription whose snapshot the in-memory
-  // shell last came from, or that a cache resume has completed for; null otherwise.
-  const authoritativeOmission = yield* Ref.make<string | null>(null);
   const activeSubscription = yield* Ref.make<{
     readonly session: RpcSession;
     readonly omissionKey: string;
     readonly serverVersion: string | null;
   } | null>(null);
-  // What the in-memory rows descend from: a server snapshot, or a vouched cache plus replay.
-  // Resuming from the cache does not renew it; only a server snapshot does.
+  // The server snapshot the rows descend from, in memory or through the cache. Replay does not
+  // renew it; only a server snapshot does.
   const lineageVouch = yield* Ref.make(cachedVouch);
-  // The cache's vouch, usable by the first subscription only: a failed or retried resume
-  // reloads the HTTP snapshot instead.
-  const cacheResumeVouch = yield* Ref.make(cachedVouch);
-  // Set while a resume from the cache has not yet reached its completion marker.
-  const pendingCacheResume = yield* Ref.make<string | null>(null);
   const latestLive = yield* Ref.make<Option.Option<LiveShell>>(Option.none());
   const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
 
@@ -255,20 +248,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const snapshotWriteLock = yield* Semaphore.make(1);
 
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
-    items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
+    entries: ReadonlyArray<readonly [RpcSession, OrchestrationV2ShellStreamItem]>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
-    producer?: RpcSession,
   ) {
-    // Read once under the lock: a resubscribe can rewrite it while this batch applies.
+    // Read under the lock: items buffered across a session change must not land on the rows or
+    // vouch the next session already loaded.
     const subscription = yield* Ref.get(activeSubscription);
-    // A batch buffered across a session change must not take the new session's vouch; the new
-    // subscription resumes or reloads on its own.
-    if (producer !== undefined && subscription?.session !== producer) return;
+    const items = entries.flatMap(([session, item]) =>
+      session === subscription?.session ? [item] : [],
+    );
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
     let receivedAuthoritativeSnapshot = false;
-    let receivedCompletion = false;
     let deltas: Array<ShellStreamEvent> = [];
     const flushDeltas = () => {
       if (deltas.length > 0 && Option.isSome(next.snapshot)) {
@@ -309,9 +301,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       flushDeltas();
       if (item.kind === "synchronized") {
         waiting = false;
-        receivedCompletion = true;
         if (Option.isSome(next.snapshot)) {
-          next = { ...next, status: "live", error: Option.none() };
+          next = {
+            ...next,
+            status: "live",
+            error: Option.none(),
+            // A cache resume that caught up is as current as a snapshot for generation readers.
+            generation: next.generation === 0 ? ++lastShellGeneration : next.generation,
+          };
         }
         continue;
       }
@@ -353,16 +350,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               authoritativeAt: yield* Clock.currentTimeMillis,
             };
       yield* Ref.set(lineageVouch, vouch);
-      yield* Ref.set(pendingCacheResume, null);
-      if (subscription !== null) {
-        yield* Ref.set(authoritativeOmission, subscription.omissionKey);
-      }
-    } else if (receivedCompletion && Option.isSome(next.snapshot)) {
-      // The resumed cache has replayed up to the server, so later reconnects resume from memory.
-      const resumed = yield* Ref.getAndSet(pendingCacheResume, null);
-      if (resumed !== null) {
-        yield* Ref.set(authoritativeOmission, resumed);
-      }
     }
     if (Option.isSome(next.snapshot)) {
       yield* Ref.set(latestLive, Option.some({ snapshot: next.snapshot.value, vouch }));
@@ -470,34 +457,21 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           );
         const omissionKey = `${omitIdleSubagents}:${omitOlderSettled}`;
         yield* Ref.set(activeSubscription, { session, omissionKey, serverVersion });
-        yield* Ref.set(pendingCacheResume, null);
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
-        // A shell from a server snapshot resumes from its in-memory cursor. Cached data, or a
-        // snapshot taken with other omissions, reloads over HTTP so a valid cursor cannot
-        // preserve incomplete data; only a matching cache vouch lets the first subscription resume.
-        // A server upgrade can rebuild projections that replay would not resend.
-        const hasAuthoritativeSnapshot =
-          (yield* Ref.get(authoritativeOmission)) === omissionKey &&
-          ((yield* Ref.get(lineageVouch))?.serverVersion ?? null) === serverVersion;
-        const cacheVouch = yield* Ref.getAndSet(cacheResumeVouch, undefined);
-        let canResume = hasAuthoritativeSnapshot;
+        // Rows from a recent server snapshot with the same omissions and server version resume
+        // from their cursor, in memory or from the cache. Anything else reloads over HTTP so a
+        // valid cursor cannot preserve incomplete data or projections an upgrade rebuilt.
         let current = yield* SubscriptionRef.get(state);
-        const resumesFromCache =
-          !hasAuthoritativeSnapshot &&
-          cacheVouch !== undefined &&
+        let resume =
           Option.isSome(current.snapshot) &&
-          canResumeFromCache(
-            cacheVouch,
+          canResume(
+            yield* Ref.get(lineageVouch),
             { omissionKey, serverVersion },
             yield* Clock.currentTimeMillis,
           );
-        if (resumesFromCache) {
-          canResume = true;
-          yield* Ref.set(pendingCacheResume, omissionKey);
-        }
-        if ((!hasAuthoritativeSnapshot && !resumesFromCache) || Option.isNone(current.snapshot)) {
+        if (!resume) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -529,8 +503,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
                 ? []
                 : httpSnapshot.value.threads.map((thread) => thread.id),
             );
-            yield* applyItems([{ kind: "snapshot", snapshot }], pendingLinkIds);
-            canResume = true;
+            yield* applyItems([[session, { kind: "snapshot", snapshot }]], pendingLinkIds);
+            resume = true;
             current = yield* SubscriptionRef.get(state);
             if (Option.isSome(current.snapshot)) {
               yield* fillDeferredPullRequests(httpSnapshot.value, current.snapshot.value);
@@ -542,7 +516,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
           ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
-        if (!canResume || Option.isNone(current.snapshot)) {
+        if (!resume || Option.isNone(current.snapshot)) {
           return { ...omission, requestCompletionMarker: true as const };
         }
         return {
@@ -556,25 +530,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(
-      // A buffered chunk can span a session change, so apply each session's run separately.
-      Stream.runForEachArray(
-        Effect.fnUntraced(function* (entries) {
-          let start = 0;
-          while (start < entries.length) {
-            const producer = entries[start]![0];
-            let end = start + 1;
-            while (end < entries.length && entries[end]![0] === producer) end++;
-            yield* applyItems(
-              entries.slice(start, end).map(([, item]) => item),
-              undefined,
-              producer,
-            );
-            start = end;
-          }
-        }),
-      ),
-    ),
+    ).pipe(Stream.runForEachArray((entries) => applyItems(entries))),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {

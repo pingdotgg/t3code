@@ -56,12 +56,15 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
 
 const SERVER_VERSION = "1.0.0";
 
-function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function session(
+  client: WsRpcProtocolClient,
+  serverVersion = SERVER_VERSION,
+): RpcSession.RpcSession {
   return {
     client,
     initialConfig: Effect.succeed({
       shellResumeCompletionMarker: true,
-      environment: { serverVersion: SERVER_VERSION },
+      environment: { serverVersion },
     } as never),
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
@@ -69,6 +72,24 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
     inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
+}
+
+function cacheStore(
+  shell: Pick<Persistence.EnvironmentCacheStore["Service"], "loadShell" | "saveShell">,
+) {
+  return Persistence.EnvironmentCacheStore.of({
+    ...shell,
+    loadThread: () => Effect.succeedNone,
+    saveThread: () => Effect.void,
+    removeThread: () => Effect.void,
+    loadServerConfig: () => Effect.succeedNone,
+    saveServerConfig: () => Effect.void,
+    loadVcsRefs: () => Effect.succeedNone,
+    saveVcsRefs: () => Effect.void,
+    removeVcsRefs: () => Effect.void,
+    clearVcsRefs: () => Effect.void,
+    clear: () => Effect.void,
+  });
 }
 
 const makePersistenceHarness = Effect.fn("test.makeShellPersistenceHarness")(function* (
@@ -1132,10 +1153,6 @@ describe("environment shell synchronization", () => {
       const nextSubscribed = yield* Deferred.make<void>();
       const applyBlocked = yield* Deferred.make<void>();
       const releaseApply = yield* Deferred.make<void>();
-      const saved = yield* Queue.unbounded<{
-        readonly snapshot: OrchestrationV2ShellSnapshot;
-        readonly vouch: Persistence.ShellCacheVouch | undefined;
-      }>();
       const supersededRow = { ...v2ThreadShell, id: ThreadId.make("superseded-row") };
 
       const oldClient = {
@@ -1158,19 +1175,7 @@ describe("environment shell synchronization", () => {
             ),
           ),
       } as unknown as WsRpcProtocolClient;
-      const sessionFor = (
-        client: WsRpcProtocolClient,
-        serverVersion: string,
-      ): RpcSession.RpcSession => ({
-        ...session(client),
-        initialConfig: Effect.succeed({
-          shellResumeCompletionMarker: true,
-          environment: { serverVersion },
-        } as never),
-      });
-      const activeSession = yield* SubscriptionRef.make(
-        Option.some(sessionFor(oldClient, SERVER_VERSION)),
-      );
+      const activeSession = yield* SubscriptionRef.make(Option.some(session(oldClient)));
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target: TARGET,
         state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
@@ -1180,20 +1185,9 @@ describe("environment shell synchronization", () => {
         disconnect: Effect.void,
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const cache = Persistence.EnvironmentCacheStore.of({
+      const cache = cacheStore({
         loadShell: () => Effect.succeedNone,
-        saveShell: (_id, snapshot, vouch) =>
-          Queue.offer(saved, { snapshot, vouch }).pipe(Effect.asVoid),
-        loadThread: () => Effect.succeedNone,
-        saveThread: () => Effect.void,
-        removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeedNone,
-        saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeedNone,
-        saveVcsRefs: () => Effect.void,
-        removeVcsRefs: () => Effect.void,
-        clearVcsRefs: () => Effect.void,
-        clear: () => Effect.void,
+        saveShell: () => Effect.void,
       });
       // Stamping the first vouch parks the consumer mid-apply, so the next item stays buffered
       // in the switchMap behind it while the session changes.
@@ -1229,7 +1223,7 @@ describe("environment shell synchronization", () => {
       // The upstream pulls again only after it has buffered the snapshot above.
       yield* Queue.offer(oldEvents, { kind: "future.event", sequence: 99 } as never);
       yield* Deferred.await(markerPulled);
-      yield* SubscriptionRef.set(activeSession, Option.some(sessionFor(newClient, NEXT_VERSION)));
+      yield* SubscriptionRef.set(activeSession, Option.some(session(newClient, NEXT_VERSION)));
       yield* Deferred.await(nextSubscribed);
       yield* Deferred.succeed(releaseApply, undefined);
       yield* Queue.offer(newEvents, {
@@ -1248,10 +1242,6 @@ describe("environment shell synchronization", () => {
       expect(Option.getOrThrow(settled.snapshot).threads.map((thread) => thread.id)).not.toContain(
         supersededRow.id,
       );
-
-      yield* TestClock.adjust("500 millis");
-      const persisted = yield* Queue.take(saved);
-      expect(persisted.vouch?.serverVersion).toBe(SERVER_VERSION);
     }),
   );
 });
@@ -1269,7 +1259,6 @@ describe("environment shell cold start from a vouched cache", () => {
 
   const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (input: {
     readonly vouch: Persistence.ShellCacheVouch | undefined;
-    readonly serverVersion?: string;
     readonly ageMs?: number;
   }) {
     yield* TestClock.setTime(VOUCHED_AT + (input.ageMs ?? HOUR_MS));
@@ -1286,16 +1275,7 @@ describe("environment shell cold start from a vouched cache", () => {
           Queue.offer(subscribeInputs, subscribeInput).pipe(Effect.as(Stream.fromQueue(events))),
         ),
     } as unknown as WsRpcProtocolClient;
-    const newSession = (
-      serverVersion = input.serverVersion ?? SERVER_VERSION,
-    ): RpcSession.RpcSession => ({
-      ...session(client),
-      initialConfig: Effect.succeed({
-        shellResumeCompletionMarker: true,
-        environment: { serverVersion },
-      } as never),
-    });
-    const activeSession = yield* SubscriptionRef.make(Option.some(newSession()));
+    const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
       state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
@@ -1305,7 +1285,7 @@ describe("environment shell cold start from a vouched cache", () => {
       disconnect: Effect.void,
       retryNow: Effect.void,
     } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-    const cache = Persistence.EnvironmentCacheStore.of({
+    const cache = cacheStore({
       loadShell: () =>
         Effect.succeedSome({
           ...v2ShellSnapshot,
@@ -1314,16 +1294,6 @@ describe("environment shell cold start from a vouched cache", () => {
         }),
       saveShell: (_id, snapshot, vouch) =>
         Queue.offer(saved, { snapshot, vouch }).pipe(Effect.asVoid),
-      loadThread: () => Effect.succeedNone,
-      saveThread: () => Effect.void,
-      removeThread: () => Effect.void,
-      loadServerConfig: () => Effect.succeedNone,
-      saveServerConfig: () => Effect.void,
-      loadVcsRefs: () => Effect.succeedNone,
-      saveVcsRefs: () => Effect.void,
-      removeVcsRefs: () => Effect.void,
-      clearVcsRefs: () => Effect.void,
-      clear: () => Effect.void,
     });
     const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
       load: () =>
@@ -1342,9 +1312,8 @@ describe("environment shell cold start from a vouched cache", () => {
       saved,
       httpLoads,
       shellState,
-      resubscribe: SubscriptionRef.set(activeSession, Option.some(newSession())),
-      reconnectToServer: (serverVersion: string) =>
-        SubscriptionRef.set(activeSession, Option.some(newSession(serverVersion))),
+      reconnectToServer: (serverVersion = SERVER_VERSION) =>
+        SubscriptionRef.set(activeSession, Option.some(session(client, serverVersion))),
       stateWhere: (predicate: (state: EnvironmentShellState) => boolean) =>
         SubscriptionRef.changes(shellState).pipe(
           Stream.filter(predicate),
@@ -1383,95 +1352,51 @@ describe("environment shell cold start from a vouched cache", () => {
         afterSequence: input.resumes ? CACHED_SEQUENCE : HTTP_SEQUENCE,
       });
       expect(yield* Ref.get(h.httpLoads)).toBe(input.resumes ? 0 : 1);
+      // Family, older-settled, and search reads wait for a nonzero generation.
+      yield* Queue.offer(h.events, { kind: "synchronized" });
+      expect((yield* h.stateWhere((state) => state.status === "live")).generation).toBeGreaterThan(
+        0,
+      );
     }),
   );
 
-  it.effect("reloads over HTTP when the first resume is retried or only enriched", () =>
-    Effect.gen(function* () {
-      const h = yield* makeColdStart({ vouch: VOUCH });
-      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
-        afterSequence: CACHED_SEQUENCE,
-      });
-
-      // Project identities fill in without proving the cached rows are current.
-      const before = yield* SubscriptionRef.get(h.shellState);
-      yield* Queue.offer(h.events, {
-        kind: "snapshot",
-        snapshot: { ...v2ShellSnapshot, snapshotSequence: CACHED_SEQUENCE },
-        resolvedRepositoryIdentityRoots: [],
-      });
-      yield* h.stateWhere((state) => state !== before);
-      yield* h.resubscribe;
-
-      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
-      expect(yield* Ref.get(h.httpLoads)).toBe(1);
-    }),
-  );
-
-  it.effect("keeps the original vouch time through chained resumes until a server snapshot", () =>
-    Effect.gen(function* () {
-      const h = yield* makeColdStart({ vouch: VOUCH });
-      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
-        afterSequence: CACHED_SEQUENCE,
-      });
-
-      yield* Queue.offerAll(h.events, [
-        {
-          kind: "thread.updated",
-          sequence: CACHED_SEQUENCE + 1,
-          location: "active",
-          thread: { ...v2ThreadShell, title: "Replayed" },
-        },
-        { kind: "synchronized" },
-      ]);
-      yield* h.stateWhere((state) => state.status === "live");
-      yield* TestClock.adjust("500 millis");
-      const replayed = yield* Queue.take(h.saved);
-      expect(replayed.snapshot.snapshotSequence).toBe(CACHED_SEQUENCE + 1);
-      expect(replayed.vouch).toEqual(VOUCH);
-
-      // The completed resume lets a reconnect continue from memory, with no HTTP load.
-      yield* h.resubscribe;
-      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
-        afterSequence: CACHED_SEQUENCE + 1,
-      });
-      expect(yield* Ref.get(h.httpLoads)).toBe(0);
-
-      yield* TestClock.adjust("2 hours");
-      const refreshedAt = yield* Clock.currentTimeMillis;
-      yield* Queue.offer(h.events, {
-        kind: "snapshot",
-        snapshot: { ...v2ShellSnapshot, snapshotSequence: 20 },
-      });
-      yield* h.stateWhere((state) => state.generation > 0);
-      yield* TestClock.adjust("500 millis");
-      const refreshed = yield* Queue.take(h.saved);
-      expect(refreshed.snapshot.snapshotSequence).toBe(20);
-      expect(refreshed.vouch).toEqual({ ...VOUCH, authoritativeAt: refreshedAt });
-    }),
-  );
-
-  it.effect("reloads over HTTP when a reconnect reaches an upgraded server", () =>
+  it.effect("stamps the vouch at server snapshots and reloads after a server upgrade", () =>
     Effect.gen(function* () {
       const h = yield* makeColdStart({ vouch: undefined });
       expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+      const stamped = { ...VOUCH, authoritativeAt: VOUCHED_AT + HOUR_MS };
+      yield* h.stateWhere((state) => state.generation > 0);
+      yield* TestClock.adjust("500 millis");
+      expect(yield* Queue.take(h.saved)).toMatchObject({
+        snapshot: { snapshotSequence: HTTP_SEQUENCE },
+        vouch: stamped,
+      });
+
+      // Replay keeps the snapshot's vouch, so its age still counts from the server snapshot.
+      yield* Queue.offer(h.events, {
+        kind: "thread.updated",
+        sequence: HTTP_SEQUENCE + 1,
+        location: "active",
+        thread: { ...v2ThreadShell, title: "Replayed" },
+      });
+      yield* h.stateWhere((state) =>
+        Option.exists(state.snapshot, (snapshot) => snapshot.snapshotSequence > HTTP_SEQUENCE),
+      );
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Queue.take(h.saved)).toMatchObject({
+        snapshot: { snapshotSequence: HTTP_SEQUENCE + 1 },
+        vouch: stamped,
+      });
+      yield* h.reconnectToServer();
+      expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({
+        afterSequence: HTTP_SEQUENCE + 1,
+      });
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
 
       // An upgrade can rebuild projections that replay would not resend.
       yield* h.reconnectToServer("2.0.0");
       expect(yield* Queue.take(h.subscribeInputs)).toMatchObject({ afterSequence: HTTP_SEQUENCE });
       expect(yield* Ref.get(h.httpLoads)).toBe(2);
-    }),
-  );
-
-  it.effect("saves a vouch stamped at the HTTP snapshot", () =>
-    Effect.gen(function* () {
-      const h = yield* makeColdStart({ vouch: undefined });
-      yield* h.stateWhere((state) => state.generation > 0);
-      yield* TestClock.adjust("500 millis");
-      expect(yield* Queue.take(h.saved)).toMatchObject({
-        snapshot: { snapshotSequence: HTTP_SEQUENCE },
-        vouch: { ...VOUCH, authoritativeAt: VOUCHED_AT + HOUR_MS },
-      });
     }),
   );
 });
