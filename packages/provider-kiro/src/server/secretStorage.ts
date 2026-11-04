@@ -1,3 +1,4 @@
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,6 +42,7 @@ export const makeKiroSecretStorage = Effect.fn("makeKiroSecretStorage")(function
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const secretsPath = kiroSecretsPath(path, environment, yield* HostProcess.HomeDirectory);
 
   // Only a missing file is empty: rewriting one we cannot read would drop kiro-cli's other sign-ins.
@@ -64,9 +66,16 @@ export const makeKiroSecretStorage = Effect.fn("makeKiroSecretStorage")(function
   const update = Effect.fn("KiroSecretStorage.update")(
     function* (change: (secrets: Secrets) => Secrets) {
       const next = change(yield* readUnlocked);
-      yield* fileSystem.makeDirectory(path.dirname(secretsPath), { recursive: true });
-      yield* fileSystem.writeFileString(secretsPath, encodeSecrets(next), { mode: 0o600 });
-      yield* fileSystem.chmod(secretsPath, 0o600);
+      // Atomic, so a failed write cannot truncate the sign-ins kiro-cli keeps in the same file.
+      yield* writeFileStringAtomically({
+        filePath: secretsPath,
+        contents: encodeSecrets(next),
+        mode: 0o600,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(HostProcess.Platform, platform),
+      );
       return { success: true } as const;
     },
     secretsFileLock.withPermits(1),

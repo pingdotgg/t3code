@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import { makeKiroSecretStorage } from "./secretStorage.ts";
 
@@ -30,6 +31,42 @@ describe("makeKiroSecretStorage", () => {
       assert.deepStrictEqual(Object.keys(stored).toSorted(), keys.toSorted());
       assert.strictEqual((yield* fileSystem.stat(secretsPath)).mode & 0o777, 0o600);
       assert.deepStrictEqual(yield* sessions[1]!.get(keys[3]!), { value: '{"n":3}' });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps the stored sign-ins when a write fails partway", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-kiro-secrets-" });
+      const secretsPath = path.join(root, "secrets.json");
+      const original = JSON.stringify({ "kiro.mcp.a.tokens": "A" }, null, 2);
+      yield* fileSystem.writeFileString(secretsPath, original);
+      // Writes half the text and then fails, like a full disk.
+      const failingWrites = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (target, text, options) =>
+          fileSystem.writeFileString(target, text.slice(0, text.length / 2), options).pipe(
+            Effect.andThen(
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "writeFileString",
+                  pathOrDescriptor: target,
+                }),
+              ),
+            ),
+          ),
+      });
+      const storage = yield* makeKiroSecretStorage({ KIRO_HOME: root }).pipe(
+        Effect.provideService(FileSystem.FileSystem, failingWrites),
+      );
+
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(storage.store("kiro.mcp.b.tokens", "B"))));
+      assert.strictEqual(yield* fileSystem.readFileString(secretsPath), original);
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(root), ["secrets.json"]);
+      assert.deepStrictEqual(yield* storage.get("kiro.mcp.a.tokens"), { value: "A" });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
