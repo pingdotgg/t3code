@@ -3331,16 +3331,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
-      const projection = yield* loadProjectionForCommand(
-        command,
-        ["runs", "runtimeRequests", "messages"],
-        { turnItemTypes: [], messageRoles: ["user"] },
-      );
+      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]);
+      const queuedMessages = yield* projectionStore
+        .getMessagesById(
+          command.threadId,
+          projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
+        )
+        .pipe(mapDispatchError(command));
       const automaticMessageIds = new Set(
-        projection.messages
+        [...queuedMessages.values()]
           .filter(
             (message) =>
-              message.notification !== undefined || message.delegatedCompletion !== undefined,
+              message.role === "user" &&
+              (message.notification !== undefined || message.delegatedCompletion !== undefined),
           )
           .map((message) => message.id),
       );

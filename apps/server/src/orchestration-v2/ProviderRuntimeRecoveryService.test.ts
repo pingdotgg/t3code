@@ -601,6 +601,16 @@ it.effect.each([
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          getMessagesById: (requestedThreadId, messageIds) =>
+            Effect.succeed(
+              new Map(
+                projection.messages
+                  .filter(
+                    (message) => requestedThreadId === threadId && messageIds.includes(message.id),
+                  )
+                  .map((message) => [message.id, message]),
+              ),
+            ),
           getThreadRecords: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({

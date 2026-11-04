@@ -282,6 +282,27 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         forkedFrom: { type: "run", threadId: parentId, runId: parent.runs[0]!.id },
       },
     });
+    const messageId = MessageId.make("message:reader-routing");
+    yield* store.apply({
+      id: EventId.make("event:reader-routing:message"),
+      type: "message.updated",
+      threadId,
+      occurredAt: parent.thread.createdAt,
+      payload: {
+        id: messageId,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "user",
+        text: "Committed message",
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: parent.thread.createdAt,
+        updatedAt: parent.thread.createdAt,
+      },
+    });
     const { queries, trace } = traceSqlRouting();
     yield* store.getAgentAwarenessSnapshot().pipe(trace);
     const projection = yield* store.getThreadProjection(threadId).pipe(trace);
@@ -291,6 +312,10 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         .filter((row) => row.visibility === "inherited")
         .map((row) => row.sourceItemId),
       parent.turnItems.map((item) => item.id),
+    );
+    assert.equal(
+      (yield* store.getMessagesById(threadId, [messageId]).pipe(trace)).get(messageId)?.text,
+      "Committed message",
     );
     assert.isAbove(queries.length, 1);
     assert.deepEqual([...new Set(queries.map((row) => row.connection))], ["reader"]);
@@ -343,6 +368,15 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         SET payload_json = json_set(payload_json, '$.title', 'Uncommitted title')
         WHERE thread_id = ${threadId}
       `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_messages
+          SET payload_json = json_set(payload_json, '$.text', 'Uncommitted message')
+          WHERE message_id = ${messageId}
+        `;
+        assert.equal(
+          (yield* store.getMessagesById(threadId, [messageId])).get(messageId)?.text,
+          "Uncommitted message",
+        );
         assert.equal(
           (yield* store.getAgentAwarenessSnapshot()).threads.find(
             (thread) => thread.id === threadId,
@@ -2638,10 +2672,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* insertMessageItem("null-id", threadId, -2, null);
       yield* insertMessageItem("missing-id", threadId, -3, undefined);
+      const absentMessageId = MessageId.make("message:bounded-sql-history:absent");
+      const messageReadTrace = traceSqlStatements();
+      const selected = yield* projectionStore
+        .getMessagesById(threadId, [firstMessageId, lastMessageId, firstMessageId, absentMessageId])
+        .pipe(Effect.withTracer(messageReadTrace.tracer));
+      assert.isFalse(messageReadTrace.statements.some((query) => query.includes("turn_items")));
+      assert.equal(selected.size, 2);
+      assert.equal(selected.get(firstMessageId)?.id, firstMessageId);
+      assert.equal(selected.get(lastMessageId)?.id, lastMessageId);
+      assert.isFalse(selected.has(absentMessageId));
+      assert.equal((yield* projectionStore.getMessagesById(threadId, [])).size, 0);
+      assert.equal(
+        (yield* projectionStore.getMessagesById(ThreadId.make("other-thread"), [firstMessageId]))
+          .size,
+        0,
+      );
       const readMessageIds = (filter?: ProjectionStore.ProjectionRecordFilter) =>
         projectionStore
           .getThreadRecords(threadId, ["messages"], filter)
           .pipe(Effect.map(({ messages }) => messages.map((message) => message.id)));
+      const canonical = yield* projectionStore.getThreadRecords(threadId, ["messages"]);
+      for (const message of canonical.messages) assert.deepEqual(selected.get(message.id), message);
       assert.deepEqual(yield* readMessageIds(), [lastMessageId, firstMessageId]);
       assert.deepEqual(yield* readMessageIds({ messageRoles: ["user", "assistant"] }), [
         lastMessageId,
