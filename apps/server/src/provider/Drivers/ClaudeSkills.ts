@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
@@ -521,10 +521,25 @@ const mainCheckoutRoot = Effect.fn("mainCheckoutRoot")(
   (effect, checkout) => effect.pipe(Effect.orElseSucceed(() => checkout)),
 );
 
+// Claude Code requires the root and .git to belong to the current user, and .claude when it exists.
+const isOwnedCheckout = Effect.fn("isOwnedCheckout")(function* (root: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const userId = process.geteuid?.() ?? process.getuid?.();
+  const isOwned = (file: string) =>
+    fileSystem.stat(file).pipe(Effect.map((info) => Option.getOrUndefined(info.uid) === userId));
+  return yield* Effect.gen(function* () {
+    if (userId === undefined || !(yield* isOwned(root))) return false;
+    if (!(yield* isOwned(path.join(root, ".git")))) return false;
+    return (yield* fileSystem.exists(path.join(root, ".claude")))
+      ? yield* isOwned(path.join(root, ".claude"))
+      : true;
+  }).pipe(Effect.orElseSucceed(() => false));
+});
+
 /**
  * Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
- * repository, on Windows, or when the root is home. Its owner check is skipped: callers treat a
- * file it would ignore the same as the settings it applies.
+ * repository, on Windows, when the root is home, or when the user does not own the checkout.
  */
 export const resolveClaudeLocalSettingsDirectory = Effect.fn("resolveClaudeLocalSettingsDirectory")(
   function* (cwd: string) {
@@ -537,7 +552,8 @@ export const resolveClaudeLocalSettingsDirectory = Effect.fn("resolveClaudeLocal
         .pipe(Effect.orElseSucceed(() => false));
       if (isCheckout) {
         const root = yield* mainCheckoutRoot(directory);
-        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
+        if (root === (yield* HostProcess.HomeDirectory)) return cwd;
+        return (yield* isOwnedCheckout(root)) ? root : cwd;
       }
       if (path.dirname(directory) === directory) return cwd;
     }
@@ -553,30 +569,43 @@ export const readClaudeSessionSettingsEnv = Effect.fn("readClaudeSessionSettings
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
   launchArgEnv?: Readonly<Record<string, unknown>>,
+  settingSources?: ReadonlySet<string>,
 ): Effect.fn.Return<ClaudeSettingsEnv, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
-  const managedDirectory = claudeManagedDirectory(path, platform);
-  const managedPath = path.join(managedDirectory, "managed-settings.json");
+  const loads = (source: string) => settingSources === undefined || settingSources.has(source);
   const localDirectory =
     cwd === undefined ? undefined : yield* resolveClaudeLocalSettingsDirectory(cwd);
   const settingsEnv: ClaudeSettingsEnv = {};
-  for (const settingsPath of claudeSettingsPaths(
-    path,
-    configDirPath,
-    cwd,
-    platform,
-    localDirectory,
-  )) {
-    if (settingsPath !== managedPath) {
-      assignSettingsEnv(settingsEnv, yield* readSettingsFileEnv(settingsPath));
-    }
+  for (const settingsPath of [
+    ...(loads("user") ? [path.join(configDirPath, "settings.json")] : []),
+    ...(cwd !== undefined && loads("project") ? [path.join(cwd, ".claude", "settings.json")] : []),
+    ...(cwd !== undefined && loads("local")
+      ? [
+          path.join(cwd, ".claude", "settings.local.json"),
+          ...(localDirectory !== undefined && localDirectory !== cwd
+            ? [path.join(localDirectory, ".claude", "settings.local.json")]
+            : []),
+        ]
+      : []),
+  ]) {
+    assignSettingsEnv(settingsEnv, yield* readSettingsFileEnv(settingsPath));
   }
   assignSettingsEnv(settingsEnv, launchArgEnv);
-  yield* assignManagedSettingsEnv(settingsEnv, managedDirectory);
+  yield* assignManagedSettingsEnv(settingsEnv, claudeManagedDirectory(path, platform));
   return settingsEnv;
 });
+
+/** The sources named by --setting-sources; --settings and managed settings always apply. */
+export function claudeLaunchArgSettingSources(
+  launchArgs?: string,
+): ReadonlySet<string> | undefined {
+  const value = parseCliArgs(launchArgs ?? "").flags["setting-sources"];
+  return typeof value === "string"
+    ? new Set(value.split(",").map((source) => source.trim()))
+    : undefined;
+}
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
 export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<string> {

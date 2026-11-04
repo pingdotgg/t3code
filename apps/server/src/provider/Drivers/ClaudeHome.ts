@@ -121,10 +121,11 @@ export const resolveClaudeSessionEnvironment = Effect.fn("resolveClaudeSessionEn
     environment: NodeJS.ProcessEnv,
     cwd: string | undefined,
     launchArgEnv?: Readonly<Record<string, unknown>>,
+    settingSources?: ReadonlySet<string>,
   ) {
     return withClaudeEntrypoint(
       environment,
-      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv),
+      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv, settingSources),
     );
   },
 );

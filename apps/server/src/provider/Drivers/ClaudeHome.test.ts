@@ -288,7 +288,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
 
   it.effect("uses root local settings only from a checkout the user owns", () =>
     Effect.gen(function* () {
-      if (process.platform === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
