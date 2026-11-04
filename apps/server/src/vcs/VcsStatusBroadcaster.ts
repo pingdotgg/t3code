@@ -31,6 +31,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -228,11 +229,15 @@ function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
 
-const normalizeCwd = (cwd: string) =>
-  Effect.service(FileSystem.FileSystem).pipe(
-    Effect.flatMap((fs) => fs.realPath(cwd)),
-    Effect.orElseSucceed(() => cwd),
-  );
+// Runs inside each status operation's span; a span of its own per refresh would only add noise.
+const normalizeCwd = Effect.fnUntraced(
+  function* (cwd: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
+    return yield* ioGate.run(cwd, cwd, fs.realPath(cwd));
+  },
+  (effect, cwd) => effect.pipe(Effect.orElseSucceed(() => cwd)),
+);
 
 /** @public */
 export const make = Effect.gen(function* () {

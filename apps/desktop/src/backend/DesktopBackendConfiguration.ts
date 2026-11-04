@@ -532,6 +532,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        // Must be set before libuv starts; see apps/server/src/threadpoolSize.ts.
+        UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE ?? "16",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
       },
       extendEnv: true,

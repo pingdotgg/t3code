@@ -293,36 +293,71 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
-    it.effect("gives up on a folder that stops answering without taking every fs thread", () =>
+    it.effect("pauses a folder that stops answering while other projects keep resolving", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const cwd = yield* makeTempDir;
-        const gateFull = yield* Deferred.make<void>();
-        let inFlight = 0;
-        let peakInFlight = 0;
+        const path = yield* Path.Path;
+        const hungRoot = yield* makeTempDir;
+        const healthyRoot = yield* makeTempDir;
+        yield* writeTextFile(healthyRoot, "favicon.svg", "<svg>healthy</svg>");
+        const firstHungStat = yield* Deferred.make<void>();
+        let hungStats = 0;
         // Like a stat on a dead mount, which never returns.
         const hungStat = Effect.suspend(() => {
-          inFlight += 1;
-          peakInFlight = Math.max(peakInFlight, inFlight);
-          return inFlight === 2 ? Deferred.succeed(gateFull, undefined) : Effect.void;
+          hungStats += 1;
+          return Deferred.succeed(firstHungStat, undefined);
         }).pipe(Effect.andThen(Effect.never));
         const resolver = yield* makeResolverWithFileSystem(
           FileSystem.FileSystem.of({
             ...fileSystem,
             stat: (filePath) =>
-              filePath !== cwd && filePath.startsWith(cwd) ? hungStat : fileSystem.stat(filePath),
+              filePath.startsWith(hungRoot + path.sep) ? hungStat : fileSystem.stat(filePath),
           }),
         );
 
-        const resolving = yield* resolver.resolvePath(cwd).pipe(Effect.flip, Effect.forkChild);
-        yield* Deferred.await(gateFull);
+        const resolving = yield* resolver.resolvePath(hungRoot).pipe(Effect.flip, Effect.forkChild);
+        yield* Deferred.await(firstHungStat);
         yield* TestClock.adjust("10 seconds");
         const error = yield* Fiber.join(resolving);
-
         expect(error.operation).toBe("stat-candidate");
         expect(error.cause).toMatchObject({ reason: { _tag: "TimedOut" } });
-        expect(peakInFlight).toBe(2);
+
+        expect(yield* resolver.resolvePath(healthyRoot)).toBe(
+          path.join(healthyRoot, "favicon.svg"),
+        );
+        // The paused folder fails at once and never gets a second thread.
+        const again = yield* Effect.flip(resolver.resolvePath(hungRoot));
+        expect(again.cause).toMatchObject({ reason: { _tag: "TimedOut" } });
+        expect(hungStats).toBe(1);
       }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("forgets a deleted checkout and picks up a re-clone at the same path", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const gate = WorkspaceIoGate.makeWorkspaceIoGate({ maxInFlight: 2, timeout: "10 seconds" });
+        const resolver = yield* ProjectFaviconResolver.make.pipe(
+          Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
+          Effect.provideService(WorkspaceIoGate.WorkspaceIoGate, gate),
+        );
+        // A project checkout and a thread worktree are both short-lived roots.
+        for (const relativeRoot of ["project", "worktrees/project/feature"]) {
+          const root = path.join(parent, relativeRoot);
+          yield* writeTextFile(root, "favicon.svg", "<svg>first clone</svg>");
+          expect(yield* resolver.resolvePath(root)).toBe(path.join(root, "favicon.svg"));
+
+          yield* fileSystem.remove(root, { recursive: true });
+          const gone = yield* Effect.flip(resolver.resolvePath(root));
+          expect(ProjectFaviconResolver.isMissingWorkspaceRoot(gone)).toBe(true);
+          expect(gate.trackedRoots()).toBe(0);
+
+          yield* writeTextFile(root, "favicon.png", "png");
+          expect(yield* resolver.resolvePath(root)).toBe(path.join(root, "favicon.png"));
+          expect(gate.trackedRoots()).toBe(0);
+        }
+      }),
     );
 
     it.effect("skips icon metadata paths outside the workspace", () =>

@@ -54,22 +54,24 @@ export const make = Effect.gen(function* () {
   const load: T3ProjectFileLoader["Service"]["load"] = Effect.fn("T3ProjectFileLoader.load")(
     function* (workspaceRoot) {
       const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
-      const raw = yield* ioGate.run(filePath, fileSystem.readFileString(filePath)).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logT3ProjectFileLoadError(
-                  new T3ProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
+      const raw = yield* ioGate
+        .run(workspaceRoot, filePath, fileSystem.readFileString(filePath))
+        .pipe(
+          Effect.asSome,
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound"
+                ? Effect.succeed(Option.none<string>())
+                : logT3ProjectFileLoadError(
+                    new T3ProjectFileLoadError({
+                      operation: "read",
+                      workspaceRoot,
+                      filePath,
+                      cause: error,
+                    }),
+                  ).pipe(Effect.as(Option.none<string>())),
+          }),
+        );
       if (Option.isNone(raw)) {
         return Option.none<T3ProjectFile>();
       }

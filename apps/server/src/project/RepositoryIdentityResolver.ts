@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -146,16 +147,6 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
     const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
 
-    // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
-    const isFolder = yield* ioGate.run(cwd, fileSystem.stat(cwd)).pipe(
-      Effect.map((info) => info.type === "Directory"),
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
-      // A folder that does not answer would also hang every git probe below.
-      Effect.catchReason("PlatformError", "TimedOut", () => Effect.succeed(false)),
-      Effect.orElseSucceed(() => true),
-    );
-    if (!isFolder) return null;
-
     // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     const topLevelResult = yield* processRunner
       .run({
@@ -183,11 +174,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       // An explicit --git-dir fails unless the folder has this entry; a symlink counts even
       // when its target is missing, as git reads a symlinked HEAD's target text.
       const target = path.join(cwd, entry);
-      const hasEntry = yield* ioGate.run(target, fileSystem.exists(target)).pipe(
+      const hasEntry = yield* ioGate.run(cwd, target, fileSystem.exists(target)).pipe(
         Effect.flatMap((exists) =>
           exists
             ? Effect.succeed(true)
-            : ioGate.run(target, fileSystem.readLink(target)).pipe(
+            : ioGate.run(cwd, target, fileSystem.readLink(target)).pipe(
                 Effect.as(true),
                 Effect.orElseSucceed(() => false),
               ),
@@ -260,6 +251,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
@@ -294,8 +286,30 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
+  const forgetPath = Effect.fnUntraced(function* (cwd: string) {
+    const cacheKey = yield* Cache.getSuccess(repositoryRootCache, cwd);
+    if (Option.isSome(cacheKey) && cacheKey.value !== null) {
+      yield* Cache.invalidate(repositoryIdentityCache, cacheKey.value);
+    }
+    yield* Cache.invalidate(repositoryRootCache, cwd);
+  });
+
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
+      // Checked before the caches: deleted clones and reclaimed worktrees come back at the same
+      // path. `git -C` cannot enter a missing folder or a file, and one that does not answer hangs it.
+      const root = yield* ioGate.run(cwd, cwd, fileSystem.stat(cwd)).pipe(
+        Effect.map((info) => (info.type === "Directory" ? "folder" : "file")),
+        Effect.catchReasons("PlatformError", {
+          NotFound: () => Effect.succeed("gone"),
+          TimedOut: () => Effect.succeed("gone"),
+        }),
+        Effect.catchTags({ PlatformError: () => Effect.succeed("folder") }),
+      );
+      if (root !== "folder") {
+        if (root === "gone") yield* forgetPath(cwd);
+        return null;
+      }
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
       const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
       if (cacheKey === null) return null;

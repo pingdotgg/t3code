@@ -53,6 +53,7 @@ import {
 } from "../git/remoteRefs.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
+import * as WorkspaceIoGate from "../workspace/WorkspaceIoGate.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -939,6 +940,7 @@ export const windowsLongPathConfigEnv = (
 
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
@@ -1422,12 +1424,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const commonDirOutput = commonDirResult.stdout.trim();
-    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    const physicalCwd = yield* ioGate
+      .run(cwd, cwd, fileSystem.realPath(cwd))
+      .pipe(Effect.orElseSucceed(() => cwd));
     const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
       : path.resolve(physicalCwd, commonDirOutput);
-    return yield* fileSystem
-      .realPath(resolvedGitCommonDir)
+    return yield* ioGate
+      .run(cwd, resolvedGitCommonDir, fileSystem.realPath(resolvedGitCommonDir))
       .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
   });
 
@@ -1477,7 +1481,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const isAtRepositoryRoot =
       worktreeRoot === null
         ? undefined
-        : yield* fileSystem.realPath(cwd).pipe(
+        : yield* ioGate.run(cwd, cwd, fileSystem.realPath(cwd)).pipe(
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
@@ -2109,7 +2113,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
       // Status can succeed while locked, repeatedly running LFS clean filters without caching.
       if (
-        yield* fileSystem.exists(lockPath).pipe(
+        yield* ioGate.run(cwd, lockPath, fileSystem.exists(lockPath)).pipe(
           Effect.mapError(
             (cause) =>
               new GitCommandError({
@@ -4624,6 +4628,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // folder than this path. Resolving it once keeps Git, the Windows deletion
     // in removeLinkedWorktree, and the leftover cleanup below on one directory.
     const target = path.resolve(input.cwd, input.path);
+    // A new worktree at this path must not inherit a hung or queued call's state.
+    yield* ioGate.forget(target);
     const result = yield* removeLinkedWorktree({
       operation: "GitVcsDriver.removeWorktree",
       cwd: input.cwd,

@@ -4,6 +4,7 @@
  * They and Codex's managed-token helper dispatch before the full CLI module graph (seconds
  * of evaluation) loads; everything else defers to the real CLI in ./binCli.ts.
  */
+import "./threadpoolSize.ts";
 import { isEntrypoint } from "./entrypoint.ts";
 import { enableCliCompileCache } from "./cliCompileCache.ts";
 
