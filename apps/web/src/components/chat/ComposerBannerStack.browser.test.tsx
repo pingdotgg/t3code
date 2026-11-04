@@ -7,28 +7,37 @@ import "~/index.css";
 
 import { render } from "../../../test/render";
 import { ComposerBanner } from "./ComposerBanner";
-import {
-  ComposerBannerStack,
-  NoticeText,
-  type ComposerBannerStackItem,
-} from "./ComposerBannerStack";
+import { NoticeText, type ComposerBannerStackItem } from "./ComposerBannerStack";
+import { ComposerStatusDot } from "./ComposerStatusDot";
 
 function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
   return { id: title, variant: "default", icon: <InfoIcon />, title, ...(group ? { group } : {}) };
 }
 
-it("puts machine notices first, whatever order the notices arrive in", async () => {
+it("lists machine notices first behind one dot, whatever order they arrive in", async () => {
   await using screen = await render(
-    <ComposerBannerStack items={[notice("Branch changed"), notice("Offline", "environment")]} />,
+    <ComposerStatusDot
+      items={[
+        { ...notice("Branch changed"), variant: "warning" },
+        { ...notice("Offline", "environment"), variant: "error" },
+      ]}
+    />,
   );
 
-  expect(screen.container.textContent).toBe("OfflineBranch changed");
+  const dot = screen.getByRole("button", { name: "2 notices" });
+  await expect.element(dot).toHaveAttribute("data-composer-status-dot", "error");
+  await userEvent.click(dot);
+  const alerts = page.getByRole("alert");
+  await expect.element(alerts.nth(1)).toBeVisible();
+  expect(alerts.elements().map((alert) => alert.textContent)).toEqual([
+    "Offline",
+    "Branch changed",
+  ]);
 });
 
-it("leaves the next attachment its own top edge when there are no notices", async () => {
+it("leaves the drawer its own top edge with no notice above it", async () => {
   await using screen = await render(
     <ComposerBanner.Column>
-      <ComposerBannerStack items={[]} />
       <ComposerBanner.Attachment>
         <ComposerBanner.Root data-testid="drawer">Approval</ComposerBanner.Root>
       </ComposerBanner.Attachment>

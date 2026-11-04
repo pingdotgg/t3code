@@ -119,7 +119,8 @@ import {
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
-import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
+import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { ComposerStatusDot } from "./ComposerStatusDot";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   composerOtherFilesForPresentation,
@@ -2274,7 +2275,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
-  const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
   // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
@@ -2390,12 +2390,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }),
           },
         ];
-  const shelfItems = hasBlockingComposerTopDrawer
-    ? bannerItems.filter(
-        (item) =>
-          item.group === "environment" && (item.variant === "error" || item.variant === "warning"),
-      )
-    : bannerItems;
 
   const insertComposerText = (
     text: string,
@@ -3189,7 +3183,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     >
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
-          <ComposerBannerStack items={shelfItems} />
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3262,6 +3255,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     (showProviderUnavailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
+                <ComposerStatusDot items={bannerItems} />
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
@@ -3497,6 +3491,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  <ComposerStatusDot items={bannerItems} />
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

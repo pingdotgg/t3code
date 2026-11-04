@@ -29,8 +29,8 @@ The composer banners are the reference.
   of small slots. Slots own their classes, take `className`, and spread the rest of their props,
   merging classes with `cn`. Variants and density are props on `Root`. A slot that needs a control
   renders `Button`.
-- [`ComposerBannerStack.tsx`](../../apps/web/src/components/chat/ComposerBannerStack.tsx) composes
-  the slots and owns only stack behavior: priority, expand and collapse, dismiss transitions.
+- [`ComposerStatusDot.tsx`](../../apps/web/src/components/chat/ComposerStatusDot.tsx) collects
+  composer notices behind one dot beside Send and owns only their order and severity.
 - Consumers are a few lines of slots, and the slots carry the banner styling:
   [`ComposerPlanFollowUpBanner.tsx`](../../apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx).
 

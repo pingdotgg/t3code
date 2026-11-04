@@ -441,7 +441,7 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            className="relative flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <button
@@ -452,15 +452,31 @@ export function ComposerAttachmentFileList({
             >
               {file.name}
             </button>
-            <span className="shrink-0 text-xs text-secondary-label">
+            <span
+              className={cn(
+                "shrink-0 text-xs text-secondary-label",
+                !needsReattach && upload?.status === "uploading" && "text-info",
+              )}
+            >
               {needsReattach
                 ? canReattachFile
                   ? "Attach again"
                   : "Remove to send"
                 : upload?.status === "uploading"
-                  ? formatAttachmentUploadProgress(upload.progress)
+                  ? `Uploading · ${formatAttachmentUploadProgress(upload.progress)} of ${formatAttachmentSize(file.sizeBytes)}`
                   : formatAttachmentSize(file.sizeBytes)}
             </span>
+            {!needsReattach && upload?.status === "uploading" ? (
+              <span
+                aria-hidden
+                className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-border"
+              >
+                <span
+                  className="block h-full rounded-full bg-info"
+                  style={{ width: formatAttachmentUploadProgress(upload.progress) }}
+                />
+              </span>
+            ) : null}
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
                 <TooltipTrigger
