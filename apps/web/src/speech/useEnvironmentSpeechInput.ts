@@ -138,7 +138,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   );
   const [status, setStatus] = useState<{
     readonly prepared: PreparedConnection;
-    readonly value: EnvironmentSpeechStatus;
+    readonly value: EnvironmentSpeechStatus | null;
   } | null>(null);
   const [controllerState, setControllerState] = useState({
     prepared,
@@ -354,7 +354,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         if (!disposed) setStatus({ prepared, value });
       })
       .catch(() => {
-        if (!disposed) setStatus(null);
+        if (!disposed) setStatus({ prepared, value: null });
       });
     return () => {
       disposed = true;
@@ -511,7 +511,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   return {
     available:
       prepared !== null &&
-      currentStatus?.supported === true &&
+      status?.prepared === prepared &&
+      status.value?.supported !== false &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",

@@ -1850,7 +1850,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentId,
     projectId: activeProjectId,
     projectName,
-    ownerKey: JSON.stringify([composerDraftTarget, activePendingProgress?.activeQuestion?.id]),
+    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     draftText: prompt,
     disabled: dictationDisabled,
     readDraft: () => {

@@ -15,6 +15,7 @@ import {
   type EnvironmentId,
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
+  type ProjectId,
   type SpeechAcceleration,
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
@@ -752,6 +753,8 @@ function EnvironmentModelsSection(props: {
  */
 function TranscriptionTest(props: {
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+  readonly projectName: string | null;
   readonly modelName: string | null;
 }) {
   const [draft, setDraft] = useState("");
@@ -762,7 +765,9 @@ function TranscriptionTest(props: {
   }, [draft]);
   const speech = useEnvironmentSpeechInput({
     environmentId: props.environmentId,
-    ownerKey: "settings:transcription-test",
+    projectId: props.projectId,
+    projectName: props.projectName,
+    ownerKey: JSON.stringify([props.environmentId, props.projectId]),
     draftText: draft,
     cleanup: false,
     readDraft: () => ({
@@ -865,6 +870,12 @@ export function VoiceSettingsPanel() {
   }, [refreshMicrophones]);
   const prepared = destination.prepared;
   const modelStatus = catalog?.connection === prepared ? catalog.status : null;
+  const target = settingsScope?.target;
+  const members = settingsScope?.scope.members;
+  const project =
+    members?.find(
+      (member) => member.environmentId === target?.environmentId && member.id === target.projectId,
+    ) ?? members?.[0];
 
   const selectedMicrophone = settings.voiceMicrophone;
   const selectedMicrophoneLabel = selectedMicrophone
@@ -888,7 +899,17 @@ export function VoiceSettingsPanel() {
     : settings.speechLanguage;
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer
+      searchTargetFallbacks={{
+        "speech-models": prepared ? undefined : "voice-transcription-destination",
+        "transcription-test": destination.environmentId
+          ? undefined
+          : "voice-transcription-destination",
+        "speech-post-processing-model":
+          cleanupEnabled && settingsScope ? undefined : "speech-post-processing",
+        "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
+      }}
+    >
       <SettingsSection id="voice-input" title="Voice input">
         <SettingsRow
           {...searchableSetting("voice-transcription-destination")}
@@ -1208,7 +1229,11 @@ export function VoiceSettingsPanel() {
         />
         {destination.environmentId ? (
           <TranscriptionTest
-            environmentId={destination.environmentId}
+            environmentId={
+              project?.environmentId ?? target?.environmentId ?? destination.environmentId
+            }
+            projectId={project?.id ?? null}
+            projectName={project?.title ?? null}
             modelName={model?.model ?? null}
           />
         ) : (

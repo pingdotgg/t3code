@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
+  statusUnavailable: false,
   modelState: "ready" as "ready" | "missing-model",
   download: vi.fn<() => Promise<void>>(),
   platforms: [] as string[],
@@ -75,16 +76,15 @@ vi.mock("../hooks/useSettings", () => ({
     return selector ? selector(settings) : settings;
   },
   useEnvironmentSettings: (
-    _environmentId: string,
+    environmentId: string,
     selector: (settings: Record<string, unknown>) => unknown,
   ) =>
     selector({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: Object.fromEntries(
-        Object.entries(mocks.projectWords).map(([projectId, words]) => [
-          projectId,
-          { speechProjectCustomWords: words },
-        ]),
+        Object.entries(environmentId === THREAD_ENV ? mocks.projectWords : {}).map(
+          ([projectId, words]) => [projectId, { speechProjectCustomWords: words }],
+        ),
       ),
     }),
 }));
@@ -95,6 +95,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   getEnvironmentSpeechStatus: (prepared: PreparedConnection) =>
     Effect.sync(() => {
       mocks.statusRequests.push(prepared.environmentId);
+      if (mocks.statusUnavailable) throw new Error("Temporarily offline");
       return {
         supported: true,
         state: mocks.modelState,
@@ -173,6 +174,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.canDictate = new Set(mocks.voiceCapable);
   mocks.prepared.clear();
   mocks.statusRequests = [];
+  mocks.statusUnavailable = false;
   mocks.modelState = "ready";
   mocks.download.mockReset();
   mocks.platforms = [];
@@ -404,11 +406,13 @@ it("keeps a cleanup-free recording off the provider even when cleanup is on", as
   setup({ destination: "env-a" });
   chooseTranscriptCleanup(true);
   mocks.settings.speechCorrectionWord = "sorry";
-  await using _screen = await render(<Probe cleanup={false} />);
+  mocks.projectWords = { "proj-1": [{ term: "Acme", aliases: ["ack me"] }] };
+  await using _screen = await render(<Probe cleanup={false} projectId="proj-1" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.cleanupCalls).toEqual([]);
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual([]);
+  expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
 });
 
@@ -450,4 +454,17 @@ it("shares one status probe per destination across every mounted editor", async 
   );
   expect(mocks.voice.available).toBe(true);
   expect(mocks.statusRequests).toEqual(["env-a"]);
+});
+
+it("lets the user retry after a status failure without reselecting the destination", async () => {
+  setup({ destination: "env-a" });
+  mocks.statusUnavailable = true;
+  await using _screen = await render(<Probe />);
+  expect(mocks.statusRequests).toEqual(["env-a"]);
+  expect(mocks.voice.available).toBe(true);
+  expect(mocks.microphoneRequests).toEqual([]);
+  mocks.statusUnavailable = false;
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
 });
