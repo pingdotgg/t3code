@@ -50,11 +50,6 @@ const make = Effect.gen(function* () {
   );
   const resolve: MuseUsageHome["Service"]["resolve"] = Effect.fn("MuseUsageHome.resolve")(
     function* ({ binaryPath, environment, awaitRefresh }) {
-      // Spawn failures surface asynchronously; without this a missing CLI would report as pending.
-      const resolveExecutable = yield* SpawnExecutableResolution;
-      if (resolveExecutable(binaryPath, yield* HostProcess.Platform, environment) === undefined) {
-        return Option.some(undefined);
-      }
       // Cache keys compare structurally. Omitted and undefined variables both
       // disappear from the child process environment and must share an entry.
       const key = {
@@ -63,9 +58,14 @@ const make = Effect.gen(function* () {
           Object.entries(environment).filter(([, value]) => value !== undefined),
         ),
       };
-      if (awaitRefresh) return Option.some(yield* Cache.get(cache, key));
       const settled = yield* Cache.getSuccess(cache, key);
       if (Option.isSome(settled)) return settled;
+      // Spawn failures surface asynchronously; without this a missing CLI would report as pending.
+      const resolveExecutable = yield* SpawnExecutableResolution;
+      if (resolveExecutable(binaryPath, yield* HostProcess.Platform, environment) === undefined) {
+        return Option.some(undefined);
+      }
+      if (awaitRefresh) return Option.some(yield* Cache.get(cache, key));
       // Awaited in the layer scope so a departing caller cannot cancel discovery.
       yield* Effect.forkIn(Cache.get(cache, key), scope, { startImmediately: true });
       // A lookup that settled synchronously needs no refresh.

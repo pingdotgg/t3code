@@ -425,6 +425,13 @@ describe("Muse history discovery", () => {
       expect(first).toEqual(second);
       expect(first).toHaveLength(1);
       expect(yield* museUsageReader.directories(instance, { awaitRefresh: false })).toEqual(first);
+      const uninstalled = Effect.provideService(SpawnExecutableResolution, () => undefined);
+      expect(
+        yield* museUsageReader.directories(instance, { awaitRefresh: false }).pipe(uninstalled),
+      ).toEqual(first);
+      expect(yield* museUsageReader.directories(instance, AWAIT_REFRESH).pipe(uninstalled)).toEqual(
+        first,
+      );
       expect(create).toHaveBeenCalledOnce();
       expect(close).toHaveBeenCalledOnce();
     }).pipe(Effect.provide([NodeServices.layer, MuseUsageHome.layer]), onPath),
@@ -453,7 +460,7 @@ describe("Muse history discovery", () => {
         environment: {},
       };
       expect(yield* museUsageReader.directories(instance, AWAIT_REFRESH)).toEqual([]);
-      expect(yield* museUsageReader.directories(instance, AWAIT_REFRESH)).toEqual([]);
+      expect(yield* museUsageReader.directories(instance, { awaitRefresh: false })).toEqual([]);
       expect(create).toHaveBeenCalledOnce();
       yield* TestClock.adjust("30 seconds");
       expect(yield* museUsageReader.directories(instance, AWAIT_REFRESH)).toHaveLength(1);
