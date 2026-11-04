@@ -11,7 +11,30 @@ import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { act, render } from "../../../test/render";
 
-import { DevicePanel } from "./DevicePanel";
+import DeviceSidePanel from "~/panels/device/DeviceSidePanel";
+import { PanelHostContext } from "~/panels/panelHost";
+
+function DevicePanel(props: {
+  mode: "embedded";
+  threadRef: ScopedThreadRef;
+  surface: Extract<RightPanelSurface, { kind: "device" }>;
+  visible: boolean;
+  onDismissSetup: () => void;
+}) {
+  return (
+    <PanelHostContext
+      value={{
+        threadRef: props.threadRef,
+        visible: props.visible,
+        composerDraftTarget: props.threadRef,
+        workspaceMutationId: null,
+        sendAnnotation: () => undefined,
+      }}
+    >
+      <DeviceSidePanel surface={props.surface} onDismissSetup={props.onDismissSetup} />
+    </PanelHostContext>
+  );
+}
 import "~/index.css";
 
 type CommandResult =
