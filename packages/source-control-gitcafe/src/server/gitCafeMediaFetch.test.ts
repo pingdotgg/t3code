@@ -9,14 +9,14 @@ import * as GitCafeMediaFetch from "./gitCafeMediaFetch.ts";
 
 const ATTACHMENT = "https://git.cafe/api/attachments/attach_01m6hzm1mhene8zncba8bn5fb2";
 
-const signedIn = (signedInAfter = 0) => {
+const signedIn = (signedInAfter = 0, invalidated: Array<string> = []) => {
   let lookups = 0;
   return Layer.mock(GitCafeCredentials.GitCafeCredentials)({
     get: (host) =>
       ++lookups <= signedInAfter
         ? Effect.fail(new GitCafeCredentials.GitCafeNotSignedInError({ host }))
         : Effect.succeed({ host, token: Redacted.make("cafe-token"), source: "cafe" as const }),
-    invalidate: () => Effect.void,
+    invalidate: (host) => Effect.sync(() => void invalidated.push(host)),
   });
 };
 
@@ -59,15 +59,18 @@ describe("GitCafeMediaFetch", () => {
 
   it.effect("keeps the token off storage a redirect hands the attachment to", () => {
     const sent: Array<[string, string | undefined]> = [];
+    const invalidated: Array<string> = [];
     return Effect.gen(function* () {
       const fetchMedia = yield* GitCafeMediaFetch.make;
-      expect((yield* fetchMedia({ url: ATTACHMENT, headers: {} }))?.status).toBe(200);
+      expect((yield* fetchMedia({ url: ATTACHMENT, headers: {} }))?.status).toBe(401);
       expect(sent).toEqual([
         ["git.cafe", "Bearer cafe-token"],
         ["objects.example.com", undefined],
       ]);
+      // Storage refusing its own signature says nothing about the GitCafe token.
+      expect(invalidated).toEqual([]);
     }).pipe(
-      Effect.provide(signedIn()),
+      Effect.provide(signedIn(0, invalidated)),
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) => {
@@ -81,7 +84,7 @@ describe("GitCafeMediaFetch", () => {
                     status: 302,
                     headers: { location: "https://objects.example.com/signed" },
                   })
-                : new Response(null, { status: 200 }),
+                : new Response(null, { status: 401 }),
             ),
           );
         }),

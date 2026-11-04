@@ -48,7 +48,9 @@ export const make = Effect.gen(function* () {
           ),
         )
         .pipe(Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT));
-      if (response.status === 401 && host !== null) yield* credentials.invalidate(host);
+      if (response.status === 401 && host !== null && authorization !== null) {
+        yield* credentials.invalidate(host);
+      }
       if (response.status < 300 || response.status >= 400) return response;
       const location = response.headers.location;
       if (!location || hop >= MAX_REDIRECTS) return null;
