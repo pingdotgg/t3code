@@ -187,7 +187,15 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       ]);
       // The host variable that replaces Codex's launch arguments is ignored too.
       const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "-c mcp_servers.x.command=sh" };
-      assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
+      const view = providerHostEnvironment(policy.summary, host);
+      assert.deepEqual({ ...view }, { PATH: "/usr/bin" });
+      host.PATH = "/late/bin";
+      Object.assign(host, { NEW_VARIABLE: "late", t3code_codex_launch_args: "hidden" });
+      assert.deepEqual({ ...view }, { PATH: "/late/bin", NEW_VARIABLE: "late" });
+      assert.isUndefined(view.T3CODE_CODEX_LAUNCH_ARGS);
+      assert.isFalse("t3code_codex_launch_args" in view);
+      assert.isFalse(Reflect.set(view, "PATH", "/replaced"));
+      assert.equal(host.PATH, "/late/bin");
       assert.strictEqual(providerHostEnvironment(undefined, host), host);
     }),
   );
