@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies native task caching in isolated subprocesses.
 import { describe, expect, it } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -30,12 +31,88 @@ describe("cachedTestTasks", () => {
     expect(second[key]).toEqual(first[key]);
   });
 
+  it("preserves package grouping, task order, and duplicates with uncached files", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cached-groups-"));
+    const files = ["pkg/z.test.ts", "b.test.ts", "a.test.ts", "pkg/y.test.ts", "a.test.ts"];
+    try {
+      await NodeFSP.mkdir(NodePath.join(directory, "pkg"));
+      await NodeFSP.writeFile(NodePath.join(directory, "package.json"), "{}");
+      await NodeFSP.writeFile(
+        NodePath.join(directory, "pkg/package.json"),
+        JSON.stringify({ scripts: { test: "vp test run --passWithNoTests" } }),
+      );
+      for (const { uncached, groups } of [
+        {
+          uncached: undefined,
+          groups: [
+            ["a.test.ts", "b.test.ts"],
+            ["pkg/y.test.ts", "pkg/z.test.ts"],
+          ],
+        },
+        {
+          uncached: [],
+          groups: [
+            ["a.test.ts", "b.test.ts"],
+            ["pkg/y.test.ts", "pkg/z.test.ts"],
+          ],
+        },
+        {
+          uncached: ["missing.test.ts"],
+          groups: [
+            ["a.test.ts", "b.test.ts"],
+            ["pkg/y.test.ts", "pkg/z.test.ts"],
+          ],
+        },
+        {
+          uncached: ["a.test.ts", "a.test.ts", "pkg/z.test.ts", "missing.test.ts"],
+          groups: [["b.test.ts"], ["a.test.ts"], ["pkg/y.test.ts"], ["pkg/z.test.ts"]],
+        },
+        {
+          uncached: files,
+          groups: [["a.test.ts"], ["b.test.ts"], ["pkg/y.test.ts"], ["pkg/z.test.ts"]],
+        },
+      ]) {
+        const expected: ReturnType<typeof cachedTestTasks> = {};
+        for (const group of groups) {
+          const inPackage = group[0]!.startsWith("pkg/");
+          const key = `test-cache:${NodeCrypto.createHash("sha256").update(group.join("\0")).digest("hex")}`;
+          expected[key] = {
+            command: `${inPackage ? "vp test run --passWithNoTests" : "vp test run"} ${group.map((file) => `'${inPackage ? file.slice(4) : file}'`).join(" ")}`,
+            ...(inPackage ? { cwd: "pkg" } : {}),
+            cache: uncached?.includes(group[0]!)
+              ? false
+              : {
+                  input: [
+                    { auto: true },
+                    "!**/node_modules/.vite/**",
+                    "!**/node_modules/.vitest-cache/**",
+                  ],
+                  output: [],
+                },
+          };
+        }
+        expected["test-cache"] = {
+          command: 'node -e ""',
+          dependsOn: Object.keys(expected),
+          cache: false,
+        };
+        const tasks = cachedTestTasks(JSON.stringify({ files, groupSize: 2, uncached }), directory);
+        expect(tasks).toEqual(expected);
+        expect(Object.keys(tasks)).toEqual(Object.keys(expected));
+      }
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps shell metacharacters in filenames out of the command", () => {
-    const tasks = cachedTestTasks(
-      JSON.stringify({ files: ["src/a'$(touch injected).test.ts"], groupSize: 1 }),
-    );
-    const task = Object.entries(tasks).find(([key]) => key !== "test-cache")![1];
-    expect(task.command).toBe("vp test run 'src/a'\"'\"'$(touch injected).test.ts'");
+    for (const uncached of [[], ["src/a'$(touch injected).test.ts"]]) {
+      const tasks = cachedTestTasks(
+        JSON.stringify({ files: ["src/a'$(touch injected).test.ts"], groupSize: 1, uncached }),
+      );
+      const task = Object.entries(tasks).find(([key]) => key !== "test-cache")![1];
+      expect(task.command).toBe("vp test run 'src/a'\"'\"'$(touch injected).test.ts'");
+    }
   });
 
   it("rejects paths outside the checkout and empty groups", () => {
@@ -43,6 +120,11 @@ describe("cachedTestTasks", () => {
       { files: ["../elsewhere.test.ts"], groupSize: 1 },
       { files: ["/absolute.test.ts"], groupSize: 1 },
       { files: ["src/a.test.ts"], groupSize: 0 },
+      ...[null, "src/a.test.ts", {}, [null], [1], ["src/a.test.ts", false]].map((uncached) => ({
+        files: ["src/a.test.ts"],
+        groupSize: 1,
+        uncached,
+      })),
     ]) {
       expect(() => cachedTestTasks(JSON.stringify(request))).toThrow();
     }
@@ -57,12 +139,17 @@ describe("cachedTestTasks", () => {
 
   it("does not add tasks without an explicit request", () => {
     expect(cachedTestTasks(undefined)).toEqual({});
+    expect(
+      cachedTestTasks(JSON.stringify({ files: [], groupSize: 2, uncached: ["missing.test.ts"] })),
+    ).toEqual({
+      "test-cache": { command: 'node -e ""', dependsOn: [], cache: false },
+    });
   });
 
   it("reuses individual results, invalidates filesystem inputs, and never caches failures", async () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cached-tests-"));
     const root = NodePath.resolve(import.meta.dirname, "../..");
-    const run = (files = ["a.test.ts", "b.test.ts"], uncached: Array<string> = []) =>
+    const run = (files = ["a.test.ts", "b.test.ts"], uncached: Array<string> = [], groupSize = 1) =>
       new Promise<number | null>((resolve, reject) => {
         const child = NodeChildProcess.spawn(
           process.execPath,
@@ -73,7 +160,7 @@ describe("cachedTestTasks", () => {
               ...process.env,
               NODE_OPTIONS: "",
               VP_REMOTE_CACHE: "off",
-              T3_CACHED_TESTS: JSON.stringify({ files, groupSize: 1, uncached }),
+              T3_CACHED_TESTS: JSON.stringify({ files, groupSize, uncached }),
               VITE_CACHE_PATH: NodePath.join(directory, "cache"),
               PATH: `${NodePath.join(root, "node_modules/.bin")}${NodePath.delimiter}${process.env.PATH}`,
             },
@@ -133,6 +220,30 @@ describe("cachedTestTasks", () => {
       await NodeFSP.unlink(NodePath.join(directory, "report.json"));
       expect(await run(undefined, ["b.test.ts"])).toBe(0);
       expect(await NodeFSP.readFile(NodePath.join(directory, "report.json"), "utf8")).toBe("{}");
+      await NodeFSP.writeFile(
+        NodePath.join(directory, "b.test.ts"),
+        'import {test,expect} from "vite-plus/test";test("independent",()=>expect(1).toBe(1));',
+      );
+      await NodeFSP.mkdir(NodePath.join(directory, "reports"));
+      for (const name of ["c", "d"]) {
+        await NodeFSP.writeFile(
+          NodePath.join(directory, `${name}.test.ts`),
+          `import {test} from "vite-plus/test";import {writeFileSync} from "node:fs";test("report",()=>writeFileSync("reports/${name}.json","${name}"));`,
+        );
+      }
+      const files = ["d.test.ts", "b.test.ts", "c.test.ts", "a.test.ts", "c.test.ts"];
+      const uncached = ["c.test.ts", "d.test.ts", "c.test.ts", "missing.test.ts"];
+      expect(await run(files, uncached, 2)).toBe(0);
+      for (const name of ["c", "d"]) {
+        await NodeFSP.unlink(NodePath.join(directory, "reports", `${name}.json`));
+      }
+      expect(await run(files, uncached, 2)).toBe(0);
+      expect(await summary()).toBe(1);
+      for (const name of ["c", "d"]) {
+        expect(
+          await NodeFSP.readFile(NodePath.join(directory, "reports", `${name}.json`), "utf8"),
+        ).toBe(name);
+      }
     } finally {
       await NodeFSP.rm(directory, { recursive: true, force: true });
     }
