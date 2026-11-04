@@ -501,6 +501,10 @@ describe("voice settings", () => {
       voiceTranscriptionDestination: { kind: "environment", environmentId: "env-1" },
       speechPostProcessingEnabled: true,
     };
+    expect(decodeClientSettings({}).speechSilenceFiltering).toBe(true);
+    expect(decodeClientSettingsPatch({ speechSilenceFiltering: false })).toEqual({
+      speechSilenceFiltering: false,
+    });
     for (const key of Object.keys(imported)) {
       expect(decodeClientSettings(imported)).not.toHaveProperty(key);
       expect(decodeClientSettingsPatch(imported)).not.toHaveProperty(key);

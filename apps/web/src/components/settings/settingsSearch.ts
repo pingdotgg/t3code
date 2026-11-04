@@ -540,6 +540,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice cleanup sorry scratch that fix mistake"],
   },
   {
+    id: "speech-silence-filtering",
+    title: "Silence filtering",
+    to: "/settings/voice",
+    searchTerms: ["voice speech vad silero pauses noise"],
+  },
+  {
     id: "remove-filler-words",
     title: "Remove filler words",
     to: "/settings/voice",

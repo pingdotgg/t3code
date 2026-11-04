@@ -17,7 +17,6 @@ export {
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
   postProcessEnvironmentTranscript,
-  prepareEnvironmentSpeechModel,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   transcribeEnvironmentPcm,

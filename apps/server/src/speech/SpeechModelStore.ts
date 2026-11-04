@@ -17,6 +17,8 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import type { SpeechModel } from "./model.ts";
 
+type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256">;
+
 class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadError>()(
   "SpeechModelDownloadError",
   {
@@ -39,17 +41,17 @@ export class SpeechModelStore extends Context.Service<
   SpeechModelStore,
   {
     /** Cheap size check for status polls; never hashes the file. */
-    readonly isReady: (model: SpeechModel) => Effect.Effect<boolean>;
+    readonly isReady: (model: ModelFile) => Effect.Effect<boolean>;
     /** The installed file once its SHA-256 has been verified, hashing it on first use. */
-    readonly installedPath: (model: SpeechModel) => Effect.Effect<string | undefined>;
+    readonly installedPath: (model: ModelFile) => Effect.Effect<string | undefined>;
     readonly download: (
-      model: SpeechModel,
+      model: ModelFile,
       progress?: SpeechModelDownloadProgress,
     ) => Effect.Effect<
       string,
       SpeechModelDownloadError | PlatformError | HttpClientError.HttpClientError
     >;
-    readonly remove: (model: SpeechModel) => Effect.Effect<void, PlatformError>;
+    readonly remove: (model: ModelFile) => Effect.Effect<void, PlatformError>;
   }
 >()("t3/speech/SpeechModelStore") {}
 
@@ -70,11 +72,11 @@ const make = Effect.gen(function* () {
       yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.ignore);
     }
   }
-  const modelPath = (model: SpeechModel) => path.join(directory, model.filename);
+  const modelPath = (model: ModelFile) => path.join(directory, model.filename);
   // Files whose digest failed, by identity, so status polls stop calling them ready.
   const corrupt = new Map<string, string>();
 
-  const identity = (model: SpeechModel, info: FileSystem.File.Info) =>
+  const identity = (model: ModelFile, info: FileSystem.File.Info) =>
     [
       model.sha256,
       info.size,
@@ -85,7 +87,7 @@ const make = Effect.gen(function* () {
 
   const statFile = (file: string) => fs.stat(file).pipe(Effect.orElseSucceed(() => undefined));
 
-  const expectedFile = (model: SpeechModel, file: string) =>
+  const expectedFile = (model: ModelFile, file: string) =>
     statFile(file).pipe(
       Effect.map((info) =>
         info?.type === "File" && Number(info.size) === model.size ? info : undefined,
@@ -93,7 +95,7 @@ const make = Effect.gen(function* () {
     );
 
   const digestMatches = Effect.fn("SpeechModelStore.digest")(
-    function* (model: SpeechModel, file: string) {
+    function* (model: ModelFile, file: string) {
       const hash = NodeCrypto.createHash("sha256");
       yield* fs
         .stream(file)
@@ -105,7 +107,7 @@ const make = Effect.gen(function* () {
 
   // A verified file is trusted while its size, mtime, device and inode are unchanged.
   const verifiedPath = Effect.fn("SpeechModelStore.verifiedPath")(function* (
-    model: SpeechModel,
+    model: ModelFile,
     file: string,
     onVerificationStart?: () => void,
   ) {
@@ -127,7 +129,7 @@ const make = Effect.gen(function* () {
   });
 
   const fetchInto = Effect.fn("SpeechModelStore.fetch")(function* (
-    model: SpeechModel,
+    model: ModelFile,
     url: string,
     partialPath: string,
     offset: number,
