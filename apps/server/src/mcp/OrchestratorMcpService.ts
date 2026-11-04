@@ -2768,12 +2768,34 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
+        // Check every request before creating any thread, so a bad entry cannot leave a partial batch.
+        if (input.threads.some((request) => request.target?.environmentId !== undefined)) {
+          return yield* failure(
+            "invalid_request",
+            "create_threads creates threads on this machine. For a linked environment, use t3_thread_launch with environmentId. No thread was created.",
+          );
+        }
+        const otherProjectIds = new Set(
+          input.threads.flatMap((request) =>
+            request.target?.projectId === undefined ||
+            request.target.projectId === parent.thread.projectId
+              ? []
+              : [request.target.projectId],
+          ),
+        );
+        yield* Effect.forEach(otherProjectIds, requireProject, { discard: true });
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              const projectId = request.target?.projectId ?? parent.thread.projectId;
+              const inParentProject = projectId === parent.thread.projectId;
+              // Target resolution and enablement checks read the project from `parent.thread`.
+              const projectParent = inParentProject
+                ? parent
+                : { ...parent, thread: { ...parent.thread, projectId } };
               const commandId = stableCommandId({
                 scope,
                 requestKey: key,
@@ -2792,7 +2814,7 @@ const make = Effect.gen(function* () {
                     .pipe(Effect.mapError(threadManagementFailure))
                 : null;
               const target = yield* resolveTargetRechecking({
-                parent,
+                parent: projectParent,
                 target:
                   committedThread === null
                     ? request.target
@@ -2812,13 +2834,75 @@ const make = Effect.gen(function* () {
                 parent.thread.interactionMode,
                 request.interactionMode,
               );
-              yield* assertTargetEnabledForProject(parent, commandId, target);
+              yield* assertTargetEnabledForProject(projectParent, commandId, target);
               const title = threadTitle({
                 parentTitle: parent.thread.title,
                 prompt: request.prompt,
                 title: request.title,
                 index,
               });
+              if (!inParentProject) {
+                // Another project has its own checkout, so the thread starts on that
+                // project's root, as t3_thread_launch does. The parent timeline records
+                // only threads in its own project.
+                const messageId = stableMessageId({ scope, requestKey: key, index });
+                const launched = yield* threadLaunch
+                  .launch({
+                    commandId,
+                    threadId,
+                    projectId,
+                    title,
+                    modelSelection: target.modelSelection,
+                    runtimeMode,
+                    interactionMode,
+                    workspaceStrategy: { type: "root" },
+                    ...(request.prompt === undefined
+                      ? {}
+                      : {
+                          initialMessage: {
+                            messageId,
+                            senderThreadId: scope.thread.threadId,
+                            text: request.prompt,
+                            attachments: [],
+                          },
+                        }),
+                    createdBy: "agent",
+                    creationSource: "mcp",
+                    ...(parent.thread.linkOrigin === undefined
+                      ? {}
+                      : { linkOrigin: parent.thread.linkOrigin }),
+                  })
+                  .pipe(
+                    Effect.mapError((error) =>
+                      error._tag === "ThreadManagementProviderInstanceDisabledError"
+                        ? threadManagementFailure(error)
+                        : failure(
+                            "orchestration_error",
+                            `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
+                          ),
+                    ),
+                  );
+                const launchedThread = launched.projection.thread;
+                const launchedRun =
+                  request.prompt === undefined
+                    ? undefined
+                    : launched.projection.runs.find((run) => run.userMessageId === messageId);
+                return {
+                  threadId: launched.threadId,
+                  link: formatThreadLink({
+                    environmentId: scope.environmentId,
+                    threadId: launched.threadId,
+                  }),
+                  projectId: launchedThread.projectId,
+                  runId: launchedRun?.id ?? null,
+                  status: launchedRun?.status ?? "idle",
+                  title: launchedThread.title,
+                  createdBy: launchedThread.createdBy,
+                  creationSource: launchedThread.creationSource,
+                  providerInstanceId: launchedThread.modelSelection.instanceId,
+                  model: launchedThread.modelSelection.model,
+                } satisfies OrchestratorMcpCreatedThread;
+              }
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -2912,6 +2996,7 @@ const make = Effect.gen(function* () {
               return {
                 threadId,
                 link: formatThreadLink({ environmentId: scope.environmentId, threadId }),
+                projectId: projection.thread.projectId,
                 runId: run?.id ?? null,
                 status: run?.status ?? "idle",
                 title: projection.thread.title,

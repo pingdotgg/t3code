@@ -32,6 +32,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2225,6 +2226,194 @@ describe("OrchestratorMcpService provider resolution", () => {
             const untouched = yield* orchestrator.getThreadProjection(empty.threads[0]!.threadId);
             assert.equal(untouched.messages.length, 0);
             assert.equal(untouched.runs.length, 0);
+          }).pipe(Effect.provide(layerTest));
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      ),
+  );
+
+  it.live(
+    "creates a thread in the project its target names and reports each thread's project",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("codex");
+          const otherProjectId = ProjectId.make("project:mcp-create-other");
+          const missingProjectId = ProjectId.make("project:mcp-create-missing");
+          const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchInput>>(
+            [],
+          );
+          const cwd = yield* checkpointWorkspace("mcp-create-project");
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            {
+              instanceId: codexInstanceId,
+              driver,
+              getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+              planSelectionTransition: () =>
+                Effect.succeed({ type: "apply_on_next_turn" as const }),
+              openSession: () =>
+                Effect.die("These tests exercise committed commands before provider execution."),
+            },
+          ]);
+          const layerDatabase = SqlitePersistence.layerMemory;
+          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+            { name: "mcp-create-project", runtimePolicyOverride: { cwd } },
+            layerRegistry,
+            { databaseLayer: layerDatabase, runEffectWorker: false },
+          );
+          const layerSettings = ServerSettings.layerTest({
+            providerInstances: { [codexInstanceId]: { driver: "codex", enabled: true } },
+          });
+          const layerThreads = ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layerOrchestrator),
+            Layer.provide(
+              LegacyV1ThreadImporter.layer.pipe(
+                Layer.provide(layerOrchestrator),
+                Layer.provide(layerDatabase),
+              ),
+            ),
+            Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+            Layer.provideMerge(layerSettings),
+          );
+          const layerTest = OrchestratorMcpService.layer.pipe(
+            Layer.provide(
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: (input) =>
+                  Ref.update(launches, (all) => [...all, input]).pipe(
+                    Effect.as({
+                      threadId: input.threadId!,
+                      resumed: false,
+                      projection: {
+                        thread: {
+                          id: input.threadId!,
+                          projectId: input.projectId,
+                          title: input.title,
+                          createdBy: input.createdBy,
+                          creationSource: input.creationSource,
+                          modelSelection: input.modelSelection,
+                        },
+                        runs:
+                          input.initialMessage === undefined
+                            ? []
+                            : [
+                                {
+                                  id: RunId.make("run:mcp-create-other"),
+                                  status: "preparing",
+                                  userMessageId: input.initialMessage.messageId,
+                                },
+                              ],
+                      } as unknown as OrchestrationV2ThreadProjection,
+                    }),
+                  ),
+              }),
+            ),
+            Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+            Layer.provideMerge(layerThreads),
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                NodeCrypto.layer,
+                layerRegistry,
+                layerSettings,
+                providerRegistryLayer([
+                  providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+                ]),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: (id) =>
+                    Effect.succeed(
+                      id === otherProjectId ? Option.some({ id } as never) : Option.none(),
+                    ),
+                }),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              ),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("parent:create"),
+              threadId: parentThreadId,
+              projectId,
+              title: "MCP parent",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "feature/parent",
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("parent:start"),
+              threadId: parentThreadId,
+              messageId: MessageId.make("parent:message"),
+              text: "Create threads.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+
+            // No project, or this thread's own: the thread shares this checkout.
+            const own = yield* service.createThreads(scope, {
+              threads: [{}, { target: { projectId } }],
+              clientRequestId: "own-project",
+            });
+            for (const thread of own.threads) {
+              assert.equal(thread.projectId, projectId);
+              const created = yield* orchestrator.getThreadProjection(thread.threadId);
+              assert.equal(created.thread.branch, "feature/parent");
+              assert.equal(created.thread.worktreePath, cwd);
+            }
+            assert.deepEqual(yield* Ref.get(launches), []);
+
+            // Another project: launched on that project's root checkout.
+            const other = yield* service.createThreads(scope, {
+              threads: [{ prompt: "Audit this app.", target: { projectId: otherProjectId } }],
+              clientRequestId: "other-project",
+            });
+            const otherThread = other.threads[0]!;
+            assert.equal(otherThread.projectId, otherProjectId);
+            assert.equal(otherThread.runId, RunId.make("run:mcp-create-other"));
+            assert.equal(otherThread.providerInstanceId, codexInstanceId);
+            assert.equal(otherThread.model, "gpt-5.4");
+            const [launch] = yield* Ref.get(launches);
+            assert.equal(launch?.projectId, otherProjectId);
+            assert.equal(launch?.threadId, otherThread.threadId);
+            assert.deepEqual(launch?.workspaceStrategy, { type: "root" });
+            assert.equal(launch?.initialMessage?.text, "Audit this app.");
+            assert.equal(launch?.initialMessage?.senderThreadId, parentThreadId);
+            assert.equal(launch?.createdBy, "agent");
+
+            // A linked environment or an unknown project fails before any thread is created.
+            const threadCount = () =>
+              service.listThreads(scope, {}).pipe(Effect.map((listed) => listed.threads.length));
+            const before = yield* threadCount();
+            const environmentError = yield* service
+              .createThreads(scope, {
+                threads: [
+                  {},
+                  { target: { environmentId: EnvironmentId.make("environment:peer") } },
+                ],
+                clientRequestId: "linked-environment",
+              })
+              .pipe(Effect.flip);
+            assert.equal(environmentError.code, "invalid_request");
+            assert.include(environmentError.message, "t3_thread_launch");
+            const missingError = yield* service
+              .createThreads(scope, {
+                threads: [{}, { target: { projectId: missingProjectId } }],
+                clientRequestId: "missing-project",
+              })
+              .pipe(Effect.flip);
+            assert.equal(missingError.code, "invalid_request");
+            assert.include(missingError.message, missingProjectId);
+            assert.equal(yield* threadCount(), before);
+            assert.equal((yield* Ref.get(launches)).length, 1);
           }).pipe(Effect.provide(layerTest));
         }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
