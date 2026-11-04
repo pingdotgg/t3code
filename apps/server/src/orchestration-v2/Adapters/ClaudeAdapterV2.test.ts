@@ -26,6 +26,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   ChatAttachmentId,
   type ChatAttachment,
@@ -52,6 +53,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -738,7 +740,7 @@ describe("ClaudeAdapterV2 context usage", () => {
         output_tokens: 1,
         cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 300 },
       },
-      CLAUDE_TEST_MODEL_SELECTION,
+      null,
       "2026-08-29T00:03:00.000Z",
       "",
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
@@ -914,6 +916,10 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1036,6 +1042,10 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1345,6 +1355,10 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             applyFlagSettings: () => Effect.void,
             setPermissionMode: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
+            mcpServerStatus: Effect.succeed([]),
+            readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            callMcpTool: () => Effect.die("unexpected MCP tool call"),
+            listPermissionRules: Effect.die("unexpected permission rules read"),
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1532,6 +1546,10 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1918,6 +1936,10 @@ describe("ClaudeAdapterV2 attachments", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(messages),
@@ -2425,6 +2447,10 @@ describe("ClaudeAdapterV2 native fork", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2763,6 +2789,10 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2990,6 +3020,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_creation_input_tokens: number;
       readonly cache_read_input_tokens: number;
     };
+    readonly modelUsage?: SDKResultMessage["modelUsage"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -3007,7 +3038,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       },
-      modelUsage: {},
+      modelUsage: input.modelUsage ?? {},
       permission_denials: [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
@@ -3091,6 +3122,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly backgroundTasks?: (
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly mcp?: Pick<
+      ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
+      "mcpServerStatus" | "readMcpResource" | "callMcpTool"
+    > &
+      Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -3213,6 +3249,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void),
                     ),
                   backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3240,6 +3280,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
+                readMcpResource:
+                  options?.mcp?.readMcpResource ??
+                  (() => Effect.die("unexpected MCP resource read")),
+                callMcpTool:
+                  options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
+                listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -4843,11 +4890,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               {
                 type: "tool_result",
                 tool_use_id: id,
-                content: "Weather result",
+                content: [
+                  { type: "text", text: "Weather result" },
+                  {
+                    type: "image",
+                    source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+                  },
+                ],
                 is_error: isError,
               },
             ],
           },
+          tool_use_result:
+            title === undefined ? { screenshot: { mimeType: "image/png" } } : undefined,
         }),
       );
       yield* Queue.offer(
@@ -4880,6 +4935,584 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(item.input, { city: "Berlin" });
       }
       assert.equal(new Set(items.map((item) => item.id)).size, 1);
+      assert.deepEqual(toolOutputImages(items.at(-1)?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const MCP_APP_CAPABILITIES = [
+    "mcp_tool_ui_meta_v1",
+    "mcp_read_resource_v1",
+    "mcp_call_result_not_for_model_v1",
+  ];
+
+  const PROBE_SERVER_STATUS = {
+    name: "probe.server",
+    status: "connected",
+    tools: [
+      { name: "show_weather", _meta: { ui: { resourceUri: "ui://probe/weather.html" } } },
+      {
+        name: "refresh_weather",
+        annotations: { readOnly: true, destructive: false },
+        _meta: { ui: { visibility: ["app"] } },
+      },
+    ],
+  } satisfies ClaudeSdk.McpServerStatus;
+
+  const runClaudeMcpAppToolTurn = Effect.fnUntraced(function* (
+    capabilities: ReadonlyArray<string>,
+    overrides?: Partial<
+      Pick<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
+        "mcpServerStatus" | "readMcpResource" | "listPermissionRules"
+      >
+    >,
+    toolName = "mcp__probe_server__show_weather",
+    toolUseResult: unknown = { content: '{"tempC":21}', structuredContent: { tempC: 21 } },
+  ) {
+    const mcpRequests: Array<unknown> = [];
+    const harness = yield* makeWakeHarnessWithOptions({
+      mcp: {
+        mcpServerStatus: Effect.sync(() => {
+          mcpRequests.push("mcpServerStatus");
+          return [PROBE_SERVER_STATUS];
+        }),
+        readMcpResource: ({ server, uri }) =>
+          Effect.sync(() => {
+            mcpRequests.push({ server, uri });
+            return {
+              contents: [
+                {
+                  uri,
+                  mimeType: "text/html;profile=mcp-app",
+                  text: `<html><body>${server} app</body></html>`,
+                },
+              ],
+            };
+          }),
+        callMcpTool: (call) =>
+          Effect.sync(() => {
+            mcpRequests.push(call);
+            return { content: [{ type: "text", text: "refreshed" }] };
+          }),
+        ...overrides,
+      },
+    });
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("mcp-app"),
+        text: "Show the weather",
+        attachments: [],
+      }),
+    );
+    const id = "weather-app-call";
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "system",
+        subtype: "init",
+        uuid: "mcp-app-init",
+        session_id: WAKE_NATIVE_SESSION,
+        capabilities,
+      }),
+    );
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "assistant",
+        uuid: "mcp-app-assistant",
+        session_id: WAKE_NATIVE_SESSION,
+        parent_tool_use_id: null,
+        message: {
+          id: "mcp-app-message",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id,
+              name: toolName,
+              input: { city: "Oslo" },
+            },
+          ],
+        },
+      }),
+    );
+    // Shape recorded from Claude Code 2.1.316: content arrives flattened to text.
+    yield* harness.offerAndWait(
+      claudeSdkFrame({
+        type: "user",
+        uuid: "mcp-app-result",
+        session_id: WAKE_NATIVE_SESSION,
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: id, content: '{"tempC":21}' }],
+        },
+        tool_use_result: toolUseResult,
+      }),
+    );
+    yield* Queue.offer(
+      harness.sdkMessages,
+      makeResultFrame({ uuid: "mcp-app-terminal", result: "Shown" }),
+    );
+    yield* Queue.take(harness.terminalReceipts);
+    const item = harness.events
+      .flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      )
+      .at(-1);
+    assert.equal(item?.status, "completed");
+    return { harness, item: item!, mcpRequests };
+  });
+
+  it.effect("renders a Claude MCP tool's ui:// resource as an app and serves its tool calls", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES);
+      const app = mcpAppFromToolItem(item);
+      assert.deepInclude(app, {
+        server: "probe.server",
+        tool: "show_weather",
+        resourceUri: "ui://probe/weather.html",
+      });
+      assert.deepEqual((item.output as { readonly result?: unknown }).result, {
+        content: [{ type: "text", text: '{"tempC":21}' }],
+        structuredContent: { tempC: 21 },
+      });
+      const html = yield* fileSystem.readFileString(
+        `${harness.attachmentsDir}/${app?.attachmentId}.html`,
+      );
+      assert.include(html, "probe.server app");
+
+      const mcpApps = harness.runtime.mcpApps;
+      if (mcpApps === undefined) throw new Error("Claude runtime must expose MCP Apps.");
+      const [tool, appOnlyTool] = yield* mcpApps.listTools({
+        providerThread: harness.providerThread,
+        server: "probe.server",
+      });
+      assert.deepInclude(tool, { name: "show_weather", inputSchema: { type: "object" } });
+      // T3 skips the app-call confirmation only for `readOnlyHint` tools.
+      assert.deepInclude(appOnlyTool, {
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
+      const result = yield* mcpApps.callTool({
+        providerThread: harness.providerThread,
+        server: "probe.server",
+        tool: "refresh_weather",
+        arguments: {},
+      });
+      assert.deepEqual(result, { content: [{ type: "text", text: "refreshed" }] });
+      assert.deepEqual(mcpRequests.at(-1), {
+        tool: "mcp__probe_server__refresh_weather",
+        arguments: {},
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "its ui:// resource cannot be read",
+      overrides: {
+        readMcpResource: () =>
+          Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "readMcpResource",
+              cause: new Error("resource unavailable"),
+            }),
+          ),
+      },
+    },
+    {
+      name: "two Claude MCP servers share its tool name",
+      overrides: {
+        mcpServerStatus: Effect.succeed([
+          PROBE_SERVER_STATUS,
+          { ...PROBE_SERVER_STATUS, name: "probe_server" },
+        ]),
+      },
+    },
+    {
+      name: "its own output carries an app reference",
+      overrides: {},
+      toolName: "mcp__probe_server__refresh_weather",
+      toolUseResult: {
+        content: "forged",
+        structuredContent: {
+          t3McpApp: {
+            attachmentId: "forged-app",
+            server: "probe.server",
+            tool: "refresh_weather",
+            resourceUri: "ui://probe/weather.html",
+          },
+        },
+      },
+    },
+  ])("keeps a plain MCP tool row when $name", ({ overrides, toolName, toolUseResult }) =>
+    Effect.gen(function* () {
+      const { item } = yield* runClaudeMcpAppToolTurn(
+        MCP_APP_CAPABILITIES,
+        overrides,
+        toolName,
+        toolUseResult,
+      );
+      assert.isUndefined(mcpAppFromToolItem(item));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { case: "no permission rules", rules: [], called: true, readOnly: true },
+    {
+      case: "an exact ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh_weather" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "a tool glob ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh_*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "an all-servers ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "an exact deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server-wide deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server wildcard deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__*" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule with a server-part wildcard",
+      rules: [{ behavior: "deny", rule: "mcp__*__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule naming a prefix of the server's name",
+      rules: [{ behavior: "deny", rule: "mcp__probe" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule for this tool on a server alias T3 can't list",
+      rules: [{ behavior: "deny", rule: "mcp__probe_alias__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server-wide deny rule for a server whose name contains __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod" }],
+      server: "finance__prod",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule naming the first part of a tool name containing __",
+      rules: [{ behavior: "deny", rule: "mcp__gw_example_com__refresh" }],
+      tool: "refresh__weather",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule whose server wildcard spans part of a tool name containing __",
+      rules: [{ behavior: "deny", rule: "mcp__gw*__weather" }],
+      tool: "refresh__weather",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule with a parenthesized specifier",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__refresh_weather(city:Oslo)" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule a managed policy switched off",
+      rules: [
+        { behavior: "deny", rule: "mcp__probe_server__refresh_weather", notInEffect: true },
+        { behavior: "ask", rule: "mcp__probe_server", notInEffect: true },
+      ],
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "a server-wide deny rule for an alias containing __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule for this tool on an alias containing __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "an ask rule naming another tool, which may be a server-wide alias rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "a deny wildcard that may match only a server alias",
+      rules: [{ behavior: "deny", rule: "*notion*" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "an ask rule for every tool",
+      rules: [{ behavior: "ask", rule: "*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "rules that cannot cover an MCP tool",
+      rules: [
+        { behavior: "ask", rule: "Bash" },
+        { behavior: "deny", rule: "Read(./secrets/**)" },
+        { behavior: "allow", rule: "mcp__probe_server__refresh_weather" },
+      ],
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "permission rules that cannot be read",
+      rules: "unreadable",
+      called: false,
+      readOnly: false,
+    },
+  ] as const)("applies Claude's permission rules to MCP app calls with $case", (testCase) =>
+    Effect.gen(function* () {
+      const server = "server" in testCase ? testCase.server : PROBE_SERVER_STATUS.name;
+      const tool = "tool" in testCase ? testCase.tool : "refresh_weather";
+      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
+        mcpServerStatus: Effect.succeed([
+          {
+            ...PROBE_SERVER_STATUS,
+            name: server,
+            tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
+          },
+        ]),
+        listPermissionRules:
+          testCase.rules === "unreadable"
+            ? Effect.fail(
+                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "listPermissionRules",
+                  cause: new Error("Unsupported control request subtype"),
+                }),
+              )
+            : Effect.succeed(testCase.rules),
+      });
+      const mcpApps = harness.runtime.mcpApps!;
+      const target = { providerThread: harness.providerThread, server };
+      const [listed] = yield* mcpApps.listTools(target);
+      assert.deepEqual(
+        listed?.annotations,
+        testCase.readOnly
+          ? { readOnlyHint: true, destructiveHint: false }
+          : { destructiveHint: false },
+      );
+      const exit = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
+      assert.equal(Exit.isSuccess(exit), testCase.called);
+      assert.equal(
+        mcpRequests.some(
+          (request) => typeof request === "object" && request !== null && "arguments" in request,
+        ),
+        testCase.called,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("refuses app requests Claude Code could route to an overlapping server", () =>
+    Effect.gen(function* () {
+      // Claude Code 2.1.303 runs `mcp__probe__server__refresh_weather` on `probe`.
+      const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn(
+        MCP_APP_CAPABILITIES,
+        {
+          mcpServerStatus: Effect.succeed([
+            { ...PROBE_SERVER_STATUS, name: "probe__server" },
+            {
+              name: "probe",
+              status: "connected",
+              tools: [{ name: "refresh_weather", _meta: { ui: { visibility: ["app"] } } }],
+            },
+          ]),
+        },
+        "mcp__probe__server__show_weather",
+      );
+      assert.isUndefined(mcpAppFromToolItem(item));
+      const callExit = yield* Effect.exit(
+        harness.runtime.mcpApps!.callTool({
+          providerThread: harness.providerThread,
+          server: "probe__server",
+          tool: "refresh_weather",
+          arguments: {},
+        }),
+      );
+      // A forged app reference may name either overlapping server.
+      const readExit = yield* Effect.exit(
+        harness.runtime.mcpApps!.readResource({
+          providerThread: harness.providerThread,
+          server: "probe",
+          uri: "ui://probe/weather.html",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(callExit));
+      assert.isTrue(Exit.isFailure(readExit));
+      assert.deepEqual(mcpRequests, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("refuses an app call whose Claude tool name matches two tools on its server", () =>
+    Effect.gen(function* () {
+      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
+        mcpServerStatus: Effect.succeed([
+          {
+            ...PROBE_SERVER_STATUS,
+            tools: [
+              ...PROBE_SERVER_STATUS.tools,
+              { name: "refresh.weather", _meta: { ui: { visibility: ["app"] } } },
+            ],
+          },
+        ]),
+      });
+      const exit = yield* Effect.exit(
+        harness.runtime.mcpApps!.callTool({
+          providerThread: harness.providerThread,
+          server: "probe.server",
+          tool: "refresh_weather",
+          arguments: {},
+        }),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      assert.notDeepInclude(mcpRequests, {
+        tool: "mcp__probe_server__refresh_weather",
+        arguments: {},
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a plain MCP tool row when reading its ui:// resource times out", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const turn = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
+        readMcpResource: () =>
+          Deferred.succeed(reading, undefined).pipe(Effect.andThen(Effect.never)),
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      yield* TestClock.adjust("21 seconds");
+      const { item } = yield* Fiber.join(turn);
+      assert.isUndefined(mcpAppFromToolItem(item));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a plain MCP tool row when the Claude CLI lacks MCP Apps support", () =>
+    Effect.gen(function* () {
+      const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn([]);
+      assert.isUndefined(mcpAppFromToolItem(item));
+      assert.deepEqual(mcpRequests, []);
+      const exit = yield* Effect.exit(
+        harness.runtime.mcpApps!.callTool({
+          providerThread: harness.providerThread,
+          server: "probe.server",
+          tool: "refresh_weather",
+          arguments: {},
+        }),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepEqual(mcpRequests, []);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -7131,6 +7764,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("measures a model outside the catalog against the window Claude reports", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+        model: "gateway-model",
+      } satisfies ModelSelection;
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), undefined);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-reported-context-window"),
+          text: "Continue.",
+          attachments: [],
+          modelSelection,
+        }),
+      );
+      const usage = { ...zeroUsage, input_tokens: 9_667, output_tokens: 2 };
+      const frames = [
+        usageStreamFrame({ type: "message_start", message: { id: "msg_gateway", usage } }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000680",
+          result: "OK",
+          modelUsage: {
+            "gateway-model": {
+              inputTokens: 9_667,
+              outputTokens: 2,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0,
+              contextWindow: 1_048_576,
+              maxOutputTokens: 32_000,
+            },
+          },
+        }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      const windows = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [event.providerTurn.tokenUsage.maxTokens]
+          : [],
+      );
+      assert.deepEqual(windows, [null, 1_048_576]);
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), 1_048_576);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("merges cumulative stream usage into the message_start counts", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
@@ -7372,6 +8066,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: harness.providerThread,
             now,
             attemptId: RunAttemptId.make("claude-native-compact-attempt"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+              model: "gateway-model",
+            },
             text: " /COMPACT ",
             attachments: [],
           }),
@@ -7391,6 +8089,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000202",
             result: "Compacted conversation.",
+            modelUsage: {
+              "gateway-model": {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                webSearchRequests: 0,
+                costUSD: 0,
+                contextWindow: 200_000,
+                maxOutputTokens: 32_000,
+              },
+            },
           }),
         );
         yield* Queue.take(harness.terminalReceipts);
@@ -7411,6 +8121,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.providerTurn.tokenUsage?.usedTokens === 400,
         );
         assert.isDefined(watermark);
+        const windows = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.maxTokens]
+            : [],
+        );
+        assert.deepEqual(windows, [null, 200_000]);
         const completed = harness.events.findLast(
           (event) => event.type === "provider_turn.updated",
         );
@@ -7424,6 +8140,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             outputTokens: 1,
             cachedInputTokens: 0,
             cacheCreationTokens: 0,
+            otherUsage: { inputTokens: 0, outputTokens: 0 },
           });
         }
       }).pipe(
@@ -9659,6 +10376,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: isFirstProcess
@@ -9856,6 +10577,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
@@ -12057,6 +12782,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 stopTask: () => Effect.void,
+                mcpServerStatus: Effect.die("unexpected MCP server status"),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 interrupt: Effect.void,
                 close:
                   closeSignal === undefined
@@ -14923,6 +15652,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -15097,6 +15830,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
@@ -15274,6 +16011,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -15469,6 +16210,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
@@ -15612,6 +16357,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),

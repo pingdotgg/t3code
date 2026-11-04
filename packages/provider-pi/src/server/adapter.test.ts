@@ -2328,7 +2328,10 @@ describe("PiAdapterV2", () => {
           if (event.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool")
             return yield* Effect.die("Expected a read image tool item");
           assert.deepEqual(event.turnItem.output, { content: imageContent, structuredContent });
-          assert.equal(turnItemOutputText(event.turnItem), note);
+          assert.equal(
+            turnItemOutputText(event.turnItem),
+            JSON.stringify(structuredContent, null, 2),
+          );
         }
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -2385,7 +2388,7 @@ describe("PiAdapterV2", () => {
           assert.equal(event.turnItem.toolName, tool.name);
           assert.equal(event.turnItem.status, "completed");
           assert.deepEqual(event.turnItem.output, { content, structuredContent: metadata });
-          assert.equal(turnItemOutputText(event.turnItem), "Screenshot captured");
+          assert.equal(turnItemOutputText(event.turnItem), JSON.stringify(metadata, null, 2));
           const image = toolOutputImages(event.turnItem.output)[0];
           assert.equal(image?.mimeType, "image/png");
           assert.deepEqual(Buffer.from(image!.data!, "base64"), pixels);
@@ -4736,5 +4739,37 @@ describe("PiRpc early process exit", () => {
       assert.isFalse(error.message.includes("API_KEY"));
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("PiRpc teardown", () => {
+  // Like pi, quits once stdin ends; it survives SIGTERM, so teardown's SIGKILL ends it otherwise.
+  const recordShutdownCues = `
+const fs = require("node:fs");
+const note = (cue) => fs.appendFileSync(process.argv[1], cue + "\\n");
+process.on("SIGTERM", () => note("SIGTERM"));
+process.stdin.on("end", () => note("stdin end")).resume();
+process.stdout.write('{"type":"ready"}\\n');
+`;
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "signals pi before its stdin reaches EOF",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cuesPath = `${yield* fileSystem.makeTempDirectoryScoped()}/cues`;
+        yield* Effect.gen(function* () {
+          const connection = yield* makePiRpcConnection({
+            command: process.execPath,
+            args: ["-e", recordShutdownCues, cuesPath],
+            cwd: undefined,
+            env: {},
+          });
+          assert.equal((yield* Queue.take(connection.events))["type"], "ready");
+        }).pipe(Effect.scoped);
+
+        const cues = (yield* fileSystem.readFileString(cuesPath)).split("\n").filter(Boolean);
+        assert.deepEqual(cues, ["SIGTERM"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

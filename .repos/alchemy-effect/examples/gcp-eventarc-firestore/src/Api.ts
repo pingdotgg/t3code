@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -39,10 +39,7 @@ export default class Api extends GCP.Function<Api>()(
             quantity?: number;
           };
           if (!body.item) {
-            return yield* HttpServerResponse.json(
-              { error: "item is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "item is required" }, { status: 400 });
           }
 
           const id = crypto.randomUUID();
@@ -58,10 +55,7 @@ export default class Api extends GCP.Function<Api>()(
           return yield* HttpServerResponse.json({ id }, { status: 201 });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
   }).pipe(Effect.provide(GCP.Firestore.WriteDatabaseHttp)),
