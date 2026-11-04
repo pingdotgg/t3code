@@ -21,14 +21,26 @@ type SpeechActions = {
   cancel(): void;
 };
 
+export type DictationKeyHandlers = {
+  keydown(event: KeyboardEvent): void;
+  keyup(event: KeyboardEvent): void;
+  blur(): void;
+};
+
 type ShortcutInput = {
   keybindings: ResolvedKeybindingsConfig;
   speech: SpeechActions;
   disabled: boolean;
   terminalOpen: boolean;
   modelPickerOpen: boolean;
+  /** Resolve the chord as if the preview had focus; the keys arrive relayed from its guest. */
+  previewFocus?: boolean;
   /** When set, the chord targets this editor only while it has focus. */
   targetRef?: RefObject<HTMLElement | null>;
+  /** An editor outside this document reports whether it holds the keyboard. */
+  ownsFocus?: () => boolean;
+  /** Receives handlers that replay keys an outside editor relayed, as if typed here. */
+  subscribeKeys?: (handlers: DictationKeyHandlers) => () => void;
 };
 
 // Several editors can bind the chord; the busy one, then the focused one, then the untargeted one wins.
@@ -41,15 +53,16 @@ function ownsShortcut(id: symbol) {
     return phase !== "idle" && phase !== "error";
   });
   if (busy) return busy[0] === id;
-  const focused = entries.find(([, read]) =>
-    read().targetRef?.current?.contains(document.activeElement),
-  );
+  const focused =
+    entries.find(([, read]) => read().ownsFocus?.()) ??
+    entries.find(([, read]) => read().targetRef?.current?.contains(document.activeElement));
   if (focused) return focused[0] === id;
-  return entries.find(([, read]) => !read().targetRef)?.[0] === id;
+  return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }
 
 export function useDictationShortcut(input: ShortcutInput) {
   const id = useRef(Symbol("dictation-target"));
+  const subscribeKeys = input.subscribeKeys;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
   const current = useRef(input);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed actions to the window keyboard listener and shortcut registry
@@ -100,11 +113,15 @@ export function useDictationShortcut(input: ShortcutInput) {
         return;
       }
       const { keybindings, terminalOpen, modelPickerOpen, disabled } = current.current;
+      const previewFocus = current.current.previewFocus ?? false;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
           terminalOpen,
           modelPickerOpen,
+          previewFocus,
+          previewOpen: previewFocus,
+          ...(previewFocus ? { editableFocus: true } : {}),
         },
       });
       if (command !== "composer.dictation") return;
@@ -129,6 +146,11 @@ export function useDictationShortcut(input: ShortcutInput) {
       };
     };
     const onBlur = () => finish(null);
+    const unsubscribe = subscribeKeys?.({
+      keydown: (event) => window.dispatchEvent(event),
+      keyup: (event) => window.dispatchEvent(event),
+      blur: onBlur,
+    });
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", finish, true);
     window.addEventListener("blur", onBlur);
@@ -136,11 +158,12 @@ export function useDictationShortcut(input: ShortcutInput) {
       disposed = true;
       pressed.current = null;
       shortcutTargets.delete(id.current);
+      unsubscribe?.();
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", finish, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [mode]);
+  }, [mode, subscribeKeys]);
 
   return shortcutLabelForCommand(input.keybindings, "composer.dictation", {
     context: { terminalFocus: false, terminalOpen: input.terminalOpen },
