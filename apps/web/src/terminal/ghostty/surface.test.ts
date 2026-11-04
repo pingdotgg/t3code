@@ -537,6 +537,85 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkActivate).not.toHaveBeenCalled();
   });
 
+  it.each(["missing", "file", "replaced", "superseded", "hidden", "dragged"])(
+    "validates a quick click without waiting for hover: %s",
+    async (scenario) => {
+      const harness = createHarness();
+      let resolveValidation!: (exists: boolean) => void;
+      const validation = new Promise<boolean>((resolve) => {
+        resolveValidation = resolve;
+      });
+      const validateLink = vi.fn(() => validation);
+      const onLinkActivate = vi.fn();
+      const surface = await harness.create({
+        canActivateLink: () => false,
+        validateLink,
+        onLinkActivate,
+      });
+      surface.write("src/main.ts");
+      harness.flushFrame();
+      harness.pointer("pointerdown", 5, 1);
+      expect(validateLink).toHaveBeenCalledWith("src/main.ts");
+      if (scenario === "dragged") harness.pointer("pointermove", 45, 1);
+      harness.pointer("pointerup", 5, 0);
+      expect(onLinkActivate).not.toHaveBeenCalled();
+      if (scenario === "replaced") {
+        surface.write("\r\x1b[2Ksrc/other.ts");
+        harness.flushFrame();
+      }
+      if (scenario === "superseded") harness.pointer("pointerdown", 5, 1);
+      if (scenario === "hidden") {
+        surface.setVisible(false);
+        surface.setVisible(true);
+      }
+      resolveValidation(scenario !== "missing");
+      await validation;
+      expect(onLinkActivate).toHaveBeenCalledTimes(scenario === "file" ? 1 : 0);
+    },
+  );
+
+  it("only requests validation for a stable visible link under the pointer", async () => {
+    const harness = createHarness();
+    const onLinkHover = vi.fn();
+    const surface = await harness.create({ onLinkHover, canActivateLink: () => false });
+    surface.write("\x1b[?1049h\x1b[Hsrc/first.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    expect(onLinkHover).not.toHaveBeenCalled();
+
+    harness.pointer("pointermove", 5, 0);
+    for (let index = 0; index < 100; index++) {
+      surface.write(`\r\x1b[2Ksrc/file-${index}.ts`);
+      harness.flushFrame();
+      vi.advanceTimersByTime(10);
+    }
+    vi.advanceTimersByTime(239);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    harness.flushFrame();
+    vi.advanceTimersByTime(1_000);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([["src/file-99.ts"]]);
+    onLinkHover.mockClear();
+
+    for (const cancel of [
+      () => {
+        surface.write("\r\x1b[2Kplain text");
+        harness.flushFrame();
+      },
+      () => harness.pointer("pointerleave", 5, 0),
+      () => surface.setVisible(false),
+      () => surface.dispose(),
+    ]) {
+      surface.setVisible(true);
+      surface.write("\r\x1b[2Ksrc/next.ts");
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0);
+      cancel();
+      vi.advanceTimersByTime(250);
+      expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    }
+  });
+
   it.each([false, true])(
     "uses visibility %s if it changes while WASM initializes",
     async (visible) => {

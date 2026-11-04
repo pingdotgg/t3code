@@ -35,6 +35,7 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
+const TERMINAL_LINK_HOVER_DELAY_MS = 250;
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
@@ -525,6 +526,9 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
+  readonly validateLink?: (text: string) => Promise<boolean>;
+  /** Reports a candidate after 250 ms under the pointer, or null when it changes or leaves. */
+  readonly onLinkHover?: (text: string | null) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
@@ -585,6 +589,8 @@ export class GhosttyTerminalSurface {
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
   private linkActivationLink: TerminalLinkWithRange | null = null;
+  private linkActivationValidation: Promise<boolean> | undefined;
+  private linkActivationRequestId = 0;
   private linkActivationOrigin: {
     x: number;
     y: number;
@@ -592,6 +598,8 @@ export class GhosttyTerminalSurface {
   } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
+  private linkHoverText: string | null = null;
+  private linkHoverTimer: number | null = null;
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
@@ -740,6 +748,8 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     if (!visible) {
+      this.linkActivationRequestId += 1;
+      this.clearHoveredLink();
       this.cancelRender();
       this.setSelectionAutoscroll(0);
       return;
@@ -1061,6 +1071,7 @@ export class GhosttyTerminalSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearHoveredLink();
     this.stopObservingResize();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
@@ -1344,6 +1355,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
+    this.linkActivationRequestId += 1;
     if (event.pointerType === "touch") {
       event.preventDefault();
       if (!event.isPrimary || this.touchScroll !== null) return;
@@ -1379,12 +1391,13 @@ export class GhosttyTerminalSurface {
     }
     if (event.button !== 0) return;
     const clickCount = this.recordSelectionClick(event);
-    const link = this.linkAt(event.clientX, event.clientY);
+    const link = this.linkAt(event.clientX, event.clientY, true);
     if (link && !event.shiftKey && clickCount === 1) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;
       this.linkActivationLink = link;
+      this.linkActivationValidation = this.validateLink(link.text);
       this.linkActivationOrigin = {
         x: event.clientX,
         y: event.clientY,
@@ -1470,6 +1483,7 @@ export class GhosttyTerminalSurface {
       }
       this.linkActivationPointerId = null;
       this.linkActivationLink = null;
+      this.linkActivationValidation = undefined;
       this.linkActivationOrigin = null;
       this.clearHoveredLink();
       this.beginSelection(
@@ -1577,14 +1591,32 @@ export class GhosttyTerminalSurface {
 
   private clearHoveredLink(cursor = ""): void {
     this.hoverPointer = null;
+    this.updateLinkHover(null);
     this.setHoveredLink(null);
     this.canvas.style.cursor = cursor;
   }
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
-    this.setHoveredLink(link);
+    const link = pointer ? this.findLinkAt(pointer.x, pointer.y) : null;
+    this.updateLinkHover(link?.text ?? null);
+    this.setHoveredLink(link && this.options.canActivateLink?.(link.text) !== false ? link : null);
+  }
+
+  private updateLinkHover(text: string | null): void {
+    if (!this.options.onLinkHover || text === this.linkHoverText) return;
+    this.linkHoverText = text;
+    if (this.linkHoverTimer !== null) {
+      window.clearTimeout(this.linkHoverTimer);
+      this.linkHoverTimer = null;
+    }
+    this.options.onLinkHover(null);
+    if (text !== null) {
+      this.linkHoverTimer = window.setTimeout(() => {
+        this.linkHoverTimer = null;
+        this.options.onLinkHover?.(text);
+      }, TERMINAL_LINK_HOVER_DELAY_MS);
+    }
   }
 
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
@@ -1617,8 +1649,8 @@ export class GhosttyTerminalSurface {
         this.sendMouse("press", ghosttyMouseButton(0), event);
         this.sendMouse("release", ghosttyMouseButton(0), event);
       } else {
-        const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link.text, event);
+        const link = this.linkAt(event.clientX, event.clientY, true);
+        if (link) this.activateLink(link, event);
         else this.clearSelection();
       }
       return;
@@ -1628,15 +1660,17 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       event.stopPropagation();
       const link = this.linkActivationLink;
+      const validation = this.linkActivationValidation;
       this.linkActivationPointerId = null;
       this.linkActivationLink = null;
+      this.linkActivationValidation = undefined;
       this.linkActivationOrigin = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
       if (event.type !== "pointercancel") {
-        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY))) {
-          this.options.onLinkActivate(link.text, event);
+        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY, true))) {
+          this.activateLink(link, event, validation);
         }
       }
       return;
@@ -2080,9 +2114,50 @@ export class GhosttyTerminalSurface {
     };
   }
 
-  private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+  private validateLink(text: string): Promise<boolean> | undefined {
+    if (this.options.canActivateLink?.(text) !== false) return;
+    const validation = this.options.validateLink?.(text);
+    // A drag can abandon the press before activateLink subscribes to its result.
+    void validation?.catch(() => {});
+    return validation;
+  }
+
+  private activateLink(
+    link: TerminalLinkWithRange,
+    event: MouseEvent,
+    validation = this.validateLink(link.text),
+  ): void {
+    if (!validation) {
+      this.options.onLinkActivate(link.text, event);
+      return;
+    }
+    const requestId = this.linkActivationRequestId;
+    void validation.then(
+      (valid) => {
+        if (
+          valid &&
+          !this.disposed &&
+          this.visible &&
+          requestId === this.linkActivationRequestId &&
+          isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
+        )
+          this.options.onLinkActivate(link.text, event);
+      },
+      () => {},
+    );
+  }
+
+  private linkAt(
+    clientX: number,
+    clientY: number,
+    allowValidation = false,
+  ): TerminalLinkWithRange | null {
     const link = this.findLinkAt(clientX, clientY);
-    return link && this.options.canActivateLink?.(link.text) !== false ? link : null;
+    return link &&
+      ((allowValidation && this.options.validateLink) ||
+        this.options.canActivateLink?.(link.text) !== false)
+      ? link
+      : null;
   }
 
   private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
