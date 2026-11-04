@@ -54,6 +54,7 @@ import {
   browserApiCorsAllowedMethods,
   DESKTOP_RENDERER_ORIGINS,
 } from "./httpCors.ts";
+import { requestUrl } from "./requestUrl.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -391,8 +392,13 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Webhook URLs carry their secret token in the path, so they never reach a trace.
-  return UNTRACED_REQUEST_PATHS.has(path) || path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`);
+  // Signed URLs carry bearer tokens in the path, so they never reach a trace.
+  return (
+    UNTRACED_REQUEST_PATHS.has(path) ||
+    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
+    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
+    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
+  );
 });
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
@@ -402,7 +408,7 @@ export const layerAssetRoute = HttpRouter.add(
   `${ASSET_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
@@ -460,7 +466,7 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
   `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
@@ -561,7 +567,7 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
 
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });

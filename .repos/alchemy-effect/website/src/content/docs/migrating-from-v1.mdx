@@ -3,6 +3,10 @@ title: Migrating from v1
 description: Migrate your Alchemy v1 (async/await) project to Alchemy v2.
 ---
 
+import PackageManagers from "../../components/PackageManagers.astro";
+
+export const pkgs = `alchemy@latest @alchemy.run/cloudflare@latest effect @effect/platform-bun @effect/platform-node`;
+
 Alchemy v1 uses `async/await` with top-level `await` for
 orchestration. Alchemy v2 replaces this with Effect generators for
 type-safe error handling, composable retries, and declarative
@@ -11,6 +15,13 @@ resource wiring. The v1 documentation lives at
 
 Your existing `async fetch` handlers **do not need to change** — you
 can keep them as-is and still get all the benefits of the new engine.
+
+## Install v2
+
+Each cloud provider is its own package in v2. Upgrade `alchemy` and add
+the provider you deploy to, here `@alchemy.run/cloudflare`:
+
+<PackageManagers add={pkgs} />
 
 ## Step 1: Replace the Stack
 
@@ -41,7 +52,7 @@ of `await`:
 ```typescript
 // v2 — alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export const Bucket = Cloudflare.R2.Bucket("Bucket");
@@ -206,7 +217,7 @@ resources in the Worker's Construction phase using `yield*`:
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -244,7 +255,7 @@ Stack just `yield*`-s the imported Worker:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import Worker from "./src/worker.ts";
 +import { Bucket } from "./src/bucket.ts";

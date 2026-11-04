@@ -363,6 +363,10 @@ fn exports_exact_window_over_real_fd_transport() {
     let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
     reader.next_frame(&mut pixels).unwrap();
     assert_eq!(pixels, [10, 20, 30, 255, 40, 50, 60, 255]);
+    let png = std::fs::read(directory.path().join("capture.png")).unwrap();
+    let idat = png.windows(4).position(|tag| tag == b"IDAT").unwrap();
+    // zlib FLEVEL 1 selects levels 2-5; the slow default level 6 reports 2.
+    assert_eq!(png[idat + 5] >> 6, 1);
 }
 #[test]
 fn failed_export_produces_no_image_and_no_second_capture() {

@@ -998,6 +998,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
             case "missing": {
               yield* setDeleted();
+              // A 404 also means "not created yet". Only a delete event may outlive this mount.
+              if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
               return yield* Effect.never;
             }
             case "unavailable": {
@@ -1111,3 +1113,4 @@ export * from "./threadFamilies.ts";
 export * from "./olderSettledThreads.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
+export * from "./threadTagFilter.ts";
