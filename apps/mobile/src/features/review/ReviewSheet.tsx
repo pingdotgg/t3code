@@ -28,7 +28,6 @@ import { NativeInspectorContent } from "../../native/NativeInspectorContent";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { cn } from "../../lib/cn";
 import { environmentCatalog } from "../../connection/catalog";
@@ -398,7 +397,9 @@ function ReviewFileNavigator({
       }
     >
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
+          sidebar={false}
           title="Changed files"
           subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
           hideBottomBorder

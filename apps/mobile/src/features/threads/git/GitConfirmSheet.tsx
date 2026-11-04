@@ -9,7 +9,7 @@ import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text } from "../../../components/ui/AppText";
@@ -130,7 +130,9 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         />
       ) : null}
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader
+        <AppBar
+          sheet
+          sidebar={false}
           title="Confirm action"
           onBack={() => navigation.goBack()}
           hideBottomBorder

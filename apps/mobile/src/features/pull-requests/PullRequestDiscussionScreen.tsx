@@ -14,7 +14,7 @@ import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-co
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -140,7 +140,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
           options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}
         />
         {Platform.OS === "android" ? (
-          <AndroidScreenHeader
+          <AppBar
+            embedded
+            sidebar={false}
             title="Discussion"
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}

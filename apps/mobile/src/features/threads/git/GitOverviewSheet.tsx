@@ -23,10 +23,8 @@ import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeInspectorContent } from "../../../native/NativeInspectorContent";
 import { NativeHeader, NativeScreen } from "../../../native/ThemedScreenStack";
-import {
-  AndroidHeaderIconButton,
-  AndroidSheetHeader,
-} from "../../../components/ui/AndroidScreenHeader";
+import { AndroidHeaderIconButton } from "../../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../../components/ui/AppBar";
 import { AndroidAnchoredMenu } from "../../../components/ui/AndroidAnchoredMenu";
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
@@ -467,7 +465,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           </Text>
         </View>
       ) : (
-        <AndroidSheetHeader
+        <AppBar
+          sheet
+          sidebar={false}
           title={currentBranchLabel}
           hideBottomBorder={Platform.OS === "android"}
           subtitle={currentStatusSummary}
