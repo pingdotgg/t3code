@@ -50,6 +50,7 @@ import {
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -490,9 +491,7 @@ function codexMcpToolOutput(
   const resultOutput =
     item.result === null || item.result === undefined
       ? undefined
-      : item.result.structuredContent !== null && item.result.structuredContent !== undefined
-        ? item.result.structuredContent
-        : item.result.content;
+      : mcpToolResultOutput(item.result);
 
   if (item.error === null || item.error === undefined) {
     return resultOutput;

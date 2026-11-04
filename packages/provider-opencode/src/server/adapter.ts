@@ -80,7 +80,7 @@ import {
   makeSubagentChildThread,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
-import { openCodeCommandFailed, openCodeToolTurnItem } from "./toolItems.ts";
+import { openCodeCommandFailed, openCodeToolOutput, openCodeToolTurnItem } from "./toolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
@@ -1605,6 +1605,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   toolName: part.tool.slice(serverName.replace(/[^a-zA-Z0-9_-]/g, "_").length + 1),
                   title: toolTitle(part) === part.tool ? undefined : toolTitle(part),
                 });
+          const files =
+            part.state.status === "completed"
+              ? part.state.attachments?.map((file) => ({ uri: file.url, mime: file.mime }))
+              : undefined;
           const turnItem: OrchestrationV2TurnItem = matchingServers?.length
             ? {
                 ...base,
@@ -1612,12 +1616,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ...presentation,
                 toolName: part.tool,
                 input,
-                ...(output === undefined ? {} : { output }),
+                ...(output === undefined && !files?.length
+                  ? {}
+                  : { output: openCodeToolOutput(output, files) }),
               }
             : openCodeToolTurnItem(base, {
                 name: part.tool,
                 input,
                 output,
+                files,
                 completedMetadata:
                   part.state.status === "completed" ? part.state.metadata : undefined,
               });
