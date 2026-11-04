@@ -7713,7 +7713,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 );
               }).pipe(
-                Effect.onError(() => finalizeRemainingInterruptLineage),
+                Effect.onError((cause) =>
+                  Cause.hasInterruptsOnly(cause) ? Effect.void : finalizeRemainingInterruptLineage,
+                ),
                 Effect.ensuring(cleanupInterruptState),
               );
             },

@@ -1720,8 +1720,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
+  it.effect.each([false, true])("waits for native start before Stop (cancelled: %s)", (cancelled) =>
     Effect.gen(function* () {
+      const interruptAwaitingResponse = yield* Deferred.make<void>();
+      const releaseInterrupt = yield* Deferred.make<void>();
       const nativeThreadId = "early-stop-thread";
       const nativeTurnId = "early-stop-turn";
       const prompt = "Run a command.";
@@ -1772,7 +1774,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               method: "turn/completed",
               params: {
                 threadId: nativeThreadId,
-                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                turn: makeCodexReplayTurn({
+                  id: nativeTurnId,
+                  status: cancelled ? "completed" : "interrupted",
+                }),
               },
             },
           },
@@ -1786,6 +1791,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           Effect.sync(() => {
             if (method === "turn/interrupt") interruptSent = true;
           }),
+        undefined,
+        (entry) =>
+          cancelled && entry.label === "turn/interrupt"
+            ? Deferred.succeed(interruptAwaitingResponse, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseInterrupt)),
+              )
+            : Effect.void,
       );
       yield* harness.runtime.startTurn(
         makeCodexTestTurnInput({
@@ -1806,9 +1818,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* TestClock.adjust("500 millis");
       assert.isFalse(interruptSent, "Stop must not reach Codex before native turn/started");
       yield* TestClock.adjust("500 millis");
-      yield* Fiber.join(interrupt);
+      if (cancelled) {
+        yield* Deferred.await(interruptAwaitingResponse);
+        yield* Fiber.interrupt(interrupt);
+        yield* Deferred.succeed(releaseInterrupt, undefined);
+      } else {
+        yield* Fiber.join(interrupt);
+      }
       yield* harness.firstTerminal;
-      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.equal(harness.terminalEvents()[0]?.status, cancelled ? "completed" : "interrupted");
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
     }).pipe(
