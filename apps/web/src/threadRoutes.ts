@@ -21,7 +21,7 @@ type DraftThreadRouteState = {
   promotedTo?: ScopedThreadRef | null;
 };
 
-export type ThreadRouteRenderState = "loading" | "ready" | "missing";
+export type ThreadRouteRenderState = "loading" | "ready" | "missing" | "error";
 
 export function isThreadRouteSnapshotAuthoritative(
   status: EnvironmentShellStatus | null | undefined,
@@ -39,14 +39,24 @@ export function resolveThreadRouteRenderState(input: {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
     return "ready";
   }
+  const detail = input.unlistedThreadDetail;
+  const projection = Option.getOrNull(detail.data);
+  if (
+    !input.serverThreadExists &&
+    projection === null &&
+    detail.status !== "synchronizing" &&
+    detail.status !== "deleted" &&
+    Option.isSome(detail.error)
+  ) {
+    return "error";
+  }
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
+  if (input.serverThreadExists || detail.status === "deleted") {
     return "missing";
   }
   // Shell membership can lag a new thread; its detail decides.
-  const projection = Option.getOrNull(input.unlistedThreadDetail.data);
   if (projection === null) {
     return "loading";
   }

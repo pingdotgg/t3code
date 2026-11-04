@@ -3,12 +3,14 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
-import { Navigate, useNavigate } from "@tanstack/react-router";
+import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
+import { Button } from "./ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
@@ -17,7 +19,11 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import { useEnvironmentShellStatus } from "../state/shell";
-import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
+import {
+  environmentThreadShells,
+  retryEnvironmentThread,
+  useEnvironmentThread,
+} from "../state/threads";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
@@ -189,6 +195,29 @@ export function ThreadRouteView({
     }
   } else if (hiddenByTagFilter) {
     redirect = <Navigate to="/" replace />;
+  } else if (renderState === "error") {
+    view = (
+      <Empty role="alert">
+        <EmptyHeader>
+          <EmptyTitle>Could not load thread</EmptyTitle>
+          <EmptyDescription>{Option.getOrNull(unlistedThreadDetail.error)}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => retryEnvironmentThread(target.threadRef)}
+            >
+              Retry
+            </Button>
+            <Button variant="ghost" size="sm" render={<Link to="/" />}>
+              Back to threads
+            </Button>
+          </div>
+        </EmptyContent>
+      </Empty>
+    );
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell.
     if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;

@@ -126,6 +126,23 @@ describe("threadRoutes", () => {
         },
       }),
     ).toBe("loading");
+    const failedDetail = {
+      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+      error: Option.some("Connection interrupted"),
+    };
+    expect(
+      resolveThreadRouteRenderState({
+        ...route,
+        unlistedThreadDetail: failedDetail,
+      }),
+    ).toBe("error");
+    expect(
+      resolveThreadRouteRenderState({
+        ...route,
+        bootstrapComplete: false,
+        unlistedThreadDetail: failedDetail,
+      }),
+    ).toBe("error");
     expect(
       resolveThreadRouteRenderState({
         ...route,
