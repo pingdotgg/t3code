@@ -15,6 +15,22 @@ const decodeServiceConfig = Schema.decodeUnknownOption(
   ),
 );
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const WILDCARD_HOSTS = new Set(["0.0.0.0", "[::]"]);
+
+function isRegisteredService(registeredUrl: string, serverUrl: string): boolean {
+  const registered = URL.parse(registeredUrl);
+  const configured = URL.parse(serverUrl);
+  if (registered === null || configured === null || registered.port !== configured.port) {
+    return false;
+  }
+  return (
+    registered.hostname === configured.hostname ||
+    (LOOPBACK_HOSTS.has(configured.hostname) &&
+      (LOOPBACK_HOSTS.has(registered.hostname) || WILDCARD_HOSTS.has(registered.hostname)))
+  );
+}
+
 /**
  * Replaces the way the TUI does on a version mismatch, which hands persistent terminals to the new
  * process. `opencode service restart` shuts them down instead.
@@ -36,8 +52,10 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
       "opencode",
       "service.json",
     );
-    // The configured URL may be another machine's server, which this install must leave alone.
-    if ((yield* Service.incumbent({ file, url: input.serverUrl })) === undefined) return;
+    // `Service.incumbent` would send the local service's password to the configured URL, which may
+    // be another machine. `discover` only contacts the address in the local registration.
+    const service = yield* Service.discover({ file });
+    if (service === undefined || !isRegisteredService(service.url, input.serverUrl)) return;
 
     // Configured variables below can change PATH, which a bare name would then resolve against.
     const executable = yield* resolveCommandPath(input.binaryPath, { env: input.environment });

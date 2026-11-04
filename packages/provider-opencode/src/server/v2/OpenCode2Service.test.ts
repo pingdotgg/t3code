@@ -8,7 +8,7 @@ import { expect, vi } from "vite-plus/test";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { replaceOutdatedService } from "./OpenCode2Service.ts";
 
-const service = vi.hoisted(() => ({ incumbent: vi.fn(), ensure: vi.fn() }));
+const service = vi.hoisted(() => ({ discover: vi.fn(), ensure: vi.fn() }));
 vi.mock("@opencode/client/effect/service", () => ({ Service: service }));
 
 const runtimeWithBinaryVersion = (stdout: string) =>
@@ -32,26 +32,31 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
         JSON.stringify({ env: { PATH: "/nowhere", XDG_STATE_HOME: "/elsewhere" } }),
       );
       const file = path.join(home, ".local", "state", "opencode", "service.json");
-      const run = (binary: string) =>
+      const run = (binary: string, serverUrl = "http://127.0.0.1:49374") =>
         replaceOutdatedService({
           binaryPath: "opencode",
-          serverUrl: "http://127.0.0.1:49374",
+          serverUrl,
           environment,
         }).pipe(
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtimeWithBinaryVersion(binary)),
         );
       service.ensure.mockReturnValue(Effect.void);
 
-      service.incumbent.mockReturnValue(Effect.succeed({ state: "ready" }));
+      service.discover.mockReturnValue(Effect.succeed({ url: "http://0.0.0.0:49374" }));
       yield* run("opencode v1.18.32");
-      expect(service.incumbent).not.toHaveBeenCalled();
+      expect(service.discover).not.toHaveBeenCalled();
 
-      service.incumbent.mockReturnValue(Effect.undefined);
-      yield* run("opencode v2.2.5");
-      expect(service.incumbent).toHaveBeenCalledWith({ file, url: "http://127.0.0.1:49374" });
+      for (const elsewhere of ["http://192.168.1.5:49374", "http://127.0.0.1:49999"]) {
+        yield* run("opencode v2.2.5", elsewhere);
+      }
+      expect(service.discover).toHaveBeenCalledWith({ file });
       expect(service.ensure).not.toHaveBeenCalled();
 
-      service.incumbent.mockReturnValue(Effect.succeed({ state: "ready" }));
+      service.discover.mockReturnValue(Effect.undefined);
+      yield* run("opencode v2.2.5");
+      expect(service.ensure).not.toHaveBeenCalled();
+
+      service.discover.mockReturnValue(Effect.succeed({ url: "http://0.0.0.0:49374" }));
       yield* run("opencode v2.2.5");
       expect(service.ensure).toHaveBeenCalledWith({
         file,
