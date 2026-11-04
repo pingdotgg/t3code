@@ -1989,8 +1989,8 @@ export function AboutSettingsPanel() {
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How we handle your data, including the anonymous usage data T3 Code collects."
-              : `How we handle your data. ${telemetryOff}`
+              ? "How T3 Code handles your data. By default, T3 Learn sends no usage data to its analytics."
+              : `How T3 Code handles your data. ${telemetryOff}`
           }
           control={
             <Button
