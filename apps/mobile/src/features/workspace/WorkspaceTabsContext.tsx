@@ -88,10 +88,20 @@ export function WorkspaceTabsProvider(props: {
 }) {
   const registry = use(RegistryContext);
   const [model] = useState(createWorkspaceTabsModel);
-  const state = useAtomValue(model.resolved);
+  const stored = useAtomValue(model.resolved);
+  const preferences = useAtomValue(mobilePreferencesAtom);
   const detailKey = props.routes?.[1]?.key;
   const detailTab = workspaceDetailTab(props.routes ?? []);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Links select a page in the router, past the row handler that selects its tab; this keeps the tab in step before paint.
+  // A link commits its page with no row handler; the tab must match in that render, or a
+  // retained native slot freezes the page under the old tab.
+  const linked =
+    detailTab &&
+    resolveWorkspaceTabsSelection(
+      workspaceTabsReducer(stored, { type: "select", tab: detailTab }),
+      preferences,
+    );
+  const state = linked && linked.selectedTab !== stored.selectedTab ? linked : stored;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persists a linked page's tab so it stays selected after Back.
   useLayoutEffect(() => {
     if (detailKey === undefined || !detailTab) return;
     registry.set(
@@ -103,7 +113,11 @@ export function WorkspaceTabsProvider(props: {
     state,
     dispatch: (action: WorkspaceTabsAction) =>
       registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
-    isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
+    // Until the effect above persists this render's tab, the registry still holds `stored`.
+    isTabActive: (tab: WorkspaceTab) => {
+      const live = registry.get(model.resolved);
+      return (live === stored ? state : live).selectedTab === tab;
+    },
     bottomClearance: 0,
     settingsOpen: props.settingsOpen ?? false,
     getScrollOffset: model.getScrollOffset,
