@@ -87,6 +87,7 @@ const makeNodeSampler = Effect.gen(function* () {
 
   return Effect.sync(() => {
     const nextCpu = readCpu(platform);
+    const busy = cpu === null || nextCpu === null ? null : cpuBusyBetween(cpu, nextCpu);
     const cpuCount = NodeOS.availableParallelism();
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
@@ -113,8 +114,8 @@ const makeNodeSampler = Effect.gen(function* () {
       // Host-wide busy time says nothing about the cores an affinity mask or quota leaves us,
       // and a load average without disk wait leaves idle cores with no other cause to name.
       cpuBusy:
-        loadAverageCountsDiskWait(platform) && nextCpu.count === cpuCount
-          ? (cpuBusyBetween(cpu, nextCpu) ?? undefined)
+        loadAverageCountsDiskWait(platform) && nextCpu?.count === cpuCount
+          ? (busy ?? undefined)
           : undefined,
       cpuCount,
     };
