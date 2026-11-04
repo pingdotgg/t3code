@@ -106,6 +106,7 @@ import {
 import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
+import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -128,7 +129,16 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useAnyEnvironmentHiding,
+  useHiddenThreadKeys,
+  useEnvironmentThreadRefs,
+  useProjects,
+  useServerConfigs,
+  useVisibleThreadShells,
+  waitForProject,
+} from "../state/entities";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -203,6 +213,7 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
@@ -398,6 +409,11 @@ function OpenCommandPaletteDialog(props: {
       },
   );
   const linkedThreadSearch = initialSearch.linkedThreadSearch;
+  // Rows were captured when the palette opened; drop any hidden since then.
+  const hiddenKeys = useHiddenThreadKeys();
+  const linkedEnvironmentId = linkedThreadSearch?.linkedThreads?.environmentId ?? null;
+  const hidingAnywhere = useAnyEnvironmentHiding();
+  const linkedThreadRefs = useEnvironmentThreadRefs(linkedEnvironmentId);
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent);
     return view
@@ -474,12 +490,14 @@ function OpenCommandPaletteDialog(props: {
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
+          hostedAppUrl: configuredHostedAppUrl(),
         });
   const copyActiveThreadReference = async () => {
     if (activeThreadReferenceCopyTarget === null) return;
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  const threads = useThreadShells();
+  // Side chats and subagents open inside their parent, so opening a project never lands on one.
+  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -1717,6 +1735,13 @@ function OpenCommandPaletteDialog(props: {
       isLinkedThreadSearch && linkedThreadSearch?.linkedThreads
         ? buildLinkedThreadActionItems({
             ...linkedThreadSearch.linkedThreads,
+            threads: visibleLinkedThreads(
+              linkedThreadSearch.linkedThreads.threads,
+              linkedThreadSearch.linkedThreads.environmentId,
+              linkedThreadRefs,
+              hiddenKeys,
+              hidingAnywhere,
+            ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
             runThread: async (thread) => {
