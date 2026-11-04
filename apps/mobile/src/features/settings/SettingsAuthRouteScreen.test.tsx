@@ -35,7 +35,7 @@ vi.mock("@clerk/expo", () => ({
   getClerkInstance: () => harness.clerk,
 }));
 vi.mock("@clerk/expo/native-components", () => ({
-  AuthView: () => null,
+  AuthView: () => <span>sign-in form</span>,
   UserProfileView: () => null,
 }));
 vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => true }));
@@ -54,9 +54,10 @@ function client(sessions: readonly FakeSession[]): FakeClient {
   return self;
 }
 
-function setup(refreshed: FakeClient) {
+function setup(refreshed: FakeClient | Promise<FakeClient>) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const stale = { ...client([]), fetch: async () => refreshed, reload: async () => refreshed };
+  const refresh = async () => refreshed;
+  const stale = { ...client([]), fetch: refresh, reload: refresh };
   harness.clerk = {
     client: stale,
     session: null,
@@ -65,16 +66,17 @@ function setup(refreshed: FakeClient) {
     },
     setActive: vi.fn(async () => {}),
   };
-  const root = createRoot(document.createElement("div"));
+  const container = document.createElement("div");
+  const root = createRoot(container);
   act(() => root.render(<SettingsAuthRouteScreen />));
-  return root;
+  return { container, [Symbol.dispose]: () => act(() => root.unmount()) };
 }
 
 it("adopts the session the native-backed client already holds instead of offering a doomed sign-in", async () => {
   const nativeSession = { id: "sess_native", status: "active" };
   // The JS client is stale and signed out; refreshing it from the shared device
   // token returns the session native Clerk reports as `session_exists`.
-  const root = setup(client([nativeSession]));
+  using _screen = setup(client([nativeSession]));
 
   await vi.waitFor(() => {
     const activated = harness.clerk.setActive.mock.calls.map(([params]) => {
@@ -83,16 +85,25 @@ it("adopts the session the native-backed client already holds instead of offerin
     });
     expect(activated, "the native session was never activated in JS").toContain("sess_native");
   });
-
-  act(() => root.unmount());
 });
 
 it("leaves a truly signed-out user on the sign-in form", async () => {
   const refreshed = client([]);
-  const root = setup(refreshed);
+  using screen = setup(refreshed);
 
-  await vi.waitFor(() => expect(harness.clerk.client).toBe(refreshed));
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("sign-in form"));
+  expect(harness.clerk.client).toBe(refreshed);
   expect(harness.clerk.setActive).not.toHaveBeenCalled();
+});
 
-  act(() => root.unmount());
+it("does not offer the sign-in form until the client refresh settles", async () => {
+  // A native sign-in during a slow refresh would be wiped when the stale response lands.
+  const { promise, resolve } = Promise.withResolvers<FakeClient>();
+  using screen = setup(promise);
+
+  expect(screen.container.textContent).not.toContain("sign-in form");
+
+  await act(async () => resolve(client([])));
+  expect(screen.container.textContent).toContain("sign-in form");
+  expect(harness.clerk.setActive).not.toHaveBeenCalled();
 });

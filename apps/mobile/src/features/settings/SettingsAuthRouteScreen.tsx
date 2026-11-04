@@ -34,14 +34,18 @@ function ConfiguredSettingsAuthRouteScreen() {
   // flashing the sign-in form.
   const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
   if (isSignedIn && !hasBeenSignedIn) setHasBeenSignedIn(true);
+  // AuthView waits for the refresh: a stale response landing after a native sign-in would wipe it.
+  const [isRefreshingClient, setIsRefreshingClient] = useState(isSignedIn !== true);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes Clerk's JS client from the native device token once, so a session native Clerk already holds is adopted instead of AuthView failing with session_exists
   useEffect(() => {
-    if (!isLoaded || hasBeenSignedIn) return;
-    adoptNativeClerkSession().catch((error: unknown) => {
-      console.warn("[clerk] could not refresh the client from the native session", error);
-    });
-  }, [isLoaded, hasBeenSignedIn]);
+    if (!isLoaded || hasBeenSignedIn || !isRefreshingClient) return;
+    adoptNativeClerkSession()
+      .catch((error: unknown) => {
+        console.warn("[clerk] could not refresh the client from the native session", error);
+      })
+      .finally(() => setIsRefreshingClient(false));
+  }, [isLoaded, hasBeenSignedIn, isRefreshingClient]);
 
   // Clerk reports sign-out only through its auth store (the native profile view
   // and the T3 Connect page can both sign out), so this follows that store.
@@ -61,7 +65,7 @@ function ConfiguredSettingsAuthRouteScreen() {
             isDismissible={false}
             onHostBack={handleHostBack}
           />
-        ) : (
+        ) : isRefreshingClient ? null : (
           <AuthView isDismissible={false} onHostBack={handleHostBack} />
         )
       ) : null}
