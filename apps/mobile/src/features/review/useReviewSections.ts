@@ -184,7 +184,7 @@ export function useReviewSections(input: {
     isSelectedSectionPending:
       selectedSection?.kind === "turn"
         ? activeTurnDiff.isPending
-        : ((selectedGitPreview?.isPending || selectedGitPreview?.data?.incomplete) ?? false),
+        : (selectedGitPreview?.isPending ?? false),
     reviewSections,
     selectedSection,
     refreshSelectedSection,
@@ -194,12 +194,8 @@ export function useReviewSections(input: {
 
 function gitSectionState(
   isFileAccessPending: boolean,
-  preview: {
-    readonly isPending: boolean;
-    readonly error: string | null;
-    readonly data: { readonly incomplete?: boolean } | null;
-  },
+  preview: { readonly isPending: boolean; readonly error: string | null },
 ) {
-  if (isFileAccessPending || preview.isPending || preview.data?.incomplete) return "loading";
+  if (isFileAccessPending || preview.isPending) return "loading";
   return preview.error === null ? null : "failed";
 }
