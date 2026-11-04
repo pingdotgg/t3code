@@ -33,6 +33,8 @@ const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.sourceControlSignInWait,
+  // This operation owns its running state in the source-control panel.
+  WS_METHODS.gitStartCommitWorkflow,
 ]);
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.gitRewriteCommitMessages,
