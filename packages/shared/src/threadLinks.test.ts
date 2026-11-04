@@ -236,4 +236,14 @@ describe("hosted thread links", () => {
       ref("there", "t:1"),
     ]);
   });
+
+  it("leaves a hosted URL inside another URL or another link's label as written", () => {
+    const nested = [
+      "https://example.com/?next=https://app.t3.codes/threads/one/same",
+      "[Example](https://example.com/?next=https://app.t3.codes/threads/one/same)",
+      "[ https://app.t3.codes/threads/one/same ](https://example.com)",
+    ].join("\n");
+    expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
+    expect(threadLinkRefs(nested, local)).toEqual([]);
+  });
 });
