@@ -1,6 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { CodexInstallationSection } from "./CodexInstallationSection";
 import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
@@ -1347,18 +1346,13 @@ function ProviderInstanceRow({
             readOnly={readOnly}
             onEnable={() => actions.enableInstance(instanceId, { ...instance, enabled: true })}
           />
-        ) : mode === "editor" && codexIsolated && codexSetupMode !== "managed" ? (
-          <CodexInstallationSection
-            environmentId={environmentId}
-            instanceId={instanceId}
-            readOnly={readOnly}
-          />
-        ) : mode === "editor" && codexSetupMode === "managed" ? (
+        ) : mode === "editor" && (codexIsolated || codexSetupMode === "managed") ? (
           <CodexSetupSection
             environmentId={environmentId}
             instanceId={instanceId}
             provider={liveProvider}
-            mode={codexSetupMode}
+            mode={codexSetupMode ?? "existing"}
+            isolated={codexIsolated}
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
             onModeChange={(setupMode) =>

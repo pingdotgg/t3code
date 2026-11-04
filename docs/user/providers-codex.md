@@ -48,9 +48,16 @@ in their original home and are not copied. Providers with separate homes cannot
 continue each other's Codex sessions. Turning the option off restores the normal
 path settings; it does not delete the separate home.
 
-For a native CLI login or proxy, install Codex from the provider's setup panel,
-then configure the reported **CODEX_HOME path** on that environment. To sign in
-manually, run the reported binary with `CODEX_HOME` set to that path. Proxy
+Choose **Continue with ChatGPT** in the separate provider's setup to install
+Codex and sign in through your browser. The same flow works when the selected
+environment is remote.
+
+For a native CLI login, install Codex from the provider's setup panel and run
+the copyable **Login command** in a terminal on the selected environment. It
+sets both Codex home directories for that command and starts device sign-in.
+Open the printed URL on any device and enter the code; enable device code
+authentication in your ChatGPT security settings if prompted. Then refresh
+account status in T3 Code. For a proxy, configure the reported **CODEX_HOME path**. Proxy
 settings must be configured in that home or through the provider's environment
 and launch arguments. Binary and home overrides are ignored while the option is
 enabled. ChatGPT account linking continues to use OpenAI directly.

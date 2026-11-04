@@ -439,27 +439,31 @@ it.layer(
 
     it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
       Effect.gen(function* () {
-        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-          Effect.succeed(
-            makeCodexProbeSnapshot({
-              account: {
-                account: null,
-                requiresOpenaiAuth: true,
-              },
-            }),
-          ),
-        );
+        for (const isolateRuntime of [false, true]) {
+          const status = yield* checkCodexProviderStatus(
+            { ...defaultCodexSettings, isolateRuntime },
+            () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  account: {
+                    account: null,
+                    requiresOpenaiAuth: true,
+                  },
+                }),
+              ),
+          );
 
-        assert.strictEqual(status.status, "error");
-        assert.strictEqual(status.auth.status, "unauthenticated");
-        assert.strictEqual(
-          status.message,
-          "Codex CLI is not authenticated. Run `codex login` and try again.",
-        );
-        assert.deepStrictEqual(status.usageLimits?.unavailable, {
-          reason: "probeFailed",
-          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
-        });
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          const message = isolateRuntime
+            ? "Separate Codex is not authenticated. Connect ChatGPT or use the login command in provider setup."
+            : "Codex CLI is not authenticated. Run `codex login` and try again.";
+          assert.strictEqual(status.message, message);
+          assert.deepStrictEqual(status.usageLimits?.unavailable, {
+            reason: "probeFailed",
+            message,
+          });
+        }
       }),
     );
 

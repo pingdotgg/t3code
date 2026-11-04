@@ -1,14 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 
+import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { WizardFooter, WizardPanel } from "../ui/wizard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
-import { CodexInstallationSection } from "./CodexInstallationSection";
+import { CodexSetupSection } from "./CodexSetupSection";
+import { readCodexSetupMode } from "./CodexSetupSection.logic";
 
 export function ProviderWizardAuthenticationStep({
   environmentId,
@@ -24,8 +32,19 @@ export function ProviderWizardAuthenticationStep({
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  const settings = useEnvironmentSettings(environmentId);
+  const instance = settings.providerInstances[instanceId];
+  const instanceConfig =
+    instance?.config !== null && typeof instance?.config === "object" ? instance.config : {};
+  const isolated = "isolateRuntime" in instanceConfig && instanceConfig.isolateRuntime === true;
+  const mode = readCodexSetupMode(instanceConfig);
+  const codexSetup = instance?.driver === "codex" && (isolated || mode === "managed");
+  const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const mutate = useAtomCommand(serverEnvironment.mutateProviderInstance, "Codex setup settings");
   const query = useEnvironmentQuery(
-    serverEnvironment.providerAuthState({ environmentId, input: { instanceId } }),
+    codexSetup && !provider?.setup?.canAuthenticate
+      ? null
+      : serverEnvironment.providerAuthState({ environmentId, input: { instanceId } }),
   );
   const auth = query.data;
   const active =
@@ -33,21 +52,41 @@ export function ProviderWizardAuthenticationStep({
   const signedIn =
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
-  const nativeCodex =
-    provider?.driver === "codex" &&
-    provider.setup?.canInstall &&
-    !provider.auth.subscriptionSharing;
-  const isDiscovering = !nativeCodex && !signedIn && !query.error && auth?.methods === undefined;
+  const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
   const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
 
   return (
     <>
       <WizardPanel className="min-h-72">
         <SettingsGroup variant="plain">
-          {nativeCodex ? (
-            <CodexInstallationSection environmentId={environmentId} instanceId={instanceId} />
-          ) : null}
-          {provider && (canAuthenticate || signedIn) ? (
+          {codexSetup ? (
+            <CodexSetupSection
+              environmentId={environmentId}
+              instanceId={instanceId}
+              provider={provider}
+              mode={mode}
+              isolated={isolated}
+              enabled={instance.enabled !== false}
+              readOnly={!canManage}
+              onModeChange={(setupMode) => {
+                void mutate({
+                  environmentId,
+                  input: {
+                    patch: {},
+                    providerInstanceMutation: {
+                      operation: "upsert",
+                      instanceId,
+                      instance: {
+                        ...instance,
+                        enabled: true,
+                        config: { ...instanceConfig, enabled: true, setupMode },
+                      },
+                    },
+                  },
+                });
+              }}
+            />
+          ) : provider && (canAuthenticate || signedIn) ? (
             <ProviderAuthenticationSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}
@@ -66,13 +105,11 @@ export function ProviderWizardAuthenticationStep({
             <SettingsRow
               title="Account"
               description={
-                nativeCodex
-                  ? "On this environment, sign in using the paths above, or configure the separate home for your proxy. Then refresh provider status."
-                  : isDiscovering
-                    ? "Discovering sign-in methods…"
-                    : (query.error ??
-                      auth?.message ??
-                      "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                isDiscovering
+                  ? "Discovering sign-in methods…"
+                  : (query.error ??
+                    auth?.message ??
+                    "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
               }
               control={
                 isDiscovering ? (

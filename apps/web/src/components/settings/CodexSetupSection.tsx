@@ -120,7 +120,34 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   const existingChecking = existingState === "checking";
   const existingSummary = getProviderSummary(props.provider);
   const content =
-    props.mode === "existing" && props.presentation === "onboarding" ? (
+    props.mode === "existing" && props.isolated ? (
+      <>
+        <SettingsRow
+          title="ChatGPT account"
+          description="Sign in through your browser. T3 Code installs Codex automatically and keeps this provider’s settings and conversations separate."
+          control={
+            <ManagedControl reason={chatGptDenial}>
+              <ChatGptConnectionButton
+                size="sm"
+                disabled={props.readOnly}
+                onClick={() => {
+                  setRequested(true);
+                  props.onModeChange("managed");
+                }}
+              >
+                Continue with ChatGPT
+              </ChatGptConnectionButton>
+            </ManagedControl>
+          }
+        />
+        <CodexInstallationSection
+          environmentId={props.environmentId}
+          instanceId={props.instanceId}
+          readOnly={props.readOnly === true}
+          showLogin
+        />
+      </>
+    ) : props.mode === "existing" && props.presentation === "onboarding" ? (
       <CodexWelcomeCard
         title={props.displayName || props.provider?.displayName || "Codex"}
         description={
@@ -277,6 +304,7 @@ function ManagedCodexSetup({
   presentation,
   displayName,
   onSignInCancelled,
+  isolated,
 }: CodexSetupSectionProps & {
   readonly autoStart: boolean;
   readonly onAutoStartConsumed: () => void;
@@ -928,7 +956,7 @@ function ManagedCodexSetup({
                 disabled={readOnly || busy}
                 onClick={() => onModeChange("existing")}
               >
-                Use existing CLI
+                {isolated ? "Use CLI or proxy" : "Use existing CLI"}
               </Button>
             ) : null
           }
@@ -1045,7 +1073,7 @@ function ManagedCodexSetup({
                     disabled={readOnly || busy}
                     onClick={() => onModeChange("existing")}
                   >
-                    Use existing CLI
+                    {isolated ? "Use CLI or proxy" : "Use existing CLI"}
                   </Button>
                 ) : null}
               </>

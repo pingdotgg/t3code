@@ -697,7 +697,10 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
   });
 });
 
-function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
+function accountProbeStatus(
+  { account, rateLimits }: CodexAppServerProviderSnapshot,
+  isolated: boolean,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -725,7 +728,9 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
     return {
       status: "error",
       auth: { status: "unauthenticated" },
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message: isolated
+        ? "Separate Codex is not authenticated. Connect ChatGPT or use the login command in provider setup."
+        : "Codex CLI is not authenticated. Run `codex login` and try again.",
     };
   }
 
@@ -840,7 +845,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
-    : accountProbeStatus(snapshot);
+    : accountProbeStatus(snapshot, codexSettings.isolateRuntime === true);
   const usageLimits =
     snapshot.account.account?.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })

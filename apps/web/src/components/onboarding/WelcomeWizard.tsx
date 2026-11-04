@@ -917,6 +917,11 @@ function OnboardingCodexSetup({
     config: createdAccount ? { enabled: true, setupMode: "managed" } : {},
   };
   const mode = readCodexSetupMode(instance.config);
+  const isolated =
+    instance.config !== null &&
+    typeof instance.config === "object" &&
+    "isolateRuntime" in instance.config &&
+    instance.config.isolateRuntime === true;
   const existingChosen =
     mode === "existing" &&
     instance.config !== null &&
@@ -945,7 +950,7 @@ function OnboardingCodexSetup({
       },
     });
   };
-  return existingChosen ? (
+  return existingChosen && !isolated ? (
     <AgentCard
       driver="codex"
       provider={provider}
@@ -964,12 +969,7 @@ function OnboardingCodexSetup({
       provider={provider}
       mode={mode}
       enabled={provider?.enabled ?? true}
-      isolated={
-        instance.config !== null &&
-        typeof instance.config === "object" &&
-        "isolateRuntime" in instance.config &&
-        instance.config.isolateRuntime === true
-      }
+      isolated={isolated}
       onIsolationChange={(isolateRuntime) => updateConfig({ isolateRuntime })}
       onModeChange={(setupMode) => updateConfig({ setupMode })}
     />
