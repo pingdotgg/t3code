@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
-import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -20,6 +20,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -264,4 +265,97 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+function AnsweringPanel({
+  questions,
+  onToggleOption,
+  onAdvance,
+}: {
+  questions: typeof prompt.questions;
+  onToggleOption: (questionId: string, optionValue: string) => void;
+  onAdvance: (questionIndex: number) => void;
+}) {
+  const [answers, setAnswers] = useState({});
+  const [questionIndex, setQuestionIndex] = useState(0);
+  return (
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[{ ...prompt, questions }]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={answers}
+      questionIndex={questionIndex}
+      onToggleOption={(questionId, optionValue) => {
+        onToggleOption(questionId, optionValue);
+        setAnswers((current) => ({
+          ...current,
+          [questionId]: { selectedOptionValues: [optionValue] },
+        }));
+      }}
+      onAdvance={() => {
+        onAdvance(questionIndex);
+        setQuestionIndex((index) => Math.min(index + 1, questions.length - 1));
+      }}
+      onDismiss={() => {}}
+    />
+  );
+}
+
+const advanceClock = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+
+it("ignores a click that lands on an option as the question appears, then accepts one once it could be read", async () => {
+  using _timers = fakeTimers();
+  const onToggleOption = vi.fn();
+  const onAdvance = vi.fn();
+  await using screen = await render(
+    <AnsweringPanel
+      questions={prompt.questions.slice(0, 1)}
+      onToggleOption={onToggleOption}
+      onAdvance={onAdvance}
+    />,
+  );
+  const option = screen.getByRole("button", { name: /Incremental/ });
+
+  await userEvent.click(option);
+  await advanceClock(1_000);
+  expect(
+    onToggleOption,
+    "a click 0 ms after the question appeared selected an option",
+  ).not.toHaveBeenCalled();
+  expect(
+    onAdvance,
+    "a click 0 ms after the question appeared submitted the answer",
+  ).not.toHaveBeenCalled();
+
+  await userEvent.click(option);
+  await advanceClock(200);
+  expect(onToggleOption).toHaveBeenCalledExactlyOnceWith("question-0", "Incremental");
+  expect(onAdvance).toHaveBeenCalledExactlyOnceWith(0);
+});
+
+it("ignores a click that lands on the next question's option as auto-advance swaps it in", async () => {
+  using _timers = fakeTimers();
+  const onToggleOption = vi.fn();
+  const onAdvance = vi.fn();
+  await using screen = await render(
+    <AnsweringPanel
+      questions={prompt.questions.slice(0, 2)}
+      onToggleOption={onToggleOption}
+      onAdvance={onAdvance}
+    />,
+  );
+  await advanceClock(1_000);
+  await userEvent.click(screen.getByRole("button", { name: /Incremental/ }));
+  await advanceClock(200);
+  await expect.element(screen.getByText("Choose for question 2")).toBeVisible();
+  onToggleOption.mockClear();
+
+  await userEvent.click(screen.getByRole("button", { name: /Incremental/ }));
+  await advanceClock(1_000);
+  expect(
+    onToggleOption,
+    "a click 0 ms after question 2 replaced question 1 selected its option",
+  ).not.toHaveBeenCalled();
+  expect(onAdvance, "a click 0 ms after question 2 appeared submitted it").toHaveBeenCalledOnce();
 });
