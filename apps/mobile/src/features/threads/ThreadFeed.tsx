@@ -3343,6 +3343,13 @@ export const ThreadFeed = memo(function ThreadFeed({
   // current overlay height before the scroll integration's next reaction;
   // on Android the declarative contentInset floor covers this same window.
   const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
+  const hasLoadedMessages =
+    loadedListKey === listMountKey && presentedFeed.some((entry) => entry.type === "message");
+  const notifyMessagesLoaded = useEffectEvent(() => props.onMessagesLoad?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- repins the native list after its first message rows commit and the list has loaded
+  useEffect(() => {
+    if (hasLoadedMessages) notifyMessagesLoaded();
+  }, [hasLoadedMessages]);
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3912,7 +3919,6 @@ export const ThreadFeed = memo(function ThreadFeed({
             onLoad={() => {
               loadedListKeyRef.current = listMountKey;
               setLoadedListKey(listMountKey);
-              if (listMountKey.endsWith(":filled")) props.onMessagesLoad?.();
             }}
             // Row positions start below the header; the reflow anchor converts between them.
             onMetricsChange={(metrics) => {
