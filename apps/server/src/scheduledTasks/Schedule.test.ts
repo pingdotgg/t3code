@@ -181,7 +181,23 @@ describe("scheduled task schedule calculation", () => {
     expect(parts && [parts.month, parts.day, parts.hour, parts.minute]).toEqual([3, 10, 2, 30]);
   });
 
-  it("returns null when no window start falls within eight days", () => {
+  it("keeps the next weekly start after daylight saving skips one", () => {
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs: 60_000,
+        window: { start: "02:30", end: "03:00", weekdays: [0] },
+      },
+      DateTime.makeZonedUnsafe(
+        { year: 2025, month: 3, day: 2, hour: 2, minute: 59, second: 0, millisecond: 0 },
+        { timeZone: "America/New_York", adjustForTimeZone: true },
+      ),
+    );
+    const parts = next ? DateTime.toParts(next) : null;
+    expect(parts && [parts.month, parts.day, parts.hour, parts.minute]).toEqual([3, 16, 2, 30]);
+  });
+
+  it("returns null when no weekday can match", () => {
     const next = nextScheduledRunAt(
       {
         type: "interval",
