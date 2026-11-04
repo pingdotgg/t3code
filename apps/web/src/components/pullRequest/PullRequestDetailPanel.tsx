@@ -1087,8 +1087,9 @@ export function PullRequestDetailPanel({
     const hasReference = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
       (existing) => existing.id === reference.id,
     );
-    if (!hasReference) store.addReviewComment(attachTarget, reference);
-    store.addReviewComment(attachTarget, comment);
+    // The active editor may be answering a provider question rather than editing this draft.
+    if (!hasReference) store.addReviewComment(attachTarget, reference, { insertAtCaret: false });
+    store.addReviewComment(attachTarget, comment, { insertAtCaret: false });
     toastManager.add({ type: "success", title: "Added to the composer" });
   };
 
