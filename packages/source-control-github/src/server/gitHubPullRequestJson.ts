@@ -40,14 +40,16 @@ import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChe
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
-  PullRequestSummaryRepositoryPullRequestPullRequest as SummarizedPullRequest,
+  PullRequestSummaryFields,
   PullRequestWatchFingerprintRepositoryPullRequestPullRequest as WatchedPullRequest,
 } from "./pullRequestBatches.graphql.ts";
 import {
   PageInfo as ListingPageInfo,
   PullRequestList,
   PullRequestRow,
+  PullRequestRowStack,
   PullRequestSearch,
+  PullRequestSearchWithStacks,
 } from "./pullRequestListings.graphql.ts";
 import type {
   CheckContext,
@@ -760,6 +762,7 @@ const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
+const decodeRowStack = Schema.decodeUnknownExit(PullRequestRowStack);
 
 /** Decode rows individually so one invalid node cannot blank the entire listing. */
 const LenientRows = Schema.Struct({
@@ -770,6 +773,12 @@ const LenientRows = Schema.Struct({
 export const LenientPullRequestSearch = GraphQL.query(PullRequestSearch.name, {
   document: PullRequestSearch.document,
   variables: PullRequestSearch.variables,
+  result: Schema.Struct({ search: LenientRows }),
+});
+
+export const LenientPullRequestSearchWithStacks = GraphQL.query(PullRequestSearchWithStacks.name, {
+  document: PullRequestSearchWithStacks.document,
+  variables: PullRequestSearchWithStacks.variables,
   result: Schema.Struct({ search: LenientRows }),
 });
 
@@ -813,7 +822,8 @@ function toRow(
   const decodedNode = decodeRow(entry);
   if (!Exit.isSuccess(decodedNode)) return null;
   const node = decodedNode.value;
-  const stack = toStackMembership(node);
+  const decodedStack = decodeRowStack(entry);
+  const stack = Exit.isSuccess(decodedStack) ? toStackMembership(decodedStack.value) : undefined;
   const reviewRequests = nodesOf(node.reviewRequests).flatMap(
     (request): ReadonlyArray<ReviewRequestFields> => {
       const reviewer = request.requestedReviewer;
@@ -910,7 +920,9 @@ export interface GitHubPullRequestSummary {
   readonly stack?: PullRequestStackMembership | null;
 }
 
-export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullRequestSummary {
+export function toPullRequestSummary(
+  pr: PullRequestSummaryFields & Parameters<typeof toStackMembership>[0],
+): GitHubPullRequestSummary {
   return {
     number: pr.number,
     title: pr.title,

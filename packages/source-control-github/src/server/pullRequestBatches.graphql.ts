@@ -50,53 +50,39 @@ export const LatestReviewsPullRequestReviewConnection = Schema.Struct({
 export interface LatestReviewsPullRequestReviewConnection extends Schema.Struct.Type<typeof LatestReviewsPullRequestReviewConnection.fields> {}
 
 /** Represents the rollup for both the check runs and status for a commit. */
-export const PullRequestSummaryRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup = Schema.Struct({
+export const PullRequestSummaryFieldsCommitsNodesCommitStatusCheckRollupStatusCheckRollup = Schema.Struct({
   /** The combined status for the commit. */
   state: GraphQL.enumLiterals(Shared.StatusState.literals)
 })
-export interface PullRequestSummaryRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup.fields> {}
+export interface PullRequestSummaryFieldsCommitsNodesCommitStatusCheckRollupStatusCheckRollup extends Schema.Struct.Type<typeof PullRequestSummaryFieldsCommitsNodesCommitStatusCheckRollupStatusCheckRollup.fields> {}
 
 /** Represents a Git commit. */
-export const PullRequestSummaryRepositoryPullRequestCommitsNodesCommitCommit = Schema.Struct({
+export const PullRequestSummaryFieldsCommitsNodesCommitCommit = Schema.Struct({
   /** Check and Status rollup information for this commit. */
-  statusCheckRollup: Schema.NullOr(PullRequestSummaryRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup)
+  statusCheckRollup: Schema.NullOr(PullRequestSummaryFieldsCommitsNodesCommitStatusCheckRollupStatusCheckRollup)
 })
-export interface PullRequestSummaryRepositoryPullRequestCommitsNodesCommitCommit extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestCommitsNodesCommitCommit.fields> {}
+export interface PullRequestSummaryFieldsCommitsNodesCommitCommit extends Schema.Struct.Type<typeof PullRequestSummaryFieldsCommitsNodesCommitCommit.fields> {}
 
 /** Represents a Git commit part of a pull request. */
-export const PullRequestSummaryRepositoryPullRequestCommitsNodesPullRequestCommit = Schema.Struct({
+export const PullRequestSummaryFieldsCommitsNodesPullRequestCommit = Schema.Struct({
   /** The Git commit object */
-  commit: PullRequestSummaryRepositoryPullRequestCommitsNodesCommitCommit
+  commit: PullRequestSummaryFieldsCommitsNodesCommitCommit
 })
-export interface PullRequestSummaryRepositoryPullRequestCommitsNodesPullRequestCommit extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestCommitsNodesPullRequestCommit.fields> {}
+export interface PullRequestSummaryFieldsCommitsNodesPullRequestCommit extends Schema.Struct.Type<typeof PullRequestSummaryFieldsCommitsNodesPullRequestCommit.fields> {}
 
 /** The connection type for PullRequestCommit. */
-export const PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection = Schema.Struct({
+export const PullRequestSummaryFieldsCommitsPullRequestCommitConnection = Schema.Struct({
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestSummaryRepositoryPullRequestCommitsNodesPullRequestCommit)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestSummaryFieldsCommitsNodesPullRequestCommit)))
 })
-export interface PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection.fields> {}
+export interface PullRequestSummaryFieldsCommitsPullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestSummaryFieldsCommitsPullRequestCommitConnection.fields> {}
 
-/** A stack of PullRequests */
-export const PullRequestStack = Schema.Struct({
-  /** A number uniquely identifying the stack within its repository */
-  number: Shared.Int,
-  /** The total number of pull requests in the stack */
-  size: Shared.Int,
-  /** The branch that the stack's pull requests target */
-  baseRefName: Schema.String
-})
-export interface PullRequestStack extends Schema.Struct.Type<typeof PullRequestStack.fields> {}
-
-/** A member of a PullRequestStack */
-export const PullRequestStackEntry = Schema.Struct({
-  /** This entry's position in the stack, where 1 is the closest to the base branch, 2 is stacked on top of 1, etc. */
-  position: Shared.Int
-})
-export interface PullRequestStackEntry extends Schema.Struct.Type<typeof PullRequestStackEntry.fields> {}
-
-/** A repository pull request. */
-export const PullRequestSummaryRepositoryPullRequestPullRequest = Schema.Struct({
+/**
+ * `fragment PullRequestSummaryFields on PullRequest`
+ *
+ * A repository pull request.
+ */
+export const PullRequestSummaryFields = Schema.Struct({
   /** Identifies the pull request number. */
   number: Shared.Int,
   /** Identifies the pull request title. */
@@ -135,18 +121,14 @@ export const PullRequestSummaryRepositoryPullRequestPullRequest = Schema.Struct(
   /** A list of latest reviews per user associated with the pull request that are not also pending review. */
   latestReviews: Schema.NullOr(LatestReviewsPullRequestReviewConnection),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
-  commits: PullRequestSummaryRepositoryPullRequestCommitsPullRequestCommitConnection,
-  /** The stack this Pull Request belongs to, or null if it is not part of a stack */
-  stack: Schema.optionalKey(Schema.NullOr(PullRequestStack)),
-  /** The stack entry for this Pull Request, or null if it is not part of a stack */
-  stackEntry: Schema.optionalKey(Schema.NullOr(PullRequestStackEntry))
+  commits: PullRequestSummaryFieldsCommitsPullRequestCommitConnection
 })
-export interface PullRequestSummaryRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryPullRequestPullRequest.fields> {}
+export interface PullRequestSummaryFields extends Schema.Struct.Type<typeof PullRequestSummaryFields.fields> {}
 
 /** A repository contains the content for a project. */
 export const PullRequestSummaryRepositoryRepository = Schema.Struct({
   /** Returns a single pull request from the current repository by number. */
-  pullRequest: Schema.NullOr(PullRequestSummaryRepositoryPullRequestPullRequest)
+  pullRequest: Schema.NullOr(PullRequestSummaryFields)
 })
 export interface PullRequestSummaryRepositoryRepository extends Schema.Struct.Type<typeof PullRequestSummaryRepositoryRepository.fields> {}
 
@@ -156,19 +138,19 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" },
-      { name: "stacks", body: "Boolean!" }
+      { name: "number", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestSummaryFields}}"] }
     ],
-    fragments: []
+    fragments: [
+      { name: "PullRequestSummaryFields", body: ["on PullRequest{number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+    ]
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int,
-    stacks: Schema.Boolean
+    number: Shared.Int
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -178,6 +160,71 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
 export declare namespace PullRequestSummary {
   export type Variables = typeof PullRequestSummary.variables.Type
   export type Result = typeof PullRequestSummary.result.Type
+}
+
+/** A stack of PullRequests */
+export const PullRequestStack = Schema.Struct({
+  /** A number uniquely identifying the stack within its repository */
+  number: Shared.Int,
+  /** The total number of pull requests in the stack */
+  size: Shared.Int,
+  /** The branch that the stack's pull requests target */
+  baseRefName: Schema.String
+})
+export interface PullRequestStack extends Schema.Struct.Type<typeof PullRequestStack.fields> {}
+
+/** A member of a PullRequestStack */
+export const PullRequestStackEntry = Schema.Struct({
+  /** This entry's position in the stack, where 1 is the closest to the base branch, 2 is stacked on top of 1, etc. */
+  position: Shared.Int
+})
+export interface PullRequestStackEntry extends Schema.Struct.Type<typeof PullRequestStackEntry.fields> {}
+
+/** A repository pull request. */
+export const PullRequestSummaryWithStacksRepositoryPullRequestPullRequest = Schema.Struct({
+  ...PullRequestSummaryFields.fields,
+  /** The stack this Pull Request belongs to, or null if it is not part of a stack */
+  stack: Schema.NullOr(PullRequestStack),
+  /** The stack entry for this Pull Request, or null if it is not part of a stack */
+  stackEntry: Schema.NullOr(PullRequestStackEntry)
+})
+export interface PullRequestSummaryWithStacksRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestSummaryWithStacksRepositoryPullRequestPullRequest.fields> {}
+
+/** A repository contains the content for a project. */
+export const PullRequestSummaryWithStacksRepositoryRepository = Schema.Struct({
+  /** Returns a single pull request from the current repository by number. */
+  pullRequest: Schema.NullOr(PullRequestSummaryWithStacksRepositoryPullRequestPullRequest)
+})
+export interface PullRequestSummaryWithStacksRepositoryRepository extends Schema.Struct.Type<typeof PullRequestSummaryWithStacksRepositoryRepository.fields> {}
+
+/** `query PullRequestSummaryWithStacks` */
+export const PullRequestSummaryWithStacks = GraphQL.query("PullRequestSummaryWithStacks", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestSummaryFields stack{number size baseRefName}stackEntry{position}}}"] }
+    ],
+    fragments: [
+      { name: "PullRequestSummaryFields", body: ["on PullRequest{number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+    ]
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(PullRequestSummaryWithStacksRepositoryRepository)
+  })
+})
+export declare namespace PullRequestSummaryWithStacks {
+  export type Variables = typeof PullRequestSummaryWithStacks.variables.Type
+  export type Result = typeof PullRequestSummaryWithStacks.result.Type
 }
 
 /** A repository pull request. */
@@ -335,32 +382,32 @@ export const StatusCheckRollupContextConnection = Schema.Struct({
 export interface StatusCheckRollupContextConnection extends Schema.Struct.Type<typeof StatusCheckRollupContextConnection.fields> {}
 
 /** Represents the rollup for both the check runs and status for a commit. */
-export const PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup = Schema.Struct({
+export const PullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup = Schema.Struct({
   /** A list of status contexts and check runs for this commit. */
   contexts: StatusCheckRollupContextConnection
 })
-export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup.fields> {}
+export interface PullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup extends Schema.Struct.Type<typeof PullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup.fields> {}
 
 /** Represents a Git commit. */
-export const PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit = Schema.Struct({
+export const PullRequestCommitsNodesCommitCommit = Schema.Struct({
   /** Check and Status rollup information for this commit. */
-  statusCheckRollup: Schema.NullOr(PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup)
+  statusCheckRollup: Schema.NullOr(PullRequestCommitsNodesCommitStatusCheckRollupStatusCheckRollup)
 })
-export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit.fields> {}
+export interface PullRequestCommitsNodesCommitCommit extends Schema.Struct.Type<typeof PullRequestCommitsNodesCommitCommit.fields> {}
 
 /** Represents a Git commit part of a pull request. */
-export const PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesPullRequestCommit = Schema.Struct({
+export const PullRequestCommitsNodesPullRequestCommit = Schema.Struct({
   /** The Git commit object */
-  commit: PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesCommitCommit
+  commit: PullRequestCommitsNodesCommitCommit
 })
-export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesPullRequestCommit extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesPullRequestCommit.fields> {}
+export interface PullRequestCommitsNodesPullRequestCommit extends Schema.Struct.Type<typeof PullRequestCommitsNodesPullRequestCommit.fields> {}
 
 /** The connection type for PullRequestCommit. */
-export const PullRequestWatchFingerprintRepositoryPullRequestCommitsPullRequestCommitConnection = Schema.Struct({
+export const PullRequestCommitsPullRequestCommitConnection = Schema.Struct({
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestWatchFingerprintRepositoryPullRequestCommitsNodesPullRequestCommit)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestCommitsNodesPullRequestCommit)))
 })
-export interface PullRequestWatchFingerprintRepositoryPullRequestCommitsPullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestCommitsPullRequestCommitConnection.fields> {}
+export interface PullRequestCommitsPullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestCommitsPullRequestCommitConnection.fields> {}
 
 /** A repository pull request. */
 export const PullRequestWatchFingerprintRepositoryPullRequestPullRequest = Schema.Struct({
@@ -377,7 +424,7 @@ export const PullRequestWatchFingerprintRepositoryPullRequestPullRequest = Schem
   /** The list of all review threads for this pull request. */
   reviewThreads: PullRequestReviewThreadConnection,
   /** A list of commits present in this pull request's head branch not present in the base branch. */
-  commits: PullRequestWatchFingerprintRepositoryPullRequestCommitsPullRequestCommitConnection
+  commits: PullRequestCommitsPullRequestCommitConnection
 })
 export interface PullRequestWatchFingerprintRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof PullRequestWatchFingerprintRepositoryPullRequestPullRequest.fields> {}
 
@@ -417,4 +464,4 @@ export declare namespace PullRequestWatchFingerprint {
 }
 
 /** Every operation in pullRequestBatches.graphql. */
-export const PullRequestBatchesGraphQLGroup = GraphQLGroup.make(PullRequestSummary, PullRequestStats, PullRequestStackMembership, PullRequestWatchFingerprint)
+export const PullRequestBatchesGraphQLGroup = GraphQLGroup.make(PullRequestSummary, PullRequestSummaryWithStacks, PullRequestStats, PullRequestStackMembership, PullRequestWatchFingerprint)
