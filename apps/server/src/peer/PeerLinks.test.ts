@@ -624,9 +624,9 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
       // Each address says why it was not Box.
-      expect(failed.message).toContain("could not reach Box");
-      expect(failed.message).toContain("Impostor");
-      expect(failed.message).toContain("plain http");
+      expect(failed.message).toBe(
+        `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+      );
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
 
