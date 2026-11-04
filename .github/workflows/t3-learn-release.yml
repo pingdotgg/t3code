@@ -8,6 +8,9 @@ name: T3 Learn Release
 # release after install tests pass and the promote job marks it latest.
 # Builds are unsigned; macOS builds get an ad hoc signature. Upstream's
 # release.yml also matches these tags but only runs in pingdotgg/t3code.
+# Mac jobs run on GitHub's hosted Macs unless the repo variable
+# T3_LEARN_MAC_RUNNER names a self-hosted label, set only while a rented Mac
+# serves this workflow's jobs with one-job runners in throwaway VMs.
 
 on:
   push:
@@ -121,7 +124,7 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS arm64
-      runner: macos-26
+      runner: ${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
       platform: mac
       target: dmg
       arch: arm64
@@ -146,7 +149,7 @@ jobs:
       clerk_cli_oauth_client_id: ""
       relay_url: ""
       label: macOS x64
-      runner: macos-26
+      runner: ${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}
       platform: mac
       target: dmg
       arch: x64
@@ -374,7 +377,7 @@ jobs:
   # on a clean runner and next to an installed T3 Code, then uninstalls it.
   install_test:
     if: needs.preflight.outputs.skip != 'true'
-    name: Install on ${{ matrix.os }} (${{ matrix.scenario }})
+    name: Install on ${{ matrix.os }} ${{ matrix.arch }} (${{ matrix.scenario }})
     needs: [preflight, release]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -382,10 +385,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-26, scenario: fresh }
-          - { os: macos-26, scenario: next-to-t3-code }
-          - { os: macos-15-intel, scenario: fresh }
-          - { os: macos-15-intel, scenario: next-to-t3-code }
+          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: fresh }
+          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: next-to-t3-code }
+          - {
+              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              arch: x64,
+              scenario: fresh,
+            }
+          - {
+              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              arch: x64,
+              scenario: next-to-t3-code,
+            }
           - { os: ubuntu-24.04, scenario: fresh }
           - { os: ubuntu-24.04, scenario: next-to-t3-code }
           - { os: ubuntu-24.04, scenario: appimage }
@@ -420,7 +431,8 @@ jobs:
 
       - name: Install and check (macOS, Linux)
         if: runner.os != 'Windows'
-        run: bash .github/scripts/t3-learn-install-test.sh "${{ matrix.scenario }}" "$VERSION"
+        # On the rented Apple silicon Mac, the Intel rows run under Rosetta.
+        run: ${{ matrix.arch == 'x64' && runner.arch == 'ARM64' && 'arch -x86_64 ' || '' }}/bin/bash .github/scripts/t3-learn-install-test.sh "${{ matrix.scenario }}" "$VERSION"
 
       - name: Install and check (Windows)
         if: runner.os == 'Windows'
@@ -435,7 +447,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: install-test-${{ matrix.os }}-${{ matrix.scenario }}
+          name: install-test-${{ matrix.os }}-${{ matrix.arch || 'native' }}-${{ matrix.scenario }}
           path: install-test
           if-no-files-found: ignore
 

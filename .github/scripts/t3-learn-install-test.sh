@@ -58,7 +58,8 @@ t3code_version=""
 if [ "$scenario" = next-to-t3-code ]; then
   log "Installing upstream T3 Code"
   if [ "$os" = Darwin ]; then
-    brew install --cask t3-code
+    # Homebrew refuses to run under Rosetta (Intel rows on an Apple silicon runner).
+    if [ "$(sysctl -in sysctl.proc_translated)" = 1 ]; then arch -arm64 brew install --cask t3-code; else brew install --cask t3-code; fi
     t3code_app="$(ls -d /Applications/T3\ Code*.app | head -n 1)"
     # Gatekeeper's first-launch prompt would hold `open` on a CI runner.
     xattr -dr com.apple.quarantine "$t3code_app"
