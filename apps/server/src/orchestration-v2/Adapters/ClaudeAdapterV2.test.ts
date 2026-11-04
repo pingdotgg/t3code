@@ -8679,9 +8679,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000665",
           session_id: WAKE_NATIVE_SESSION,
         }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 10_000, post_tokens: 4_321 },
+          uuid: "00000000-0000-4000-8000-000000000666",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
         turnOneResult,
       ]);
       yield* Queue.take(harness.terminalReceipts);
+      const compactionTurn = harness.events.find(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.status === "running" &&
+          event.providerTurn.tokenUsage?.usedTokens === 4_321,
+      );
+      assert.equal(compactionTurn?.type, "provider_turn.updated");
+      if (compactionTurn?.type === "provider_turn.updated") {
+        assert.equal(compactionTurn.providerTurn.model, "claude-sonnet-4-6");
+        assert.isTrue(compactionTurn.providerTurn.modelSubstituted);
+      }
       assert.deepEqual(executed(), { model: "claude-sonnet-4-6", modelSubstituted: true });
       const localNotices = harness.events.flatMap((event) =>
         event.type === "turn_item.updated" &&
