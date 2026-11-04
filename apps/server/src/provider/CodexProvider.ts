@@ -654,6 +654,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
   );
   const configuredModelProvider = configResponse?.config.model_provider?.trim();
+  const configUnknown = configResponse === undefined;
   const usesCustomModelProvider =
     configuredModelProvider !== undefined &&
     configuredModelProvider.length > 0 &&
@@ -674,7 +675,15 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           deadlineMs,
           fallback: "initial",
         })
-      : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs);
+      : configUnknown
+        ? requestRefreshedCodexModels({
+            client,
+            codexHome: initialize.codexHome,
+            spawnedAtMs,
+            deadlineMs,
+            fallback: "catalog-cache",
+          })
+        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs);
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
