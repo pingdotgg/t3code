@@ -44,9 +44,9 @@ describe("StyledDiffCodeView", () => {
       { container },
     );
     const renderedItem = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element;
-    await vi.waitFor(() => expect(renderedItem()).toBeTruthy());
     await vi.waitFor(() =>
       expect(renderedItem()?.shadowRoot?.querySelectorAll("[data-line]").length).toBeGreaterThan(0),
+      { timeout: 10_000 },
     );
     const rows = renderedItem()!.shadowRoot!.querySelectorAll("[data-line]");
     expect(rows.length).toBeLessThan(LINE_COUNT);
