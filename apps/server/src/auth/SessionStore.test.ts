@@ -287,6 +287,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
     );
 
+    it.effect("closes a LAN credential's socket when its parent session is revoked", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const parent = yield* sessions.issue({
+          subject: "paired-phone",
+          method: "bearer-access-token",
+        });
+        const lan = yield* sessions.issue({
+          ...relaySessionInput,
+          subject: SessionStore.lanCredentialSubject(parent.sessionId),
+        });
+        const ticket = yield* sessions.issueWebSocketToken(lan.sessionId);
+        const watcher = yield* sessions
+          .awaitInvalidation(lan.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* sessions.revoke(parent.sessionId);
+        yield* Fiber.join(watcher);
+        const socket = yield* Effect.flip(sessions.verifyWebSocketToken(ticket.token));
+        expect(socket._tag).toBe("WebSocketSessionRevokedError");
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+    );
+
     it.effect("closes a DPoP socket when an earlier renewal in its chain is revoked", () =>
       Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;

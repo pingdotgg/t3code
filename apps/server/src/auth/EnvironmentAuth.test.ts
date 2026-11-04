@@ -3,7 +3,13 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  AuthRelayWriteScope,
+  authScopeResponse,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -90,7 +96,7 @@ const makeDpopKey = () => {
     sign: (input: {
       readonly method: string;
       readonly url: string;
-      readonly token: string;
+      readonly token?: string;
       readonly iat: number;
     }) => {
       const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -100,7 +106,7 @@ const makeDpopKey = () => {
         htu: input.url,
         jti: `proof-${++proofCount}`,
         iat: input.iat,
-        ath: computeDpopAccessTokenHash(input.token),
+        ...(input.token ? { ath: computeDpopAccessTokenHash(input.token) } : {}),
       });
       const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
         key: privateKey,
@@ -803,6 +809,76 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* upgrade(Redacted.value(legacy.ticket), "rpc")).sessionId).toBe(
           session.sessionId,
         );
+      }).pipe(
+        Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+      ),
+    );
+
+    it.effect("mints a key-bound LAN credential that cannot outlive or outrank its session", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const host = "desk.tail1234.ts.net";
+        const url = `https://${host}/api/auth/lan-credential`;
+        const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
+        const mint = (authorization: string, dpop?: string) =>
+          serverAuth.issueLanCredential(
+            HttpServerRequest.fromWeb(
+              new Request(url, {
+                method: "POST",
+                headers: {
+                  host,
+                  "x-forwarded-proto": "https",
+                  authorization,
+                  ...(dpop === undefined ? {} : { dpop }),
+                },
+              }),
+            ),
+          );
+        const parent = yield* sessions.issue({
+          method: "bearer-access-token",
+          subject: "paired-phone",
+          scopes: AuthStandardClientScopes,
+          client: { label: "Phone", deviceType: "mobile" },
+        });
+
+        const unproven = yield* Effect.flip(mint(`Bearer ${parent.token}`));
+        expect(unproven._tag).toBe("ServerAuthInvalidCredentialError");
+
+        const issued = yield* mint(
+          `Bearer ${parent.token}`,
+          key.sign({ method: "POST", url, iat }),
+        );
+        expect(issued.token_type).toBe("DPoP");
+        const lan = yield* sessions.verify(issued.access_token);
+        expect(lan.proofKeyThumbprint).toBe(key.thumbprint);
+        expect(lan.scopes).not.toContain(AuthAccessWriteScope);
+        expect(lan.scopes).not.toContain(AuthRelayWriteScope);
+        expect(lan.scopes).toContain(AuthOrchestrationOperateScope);
+        expect(lan.client.label).toBe("Phone (local network)");
+        expect(DateTime.toEpochMillis(lan.expiresAt!)).toBeLessThanOrEqual(
+          DateTime.toEpochMillis(parent.expiresAt),
+        );
+
+        const asBearer = yield* Effect.flip(
+          serverAuth.authenticateHttpRequest(makeBearerRequest(issued.access_token)),
+        );
+        expect(asBearer._tag).toBe("ServerAuthInvalidCredentialError");
+
+        const chained = yield* Effect.flip(
+          mint(
+            `DPoP ${issued.access_token}`,
+            key.sign({ method: "POST", url, token: issued.access_token, iat }),
+          ),
+        );
+        expect(chained._tag).toBe("ServerAuthLanCredentialNotAllowedError");
+
+        yield* sessions.revoke(parent.sessionId);
+        const revoked = yield* Effect.flip(sessions.verify(issued.access_token));
+        expect(revoked._tag).toBe("SessionTokenRevokedError");
+        const remaining = yield* sessions.listActive();
+        expect(remaining.some((session) => session.sessionId === lan.sessionId)).toBe(false);
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
       ),

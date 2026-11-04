@@ -7,6 +7,7 @@ import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   exchangeRemoteDpopAccessToken,
+  issueRemoteLanCredential,
   type RemoteEnvironmentAuthError,
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
@@ -78,6 +79,16 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
        */
       readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
+    readonly authorizeLanDpop: (input: {
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly httpBaseUrl: string;
+      readonly wsBaseUrl: string;
+      readonly accessToken: string;
+    }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
+    readonly mintLanCredential: (input: {
+      readonly httpBaseUrl: string;
+      readonly bearerToken: string;
+    }) => Effect.Effect<string, ConnectionAttemptError>;
     readonly authorizeDpopHttp: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly rejectedAccessToken?: string;
@@ -96,10 +107,13 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
-function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
+function mapDpopSocketError(
+  error: RemoteEnvironmentAuthError | ConnectionAttemptError,
+  connectionMethod: ClientConnectionMethod = "relay",
+) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
-    : mapRemoteDpopEnvironmentError(error);
+    : mapRemoteDpopEnvironmentError(error, connectionMethod);
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -192,6 +206,72 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const createSocketProof = (proof: ManagedRelay.ManagedRelayDpopProofInput) =>
+    signer.createProof(proof).pipe(
+      Effect.mapError(
+        () =>
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "Could not create the websocket authorization proof.",
+          }),
+      ),
+    );
+
+  const authorizeLanDpop = Effect.fn("clientRuntime.connection.remote.authorizeLanDpop")(function* (
+    input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeLanDpop"]>[0],
+  ) {
+    const descriptor = yield* verifyDirectEndpoint({
+      expectedEnvironmentId: input.expectedEnvironmentId,
+      httpBaseUrl: input.httpBaseUrl,
+      connectionMethod: "direct",
+    });
+    const socketUrl = yield* resolveRemoteDpopWebSocketConnectionUrl({
+      wsBaseUrl: input.wsBaseUrl,
+      httpBaseUrl: input.httpBaseUrl,
+      accessToken: input.accessToken,
+      createProof: createSocketProof,
+      clientMetadata: presentation.metadata,
+      connectionMethod: "direct",
+    }).pipe(
+      Effect.mapError((error) => mapDpopSocketError(error, "direct")),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    return {
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      httpBaseUrl: input.httpBaseUrl,
+      socketUrl,
+      descriptor,
+      httpAuthorization: { _tag: "LanDpop" as const, accessToken: input.accessToken },
+    };
+  });
+
+  const mintLanCredential = Effect.fn("clientRuntime.connection.remote.mintLanCredential")(
+    function* (
+      input: Parameters<RemoteEnvironmentAuthorization["Service"]["mintLanCredential"]>[0],
+    ) {
+      const dpopProof = yield* signer
+        .createProof({
+          method: "POST",
+          url: environmentEndpointUrl(input.httpBaseUrl, "/api/auth/lan-credential"),
+        })
+        .pipe(
+          Effect.mapError(
+            () =>
+              new ConnectionBlockedError({
+                reason: "configuration",
+                detail: "Could not create the LAN credential proof.",
+              }),
+          ),
+        );
+      const issued = yield* issueRemoteLanCredential({ ...input, dpopProof }).pipe(
+        Effect.mapError((error) => mapDpopSocketError(error, "direct")),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      return issued.access_token;
+    },
+  );
+
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
     function* (
       token: TokenStore.RemoteDpopAccessToken,
@@ -202,16 +282,7 @@ export const make = Effect.gen(function* () {
         wsBaseUrl: endpoint.wsBaseUrl,
         httpBaseUrl: endpoint.httpBaseUrl,
         accessToken: token.accessToken,
-        createProof: (proof) =>
-          signer.createProof(proof).pipe(
-            Effect.mapError(
-              () =>
-                new ConnectionBlockedError({
-                  reason: "configuration",
-                  detail: "Could not create the websocket authorization proof.",
-                }),
-            ),
-          ),
+        createProof: createSocketProof,
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -527,6 +598,8 @@ export const make = Effect.gen(function* () {
 
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
+    authorizeLanDpop,
+    mintLanCredential,
     authorizeDpop: Effect.fn("environment.authorization")(function (input) {
       return authorizeDpop(input);
     }),

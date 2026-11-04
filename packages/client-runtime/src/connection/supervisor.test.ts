@@ -261,6 +261,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     Layer.succeed(
       ConnectionDriver.ConnectionDriver,
       ConnectionDriver.ConnectionDriver.of({
+        mintLanCredential: () => Effect.die("Unexpected LAN credential mint."),
         connect,
         preflight: (_entry, route) =>
           options?.preflight?.(route) ??
@@ -2121,6 +2122,14 @@ describe("EnvironmentSupervisor routes", () => {
           expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(2);
           return;
         }
+        if (discovery === "initial") {
+          yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+          expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+          expect(
+            Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag,
+          ).toBe("RelayConnectionTarget");
+          return;
+        }
         if (discovery === "withdrawn" || discovery === "omitted") {
           yield* Deferred.await(discoveryProcessed);
           expect(yield* Ref.get(learned)).toContain(
@@ -2137,8 +2146,62 @@ describe("EnvironmentSupervisor routes", () => {
           "BearerConnectionTarget",
         );
         expect(yield* Ref.get(learned)).toEqual([
-          `learned:${TARGET.environmentId}:${discovery !== "initial" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
+          `learned:${TARGET.environmentId}:https://fixture.tail1234.ts.net`,
         ]);
       }),
+  );
+  it.effect("prefers an answering T3 Connect route over a plain HTTP LAN credential", () =>
+    Effect.gen(function* () {
+      const tailnetTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "tailnet",
+      });
+      const tailnetRoute: ConnectionRoute = {
+        target: tailnetTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: "tailnet",
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "https://desk.tail1234.ts.net/",
+            wsBaseUrl: "wss://desk.tail1234.ts.net/",
+          }),
+        ),
+      };
+      const relayRoute: ConnectionRoute = { target: RELAY_TARGET, profile: Option.none() };
+      const saved = entryWithRoutes(
+        { target: tailnetTarget, profile: tailnetRoute.profile, enabled: true },
+        [tailnetRoute, relayRoute],
+      );
+      const merged = mergeLearnedRoutes({
+        entry: saved,
+        activeRoute: tailnetRoute,
+        reported: [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" }],
+        allowInsecure: true,
+        lanCredential: true,
+      });
+      const entry = entryWithRoutes(saved, merged!);
+      const harness = yield* makeHarness({
+        checkRoute: (route) => {
+          if (route.target._tag === "RelayConnectionTarget") return Effect.succeed("answered");
+          const profile = Option.getOrNull(route.profile);
+          const http = profile?._tag === "BearerConnectionProfile" ? profile.httpBaseUrl : "";
+          return Effect.succeed(http.startsWith("https:") ? "silent" : "answered");
+        },
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+    }),
   );
 });

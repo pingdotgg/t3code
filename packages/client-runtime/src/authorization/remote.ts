@@ -167,6 +167,24 @@ export const bootstrapRemoteBearerSession = Effect.fn(
   );
 });
 
+export const issueRemoteLanCredential = Effect.fn(
+  "clientRuntime.authorization.issueRemoteLanCredential",
+)(function* (input: {
+  readonly httpBaseUrl: string;
+  readonly bearerToken: string;
+  readonly dpopProof: string;
+  readonly timeoutMs?: number;
+}) {
+  const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  return yield* executeEnvironmentHttpRequest(
+    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/lan-credential"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.lanCredential({
+      headers: { authorization: `Bearer ${input.bearerToken}`, dpop: input.dpopProof },
+    }),
+  );
+});
+
 export const fetchRemoteSessionState = Effect.fn(
   "clientRuntime.authorization.fetchRemoteSessionState",
 )(function* (input: {

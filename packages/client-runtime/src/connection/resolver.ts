@@ -52,7 +52,7 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
-import { credentialConnectionId } from "./routes.ts";
+import { credentialConnectionId, lanCredentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export class ConnectionResolver extends Context.Service<
@@ -161,6 +161,60 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         expectedEnvironmentId: target.environmentId,
         directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
       });
+      return { ...authorized, target } satisfies PreparedConnection;
+    }
+    if (profile.lanDpop === true) {
+      const unavailable = (detail: string) =>
+        new ConnectionTransientError({ reason: "endpoint-unavailable", detail });
+      const credentialId = lanCredentialConnectionId(credentialConnectionId(target.connectionId));
+      const lanCredential = yield* credentials.get(credentialId);
+      if (Option.isNone(lanCredential) || !isBearerCredential(lanCredential.value)) {
+        return yield* unavailable("Connect over another route once to enable the local network.");
+      }
+      const accessToken = lanCredential.value.token;
+      if (
+        !(yield* discovery.verify({
+          token: accessToken,
+          environmentId: target.environmentId,
+          candidate: profile.httpBaseUrl,
+        }))
+      ) {
+        return yield* unavailable("The endpoint could not prove its identity.");
+      }
+      const authorized = yield* remote
+        .authorizeLanDpop({
+          expectedEnvironmentId: target.environmentId,
+          httpBaseUrl: profile.httpBaseUrl,
+          wsBaseUrl: profile.wsBaseUrl,
+          accessToken,
+        })
+        .pipe(
+          Effect.catchIf(
+            (error) =>
+              error._tag === "ConnectionBlockedError" &&
+              error.reason === "authentication" &&
+              error.failureCause !== "clock_skew" &&
+              error.dpopFailureReason === undefined &&
+              error.hop !== "device",
+            () =>
+              credentials
+                .remove(credentialId)
+                .pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      unavailable("Connect over another route to renew the local network access."),
+                    ),
+                  ),
+                ),
+          ),
+          Effect.mapError((error) => {
+            if (error._tag !== "ConnectionBlockedError" || error.reason !== "authentication") {
+              return error;
+            }
+            const { _tag, ...failure } = error;
+            return new ConnectionTransientError({ ...failure, reason: "endpoint-unavailable" });
+          }),
+        );
       return { ...authorized, target } satisfies PreparedConnection;
     }
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
