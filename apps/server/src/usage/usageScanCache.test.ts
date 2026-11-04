@@ -269,6 +269,9 @@ describe("scan cache round trip", () => {
     expect(v11.get("/grok/updates.jsonl")).toEqual({
       ...original.get("/grok/updates.jsonl"),
       ...reparse,
+      records: [
+        record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+      ],
     });
   });
 

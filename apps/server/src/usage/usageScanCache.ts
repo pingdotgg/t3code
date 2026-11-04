@@ -258,7 +258,13 @@ export function decodeScanCache(
         ...(version >= 7 && unresolvedServiceTierTurnId !== undefined
           ? { unresolvedServiceTierTurnId }
           : {}),
-        dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
+        dedupeKey:
+          typeof dedupeKey !== "string"
+            ? null
+            : // Saved copies of moved transcripts must still match the re-parsed v12 key.
+              provider === "grok" && version < 12 && dedupeKey.endsWith(`:${model}`)
+              ? `${dedupeKey.slice(0, -model.length)}${timestampMs}:${model}`
+              : dedupeKey,
       });
     }
     return records;
