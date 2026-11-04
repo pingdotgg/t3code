@@ -4,6 +4,7 @@ import type {
   ModelSelection,
   PullRequestReviewGuide,
   TextGenerationError,
+  AgentSessionRecap,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
@@ -98,6 +99,11 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface ProviderTextGeneration {
+  readonly generateSessionRecap?: (input: {
+    cwd: string;
+    recentMessages: string;
+    modelSelection: ModelSelection;
+  }) => Effect.Effect<AgentSessionRecap, TextGenerationError>;
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

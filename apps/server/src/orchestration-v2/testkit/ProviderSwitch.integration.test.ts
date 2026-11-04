@@ -34,6 +34,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as AgentSessionImporter from "../../project/AgentSessionImporter.ts";
+import * as AgentSessionScanner from "../../project/AgentSessionScanner.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeAgentSdkQueryRunnerError,
@@ -438,6 +444,153 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
 ) {}
 
 describe("orchestration v2 provider switching", () => {
+  it.live.each(["codex", "claudeAgent"] as const)(
+    "continues imported %s history and carries it through a provider switch",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`history-${source}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const original = source === "codex" ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
+          const other = source === "codex" ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
+          const nativeId = "df3246b8-9249-4da3-9d74-e1b50f501f51";
+          const timestamp = "2026-09-01T10:00:00.000Z";
+          const database = SqlitePersistence.layerMemory;
+          const runtime = ProviderReplayHarness.layerWithRegistry(
+            {
+              name: `history-${source}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: { type: "readOnly" },
+              },
+            },
+            ProviderAdapterRegistry.layerFromAdapters([
+              makeTestAdapter({
+                instanceId: CODEX_MODEL_SELECTION.instanceId,
+                driver: CODEX_DRIVER,
+                capabilities: CodexProviderCapabilitiesV2,
+                modelSelection: CODEX_MODEL_SELECTION,
+                responseByRunOrdinal: {},
+                capturedTurns,
+              }),
+              makeTestAdapter({
+                instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                driver: CLAUDE_DRIVER,
+                capabilities: ClaudeProviderCapabilitiesV2,
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                responseByRunOrdinal: {},
+                capturedTurns,
+              }),
+            ]),
+            { databaseLayer: database },
+          );
+          const importer = AgentSessionImporter.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                runtime,
+                ProjectionStore.layer.pipe(Layer.provide(database)),
+                ProviderSessionRuntime.layer.pipe(Layer.provide(database)),
+                IdAllocator.layer,
+                ServerSettings.layerTest(),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: () =>
+                    Effect.succeedSome({
+                      id: projectId,
+                      title: "History",
+                      workspaceRoot: cwd,
+                      defaultModelSelection: null,
+                      scripts: [],
+                      createdAt: timestamp,
+                      updatedAt: timestamp,
+                      deletedAt: null,
+                    }),
+                }),
+                Layer.mock(AgentSessionScanner.AgentSessionScanner)({
+                  recentThreads: () =>
+                    Stream.make({
+                      _tag: "Importable",
+                      source: {
+                        provider: source,
+                        providerInstanceId: original.instanceId,
+                        providerSessionId: nativeId,
+                        filePath: `${cwd}/session.jsonl`,
+                        size: 100,
+                        mtimeMs: 2,
+                        device: 3,
+                        inode: "4",
+                        birthtimeMs: 1,
+                      },
+                      thread: {
+                        source,
+                        providerInstanceId: original.instanceId,
+                        providerSessionId: nativeId,
+                        title: "Release marker",
+                        model: original.model,
+                        createdAt: timestamp,
+                        updatedAt: timestamp,
+                        omittedMessageCount: 0,
+                        messages: [
+                          {
+                            role: "user",
+                            text: "Remember that the release marker is violet.",
+                            createdAt: timestamp,
+                          },
+                          {
+                            role: "assistant",
+                            text: "I will remember violet.",
+                            createdAt: timestamp,
+                          },
+                        ],
+                      },
+                    }),
+                }),
+              ),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const imports = yield* AgentSessionImporter.AgentSessionImporter;
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const imported = yield* imports.importRecentAgentThreads({
+              projectId,
+              session: { providerInstanceId: original.instanceId, providerSessionId: nativeId },
+            });
+            assert.isDefined(imported.threadId);
+            const importedThreadId = imported.threadId!;
+            assert.deepEqual(yield* Ref.get(capturedTurns), []);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(importedThreadId)).runs.length,
+              0,
+            );
+            for (const [index, selection] of [original, other, original].entries()) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`history:${index}`),
+                threadId: importedThreadId,
+                messageId: MessageId.make(`history:${index}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: "What is the release marker?",
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              yield* waitForIdle(importedThreadId);
+            }
+            const turns = yield* Ref.get(capturedTurns);
+            assert.deepEqual(
+              turns.map((turn) => turn.modelSelection.instanceId),
+              [original.instanceId, other.instanceId, original.instanceId],
+            );
+            assert.equal(turns[0]?.nativeThreadId, nativeId);
+            assert.include(turns[1]?.text ?? "", "release marker is violet");
+            assert.equal(turns[2]?.nativeThreadId, nativeId);
+          }).pipe(Effect.provide(Layer.merge(runtime, importer)));
+        }),
+      ),
+  );
   it.live.each([
     "compact-native",
     "compact-legacy",

@@ -99,3 +99,23 @@ remaining history.
 
 You can continue without configuring agents or importing projects, or return to an earlier step
 using the setup progress bar. Navigation pauses while an import is running.
+
+## Open an individual conversation
+
+Open **Agent history** from the sidebar or command palette, or from Settings on
+mobile. Choose the computer that owns the logs and a project, or **All projects**.
+History reads the configured Claude Code and Codex session folders on that
+computer, including conversations started in their CLIs.
+
+Open a conversation to review recent messages. Continuing imports readable
+history into a normal T3 thread, or reopens its existing thread. It does not send
+a message. Stop any external CLI using that session before continuing; T3 asks
+you to confirm because log files cannot reliably establish whether it is active.
+Provider switching and recovery use the normal T3 behavior.
+
+Long logs show a bounded recent preview. Imported history has the same limits
+as project import above; native continuation still uses the provider's original
+session. Search covers titles, project paths and recently cached excerpts or
+recaps. Generate a short recap on request using your configured text-generation
+model. Server recap caches reset on restart. Previously viewed history can remain
+readable offline, but continuing requires the owning computer to reconnect.

@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  HistoryIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -14,6 +20,8 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
+import { useQuietThreadShell } from "../../state/entities";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -219,6 +227,8 @@ function SidebarUtilityItem({
 }
 
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  const target = useThreadRouteTarget();
+  const thread = useQuietThreadShell(target?.kind === "server" ? target.threadRef : null);
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -282,6 +292,20 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}
+          />
+          <SidebarUtilityItem
+            icon={<HistoryIcon />}
+            label="Agent history"
+            onClick={() => {
+              closeMobileSidebar();
+              void navigate({
+                to: "/history",
+                search:
+                  thread === null
+                    ? {}
+                    : { environmentId: thread.environmentId, projectId: thread.projectId },
+              });
+            }}
           />
         </>
       )}

@@ -40,6 +40,7 @@ export class TextGeneration extends Context.Service<TextGeneration, ProviderText
 ) {}
 
 type TextGenerationOp =
+  | "generateSessionRecap"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
@@ -127,6 +128,20 @@ export const make = Effect.gen(function* () {
     );
   });
   return TextGeneration.of({
+    generateSessionRecap: Effect.fn("TextGeneration.generateSessionRecap")(function (input) {
+      return generate(
+        "generateSessionRecap",
+        input.modelSelection,
+        (service, modelSelection) =>
+          service.generateSessionRecap?.({ ...input, modelSelection }) ??
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateSessionRecap",
+              detail: "This text-generation provider does not support session recaps.",
+            }),
+          ),
+      );
+    }),
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),
