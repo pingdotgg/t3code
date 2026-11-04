@@ -636,7 +636,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("classifies a free-tier limit as a usage limit that resets after retryAfterMs", () =>
+  // The delay counts from the event's own time (created = 1 ms), not the test clock (0 ms).
+  it.effect.each([
+    {
+      name: "resets after retryAfterMs",
+      retryAfterMs: 21_486_000,
+      resetAt: "1970-01-01T05:58:06.001Z",
+    },
+    {
+      name: "has no reset when retryAfterMs is past the date range",
+      retryAfterMs: Number.MAX_SAFE_INTEGER,
+    },
+  ] as const)("classifies a free-tier limit that $name", ({ retryAfterMs, ...rest }) =>
     Effect.gen(function* () {
       const message =
         "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.";
@@ -645,7 +656,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         event("session.execution.failed", {
           sessionID: SESSION,
-          error: { type: "provider.free-limit", message, status: 429, retryAfterMs: 21_486_000 },
+          error: { type: "provider.free-limit", message, status: 429, retryAfterMs },
         }),
       ]);
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
@@ -657,7 +668,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         code: "provider.free-limit",
         message,
         retryable: null,
-        resetAt: "1970-01-01T05:58:06.000Z",
+        ...("resetAt" in rest ? { resetAt: rest.resetAt } : {}),
       });
     }).pipe(Effect.scoped),
   );

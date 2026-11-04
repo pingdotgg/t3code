@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -2177,11 +2178,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             type === "provider.rate-limit" ||
             type === "provider.free-limit" ||
             claudeLimit !== undefined;
-          const failedAt = yield* DateTime.now;
+          // A delay past the date range has no reset time; it must not fail the event.
           const retryAt =
             retryAfterMs === undefined
               ? null
-              : DateTime.formatIso(DateTime.addDuration(failedAt, retryAfterMs));
+              : Option.match(DateTime.make(event.created + retryAfterMs), {
+                  onNone: () => null,
+                  onSome: DateTime.formatIso,
+                });
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
