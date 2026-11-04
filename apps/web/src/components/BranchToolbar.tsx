@@ -4,7 +4,7 @@ import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
 import {
   type Ref,
@@ -86,6 +86,7 @@ interface BranchToolbarProps {
   isServerThread: boolean;
   showGitControls: boolean;
   draftId?: DraftId;
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
@@ -604,6 +605,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   isServerThread,
   showGitControls,
   draftId,
+  composerDraftTarget,
   onEnvModeChange,
   envMode,
   activeThreadBranchOverride,
@@ -722,6 +724,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             environmentId={environmentId}
             threadId={threadId}
             {...(draftId ? { draftId } : {})}
+            composerDraftTarget={composerDraftTarget}
             envLocked={envLocked}
             effectiveEnvModeOverride={effectiveEnvMode}
             {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}

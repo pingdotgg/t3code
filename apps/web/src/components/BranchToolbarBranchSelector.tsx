@@ -12,6 +12,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type ContextMenuItem,
+  type ScopedThreadRef,
   type EnvironmentId,
   type VcsRef,
   type ThreadId,
@@ -80,6 +81,7 @@ interface BranchToolbarBranchSelectorProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   envLocked: boolean;
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;
@@ -102,6 +104,7 @@ export function BranchToolbarBranchSelector({
   environmentId,
   threadId,
   draftId,
+  composerDraftTarget,
   envLocked,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
@@ -751,6 +754,7 @@ export function BranchToolbarBranchSelector({
             openAriaLabel={prUrl ?? `Open ${sourceControlPresentation.terminology.singular}`}
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
+            composerDraftTarget={composerDraftTarget}
           />
         ) : null}
       </div>

@@ -8,7 +8,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
   EyeIcon,
@@ -20,6 +20,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import type { DraftId } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
@@ -93,6 +94,7 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -105,6 +107,7 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -167,7 +170,15 @@ export function ThreadDetailsPrRow({
       onActed?.();
     },
   });
-  const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
+  const { handoff, startHandoff } = usePullRequestHandoffs({
+    environmentId,
+    detail,
+    composerDraftTarget,
+  });
+  const handoffSuffix =
+    composerDraftTarget === undefined ? (
+      <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
+    ) : null;
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
     environmentId,
@@ -325,8 +336,11 @@ export function ThreadDetailsPrRow({
           pendingLabel: "Preparing...",
           pending: handoff === "conflicts",
           destructive: true,
-          suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-          tooltip: "Check the branch out and resolve the conflicts in a new thread",
+          suffix: handoffSuffix,
+          tooltip:
+            composerDraftTarget === undefined
+              ? "Check the branch out and resolve the conflicts in a new thread"
+              : "Resolve the conflicts in this thread",
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
@@ -345,8 +359,8 @@ export function ThreadDetailsPrRow({
               pendingLabel: "Preparing...",
               pending: handoff === "findings",
               destructive: true,
-              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
+              suffix: handoffSuffix,
+              tooltip: `Fix the failing checks in ${composerDraftTarget === undefined ? "a new" : "this"} thread`,
               onClick: startFixChecks,
             }
           : rowAction === "merge"

@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -175,6 +175,37 @@ it("requires a new merge click after passing checks become pending and pass agai
   await clickMerge();
   expect(dialogs()).toHaveLength(1);
   expect(state.perform).not.toHaveBeenCalled();
+});
+
+it("adds the failing checks to the current composer instead of opening a thread", async () => {
+  await using screen = await setup();
+  const draftId = DraftId.make("current-draft");
+  await act(async () => {
+    state.status = "failure";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerDraftTarget={draftId}
+      />,
+    );
+  });
+  await act(async () => {
+    [...screen.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Fix")!
+      .click();
+  });
+  const prompt = useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt;
+  expect(prompt).toContain("https://github.com/owner/repo/pull/1");
+  expect(prompt).toContain("CI-failure");
+  expect(state.newThread).not.toHaveBeenCalled();
+  expect(state.prepareThread).not.toHaveBeenCalled();
 });
 
 async function setup() {
