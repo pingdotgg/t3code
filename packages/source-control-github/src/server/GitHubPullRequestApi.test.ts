@@ -1907,37 +1907,113 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("keeps state and involvement filters on the search-free fallback", () =>
+  it.effect.each([502, 503, 504])("retries a transient HTTP %s search failure once", (status) =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            listedPullRequests(4, 1, (number) => ({
-              state: number === 4 ? "OPEN" : "CLOSED",
-              ...(number === 3 ? { mergedAt: "2026-07-03T00:00:00Z" } : {}),
-              reviewRequests:
-                number === 2 ? [{ slug: "platform", name: "Platform" }] : [{ login: "bilal" }],
-            })),
-          ),
-        ),
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("Bad gateway", false, false, {}, status)))
+        .mockReturnValueOnce(
+          Effect.succeed(searchPage([searchItem(7, "acme/web", "2026-07-03T00:00:00Z")])),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const read = yield* cli
+        .searchPullRequests({
+          cwd: "/w",
+          host: "github.com",
+          repositories: ["acme/web"],
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("250 millis");
+      const batch = yield* Fiber.join(read);
+      expect(batch.items.map((item) => item.number)).toEqual([7]);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(mockedExecute.mock.calls[1]).toEqual(mockedExecute.mock.calls[0]);
+    }),
+  );
+
+  it.effect.each([
+    { status: 502, query: "specific title" },
+    { status: 504, cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 } },
+    { status: 429 },
+  ])("preserves a listing failure for $status without an unsafe fallback", (input) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(output("GitHub refused the request", false, false, {}, input.status)),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const batch = yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
-      expect(searchOfCall(1)).toBeUndefined();
-      assert.isFalse(batch.continues);
+      const read = yield* cli
+        .listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: `github.list-failure-${input.status}.test`,
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          ...input,
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* TestClock.adjust("250 millis");
+      const result = yield* Fiber.join(read);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledTimes(input.status >= 500 ? 2 : 1);
+      expect(
+        mockedExecute.mock.calls.every(
+          ([call]) => call.kind === "graphql" && call.operationName === "PullRequestSearch",
+        ),
+      ).toBe(true);
     }),
+  );
+
+  it.effect.each([200, 502, 503, 504])(
+    "keeps state and involvement filters on the search-free fallback after HTTP %s",
+    (status) =>
+      Effect.gen(function* () {
+        const searchAnswer =
+          status === 200 ? emptySearch() : output("Bad gateway", false, false, {}, status);
+        mockedExecute.mockReturnValueOnce(Effect.succeed(searchAnswer));
+        if (status !== 200) {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(searchAnswer));
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(output("Bad gateway", false, false, {}, status)),
+          );
+        }
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(4, 1, (number) => ({
+                state: number === 4 ? "OPEN" : "CLOSED",
+                ...(number === 3 ? { mergedAt: "2026-07-03T00:00:00Z" } : {}),
+                reviewRequests:
+                  number === 2 ? [{ slug: "platform", name: "Platform" }] : [{ login: "bilal" }],
+              })),
+            ),
+          ),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+        const read = yield* cli
+          .listPullRequests({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            state: "closed",
+            involvement: "reviewing",
+            viewer: "bilal",
+            limit: 10,
+          })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("500 millis");
+        const batch = yield* Fiber.join(read);
+
+        expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+        expect(mockedExecute).toHaveBeenCalledTimes(status === 200 ? 2 : 4);
+        expect(searchOfCall(status === 200 ? 1 : 3)).toBeUndefined();
+        assert.isFalse(batch.continues);
+      }),
   );
 
   it.effect("grows the search-free fallback until it fills the filtered page", () =>

@@ -14,6 +14,7 @@ import { GraphQLClient, GraphQLClientError, GraphQLGroup, GraphQLResolver } from
 import { HttpClient } from "effect/http";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -800,6 +801,17 @@ function matchesFilters(
         resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
   );
 }
+
+const isTransientListingError = (error: GitHubPullRequestApiError): boolean =>
+  error._tag === "GitHubApiResponseError" &&
+  (error.status === 502 || error.status === 503 || error.status === 504);
+
+const retryListing = <A, E extends GitHubPullRequestApiError, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.retry(effect, {
+    while: isTransientListingError,
+    times: 1,
+    schedule: Schedule.spaced(Duration.millis(250)),
+  });
 
 function matchesUnsortedListing(
   item: GitHubPullRequestListItem,
@@ -1817,7 +1829,7 @@ export const make = Effect.gen(function* () {
                     toPage(toPullRequestRows(result.repository?.pullRequests)),
                   ),
                 )
-          ).pipe(graphql(target)),
+          ).pipe(graphql(target), retryListing),
         ).pipe(
           Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
             const items = continues
@@ -1844,13 +1856,15 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
-      // Unindexed repositories silently return no search rows; fall back to the repository listing.
-      const hasQuery = (input.query?.trim().length ?? 0) > 0;
+      // Repository listings cannot preserve a search phrase or continuation cursor.
+      const canFallback = input.cursor === undefined && (input.query?.trim().length ?? 0) === 0;
       const listed = read(true).pipe(
-        Effect.filterOrElse(
-          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
-          () => read(false),
-        ),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            canFallback && isTransientListingError(error) ? read(false) : Effect.fail(error),
+          onSuccess: (batch) =>
+            canFallback && batch.items.length === 0 ? read(false) : Effect.succeed(batch),
+        }),
         Effect.filterOrElse(
           (batch) => !stacks || batch.items.length === 0,
           (batch) =>
@@ -1925,6 +1939,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           graphql({ ...input, operation: "searchPullRequests" }),
+          retryListing,
           Effect.map(({ search }) => {
             const page = toPullRequestRows(search);
             const items = page.rows.flatMap(({ item, repository }) =>
