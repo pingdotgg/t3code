@@ -8,9 +8,9 @@ serialize, dropped into a mailbox and processed asynchronously
 somewhere else. In Alchemy it's the `Queue` resource plus
 producer bindings (`SendMessage`, `SendMessageBatch`, and the
 `Stream`-sink-shaped `QueueSink`) and a consumer side:
-`SQS.consumeQueueMessages` subscribes a Lambda to the queue as a
-typed `Stream<SQSRecord>`, creating the event source mapping and
-granting the receive/delete permissions for you.
+`SQS.consumeQueueMessages` subscribes a Lambda to the queue and hands
+each batch of messages to your Effect, creating the event source
+mapping and granting the receive/delete permissions for you.
 
 The walkthrough below builds on the [Lambda](/aws/compute/lambda) and
 [DynamoDB](/aws/data/dynamodb) pages: it adds a **Queue**, sends
@@ -21,9 +21,9 @@ messages to it from the existing function, and stands up a
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
-import * as DynamoDB from "alchemy/AWS/DynamoDB";
-+import * as SQS from "alchemy/AWS/SQS";
+import * as AWS from "@alchemy.run/aws";
+import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
++import * as SQS from "@alchemy.run/aws/SQS";
 // ...
 
 Effect.gen(function* () {
@@ -101,20 +101,21 @@ Consumers live as their own Lambda Function. Create
 
 ```typescript
 // src/worker.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default class Worker extends AWS.Lambda.Function<Worker>()(
   "JobsWorker",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     return {};
   }),
 ) {}
 ```
 
-This consumer doesn't need a Function URL — its only entrypoint
-is the SQS message poller AWS will configure for it.
+`functionUrl: false` turns off the public Function URL every Lambda
+gets by default. This consumer's only entrypoint is the SQS message
+poller AWS will configure for it.
 
 ## Share the queue between two functions
 
@@ -124,7 +125,7 @@ the cleanest way to do that is to lift the declaration out of
 
 ```typescript
 // src/queue.ts
-import * as SQS from "alchemy/AWS/SQS";
+import * as SQS from "@alchemy.run/aws/SQS";
 
 export const Jobs = SQS.Queue("Jobs");
 ```
@@ -147,13 +148,13 @@ a typed `Queue` resource:
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 +import { Jobs } from "./queue.ts";
 
 export default class Worker extends AWS.Lambda.Function<Worker>()(
   "JobsWorker",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
 +    const queue = yield* Jobs;
     return {};
@@ -163,32 +164,33 @@ export default class Worker extends AWS.Lambda.Function<Worker>()(
 
 ## Subscribe to messages
 
-`SQS.consumeQueueMessages(queue, ...)` is the consumer-side mirror
-of `consumeBucketEvents` / `stream`: a typed `Stream<SQSRecord>` you
-can compose with any operator. Add the smallest possible
-subscription — log each message body:
+`SQS.consumeQueueMessages(queue, ...)` calls your handler with each
+batch Lambda delivers — the `SQSEvent` — and takes back Lambda's
+batch response. Add the smallest possible subscription — log each
+message body:
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as AWS from "alchemy/AWS";
-+import * as SQS from "alchemy/AWS/SQS";
+import * as AWS from "@alchemy.run/aws";
++import * as SQS from "@alchemy.run/aws/SQS";
 +import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-+import * as Stream from "effect/Stream";
 import { Jobs } from "./queue.ts";
 
 export default class Worker extends AWS.Lambda.Function<Worker>()(
   "JobsWorker",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     const queue = yield* Jobs;
 +
-+    yield* SQS.consumeQueueMessages(queue, { batchSize: 10 }, (stream) =>
-+      stream.pipe(
-+        Stream.runForEach((record) =>
-+          Console.log(`received: ${record.body}`),
-+        ),
-+      ),
++    yield* SQS.consumeQueueMessages(
++      queue,
++      { batchSize: 10 },
++      Effect.fn(function* (event) {
++        for (const record of event.Records) {
++          yield* Console.log(`received: ${record.body}`);
++        }
++      }),
 +    );
 
     return {};
@@ -199,7 +201,9 @@ export default class Worker extends AWS.Lambda.Function<Worker>()(
 That single `consumeQueueMessages(...)` call creates the Lambda event
 source mapping pointing at the queue and grants the function
 `sqs:ReceiveMessage`, `DeleteMessage`, and `GetQueueAttributes`
-on the queue ARN.
+on the queue ARN. Returning nothing means every message succeeded,
+so Lambda deletes the whole batch; if the handler fails, Lambda
+retries the whole batch.
 
 ## Provide the runtime layer
 
@@ -261,25 +265,35 @@ Within a couple of seconds you'll see:
 received: {"type":"job.created","id":"q1","content":"hello queue"}
 ```
 
-## Bonus: process records in parallel
+## Bonus: retry only the failed messages
 
-`Stream.mapEffect` accepts a `concurrency` option, so you can
-fan out per-record work without rewriting anything:
+Return Lambda's `SQSBatchResponse` to report the messages that
+failed. Lambda deletes the rest and redelivers only those once their
+visibility timeout lapses:
 
 ```typescript
-stream.pipe(
-  Stream.mapEffect(
-    (record) => doSomethingWith(record.body).pipe(Effect.orDie),
-    { concurrency: 4 },
-  ),
-  Stream.runDrain,
+yield* SQS.consumeQueueMessages(
+  queue,
+  { batchSize: 10 },
+  Effect.fn(function* (event) {
+    const failed = yield* Effect.filter(
+      event.Records,
+      (record) =>
+        doSomethingWith(record.body).pipe(
+          Effect.as(false),
+          Effect.catchCause(() => Effect.succeed(true)),
+        ),
+      { concurrency: 4 },
+    );
+    return {
+      batchItemFailures: failed.map((record) => ({ itemIdentifier: record.messageId })),
+    };
+  }),
 );
 ```
 
-Up to 4 records process concurrently, and the event source
-mapping won't ack them until the stream completes — which is the
-same delivery semantics SQS already gives you, just with
-controllable concurrency on top.
+Up to 4 messages process concurrently, and a message that fails
+never drags the rest of its batch back onto the queue.
 
 ## Bonus: forward a stream to SQS with `QueueSink`
 
@@ -305,19 +319,21 @@ const putItem = yield* DynamoDB.PutItem(table);
 -const sendMessage = yield* SQS.SendMessage(queue);
 +const sink = yield* SQS.QueueSink(queue);
 
-yield* DynamoDB.consumeTableChanges(table, {
-  streamViewType: "NEW_AND_OLD_IMAGES",
-}, (stream) =>
-  stream.pipe(
-+    Stream.map((record) =>
-+      JSON.stringify({
-+        eventName: record.eventName,
-+        keys: record.dynamodb.Keys,
-+        newImage: record.dynamodb.NewImage,
-+      }),
-+    ),
-+    Stream.run(sink),
-  ),
+yield* DynamoDB.consumeTableChanges(
+  table,
+  { streamViewType: "NEW_AND_OLD_IMAGES" },
+  Effect.fn(function* (event) {
++    yield* Stream.fromIterable(event.Records).pipe(
++      Stream.map((record) =>
++        JSON.stringify({
++          eventName: record.eventName,
++          keys: record.dynamodb.Keys,
++          newImage: record.dynamodb.NewImage,
++        }),
++      ),
++      Stream.run(sink),
++    );
+  }),
 );
 ```
 
@@ -367,7 +383,7 @@ change, batched ten-at-a-time on the producer side.
 ## Where next
 
 - [Kinesis](/aws/messaging/kinesis) — stream higher-volume records:
-  ordered, sharded, and with the same `Stream` consumer surface.
+  ordered, sharded, and with the same batch handler.
 - [Process DynamoDB Streams](/aws/messaging/dynamodb-streams) — the
   change-data-capture pipeline the `QueueSink` bonus above
   builds on.
