@@ -1,3 +1,4 @@
+import { threadLinkMessageId } from "@t3tools/shared/promptLinks";
 import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -12,7 +13,15 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -93,6 +102,7 @@ import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspa
 import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
+import { promptLinkSearchFromParams } from "../prompt-links/prompt-link-model";
 import {
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
@@ -113,6 +123,8 @@ import {
 } from "./thread-inspector-preview";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+
+const MESSAGE_LINK_KEYS = ["message"];
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -157,6 +169,8 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly draft?: NewTaskDraftRouteParams;
   readonly inspector?: ThreadInspectorTarget;
   readonly prompt?: string | string[];
+  /** A message link's target, which the feed opens at. */
+  readonly message?: string | string[];
 }>;
 
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
@@ -393,32 +407,36 @@ function ThreadRouteContent(
     label: "load earlier thread history",
     reportFailure: false,
   });
-  const historyControls = (() => {
-    const history = selectedThreadDetailState.history;
-    if (!selectedThread) {
-      return undefined;
-    }
-    if (!history.hasMoreHistory && history.error === null) {
-      return undefined;
-    }
+  const history = selectedThreadDetailState.history;
+  const historyEnvironmentId = selectedThread?.environmentId;
+  const historyThreadId = selectedThread?.id;
+  const historyControls = useMemo(() => {
+    if (!historyEnvironmentId || !historyThreadId) return undefined;
+    if (!history.hasMoreHistory && history.error === null) return undefined;
     return {
       hasMoreHistory: history.hasMoreHistory,
       loading: history.loading,
       error: history.error,
       onLoadEarlier: () => {
         void loadEarlierHistory({
-          environmentId: selectedThread.environmentId,
-          input: { threadId: selectedThread.id },
+          environmentId: historyEnvironmentId,
+          input: { threadId: historyThreadId },
         });
       },
-      onLoadThrough: (throughEntryId: string) => {
-        void loadEarlierHistory({
-          environmentId: selectedThread.environmentId,
-          input: { threadId: selectedThread.id, throughEntryId },
-        });
-      },
+      onLoadThrough: (throughEntryId: string) =>
+        loadEarlierHistory({
+          environmentId: historyEnvironmentId,
+          input: { threadId: historyThreadId, throughEntryId },
+        }),
     };
-  })();
+  }, [
+    history.hasMoreHistory,
+    history.loading,
+    history.error,
+    historyEnvironmentId,
+    historyThreadId,
+    loadEarlierHistory,
+  ]);
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const openPullRequest = useOpenPullRequest();
@@ -457,6 +475,14 @@ function ThreadRouteContent(
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
+  const linkedMessageId = threadLinkMessageId(
+    promptLinkSearchFromParams(params, MESSAGE_LINK_KEYS) ?? "",
+  );
+  // The feed reports a message link handled once it reaches the message or gives up.
+  const handleLinkedMessageHandled = useCallback(
+    () => navigation.setParams({ message: undefined }),
+    [navigation],
+  );
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
   // The chosen mode survives thread switches; "route" only applies while the route
@@ -1035,7 +1061,10 @@ function ThreadRouteContent(
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
+          threadSyncError={Option.getOrNull(selectedThreadDetailState.error)}
           historyControls={historyControls}
+          linkedMessageId={linkedMessageId}
+          onLinkedMessageHandled={handleLinkedMessageHandled}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
           queuedRunEdit={composer.queuedRunEdit}

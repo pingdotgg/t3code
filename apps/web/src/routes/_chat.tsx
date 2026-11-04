@@ -7,7 +7,7 @@ import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
-import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
+import { ThreadLinkParams } from "../components/promptLinks/ThreadLinkParams";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 function threadRouteTargetKey(target: ThreadRouteTarget | null) {
@@ -31,7 +31,7 @@ function ChatRouteLayout() {
   return (
     <>
       {shownTarget?.kind === "server" && !modalOpen ? (
-        <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
+        <ThreadLinkParams threadRef={shownTarget.threadRef} />
       ) : null}
       {shownTarget ? (
         <ThreadRouteView target={shownTarget} background={modalOpen} />

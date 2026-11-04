@@ -157,9 +157,13 @@ export function parseThreadLinkPrompt(search: string): PromptLinkResult<LinkedPr
   return readPrompt(new URLSearchParams(search));
 }
 
+export function threadLinkMessageId(search: string): string | null {
+  return optionalParam(new URLSearchParams(search), "message");
+}
+
 export function withoutPromptLinkParams(search: string): string {
   const params = new URLSearchParams(search);
-  for (const key of ["prompt", "repo", "pr", "provider", "model"]) params.delete(key);
+  for (const key of ["prompt", "repo", "pr", "provider", "model", "message"]) params.delete(key);
   const rest = params.toString();
   return rest ? `?${rest}` : "";
 }
@@ -178,6 +182,21 @@ export function buildNewThreadLink(input: {
   }
   if (input.provider) url.searchParams.set("provider", input.provider);
   if (input.provider && input.model) url.searchParams.set("model", input.model);
+  return url.toString();
+}
+
+/** A shareable link to a message in a thread, on the hosted app. */
+export function buildThreadMessageLink(input: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly origin?: string;
+}): string {
+  const url = new URL(
+    `/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`,
+    input.origin ?? DEFAULT_HOSTED_APP_URL,
+  );
+  url.searchParams.set("message", input.messageId);
   return url.toString();
 }
 
@@ -202,7 +221,7 @@ export function promptLinkAppPath(
   // The web app's own thread route is a link only with a prompt, so reloading a tab never asks.
   const thread = url.pathname.startsWith("/threads/")
     ? THREAD_PATH.exec(url.pathname.slice("/threads".length))
-    : url.searchParams.has("prompt")
+    : url.searchParams.has("prompt") || url.searchParams.has("message")
       ? THREAD_PATH.exec(url.pathname)
       : null;
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;

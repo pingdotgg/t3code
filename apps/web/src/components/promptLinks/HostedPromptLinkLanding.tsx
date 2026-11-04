@@ -4,6 +4,7 @@ import {
   parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
+  threadLinkMessageId,
 } from "@t3tools/shared/promptLinks";
 import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -41,6 +42,10 @@ function summarize(
   if (url.pathname !== "/new") {
     const prompt = parseThreadLinkPrompt(url.search);
     if (!prompt.ok) return prompt;
+    const detail =
+      threadLinkMessageId(url.search) === null
+        ? "Opens one of your threads."
+        : "Opens one of your threads at a message.";
     return {
       ok: true,
       value:
@@ -49,9 +54,9 @@ function summarize(
               title: "Open this thread",
               description: "It opens in T3 Code if you're connected to the machine it runs on.",
               prompt: null,
-              details: [],
+              details: threadLinkMessageId(url.search) === null ? [] : [detail],
             }
-          : { ...PROMPT_HEADER, prompt: prompt.value, details: ["Opens one of your threads."] },
+          : { ...PROMPT_HEADER, prompt: prompt.value, details: [detail] },
     };
   }
   const link = parseNewThreadLink(url.search);

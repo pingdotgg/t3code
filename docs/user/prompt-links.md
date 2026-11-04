@@ -62,3 +62,10 @@ it anywhere, such as Slack, a GitHub comment, or your notes. On a phone with T3 
 opens the thread in the app. Elsewhere, opening it asks where to open it, like a prompt link, then
 opens the thread. Only someone connected to the machine that runs the thread can see it. In T3 Code,
 a thread link in a message opens the thread in the app.
+
+## Link to a message
+
+Click the time under any message to copy a link to it. On mobile, long-press a message's copy
+button and choose **Copy message link**. The link opens that thread scrolled to the
+message, on desktop, mobile, or app.t3.codes, the same way prompt links open. It only works on a
+device that is connected to the machine the thread runs on.

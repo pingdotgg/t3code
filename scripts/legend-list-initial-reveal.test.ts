@@ -16,30 +16,43 @@ function createList(bundle: string) {
     source.indexOf("var INSET_END_SETTLE_WATCHDOG_FRAMES"),
     source.indexOf("function dispatchInitialScroll("),
   );
+  const initialScroll = source.slice(
+    source.indexOf("var PRESERVED_INITIAL_SCROLL_FALLBACK_CLEAR_DELAY_MS"),
+    source.indexOf("// src/core/calculateOffsetForIndex.ts"),
+  );
+  const imperativeHandle = source.slice(
+    source.indexOf("function createImperativeHandle("),
+    source.indexOf("// src/utils/getAlwaysRenderIndices.ts"),
+  );
   const frames: Array<() => void> = [];
   const values = new Map<string, unknown>();
   const scrollTo = vi.fn();
   const onLoad = vi.fn();
   const state = {
     props: { data: ["message"], onLoad, drawDistance: 500 },
-    initialScroll: { index: 0, viewPosition: 1 },
+    initialScroll: { index: 0, viewPosition: 1 } as
+      | { index: number; viewPosition: number }
+      | undefined,
     loadStartTime: 0,
     didContainersLayout: true,
     didFinishInitialScroll: true,
     didLoad: false,
     didUserDrag: false,
+    insetEndSettleWatchdogActive: false,
+    insetEndRevealHold: false,
     scrollLength: 800,
     scroll: 400,
     lastNativeScroll: 200 as number | undefined,
     scrollingTo: undefined as { offset: number } | undefined,
     maintainingScrollAtEnd: false,
     refScroller: { current: { scrollTo } },
+    scheduledWork: { cancel: vi.fn(), has: () => false },
   };
   const ctx = { state };
   let contentSize = 1200;
   let inset = 100;
   const api = NodeVM.runInNewContext(
-    `${renderState}\n${watchdog}\n({ start: startInsetEndSettleWatchdog, complete: setInitialRenderState })`,
+    `${renderState}\n${watchdog}\n${initialScroll}\n${imperativeHandle}\n({ start: startInsetEndSettleWatchdog, complete: setInitialRenderState, finish: finishInitialScroll, list: createImperativeHandle(ctx) })`,
     {
       requestAnimationFrame: (callback: () => void) => frames.push(callback),
       getContentSize: () => contentSize,
@@ -49,10 +62,23 @@ function createList(bundle: string) {
       setAdaptiveRender: vi.fn(),
       scheduleFullDrawDistancePrewarm: vi.fn(),
       INITIAL_DRAW_DISTANCE: 250,
+      Platform: { OS: "ios" },
+      ctx,
+      initialScrollCompletion: { resetFlags: vi.fn() },
+      initialScrollWatchdog: { clear: vi.fn() },
+      setInitialScrollSession: vi.fn(),
+      settlePendingImperativeScroll: vi.fn(),
+      scrollToIndex: () => {
+        state.scroll = 200;
+        state.lastNativeScroll = 200;
+        scrollTo({ animated: false, x: 0, y: 200 });
+      },
     },
   ) as {
     start: (context: typeof ctx) => void;
     complete: (context: typeof ctx, flags: Record<string, boolean>) => void;
+    finish: (context: typeof ctx) => void;
+    list: { scrollToIndex: (params: { index: number }) => Promise<void> };
   };
   return {
     state,
@@ -60,6 +86,8 @@ function createList(bundle: string) {
     onLoad,
     start: () => api.start(ctx),
     complete: () => api.complete(ctx, {}),
+    finish: () => api.finish(ctx),
+    scrollToMessage: () => api.list.scrollToIndex({ index: 0 }),
     ready: () => values.get("readyToRender") === true,
     resize: (size: number) => {
       contentSize = size;
@@ -144,6 +172,44 @@ describe.each(["react-native.js", "react-native.mjs"])(
       expect(list.state.didUserDrag).toBe(true);
       expect(list.scrollTo).not.toHaveBeenCalled();
       expect(list.onLoad).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["before reveal", "after reveal", "after clearing the initial target"])(
+      "keeps an imperative message position %s",
+      async (phase) => {
+        const list = createList(bundle);
+        list.state.lastNativeScroll = 400;
+        list.start();
+        if (phase !== "before reveal") list.advance(7);
+        expect(list.ready()).toBe(phase !== "before reveal");
+        if (phase === "after clearing the initial target") {
+          list.finish();
+          expect(list.state.initialScroll).toBeUndefined();
+        }
+
+        const scroll = list.scrollToMessage();
+        expect(list.state.insetEndSettleWatchdogActive).toBe(false);
+        expect(list.state.insetEndRevealHold).toBe(false);
+        expect(list.ready()).toBe(true);
+        await scroll;
+        list.advance(150);
+
+        expect(list.ready()).toBe(true);
+        expect(list.onLoad).toHaveBeenCalledTimes(1);
+        expect(list.scrollTo.mock.calls).toEqual([[{ animated: false, x: 0, y: 200 }]]);
+      },
+    );
+
+    it("keeps a message position requested by onLoad when the reveal budget expires", () => {
+      const list = createList(bundle);
+      list.onLoad.mockImplementation(() => void list.scrollToMessage());
+      list.state.lastNativeScroll = undefined;
+      list.start();
+      list.advance(150);
+
+      expect(list.ready()).toBe(true);
+      expect(list.onLoad).toHaveBeenCalledTimes(1);
+      expect(list.scrollTo.mock.calls).toEqual([[{ animated: false, x: 0, y: 200 }]]);
     });
   },
 );

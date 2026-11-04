@@ -439,6 +439,7 @@ describe("ThreadInlineFilePreview playback", () => {
       await act(async () =>
         root!.render(
           createElement(ThreadFeed, {
+            connectionPhase: "connected",
             environmentId,
             threadId,
             detailRef: null,
@@ -1378,6 +1379,7 @@ describe("ThreadFeed previews", () => {
         Fragment,
         null,
         createElement(ThreadFeed, {
+          connectionPhase: "connected",
           environmentId,
           threadId,
           detailRef: null,
