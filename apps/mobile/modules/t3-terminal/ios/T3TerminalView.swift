@@ -138,7 +138,10 @@ private final class TerminalInputField: UITextField {
   }
 
   override func deleteBackward() {
-    onDeleteBackward?()
+    // While an IME composes, Backspace edits the marked text, not the PTY.
+    if markedTextRange == nil {
+      onDeleteBackward?()
+    }
     super.deleteBackward()
   }
 
@@ -349,13 +352,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.smartDashesType = .no
     inputField.smartQuotesType = .no
     inputField.returnKeyType = .send
-    inputField.keyboardType = .asciiCapable
+    inputField.keyboardType = .default
     inputField.enablesReturnKeyAutomatically = false
     inputField.translatesAutoresizingMaskIntoConstraints = false
     inputField.alpha = 0.02
     inputField.isAccessibilityElement = false
     inputField.accessibilityElementsHidden = true
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
+    inputField.addTarget(self, action: #selector(handleInputEditingChanged), for: .editingChanged)
     inputField.onDeleteBackward = { [weak self] in
       self?.emitInput("\u{7F}")
     }
@@ -417,19 +421,16 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  // An IME's first keystroke arrives here before it becomes marked text, so insertions
+  // land in the field and handleInputEditingChanged emits them once committed.
   public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-    if !string.isEmpty {
-      // Some software keyboards deliver Return through this delegate instead of
-      // textFieldShouldReturn, so normalize that path too.
-      emitInput(TerminalInputSequence.normalizingReturn(string))
-      return false
-    }
-
-    emitInput("\u{7F}")
-    return false
+    // Deletions outside a composition already reached the PTY through deleteBackward.
+    textField.markedTextRange != nil || !string.isEmpty
   }
 
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+    // Return during a composition commits it; that is not Enter.
+    guard textField.markedTextRange == nil else { return false }
     emitInput(TerminalInputSequence.carriageReturn)
     textField.text = ""
     return false
@@ -478,6 +479,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       pendingVerticalScrollPoints = 0
       gesture.setTranslation(.zero, in: terminalViewport)
     }
+  }
+
+  @objc
+  private func handleInputEditingChanged() {
+    guard inputField.markedTextRange == nil, let text = inputField.text, !text.isEmpty else { return }
+    // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
+    emitInput(TerminalInputSequence.normalizingReturn(text))
+    inputField.text = ""
   }
 
   @objc
