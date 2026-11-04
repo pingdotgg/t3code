@@ -3,6 +3,7 @@ import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
+  executeAtomQuery,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -38,6 +39,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useContext,
   useEffectEvent,
   useLayoutEffect,
   useRef,
@@ -81,6 +83,8 @@ import {
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
+import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
+import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { attachedTerminalSessionAtom } from "../state/terminalSessions";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -190,7 +194,7 @@ export function synchronizeTerminalOutput(
   const selection = cells > 0 && compared ? terminal.getSelection() : "";
   writeTerminalOutputUpdate(terminal, update);
   if (!compared || (cells > 0 && terminal.getSelection() !== selection)) {
-    terminal.clearSelection();
+    terminal.clearSelection({ source: "output" });
   }
   return update.cursor;
 }
@@ -534,14 +538,47 @@ function TerminalSessionViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const openFilesInApp = useClientSettings((settings) => settings.terminalFileLinksOpenInApp);
-  const canActivateTerminalLink = useEffectEvent(
-    (text: string) =>
-      isTerminalUrl(text) ||
-      (openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) ||
-      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
-  );
+  const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const [linkPath, setLinkPath] = useState<string | null>(null);
+  const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const linkMetadataQuery =
+    linkPath !== null && (canOpenHostEditor || openFilesInApp) && canReadFilesystem
+      ? getFileMetadataQueryAtom(
+          environmentId,
+          resolvePathLinkTarget(linkPath, cwd),
+          cwd,
+          metadataThreadRef,
+        )
+      : null;
+  const canActivateTerminalLink = useEffectEvent((text: string) => {
+    if (isTerminalUrl(text)) return true;
+    if (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return false;
+    if (text !== linkPath || !linkMetadataQuery) return false;
+    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
+    return metadata?.kind === "file" || metadata?.kind === "directory";
+  });
+  const validateTerminalLink = useEffectEvent(async (text: string) => {
+    if (isTerminalUrl(text)) return true;
+    if (
+      (!openFilesInApp && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+    )
+      return false;
+    const query = getFileMetadataQueryAtom(
+      environmentId,
+      resolvePathLinkTarget(text, cwd),
+      cwd,
+      metadataThreadRef,
+    );
+    if (!query) return false;
+    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    return (
+      result._tag === "Success" &&
+      (result.value?.kind === "file" || result.value?.kind === "directory")
+    );
+  });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
@@ -680,15 +717,18 @@ function TerminalSessionViewport({
       consumePendingTerminalFocus(threadRef, terminalId);
   }, [canOperateTerminal, terminalId, threadRef]);
 
-  // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
-  const canActivatePath = canOpenHostEditor || (openFilesInApp && canReadFiles);
-  const linkActivationScopeRef = useRef(canActivatePath);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes link activation styling on the imperative terminal surface when the editor grant changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the imperative terminal's hovered link after filesystem metadata or editor permissions change
   useEffect(() => {
-    if (linkActivationScopeRef.current === canActivatePath) return;
-    linkActivationScopeRef.current = canActivatePath;
-    terminalRef.current?.refreshLinkActivation();
-  }, [canActivatePath]);
+    if (!linkMetadataQuery) {
+      terminalRef.current?.refreshLinkActivation();
+      return;
+    }
+    return appAtomRegistry.subscribe(
+      linkMetadataQuery,
+      () => terminalRef.current?.refreshLinkActivation(),
+      { immediate: true },
+    );
+  }, [linkMetadataQuery]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
@@ -729,6 +769,8 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
+        validateLink: (text) => validateTerminalLink(text),
+        onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
@@ -1037,7 +1079,12 @@ function TerminalSessionViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
-        if (!canActivateTerminalLink(text)) return;
+        if (
+          !isTerminalUrl(text) &&
+          !(openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) &&
+          !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+        )
+          return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         latestTerminalLinkActivations.delete(linkActivationScope);
@@ -1829,53 +1876,6 @@ export default function ThreadTerminalDrawer({
     );
   }
 
-  // The single-terminal row and the split sidebar header share these controls,
-  // so neither layout floats them over terminal text.
-  const terminalActions = (
-    <div className="inline-flex h-full items-stretch">
-      <TerminalActionButton
-        disabled={!canOperateTerminal}
-        className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
-          hasReachedSplitLimit
-            ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-            : "hover:bg-accent/70"
-        }`}
-        onClick={onSplitTerminalAction}
-        label={splitTerminalActionLabel}
-      >
-        <SquareSplitHorizontal className="size-3.25" />
-      </TerminalActionButton>
-      <TerminalActionButton
-        disabled={!canOperateTerminal}
-        className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
-          hasReachedSplitLimit
-            ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-            : "hover:bg-accent/70"
-        }`}
-        onClick={onSplitTerminalVerticalAction}
-        label={splitTerminalVerticalActionLabel}
-      >
-        <SquareSplitVertical className="size-3.25" />
-      </TerminalActionButton>
-      <TerminalActionButton
-        disabled={!canOperateTerminal}
-        className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-        onClick={onNewTerminalAction}
-        label={newTerminalActionLabel}
-      >
-        <Plus className="size-3.25" />
-      </TerminalActionButton>
-      <TerminalActionButton
-        disabled={!canOperateTerminal}
-        className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-        onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-        label={closeTerminalActionLabel}
-      >
-        <Trash2 className="size-3.25" />
-      </TerminalActionButton>
-    </div>
-  );
-
   return (
     <aside
       ref={drawerRef}
@@ -1900,14 +1900,52 @@ export default function ThreadTerminalDrawer({
       ) : null}
 
       {!hasTerminalSidebar && (
-        <div
-          className={cn(
-            "flex shrink-0 items-stretch justify-end border-b border-border/70",
-            // The drawer's resize strip covers its top 6px; keep the buttons below it.
-            isPanel ? "h-[22px]" : "h-7 pt-1.5",
-          )}
-        >
-          {terminalActions}
+        <div className="pointer-events-none absolute right-2 top-2 z-20">
+          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+            <TerminalActionButton
+              disabled={!canOperateTerminal}
+              className={`p-1 text-foreground/90 transition-colors ${
+                hasReachedSplitLimit
+                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                  : "hover:bg-accent"
+              }`}
+              onClick={onSplitTerminalAction}
+              label={splitTerminalActionLabel}
+            >
+              <SquareSplitHorizontal className="size-3.25" />
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
+            <TerminalActionButton
+              disabled={!canOperateTerminal}
+              className={`p-1 text-foreground/90 transition-colors ${
+                hasReachedSplitLimit
+                  ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                  : "hover:bg-accent"
+              }`}
+              onClick={onSplitTerminalVerticalAction}
+              label={splitTerminalVerticalActionLabel}
+            >
+              <SquareSplitVertical className="size-3.25" />
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
+            <TerminalActionButton
+              disabled={!canOperateTerminal}
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onNewTerminalAction}
+              label={newTerminalActionLabel}
+            >
+              <Plus className="size-3.25" />
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
+            <TerminalActionButton
+              disabled={!canOperateTerminal}
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+              label={closeTerminalActionLabel}
+            >
+              <Trash2 className="size-3.25" />
+            </TerminalActionButton>
+          </div>
         </div>
       )}
 
@@ -1939,7 +1977,48 @@ export default function ThreadTerminalDrawer({
           {hasTerminalSidebar && (
             <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                {terminalActions}
+                <div className="inline-flex h-full items-stretch">
+                  <TerminalActionButton
+                    disabled={!canOperateTerminal}
+                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
+                      hasReachedSplitLimit
+                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                        : "hover:bg-accent/70"
+                    }`}
+                    onClick={onSplitTerminalAction}
+                    label={splitTerminalActionLabel}
+                  >
+                    <SquareSplitHorizontal className="size-3.25" />
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    disabled={!canOperateTerminal}
+                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
+                      hasReachedSplitLimit
+                        ? "cursor-not-allowed opacity-64 hover:bg-transparent"
+                        : "hover:bg-accent/70"
+                    }`}
+                    onClick={onSplitTerminalVerticalAction}
+                    label={splitTerminalVerticalActionLabel}
+                  >
+                    <SquareSplitVertical className="size-3.25" />
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    disabled={!canOperateTerminal}
+                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onClick={onNewTerminalAction}
+                    label={newTerminalActionLabel}
+                  >
+                    <Plus className="size-3.25" />
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    disabled={!canOperateTerminal}
+                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+                    label={closeTerminalActionLabel}
+                  >
+                    <Trash2 className="size-3.25" />
+                  </TerminalActionButton>
+                </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">

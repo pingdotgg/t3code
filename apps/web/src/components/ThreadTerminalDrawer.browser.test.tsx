@@ -4,7 +4,11 @@ import {
   ThreadId,
   type FilesystemGetMetadataResult,
   type ScopedThreadRef,
+  type FilesystemEntryMetadata,
 } from "@t3tools/contracts";
+import { Atom, AsyncResult } from "effect/reactivity";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -21,6 +25,10 @@ const fixture = vi.hoisted(() => ({
   metadataByEnvironment: new Map<EnvironmentId, FilesystemGetMetadataResult>(),
   pendingMetadata: new Map<string, Promise<FilesystemGetMetadataResult>>(),
   openEditor: vi.fn(async (_target: string) => ({ _tag: "Success" as const })),
+  linkMetadata: new Map<
+    string,
+    Atom.Writable<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>
+  >(),
 }));
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
@@ -91,6 +99,30 @@ vi.mock("../state/use-atom-query-runner", () => ({
         fixture.metadata),
     }),
 }));
+vi.mock("../state/projects", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    projectEnvironment: {
+      fileMetadata: ({
+        environmentId,
+        input,
+      }: {
+        environmentId: string;
+        input: { path: string };
+      }) => {
+        const key = JSON.stringify([environmentId, input.path]);
+        let atom = fixture.linkMetadata.get(key);
+        if (!atom) {
+          atom = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+            AsyncResult.success(null),
+          );
+          fixture.linkMetadata.set(key, atom);
+        }
+        return atom;
+      },
+    },
+  };
+});
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => null }));
 vi.mock("../hooks/useSettings", async () => {
@@ -104,6 +136,7 @@ vi.mock("../hooks/useSettings", async () => {
 function Drawer(props: {
   threadRef: ScopedThreadRef;
   terminalIds?: string[];
+  cwd?: string;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
 }) {
   const terminalIds = props.terminalIds ?? ["term-1"];
@@ -111,7 +144,7 @@ function Drawer(props: {
     <ThreadTerminalDrawer
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
-      cwd="/repo"
+      cwd={props.cwd ?? "/repo"}
       height={240}
       terminalIds={terminalIds}
       activeTerminalId={terminalIds[0]!}
@@ -151,6 +184,7 @@ function setup() {
   fixture.pendingMetadata = new Map();
   fixture.openEditor.mockClear();
   useRightPanelStore.setState({ byThreadKey: {} });
+  fixture.linkMetadata.clear();
   return { original, other };
 }
 
@@ -460,4 +494,83 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
     vi.runOnlyPendingTimers();
   });
   expect(onCloseTerminal.mock.calls).toEqual([["term-1", original]]);
+});
+
+it("only activates terminal paths confirmed to exist on their environment", async () => {
+  const { other: threadRef } = setup();
+  const key = (path: string) => JSON.stringify([threadRef.environmentId, path]);
+  const pending = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+    AsyncResult.initial(),
+  );
+  fixture.linkMetadata.set(key("/repo/src/main.ts"), pending);
+  fixture.linkMetadata.set(
+    key("/repo/src/…notes.ts"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  fixture.linkMetadata.set(
+    key("/repo/src"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "directory" }),
+    ),
+  );
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <Drawer threadRef={threadRef} onCloseTerminal={() => {}} />
+    </AppAtomRegistryProvider>,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const canActivate = (text: string) => fixture.surfaceOptions.at(-1)!.canActivateLink!(text);
+  const validate = (text: string) => fixture.surfaceOptions.at(-1)!.validateLink!(text);
+  const hover = (text: string | null) =>
+    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text));
+
+  expect(canActivate("https://example.com")).toBe(true);
+  for (const branch of ["t3/fix-html-image-details", "t3/fix-html-…mage-details"]) {
+    const candidates = extractTerminalLinks(branch);
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const candidate of candidates) {
+      expect(canActivate(candidate.text)).toBe(false);
+      await hover(candidate.text);
+      expect(canActivate(candidate.text)).toBe(false);
+      expect(await validate(candidate.text)).toBe(false);
+    }
+  }
+  const pressedValidation = validate("src/main.ts:12:7");
+  await hover("src/main.ts:12:7");
+  expect(canActivate("src/main.ts:12:7")).toBe(false);
+  await act(async () => {
+    appAtomRegistry.set(pending, AsyncResult.success({ kind: "file" }));
+  });
+  expect(canActivate("src/main.ts:12:7")).toBe(true);
+  expect(await pressedValidation).toBe(true);
+  expect(canActivate("missing/file.ts")).toBe(false);
+  await hover("missing/file.ts");
+  expect(canActivate("missing/file.ts")).toBe(false);
+  for (const path of ["/repo/src/…notes.ts", "/repo/src"]) {
+    await hover(path);
+    expect(canActivate(path)).toBe(true);
+  }
+  await hover(null);
+  expect(canActivate("/repo/src")).toBe(false);
+  fixture.linkMetadata.set(
+    key("/home/alice/notes.ts"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  await screen.rerender(
+    <AppAtomRegistryProvider>
+      <Drawer threadRef={threadRef} cwd="/home/alice/project" onCloseTerminal={() => {}} />
+    </AppAtomRegistryProvider>,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  expect(await validate("~/notes.ts:5:2")).toBe(true);
+  await hover("~/notes.ts:5:2");
+  expect(canActivate("~/notes.ts:5:2")).toBe(true);
 });
