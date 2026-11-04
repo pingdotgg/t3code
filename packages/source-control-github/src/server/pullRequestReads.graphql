@@ -50,6 +50,7 @@ fragment CheckContext on StatusCheckRollupContext {
   }
 }
 
+# `isInMergeQueue` follows `isRequired`: asked for on github.com only (`$mergeQueue`).
 # The detail of a pull request with the viewer's standing on it. Pull refs let the comparison
 # (`$headRef` is `refs/pull/<number>/head`) share this read without first resolving a fork branch.
 query PullRequestCore(
@@ -58,6 +59,7 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $mergeQueue: Boolean!
   $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
@@ -73,6 +75,7 @@ query PullRequestCore(
       body
       state
       isDraft
+      isInMergeQueue @include(if: $mergeQueue)
       mergeable
       mergeStateStatus
       reviewDecision

@@ -90,6 +90,7 @@ interface ListItemFields {
   readonly baseRefName: string;
   readonly state?: string | null | undefined;
   readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeable?: string | null | undefined;
   readonly reviewDecision?: string | null | undefined;
   readonly additions?: number | undefined;
@@ -332,6 +333,7 @@ export interface GitHubPullRequestListItem {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly additions: number;
@@ -709,6 +711,7 @@ function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
     baseBranch: raw.baseRefName,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
+    ...(raw.isInMergeQueue === undefined ? {} : { isInMergeQueue: raw.isInMergeQueue }),
     mergeability: toMergeability(raw.mergeable),
     reviewDecision: toReviewDecisionWithReviews(raw.reviewDecision, raw.latestReviews),
     additions: raw.additions ?? 0,
@@ -906,6 +909,7 @@ export interface GitHubPullRequestSummary {
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly checksState: PullRequestChecksState | null;
   readonly mergeability: PullRequestMergeability;
+  readonly isInMergeQueue?: boolean;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null;
 }
@@ -929,6 +933,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     reviewDecision: toReviewDecisionWithReviews(pr.reviewDecision, nodesOf(pr.latestReviews)),
     checksState: rollupChecksState(rollupStates(pr.commits)),
     mergeability: toMergeability(pr.mergeable),
+    ...(pr.isInMergeQueue === undefined ? {} : { isInMergeQueue: pr.isInMergeQueue }),
     ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
   };
 }

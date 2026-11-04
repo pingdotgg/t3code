@@ -104,9 +104,11 @@ export function PullRequestReviewDecisionGlyph({
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
-  return PULL_REQUEST_STATE_PRESENTATION[key];
+  if (input.state !== "open") return PULL_REQUEST_STATE_PRESENTATION[input.state];
+  if (input.isDraft) return PULL_REQUEST_STATE_PRESENTATION.draft;
+  return PULL_REQUEST_STATE_PRESENTATION[input.isInMergeQueue ? "queued" : "open"];
 }
 
 export interface PullRequestConflictPresentation {
@@ -135,25 +137,25 @@ function resolvePullRequestConflict(input: {
 export function resolvePullRequestIndicatorPresentation(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeability?: PullRequestMergeability;
   readonly baseBranch?: string;
 }): PullRequestStatePresentation {
-  return (
-    resolvePullRequestConflict(input) ??
-    resolvePullRequestState({ state: input.state, isDraft: input.isDraft })
-  );
+  return resolvePullRequestConflict(input) ?? resolvePullRequestState(input);
 }
 
 export function PullRequestStateGlyph({
   state,
   isDraft,
+  isInMergeQueue,
   className,
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  isInMergeQueue?: boolean | undefined;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, isInMergeQueue });
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>

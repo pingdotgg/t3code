@@ -1145,6 +1145,7 @@ export function PullRequestDetailPanel({
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
         isDraft: detail.isDraft,
+        isInMergeQueue: detail.isInMergeQueue,
         mergeability: detail.mergeability,
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
@@ -1164,6 +1165,7 @@ export function PullRequestDetailPanel({
     ((autoMergeArmed && can("disable-auto-merge")) ||
       (!autoMergeArmed &&
         primaryAction !== "enable-auto-merge" &&
+        primaryAction !== "queued" &&
         !detail.isDraft &&
         !conflicting &&
         can("enable-auto-merge") &&
@@ -1178,13 +1180,12 @@ export function PullRequestDetailPanel({
     allowedMergeMethods.length > 0;
   const showsMergeMethods =
     detail?.state === "open" &&
+    primaryAction !== "queued" &&
     can("merge") &&
     !detail.isDraft &&
     !conflicting &&
     allowedMergeMethods.length > 1;
-  const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
-    : null;
+  const statePresentation = detail ? resolvePullRequestState(detail) : null;
   const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
   const environmentConnected = environments.some(
     (environment) =>

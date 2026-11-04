@@ -1369,6 +1369,8 @@ export const make = Effect.gen(function* () {
 
   /** Older Enterprise servers may lack `isRequired`. */
   const asksRequired = (host: string) => host.toLowerCase() === "github.com";
+  /** Older Enterprise servers may lack `isInMergeQueue`. */
+  const asksMergeQueue = (host: string) => host.toLowerCase() === "github.com";
 
   /**
    * Every check context of the head commit, a page at a time, for a rollup the detail read cut at
@@ -1432,6 +1434,7 @@ export const make = Effect.gen(function* () {
         number: input.number,
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
+        mergeQueue: asksMergeQueue(input.host),
         requestedReviewers,
       });
     return SourceControlRateLimit.Interactive.pipe(
@@ -1670,7 +1673,11 @@ export const make = Effect.gen(function* () {
         });
       }
       const result = yield* GraphQLResolver.request(
-        { ...lookup, stacks: input.host.toLowerCase() === "github.com" },
+        {
+          ...lookup,
+          stacks: input.host.toLowerCase() === "github.com",
+          mergeQueue: asksMergeQueue(input.host),
+        },
         summaryResolver,
       );
       const pullRequest = result.repository?.pullRequest;
@@ -1799,6 +1806,7 @@ export const make = Effect.gen(function* () {
                   after,
                   // Stack badges come from their own batched read below, for the rows that stay.
                   stacks: false,
+                  mergeQueue: asksMergeQueue(input.host),
                   stats: true,
                 })
                 .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
@@ -1810,6 +1818,7 @@ export const make = Effect.gen(function* () {
                   first: pageRows(rows),
                   after,
                   stacks: false,
+                  mergeQueue: asksMergeQueue(input.host),
                   stats: true,
                 })
                 .pipe(
@@ -1921,6 +1930,7 @@ export const make = Effect.gen(function* () {
           q: query,
           first: rows,
           stacks: input.host.toLowerCase() === "github.com",
+          mergeQueue: asksMergeQueue(input.host),
           stats: false,
         })
         .pipe(

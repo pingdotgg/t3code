@@ -25,6 +25,7 @@ export interface ThreadPrPresentation {
   readonly others: number;
   readonly isDraft: boolean;
   readonly conflicting: boolean;
+  readonly isInMergeQueue: boolean;
   readonly updatedAt: string | null;
   readonly url: string;
   readonly changeRequest: ChangeRequestTerminology;
@@ -40,6 +41,7 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
 };
 
 const CONFLICT_TEXT_CLASS = "text-danger-foreground";
+const QUEUED_TEXT_CLASS = "text-adaptive-amber-700-400";
 
 function isConflictingOpenPr(input: {
   readonly state: ThreadPr["state"] | null;
@@ -60,7 +62,15 @@ export function presentThreadPr(
     isDraft,
     mergeability: pr.mergeability,
   });
-  const statusLabel = conflicting ? "has conflicts" : isDraft ? "draft" : pr.state;
+  const isInMergeQueue =
+    pr.state === "open" && !isDraft && !conflicting && pr.isInMergeQueue === true;
+  const statusLabel = conflicting
+    ? "has conflicts"
+    : isDraft
+      ? "draft"
+      : isInMergeQueue
+        ? "queued"
+        : pr.state;
   return {
     kind: "pull-request",
     others: 0,
@@ -68,6 +78,7 @@ export function presentThreadPr(
     state: pr.state,
     isDraft,
     conflicting,
+    isInMergeQueue,
     updatedAt: pr.updatedAt ?? null,
     url: pr.url,
     changeRequest,
@@ -77,7 +88,9 @@ export function presentThreadPr(
       ? "text-foreground-muted"
       : conflicting
         ? CONFLICT_TEXT_CLASS
-        : PR_STATE_TEXT_CLASS[pr.state],
+        : isInMergeQueue
+          ? QUEUED_TEXT_CLASS
+          : PR_STATE_TEXT_CLASS[pr.state],
   };
 }
 
@@ -107,6 +120,12 @@ export function presentThreadLinkedPullRequests(
       isDraft,
       mergeability: snapshot?.mergeability,
     });
+  const isInMergeQueue =
+    !isMultiple &&
+    state === "open" &&
+    !isDraft &&
+    !conflicting &&
+    snapshot?.isInMergeQueue === true;
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
@@ -119,7 +138,9 @@ export function presentThreadLinkedPullRequests(
       ? "status pending"
       : isDraft
         ? "draft"
-        : state;
+        : isInMergeQueue
+          ? "queued"
+          : state;
   return {
     kind: badge.kind,
     others: badge.kind === "pull-request" ? badge.others : 0,
@@ -127,6 +148,7 @@ export function presentThreadLinkedPullRequests(
     state,
     isDraft,
     conflicting,
+    isInMergeQueue,
     updatedAt: snapshot?.updatedAt ?? null,
     url: link.url,
     changeRequest,
@@ -142,9 +164,11 @@ export function presentThreadLinkedPullRequests(
         ? "text-foreground-muted"
         : conflicting
           ? CONFLICT_TEXT_CLASS
-          : isMultiple && state === "closed"
-            ? "text-adaptive-rose-600-400"
-            : PR_STATE_TEXT_CLASS[state],
+          : isInMergeQueue
+            ? QUEUED_TEXT_CLASS
+            : isMultiple && state === "closed"
+              ? "text-adaptive-rose-600-400"
+              : PR_STATE_TEXT_CLASS[state],
   };
 }
 
