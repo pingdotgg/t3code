@@ -20,6 +20,11 @@ const fixture = vi.hoisted(() => ({
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
   writes: [] as Array<{ threadId: string; data: string }>,
   resetSessions: () => {},
+  setSession: (
+    _thread: ScopedThreadRef,
+    _status: "closed" | "starting" | "running",
+    _version: number,
+  ) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   metadata: new Map<
     string,
@@ -64,6 +69,13 @@ vi.mock("../state/terminalSessions", async () => {
   let sessions = makeSessions();
   fixture.resetSessions = () => {
     sessions = makeSessions();
+  };
+  fixture.setSession = (thread, status, version) => {
+    appAtomRegistry.set(sessions(thread.environmentId)(thread.threadId), {
+      ...EMPTY_TERMINAL_SESSION_STATE,
+      status,
+      version,
+    });
   };
   return {
     attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
@@ -176,23 +188,28 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
 }
 
 it("drops input until the shell runs instead of failing a write for every key", async () => {
-  const { original, other } = setup("starting");
-  await using screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+  const { original } = setup("starting");
+  fixture.setSession(original, "closed", 0);
+  await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
   const clearShortcut = () => new KeyboardEvent("keydown", { key: "l", ctrlKey: true });
+  fixture.typeIntoSurface?.("before attach");
+  fixture.pressKey?.(clearShortcut());
+  await act(() => fixture.setSession(original, "running", 0));
+  fixture.typeIntoSurface?.("stale metadata");
+  fixture.pressKey?.(clearShortcut());
+  await act(() => fixture.setSession(original, "starting", 1));
   fixture.typeIntoSurface?.("early");
   fixture.pressKey?.(clearShortcut());
-  await screen.rerender(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
-  await act(async () => {
-    fixture.pendingSurfaces.shift()?.();
-  });
+  expect(fixture.writes).toEqual([]);
+  await act(() => fixture.setSession(original, "running", 1));
   fixture.typeIntoSurface?.("ready");
   fixture.pressKey?.(clearShortcut());
   expect(fixture.writes).toEqual([
-    { threadId: other.threadId, data: "ready" },
-    { threadId: other.threadId, data: "\u000c" },
+    { threadId: original.threadId, data: "ready" },
+    { threadId: original.threadId, data: "\u000c" },
   ]);
 });
 

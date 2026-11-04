@@ -987,7 +987,9 @@ function TerminalSessionViewport({
 
       const sendTerminalInput = async (data: string, fallbackError: string) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
-        if (!hasTerminalWriteAccess() || readTerminalSession().status !== "running") return;
+        if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
+          return;
+        }
         const activeTerminal = terminalRef.current;
         if (!activeTerminal) return;
         const result = await writeTerminal(data);
