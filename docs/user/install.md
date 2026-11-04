@@ -12,41 +12,27 @@ launch T3 Code and configure providers afterwards.
 
 ## Command line
 
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
+T3 Learn's command is `t3-learn`. Install T3 Learn from the
+[README](../../README.md#install), then turn the command on in **Settings → About**
+([The `t3-learn` command](#the-t3-learn-command)).
 
-On Windows, in PowerShell:
+| Task                                             | Command                                                                       |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Start the server and open the web app            | `t3-learn`                                                                    |
+| Start the server without a browser               | `t3-learn serve`                                                              |
+| Use it from your other devices                   | `t3-learn up` ([details](./remote-access.md))                                 |
+| Keep it running in the background (macOS, Linux) | `t3-learn service install` ([details](./background-service.md))               |
+| Move to the newest release                       | `t3-learn update`                                                             |
+| Reclaim database space                           | `t3-learn doctor` ([details](./background-service.md#reclaim-database-space)) |
+| Remove it again                                  | `t3-learn uninstall`                                                          |
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
-
-| Task                                             | Command                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                                    |
-| Start the server without a browser               | `t3 serve`                                                              |
-| Use it from your other devices                   | `t3 up` ([details](./remote-access.md))                                 |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
-| Move to the newest release                       | `t3 update`                                                             |
-| Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                                  | `t3 uninstall`                                                          |
-
-Run `t3 help` or `t3 --help` for the full reference. To start in a new working
-directory, use an explicit path such as `t3 ./my-project`. A bare directory name
+Run `t3-learn help` or `t3-learn --help` for the full reference. To start in a new working
+directory, use an explicit path such as `t3-learn ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3` or `t3 start` reports an already running server, connect to that server
+If `t3-learn` or `t3-learn start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
-
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
 
 ### Intel Macs
 
@@ -103,14 +89,14 @@ Home Manager, update your configuration's nixpkgs input or channel and rebuild.
 Nix manages both the desktop app and the bundled
 `t3` command; use Nix to update them instead of the in-app updater or `t3 update`.
 
-### The `t3` command
+### The `t3-learn` command
 
-The desktop app includes the `t3` command-line tool. To run it from any
+The desktop app includes the `t3-learn` command-line tool. To run it from any
 terminal, open **Settings → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
+**t3-learn command**. On macOS and Linux it adds a `t3-learn` link to a folder on your
 `PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
+terminal afterwards. **Remove** takes it off again. If another `t3-learn`
+runs first in a new terminal, Settings → About says where it is.
 
 ### Windows Subsystem for Linux
 
@@ -124,11 +110,11 @@ take longer.
 With the desktop app already running on the same machine:
 
 ```bash
-t3 app
+t3-learn app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `t3-learn app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
