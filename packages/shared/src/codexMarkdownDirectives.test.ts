@@ -138,12 +138,12 @@ describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
   { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
 ])("$name web citation markers", ({ render }) => {
-  it("leaves the markers out of the rendered Markdown", () => {
-    const markdown = render(WEB_CITATION_MARKDOWN);
-
-    expect(markdown).toContain("Prices rose 3%.");
-    expect(markdown).toContain("Rates held.");
-    expect(markdown).not.toMatch(WEB_CITATION_MARKER);
+  it.each([
+    [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],
+    [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
+    ["`citeturn0search0`", "`citeturn0search0`"],
+  ])("leaves the markers out of the rendered Markdown, except in code", (input, expected) => {
+    expect(render(input)).toBe(expected);
   });
 });
 

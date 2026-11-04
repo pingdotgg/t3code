@@ -349,7 +349,7 @@ function renderDirectiveMatches(
   let rendered = markdown;
   for (const match of matches.sort((left, right) => right.start - left.start)) {
     const replacement = match.labelRange
-      ? markdown.slice(...match.labelRange)
+      ? markdown.slice(...match.labelRange).replace(WEB_CITATION_MARKER, "")
       : replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
