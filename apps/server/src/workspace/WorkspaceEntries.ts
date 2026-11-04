@@ -521,11 +521,9 @@ export const make = Effect.gen(function* () {
       )
       .toSorted();
     const selectedPaths = [
-      ...paths.filter((entry) => !entry.endsWith("/")),
-      ...paths.filter((entry) => entry.endsWith("/")),
-    ]
-      .slice(0, IGNORED_FILES_LIMIT)
-      .toSorted();
+      ...paths.filter((entry) => !entry.endsWith("/")).slice(0, IGNORED_FILES_LIMIT),
+      ...paths.filter((entry) => entry.endsWith("/")).slice(0, IGNORED_FILES_LIMIT),
+    ].toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
         selectedPaths.map(async (relativePath) => {
@@ -540,7 +538,7 @@ export const make = Effect.gen(function* () {
     );
     return {
       files: files.filter((file) => file !== null),
-      truncated: paths.length > IGNORED_FILES_LIMIT,
+      truncated: paths.length > selectedPaths.length,
     };
   });
 

@@ -448,8 +448,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(fileOnly.files).toEqual([{ path: "z-app/.env", byteLength: 3 }]);
         expect(withFolders.files).toContainEqual(fileOnly.files[0]);
-        expect(withFolders.files).toHaveLength(200);
-        expect(withFolders.truncated).toBe(true);
+        expect(withFolders.files).toHaveLength(201);
+        expect(withFolders.truncated).toBe(false);
+
+        for (let index = 0; index < 200; index++) {
+          yield* writeTextFile(cwd, `z-app/.env.${index}`, "B=2");
+        }
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env*\n");
+        const fullFiles = yield* workspaceEntries.listIgnoredFiles({
+          cwd,
+          includeDirectories: true,
+        });
+        expect(fullFiles.files.filter((file) => !file.path.endsWith("/"))).toHaveLength(200);
+        expect(fullFiles.files.filter((file) => file.path.endsWith("/"))).toHaveLength(200);
+        expect(fullFiles.truncated).toBe(true);
       }),
     );
 
