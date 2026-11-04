@@ -5,6 +5,7 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/features/threads/use-composer-command-menu.plugin-actions.test.tsx",
+  "src/features/threads/git/GitBranchesSheet.test.tsx",
   "src/features/threads/new-task-flow-provider.test.tsx",
   "src/features/workspace/workspace-tabs-state.test.ts",
   "src/state/use-thread-pr.demand.test.tsx",
@@ -20,6 +21,7 @@ const reactTests = [
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
+  "src/components/ui/AppBar.android.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
@@ -37,6 +39,7 @@ const reactTests = [
   "src/state/use-selected-thread-git-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
+  "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",

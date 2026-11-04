@@ -2,6 +2,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
+  clampManagedRuntimeMode,
+  managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -23,6 +25,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
@@ -54,7 +57,6 @@ import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -64,7 +66,7 @@ import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentat
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -397,6 +399,7 @@ export function SettingsScheduledTasksRouteScreen() {
   const { startEditor, resetEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const insets = useSafeAreaInsets();
+  const environmentMenu = useSettingsEnvironmentMenu();
   const newTask = () => {
     if (visibleEnvironments.length === 0) return;
     resetEditor();
@@ -419,21 +422,19 @@ export function SettingsScheduledTasksRouteScreen() {
       />
       <SettingsScreen
         title="Scheduled tasks"
-        trailing={
-          <View className="flex-row items-center">
-            <AndroidSettingsEnvironmentFilter />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="New task"
-              accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
-              disabled={visibleEnvironments.length === 0}
-              onPress={newTask}
-              className="size-11 items-center justify-center rounded-full disabled:opacity-50"
-            >
-              <SymbolView name="plus" size={22} tintColorClassName="accent-icon" />
-            </Pressable>
-          </View>
+        actions={
+          Platform.OS === "android"
+            ? [
+                {
+                  accessibilityLabel: "New task",
+                  icon: "plus",
+                  disabled: visibleEnvironments.length === 0,
+                  onPress: newTask,
+                },
+              ]
+            : undefined
         }
+        menus={[environmentMenu]}
       >
         <ScrollView
           keyboardShouldPersistTaps="handled"
@@ -563,25 +564,27 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     ]);
   });
   return (
-    <SettingsScreen title={title}>
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          options={{
-            headerBackVisible: false,
-            gestureEnabled: !preventRemove,
-            // Native Back pops before removal guards; a bar action lets the guard run first.
-            unstable_headerLeftItems: () => [
-              withNativeGlassHeaderItem({
-                type: "button",
-                label: "",
-                accessibilityLabel: "Back",
-                icon: { type: "sfSymbol", name: "chevron.backward" },
-                onPress: () => navigation.goBack(),
-              }),
-            ],
-          }}
-        />
-      ) : null}
+    <SettingsScreen
+      title={title}
+      // Native Back pops before removal guards; a bar action lets the guard run first.
+      options={
+        Platform.OS === "ios"
+          ? {
+              headerBackVisible: false,
+              gestureEnabled: !preventRemove,
+              unstable_headerLeftItems: () => [
+                withNativeGlassHeaderItem({
+                  type: "button",
+                  label: "",
+                  accessibilityLabel: "Back",
+                  icon: { type: "sfSymbol", name: "chevron.backward" },
+                  onPress: () => navigation.goBack(),
+                }),
+              ],
+            }
+          : undefined
+      }
+    >
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -690,6 +693,8 @@ function TaskForm({
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
+  // Existing webhook tasks keep the option so they can still switch to a timer.
+  const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -800,7 +805,9 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode: draft.runtimeMode,
+      // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
+      runtimeMode:
+        clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
@@ -976,7 +983,12 @@ function TaskForm({
               disabled={saving}
               value={draft.checkoutPath}
               borderTop
-              onChange={(checkoutPath) => setDraft({ ...draft, checkoutPath })}
+              onChange={(checkoutPath) =>
+                setDraft({
+                  ...draft,
+                  checkoutPath: resolvePastedPath(draft.checkoutPath, checkoutPath),
+                })
+              }
             />
           ) : null}
         </SettingsSection>
@@ -992,7 +1004,9 @@ function TaskForm({
                   ? [{ value: "once" as const, label: "Once" }]
                   : []),
                 { value: "interval", label: "Interval" },
-                { value: "webhook", label: "On webhook" },
+                ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
+                  ? [{ value: "webhook" as const, label: "On webhook" }]
+                  : []),
               ]}
               selected={draft.schedule.mode}
               onSelect={(mode) => {
@@ -1093,6 +1107,10 @@ function TaskForm({
                 }}
               />
             </>
+          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
+            </Text>
           ) : draft.schedule.mode === "once" ? (
             (["date", "time"] as const).map((field) => {
               const runAt = new Date(draft.schedule.runAt);
@@ -1256,7 +1274,14 @@ function TaskForm({
         tone="primary"
         fullWidth
         loading={saving}
-        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
+        disabled={
+          !canOperate ||
+          dictationPending ||
+          taskMissing ||
+          environmentUnavailable ||
+          // The server refuses an enabled webhook task under this policy.
+          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
+        }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
       />
@@ -1452,6 +1477,11 @@ function EnvironmentTasks({
                     ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
                     : ""}
               </Text>
+              {task.blockedByPolicy ? (
+                <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                  {task.blockedByPolicy}
+                </Text>
+              ) : null}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
                   Last run failed: {task.lastRunError}

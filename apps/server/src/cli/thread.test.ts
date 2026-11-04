@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { readLatestMessages, type ThreadTools, waitForRun } from "./thread.ts";
+import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -160,3 +160,8 @@ it.effect("show returns a --messages count larger than one call can spread", () 
     );
   }),
 );
+
+it("titles from a long first line without splitting an emoji", () => {
+  const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
+  assert.strictEqual(title, `${"a".repeat(78)}…`);
+});
