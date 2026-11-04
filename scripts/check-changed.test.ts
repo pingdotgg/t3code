@@ -425,7 +425,9 @@ it("lints an Astro component and runs knip when only it changed", () => {
     "--no-error-on-unmatched-pattern",
     page,
   ]);
-  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
+  const commands = calls.map(({ args }) => args);
+  expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
+  expect(commands).toContainEqual(["exec", "knip", "--exports"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
