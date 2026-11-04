@@ -212,6 +212,30 @@ export function startThreadNotifications(
       (document.visibilityState === "visible" && document.hasFocus())
     )
       return;
+    const presentBrowserNotification = () => {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      try {
+        const notification = new Notification(title, {
+          body: thread.title,
+          tag: threadNotificationTag(environmentId, thread.id),
+          silent: true,
+          // Windows drops clicks after a toast moves into Notification Center.
+          requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
+        });
+        trackNotification(environmentId, thread.id, notification);
+        notification.addEventListener("click", () => {
+          notification.close();
+          window.focus();
+          void window.desktopBridge?.revealWindow().catch(() => undefined);
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId, threadId: thread.id },
+          });
+        });
+      } catch {
+        // Some browsers expose Notification but reject desktop presentation.
+      }
+    };
     if (nativeNotifications) {
       const id = randomUUID();
       const tag = threadNotificationTag(environmentId, thread.id);
@@ -222,6 +246,13 @@ export function startThreadNotifications(
         },
       };
       trackNotification(environmentId, thread.id, notification);
+      const fallback = () => {
+        if (pending.get(tag)?.notification !== notification) return;
+        presentBrowserNotification();
+        if (pending.get(tag)?.notification !== notification) return;
+        pending.delete(tag);
+        setNotificationBadge(pending.size);
+      };
       void nativeNotifications
         .showThreadNotification?.({
           id,
@@ -232,39 +263,12 @@ export function startThreadNotifications(
           body: thread.title.slice(0, 1024),
         })
         .then((shown) => {
-          if (shown || pending.get(tag)?.notification !== notification) return;
-          pending.delete(tag);
-          setNotificationBadge(pending.size);
+          if (!shown) fallback();
         })
-        .catch(() => {
-          if (pending.get(tag)?.notification !== notification) return;
-          pending.delete(tag);
-          setNotificationBadge(pending.size);
-        });
+        .catch(fallback);
       return;
     }
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    try {
-      const notification = new Notification(title, {
-        body: thread.title,
-        tag: threadNotificationTag(environmentId, thread.id),
-        silent: true,
-        // Windows drops clicks after a toast moves into Notification Center.
-        requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
-      });
-      trackNotification(environmentId, thread.id, notification);
-      notification.addEventListener("click", () => {
-        notification.close();
-        window.focus();
-        void window.desktopBridge?.revealWindow().catch(() => undefined);
-        void router.navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: thread.id },
-        });
-      });
-    } catch {
-      // Some browsers expose Notification but reject desktop presentation.
-    }
+    presentBrowserNotification();
   };
 
   const observeThreads = (
