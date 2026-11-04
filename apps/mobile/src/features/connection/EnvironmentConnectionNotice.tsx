@@ -10,10 +10,13 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 
-function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
-  switch (phase) {
+function noticeTitle(
+  connection: EnvironmentConnectionPresentation,
+  environmentLabel: string,
+): string {
+  switch (connection.phase) {
     case "offline":
-      return "You are offline";
+      return `${environmentLabel} is offline`;
     case "connecting":
       return `Connecting to ${environmentLabel}...`;
     case "reconnecting":
@@ -21,7 +24,9 @@ function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string
     case "unsupported":
       return "Client not supported";
     case "error":
-      return `${environmentLabel} is unavailable`;
+      return connection.needsPairing === true
+        ? `${environmentLabel} needs pairing again`
+        : `${environmentLabel} is unavailable`;
     case "available":
       return `${environmentLabel} is disconnected`;
     case "connected":
@@ -40,7 +45,7 @@ function noticeDetail(
 
   switch (phase) {
     case "offline":
-      return `Cached data remains available. The ${resourceName} will load when your connection returns.`;
+      return `Cached data remains available. The ${resourceName} will load when the environment is back.`;
     case "connecting":
     case "reconnecting":
       return `The ${resourceName} will load as soon as the environment is ready.`;
@@ -78,7 +83,7 @@ export function EnvironmentConnectionNotice(props: {
         )}
 
         <Text className="text-center text-lg font-t3-bold text-foreground">
-          {noticeTitle(props.connection.phase, props.environmentLabel)}
+          {noticeTitle(props.connection, props.environmentLabel)}
         </Text>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
           {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}

@@ -18,7 +18,9 @@ import {
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
 
-const STATUS_SHOW_DELAY_MS = 800;
+// Long enough that the reconnect on every app open, which usually lands within two seconds,
+// never shows.
+const STATUS_SHOW_DELAY_MS = 2_000;
 const FADE_IN_MS = 250;
 
 type ConnectionStatus = WorkspaceConnectionStatusPresentation & {

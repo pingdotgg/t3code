@@ -214,7 +214,9 @@ function ConnectedCloudEnvironmentRow(props: {
       {...(enabled || unsupported
         ? diagnosis
           ? { statusText: diagnosis.headline }
-          : {}
+          : presentation
+            ? { statusText: environmentStatusText(presentation.connection) }
+            : {}
         : { statusText: "Off" })}
       value={enabled}
     />

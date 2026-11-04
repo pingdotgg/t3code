@@ -144,6 +144,7 @@ export const allReachableShellsLiveAtom = Atom.make((get) => {
     const settledOffline =
       connection.phase === "offline" ||
       connection.phase === "blocked" ||
+      connection.unreachable === true ||
       (connection.phase === "backoff" && connection.attempt > 2);
     if (!settledOffline) return false;
   }

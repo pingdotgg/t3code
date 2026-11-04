@@ -9,11 +9,12 @@ import {
 } from "./catalog.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import { connectionStatusText, environmentMcpUrl, presentConnectionState } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -150,6 +151,51 @@ describe("connection presentation", () => {
       failureReason: "transport",
       traceId: "trace-1",
     });
+  });
+
+  it("settles a host past its grace period as offline and a refused credential as re-pair", () => {
+    const tunnelDown = new ConnectionTransientError({
+      reason: "remote-unavailable",
+      detail: "The tunnel is down.",
+      hop: "tunnel",
+    });
+    for (const phase of ["connecting", "backoff"] as const) {
+      const connection = presentConnectionState(
+        supervisorState({
+          phase,
+          attempt: 6,
+          generation: 1,
+          lastFailure: tunnelDown,
+          unreachable: true,
+          lastConnectedAt: 1_000,
+        }),
+      );
+      expect(connection).toEqual({
+        phase: "offline",
+        error: null,
+        traceId: null,
+        failureReason: "remote-unavailable",
+        unreachable: true,
+        lastConnectedAt: 1_000,
+      });
+      expect(connectionStatusText(connection)).toBe("Offline");
+    }
+
+    const refused = (hop: "server" | "relay") =>
+      presentConnectionState(
+        supervisorState({
+          phase: "blocked",
+          lastFailure: new ConnectionBlockedError({
+            reason: "authentication",
+            detail: "The environment credential is invalid.",
+            hop,
+          }),
+        }),
+      );
+    expect(refused("server")).toMatchObject({ phase: "error", needsPairing: true });
+    expect(connectionStatusText(refused("server"))).toBe("Needs pairing again");
+    // A T3 Connect sign-in failure is fixed by signing in, not by pairing.
+    expect(refused("relay").needsPairing).toBeUndefined();
   });
 
   it("preserves an explicitly available environment while offline", () => {

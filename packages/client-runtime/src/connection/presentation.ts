@@ -23,6 +23,14 @@ export interface EnvironmentConnectionPresentation {
   readonly error: string | null;
   readonly traceId: string | null;
   readonly failureReason?: ConnectionAttemptError["reason"];
+  /**
+   * With phase "offline": this device is online but the host has not answered past the
+   * grace period. Retries continue quietly, so it is neither an error nor reconnecting.
+   */
+  readonly unreachable?: true;
+  readonly lastConnectedAt?: number;
+  /** With phase "error": the host refused this device's credential, which only pairing again fixes. */
+  readonly needsPairing?: true;
 }
 
 /**
@@ -41,11 +49,23 @@ export interface EnvironmentPresentation {
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
+  const lastConnectedAt =
+    state.lastConnectedAt === undefined ? {} : { lastConnectedAt: state.lastConnectedAt };
+  if (state.unreachable === true && (state.phase === "connecting" || state.phase === "backoff")) {
+    return {
+      phase: "offline",
+      error: null,
+      traceId: state.lastFailure?.traceId ?? null,
+      ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
+      unreachable: true,
+      ...lastConnectedAt,
+    };
+  }
   switch (state.phase) {
     case "available":
       return { phase: "available", error: null, traceId: null };
     case "offline":
-      return { phase: "offline", error: null, traceId: null };
+      return { phase: "offline", error: null, traceId: null, ...lastConnectedAt };
     case "connecting":
       return {
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
@@ -68,6 +88,10 @@ export function presentConnectionState(
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
         ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
+        // A T3 Connect sign-in failure has hop "relay" or "device" and is fixed by signing in.
+        ...(state.lastFailure?.reason === "authentication" && state.lastFailure.hop === "server"
+          ? { needsPairing: true as const }
+          : {}),
       };
   }
 }
@@ -89,10 +113,25 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
     case "unsupported":
       return "Client not supported";
     case "error":
+      if (connection.needsPairing === true) return "Needs pairing again";
       return connection.error
         ? `Connection failed. Reason: ${connection.error}`
         : "Connection failed";
   }
+}
+
+/** A wall-clock time rather than "5 min ago", so the label never goes stale on screen. */
+export function lastSeenLabel(lastConnectedAt: number, now: number): string {
+  const day = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+  const format =
+    day.format(lastConnectedAt) === day.format(now)
+      ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
+      : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+  return `last seen ${format.format(lastConnectedAt)}`;
 }
 
 export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
