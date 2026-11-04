@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { extractFigmaRows } from "./MentionIndexFigmaSyncer.ts";
-import { extractJiraRows } from "./MentionIndexJiraSyncer.ts";
-import { parseMentionMcpServers, pickMentionMcpServer } from "./MentionIndexMcpClient.ts";
+import {
+  extractFigmaRows,
+  mcpResultIsError,
+  pagesFromFigmaXml,
+} from "./MentionIndexFigmaSyncer.ts";
+import { extractJiraRows, resolveJiraBrowseUrl } from "./MentionIndexJiraSyncer.ts";
+import {
+  parseCodexMcpServers,
+  parseMcpHttpResponseBody,
+  parseMentionMcpServers,
+  pickMentionMcpServer,
+} from "./MentionIndexMcpClient.ts";
 
 describe("MentionIndexMcpClient helpers", () => {
   it("parses Cursor mcpServers and picks jira/figma by name", () => {
@@ -18,6 +27,86 @@ describe("MentionIndexMcpClient helpers", () => {
     expect(pickMentionMcpServer(servers, "figma")?.name).toBe("figma-dev");
     expect(pickMentionMcpServer(servers, "jira", "missing")).toBeNull();
     expect(pickMentionMcpServer(servers, "figma", "figma-dev")?.transport).toBe("http");
+  });
+
+  it("skips Codex servers with enabled = false and carries headers/env", () => {
+    const previous = process.env.FIGMA_TOKEN;
+    process.env.FIGMA_TOKEN = "secret-token";
+    try {
+      const servers = parseCodexMcpServers(`
+[mcp_servers.disabled-jira]
+command = "npx"
+enabled = false
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+bearer_token_env_var = "FIGMA_TOKEN"
+http_headers = { "X-Region" = "us" }
+
+[mcp_servers.local-jira]
+command = "npx"
+args = ["-y", "jira-mcp"]
+env = { "JIRA_SITE" = "acme" }
+`);
+      expect(servers.map((server) => server.name)).toEqual(["figma", "local-jira"]);
+      const figma = servers.find((server) => server.name === "figma");
+      expect(figma).toMatchObject({
+        transport: "http",
+        url: "https://mcp.figma.com/mcp",
+        headers: {
+          "X-Region": "us",
+          Authorization: "Bearer secret-token",
+        },
+      });
+      const local = servers.find((server) => server.name === "local-jira");
+      expect(local).toMatchObject({
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "jira-mcp"],
+        env: { JIRA_SITE: "acme" },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.FIGMA_TOKEN;
+      else process.env.FIGMA_TOKEN = previous;
+    }
+  });
+
+  it("parses SSE MCP responses by Content-Type and request id", () => {
+    const body = [
+      "event: message",
+      'data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}',
+      "",
+      "event: message",
+      'data: {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search"}]}}',
+      "",
+      "event: message",
+      'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}',
+      "",
+    ].join("\n");
+
+    expect(
+      parseMcpHttpResponseBody({
+        contentType: "text/event-stream; charset=utf-8",
+        text: body,
+        requestId: 1,
+      }),
+    ).toEqual({ jsonrpc: "2.0", id: 1, result: { ok: true } });
+
+    expect(
+      parseMcpHttpResponseBody({
+        contentType: "application/json",
+        text: '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}',
+        requestId: 1,
+      }),
+    ).toEqual({ jsonrpc: "2.0", id: 1, result: { ok: true } });
+
+    // Body containing "data:" must not be treated as SSE without the content type.
+    expect(
+      parseMcpHttpResponseBody({
+        contentType: "application/json",
+        text: '{"note":"data: not sse","id":1,"result":{}}',
+      }),
+    ).toEqual({ note: "data: not sse", id: 1, result: {} });
   });
 });
 
@@ -60,6 +149,32 @@ describe("Jira/Figma MCP payload mapping", () => {
     });
   });
 
+  it("derives browse URLs from self and avoids inventing atlassian.net", () => {
+    expect(
+      resolveJiraBrowseUrl({ self: "https://acme.atlassian.net/rest/api/3/issue/10001" }, "T3-7"),
+    ).toBe("https://acme.atlassian.net/browse/T3-7");
+    expect(resolveJiraBrowseUrl({ key: "T3-7" }, "T3-7")).toBe("about:blank");
+
+    const rows = extractJiraRows(
+      {
+        issues: [
+          {
+            key: "T3-7",
+            fields: { summary: "No url" },
+            self: "https://acme.atlassian.net/rest/api/2/issue/7",
+          },
+          {
+            key: "T3-8",
+            fields: { summary: "No self either" },
+          },
+        ],
+      },
+      1,
+    );
+    expect(rows[0]?.url).toBe("https://acme.atlassian.net/browse/T3-7");
+    expect(rows[1]?.url).toBe("about:blank");
+  });
+
   it("maps Figma metadata into file and page rows", () => {
     const rows = extractFigmaRows(
       "AbCdEf",
@@ -81,5 +196,28 @@ describe("Jira/Figma MCP payload mapping", () => {
       url: "https://www.figma.com/design/AbCdEf",
     });
     expect(rows[1]?.url).toContain("node-id=");
+  });
+
+  it("parses page rows from get_metadata XML text", () => {
+    const xml = `
+      <meta name="Checkout" />
+      <canvas id="0:1" name="Page 1" x="0" y="0">
+        <frame id="1:2" name="Hero" />
+      </canvas>
+      <page id="2:3" name="Mobile" />
+    `;
+    expect(pagesFromFigmaXml(xml)).toEqual([
+      { id: "0:1", name: "Page 1" },
+      { id: "2:3", name: "Mobile" },
+    ]);
+    const rows = extractFigmaRows("AbCdEf", { content: [{ type: "text", text: xml }] }, 50);
+    expect(rows.map((row) => row.itemKey)).toEqual(["AbCdEf", "AbCdEf:0:1", "AbCdEf:2:3"]);
+  });
+
+  it("detects MCP isError tool results", () => {
+    expect(mcpResultIsError({ isError: true, content: [{ type: "text", text: "nope" }] })).toBe(
+      true,
+    );
+    expect(mcpResultIsError({ content: [{ type: "text", text: "ok" }] })).toBe(false);
   });
 });

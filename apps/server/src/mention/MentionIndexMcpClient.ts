@@ -56,6 +56,7 @@ export class MentionIndexMcpClient extends Context.Service<
   {
     readonly resolveServer: (input: {
       readonly kind: MentionMcpKind;
+      /** Ignored for discovery: project-local mcp.json is untrusted. */
       readonly projectRoot?: string | undefined;
       readonly serverName?: string | undefined;
     }) => Effect.Effect<MentionMcpServerConfig | null>;
@@ -103,7 +104,7 @@ function envField(record: Record<string, unknown>): Record<string, string> {
 }
 
 function headersField(record: Record<string, unknown>): Record<string, string> {
-  const headers = asRecord(record.headers);
+  const headers = asRecord(record.headers) ?? asRecord(record.http_headers);
   if (headers === null) return {};
   const next: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
@@ -115,6 +116,7 @@ function headersField(record: Record<string, unknown>): Record<string, string> {
 function parseServerEntry(name: string, value: unknown): MentionMcpServerConfig | null {
   const record = asRecord(value);
   if (record === null) return null;
+  if (record.enabled === false) return null;
   const url = stringField(record, "url");
   if (url !== undefined) {
     return {
@@ -155,6 +157,185 @@ function pickServer(
   return entries.find((entry) => matchesKind(entry.name, kind)) ?? null;
 }
 
+function unquoteToml(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+/** Parse a TOML inline table of string values: `{ "KEY" = "value", OTHER = "x" }`. */
+function parseTomlInlineStringTable(raw: string): Record<string, string> {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return {};
+  const next: Record<string, string> = {};
+  const inner = trimmed.slice(1, -1);
+  const pair =
+    /(?:"([^"]+)"|([A-Za-z0-9_]+))\s*=\s*(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^\s,]+))/gu;
+  for (const match of inner.matchAll(pair)) {
+    const key = match[1] ?? match[2];
+    const value = match[3] ?? match[4] ?? match[5];
+    if (key === undefined || value === undefined) continue;
+    next[key] = value;
+  }
+  return next;
+}
+
+function headersFromEnvMap(
+  envHeaderNames: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [header, envName] of Object.entries(envHeaderNames)) {
+    const value = process.env[envName];
+    if (typeof value === "string" && value.length > 0) next[header] = value;
+  }
+  return next;
+}
+
+/**
+ * Lightweight Codex `config.toml` `[mcp_servers.*]` reader.
+ * Skips `enabled = false`; carries env / http_headers / bearer_token_env_var.
+ */
+export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServerConfig> {
+  const entries: MentionMcpServerConfig[] = [];
+  let current: { name: string; fields: Record<string, string> } | null = null;
+  const flush = () => {
+    if (current === null) return;
+    const fields = current.fields;
+    if (fields.enabled === "false") {
+      current = null;
+      return;
+    }
+    const command = fields.command;
+    const url = fields.url;
+    const env = fields.env ? parseTomlInlineStringTable(fields.env) : {};
+    const httpHeaders = fields.http_headers ? parseTomlInlineStringTable(fields.http_headers) : {};
+    const envHttpHeaders = fields.env_http_headers
+      ? headersFromEnvMap(parseTomlInlineStringTable(fields.env_http_headers))
+      : {};
+    const bearerEnv = fields.bearer_token_env_var;
+    const bearer =
+      bearerEnv !== undefined && bearerEnv.length > 0 ? process.env[bearerEnv] : undefined;
+    const headers: Record<string, string> = {
+      ...httpHeaders,
+      ...envHttpHeaders,
+      ...(typeof bearer === "string" && bearer.length > 0
+        ? { Authorization: `Bearer ${bearer}` }
+        : {}),
+    };
+    if (url) {
+      entries.push({
+        transport: "http",
+        name: current.name,
+        url,
+        headers,
+      });
+    } else if (command) {
+      const argsRaw = fields.args;
+      let args: string[] = [];
+      if (argsRaw) {
+        try {
+          const parsed = JSON.parse(argsRaw.replace(/'/g, '"'));
+          if (Array.isArray(parsed)) {
+            args = parsed.filter((entry): entry is string => typeof entry === "string");
+          }
+        } catch {
+          args = [];
+        }
+      }
+      entries.push({
+        transport: "stdio",
+        name: current.name,
+        command,
+        args,
+        env,
+      });
+    }
+    current = null;
+  };
+  for (const line of raw.split(/\r?\n/u)) {
+    const section = line.match(/^\[mcp_servers\.([^\]]+)\]\s*$/u);
+    if (section) {
+      flush();
+      current = { name: section[1]!.replace(/^"|"$/g, ""), fields: {} };
+      continue;
+    }
+    if (current === null) continue;
+    const field = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/u);
+    if (!field) continue;
+    current.fields[field[1]!] = unquoteToml(field[2]!);
+  }
+  flush();
+  return entries;
+}
+
+/** Parse SSE `data:` JSON-RPC frames; return the envelope matching `requestId` when set. */
+function parseMcpSsePayload(text: string, requestId?: number): unknown {
+  const events: unknown[] = [];
+  let dataLines: string[] = [];
+  const flushEvent = () => {
+    if (dataLines.length === 0) return;
+    const payload = dataLines.join("\n").trim();
+    dataLines = [];
+    if (payload.length === 0 || payload === "[DONE]") return;
+    try {
+      events.push(JSON.parse(payload));
+    } catch {
+      // ignore non-JSON SSE frames
+    }
+  };
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.length === 0) {
+      flushEvent();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  flushEvent();
+
+  if (requestId !== undefined) {
+    const matched = events.find((event) => {
+      const record = asRecord(event);
+      return record !== null && record.id === requestId;
+    });
+    if (matched !== undefined) return matched;
+  }
+  return events.find((event) => asRecord(event)?.id !== undefined) ?? events[0] ?? null;
+}
+
+export function parseMcpHttpResponseBody(input: {
+  readonly contentType: string | null;
+  readonly text: string;
+  readonly requestId?: number;
+}): unknown {
+  const contentType = input.contentType?.toLowerCase() ?? "";
+  const isSse = contentType.includes("text/event-stream");
+  if (isSse) return parseMcpSsePayload(input.text, input.requestId);
+  if (input.text.trim().length === 0) return null;
+  return JSON.parse(input.text) as unknown;
+}
+
+type StdioPending = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+};
+
+type StdioResource = {
+  readonly child: NodeChildProcess.ChildProcess;
+  readonly lines: NodeReadline.Interface;
+  readonly stdin: NodeJS.WritableStream;
+  readonly pending: Map<number, StdioPending>;
+  closed: boolean;
+  readonly rejectPending: (reason: Error) => void;
+  readonly onChildError: (cause: Error) => void;
+};
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -189,72 +370,16 @@ const make = Effect.gen(function* () {
     return entries;
   });
 
-  const readCodexTomlServers = Effect.fn("MentionIndexMcpClient.readCodexTomlServers")(function* (
-    filePath: string,
-  ) {
-    const exists = yield* fileSystem.exists(filePath).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return [] as MentionMcpServerConfig[];
-    const raw = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
-    const entries: MentionMcpServerConfig[] = [];
-    let current: { name: string; fields: Record<string, string> } | null = null;
-    const flush = () => {
-      if (current === null) return;
-      const command = current.fields.command;
-      const url = current.fields.url;
-      if (url) {
-        entries.push({
-          transport: "http",
-          name: current.name,
-          url,
-          headers: {},
-        });
-      } else if (command) {
-        const argsRaw = current.fields.args;
-        let args: string[] = [];
-        if (argsRaw) {
-          try {
-            const parsed = JSON.parse(argsRaw.replace(/'/g, '"'));
-            if (Array.isArray(parsed)) {
-              args = parsed.filter((entry): entry is string => typeof entry === "string");
-            }
-          } catch {
-            args = [];
-          }
-        }
-        entries.push({
-          transport: "stdio",
-          name: current.name,
-          command,
-          args,
-          env: {},
-        });
-      }
-      current = null;
-    };
-    for (const line of raw.split(/\r?\n/u)) {
-      const section = line.match(/^\[mcp_servers\.([^\]]+)\]\s*$/u);
-      if (section) {
-        flush();
-        current = { name: section[1]!.replace(/^"|"$/g, ""), fields: {} };
-        continue;
-      }
-      if (current === null) continue;
-      const field = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/u);
-      if (!field) continue;
-      current.fields[field[1]!] = field[2]!.replace(/^"|"$/g, "");
-    }
-    flush();
-    return entries;
-  });
-
   const resolveServer = Effect.fn("MentionIndexMcpClient.resolveServer")(function* (input: {
     readonly kind: MentionMcpKind;
     readonly projectRoot?: string | undefined;
     readonly serverName?: string | undefined;
   }) {
+    // Trust boundary: only user-level MCP configs. Project-local `.cursor/mcp.json`
+    // can ship arbitrary commands and must not be discovered or executed.
+    void input.projectRoot;
     const candidates: MentionMcpServerConfig[] = [];
     const files = [
-      ...(input.projectRoot ? [path.join(input.projectRoot, ".cursor", "mcp.json")] : []),
       path.join(home, ".cursor", "mcp.json"),
       path.join(home, ".claude.json"),
       path.join(home, ".config", "Claude", "claude_desktop_config.json"),
@@ -262,7 +387,12 @@ const make = Effect.gen(function* () {
     for (const file of files) {
       candidates.push(...(yield* readJsonServers(file)));
     }
-    candidates.push(...(yield* readCodexTomlServers(path.join(home, ".codex", "config.toml"))));
+    const codexRaw = yield* fileSystem
+      .readFileString(path.join(home, ".codex", "config.toml"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (codexRaw.trim().length > 0) {
+      candidates.push(...parseCodexMcpServers(codexRaw));
+    }
     return pickServer(candidates, input.kind, input.serverName);
   });
 
@@ -271,30 +401,73 @@ const make = Effect.gen(function* () {
     use: (session: MentionMcpToolSession) => Effect.Effect<A, E>,
   ): Effect.Effect<A, E | Error> =>
     Effect.acquireUseRelease(
-      Effect.try({
-        try: () => {
-          const child = NodeChildProcess.spawn(config.command, [...config.args], {
-            env: { ...process.env, ...config.env },
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          if (child.stdin === null || child.stdout === null) {
-            child.kill();
-            throw new Error(`MCP server ${config.name} did not expose stdio.`);
+      Effect.callback<StdioResource, Error>((resume) => {
+        let settled = false;
+        const pending = new Map<number, StdioPending>();
+        let closed = false;
+        const rejectPending = (reason: Error) => {
+          if (closed) return;
+          closed = true;
+          for (const waiter of pending.values()) {
+            waiter.reject(reason);
           }
-          const lines = NodeReadline.createInterface({ input: child.stdout });
-          return { child, lines, stdin: child.stdin };
-        },
-        catch: (cause) =>
-          cause instanceof Error
-            ? cause
-            : new Error(`Failed to start MCP server ${config.name}: ${String(cause)}`),
+          pending.clear();
+        };
+        const onChildError = (cause: Error) => {
+          const mapped =
+            (cause as NodeJS.ErrnoException).code === "ENOENT"
+              ? new Error(`MCP server ${config.name} binary not found: ${config.command}`, {
+                  cause,
+                })
+              : cause;
+          if (!settled) {
+            settled = true;
+            resume(Effect.fail(mapped));
+            return;
+          }
+          rejectPending(mapped);
+        };
+        const child = NodeChildProcess.spawn(config.command, [...config.args], {
+          env: { ...process.env, ...config.env },
+          // Ignore stderr so a full pipe cannot block the child.
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        // Always listen: an unhandled child `error` (e.g. ENOENT) crashes the process.
+        child.on("error", onChildError);
+        if (child.stdin === null || child.stdout === null) {
+          child.kill();
+          onChildError(new Error(`MCP server ${config.name} did not expose stdio.`));
+          return;
+        }
+        const lines = NodeReadline.createInterface({ input: child.stdout });
+        const succeed = () => {
+          if (settled) return;
+          settled = true;
+          resume(
+            Effect.succeed({
+              child,
+              lines,
+              stdin: child.stdin!,
+              pending,
+              get closed() {
+                return closed;
+              },
+              set closed(value: boolean) {
+                closed = value;
+              },
+              rejectPending,
+              onChildError,
+            }),
+          );
+        };
+        child.once("spawn", succeed);
+        void setImmediate(() => {
+          if (!settled && child.pid !== undefined) succeed();
+        });
       }),
-      ({ child, lines, stdin }) => {
+      (resource) => {
+        const { child, lines, stdin, pending, rejectPending, onChildError } = resource;
         let nextId = 1;
-        const pending = new Map<
-          number,
-          { resolve: (value: unknown) => void; reject: (error: Error) => void }
-        >();
 
         const onLine = (line: string) => {
           let envelope: { id?: unknown; result?: unknown; error?: { message?: string } };
@@ -314,11 +487,21 @@ const make = Effect.gen(function* () {
           waiter.resolve(envelope.result);
         };
         lines.on("line", onLine);
+        child.on("close", () => {
+          rejectPending(new Error(`MCP server ${config.name} closed.`));
+        });
+        lines.on("close", () => {
+          rejectPending(new Error(`MCP server ${config.name} closed.`));
+        });
 
         const request = (method: string, params: unknown) =>
           Effect.tryPromise({
             try: () =>
               new Promise<unknown>((resolve, reject) => {
+                if (resource.closed) {
+                  reject(new Error(`MCP server ${config.name} closed.`));
+                  return;
+                }
                 const id = nextId++;
                 pending.set(id, { resolve, reject });
                 stdin.write(
@@ -365,10 +548,8 @@ const make = Effect.gen(function* () {
           Effect.ensuring(
             Effect.sync(() => {
               lines.off("line", onLine);
-              for (const waiter of pending.values()) {
-                waiter.reject(new Error(`MCP server ${config.name} closed.`));
-              }
-              pending.clear();
+              child.off("error", onChildError);
+              rejectPending(new Error(`MCP server ${config.name} closed.`));
               child.kill();
             }),
           ),
@@ -396,7 +577,10 @@ const make = Effect.gen(function* () {
       ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
     });
 
-    const post = Effect.fn("MentionIndexMcpClient.httpPost")(function* (body: unknown) {
+    const post = Effect.fn("MentionIndexMcpClient.httpPost")(function* (
+      body: unknown,
+      requestId?: number,
+    ) {
       return yield* Effect.tryPromise({
         try: async (signal) => {
           const response = await fetch(config.url, {
@@ -410,14 +594,11 @@ const make = Effect.gen(function* () {
           if (!response.ok) {
             throw new Error(`MCP HTTP ${response.status} from ${config.name}`);
           }
-          const payload = text.includes("data:")
-            ? text
-                .split("\n")
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.slice("data:".length).trim())
-                .join("")
-            : text;
-          return payload.length === 0 ? null : (JSON.parse(payload) as unknown);
+          return parseMcpHttpResponseBody({
+            contentType: response.headers.get("content-type"),
+            text,
+            ...(requestId !== undefined ? { requestId } : {}),
+          });
         },
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
@@ -428,7 +609,7 @@ const make = Effect.gen(function* () {
       params: unknown,
     ) {
       const id = nextId++;
-      const response = yield* post({ jsonrpc: "2.0", id, method, params });
+      const response = yield* post({ jsonrpc: "2.0", id, method, params }, id);
       const envelope = asRecord(response);
       if (envelope === null) {
         return yield* Effect.fail(new Error(`Empty MCP response from ${config.name}`));

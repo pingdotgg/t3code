@@ -56,6 +56,15 @@ const make = Effect.gen(function* () {
         return;
       }
       const result = listed.success;
+      if (result.errors.length > 0) {
+        const detail = result.errors.map((error) => error.message).join("; ");
+        yield* index.markError(scopeKey, detail);
+        yield* Effect.logWarning("Mention index PR sync incomplete", {
+          projectId,
+          errors: result.errors,
+        });
+        return;
+      }
       const now = yield* Clock.currentTimeMillis;
       for (const entry of result.entries) {
         rows.push({

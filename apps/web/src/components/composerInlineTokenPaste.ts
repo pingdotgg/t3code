@@ -42,12 +42,13 @@ export function readPastedComposerContext(
     threadTitle,
   );
   const external = externalLinkContextReferences(threads.text);
+  const localId = localEnvironmentId();
   const source =
     decodedFragment?.source ??
     (threads.records[0]
       ? { environmentId: threads.records[0].environmentId }
-      : external.records[0]
-        ? { environmentId: localEnvironmentId()! }
+      : external.records[0] && localId !== null
+        ? { environmentId: localId }
         : null);
   if (source === null || source.environmentId == null) return null;
   const pastedIds = new Set<string>(

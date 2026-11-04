@@ -207,12 +207,17 @@ export const make = Effect.gen(function* () {
     if (cached) return cached;
     const fromDisk = yield* readDisk(scopeKey);
     if (fromDisk) {
-      yield* Ref.update(hot, (map) => {
+      // Retain an already-published newer scope if another writer won the race.
+      const published = yield* Ref.modify(hot, (map) => {
+        const existing = map.get(scopeKey);
+        if (existing !== undefined && existing.meta.syncedAt >= fromDisk.meta.syncedAt) {
+          return [existing, map];
+        }
         const next = new Map(map);
         next.set(scopeKey, fromDisk);
-        return next;
+        return [fromDisk, next];
       });
-      return fromDisk;
+      return published;
     }
     return {
       rows: [],

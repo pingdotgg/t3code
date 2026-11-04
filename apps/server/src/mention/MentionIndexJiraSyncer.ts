@@ -36,6 +36,15 @@ const make = Effect.gen(function* () {
 
     const settings = yield* mcp.readSettings;
     const jiraSettings = settings.jira;
+    const spaces = jiraSettings?.spaces ?? [];
+    if (spaces.length === 0) {
+      yield* index.replaceScope(scopeKey, [], {
+        status: "empty",
+        detail: "No Jira spaces configured in mentionIndex.jira",
+      });
+      return;
+    }
+
     const project = yield* projects.getById(projectId).pipe(
       Effect.map(Option.getOrNull),
       Effect.orElseSucceed(() => null),
@@ -58,11 +67,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const tools = yield* session.listTools();
           const names = new Set(tools.map((tool) => tool.name));
-          const spaces = jiraSettings?.spaces ?? [];
-          const jqlBase =
-            spaces.length > 0
-              ? `project in (${spaces.map((space) => JSON.stringify(space)).join(", ")})`
-              : "updated >= -90d";
+          const jqlBase = `project in (${spaces.map((space) => JSON.stringify(space)).join(", ")})`;
           const jqlExtra = jiraSettings?.jqlExtra?.trim();
           const jql = `${jqlBase}${jqlExtra ? ` AND (${jqlExtra})` : ""} ORDER BY updated DESC`;
 
@@ -75,16 +80,10 @@ const make = Effect.gen(function* () {
           } else if (names.has("search") || names.has("jira_search")) {
             const tool = names.has("search") ? "search" : "jira_search";
             payload = yield* session.callTool(tool, { jql, maxResults: MAX_ROWS });
-          } else if (names.has("executeRead") && names.has("discover")) {
-            yield* session.callTool("discover", {});
-            payload = yield* session.callTool("executeRead", {
-              query: jql,
-              maxResults: MAX_ROWS,
-            });
           } else {
             return yield* Effect.fail(
               new MentionIndexMcpError(
-                "Jira MCP server has no searchable issue tool (expected searchJiraIssuesUsingJql)",
+                "Jira MCP server has no searchable issue tool (expected searchJiraIssuesUsingJql, search, or jira_search)",
               ),
             );
           }
@@ -118,11 +117,7 @@ const make = Effect.gen(function* () {
     const scopeKey = mentionIndexScopeKey("jira", projectId);
     const meta = yield* index.scopeMeta(scopeKey);
     const now = yield* Clock.currentTimeMillis;
-    const stale =
-      meta === null ||
-      meta.status === "empty" ||
-      meta.status === "error" ||
-      now - meta.syncedAt > STALE_AFTER_MS;
+    const stale = meta === null || meta.status === "error" || now - meta.syncedAt > STALE_AFTER_MS;
     if (!stale) return;
 
     const key = String(projectId);
@@ -176,6 +171,29 @@ function textFromMcpResult(payload: unknown): unknown {
   }
 }
 
+/** Prefer issue url/webUrl; derive browse URL from Jira REST `self`; never invent a host. */
+export function resolveJiraBrowseUrl(record: Record<string, unknown>, key: string): string {
+  const direct =
+    stringOf(record.url) ??
+    stringOf(record.webUrl) ??
+    stringOf(record.htmlUrl) ??
+    stringOf(asRecord(record.fields)?.url);
+  if (direct !== undefined) return direct;
+
+  const self = stringOf(record.self);
+  if (self !== undefined) {
+    try {
+      const parsed = new URL(self);
+      if (parsed.pathname.includes("/rest/")) {
+        return `${parsed.origin}/browse/${key}`;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return "about:blank";
+}
+
 export function extractJiraRows(payload: unknown, now: number): MentionIndexRow[] {
   const root = textFromMcpResult(payload);
   const issues =
@@ -199,11 +217,7 @@ export function extractJiraRows(payload: unknown, now: number): MentionIndexRow[
     const status = stringOf(asRecord(fields.status)?.name) ?? stringOf(record.status) ?? undefined;
     const projectKey =
       stringOf(asRecord(fields.project)?.key) ?? stringOf(record.projectKey) ?? key.split("-")[0];
-    const url =
-      stringOf(record.url) ??
-      stringOf(record.webUrl) ??
-      stringOf(asRecord(record.fields)?.url) ??
-      (projectKey ? `https://atlassian.net/browse/${key}` : `https://atlassian.net/browse/${key}`);
+    const url = resolveJiraBrowseUrl(record, key);
     rows.push({
       providerId: "jira",
       itemKey: key,

@@ -637,10 +637,18 @@ interface ComposerDraftStoreState {
     records: ReadonlyArray<JiraContextRecord>,
     options?: ComposerContextAddOptions,
   ) => void;
+  setJiraContexts: (
+    threadRef: ComposerThreadTarget,
+    records: ReadonlyArray<JiraContextRecord>,
+  ) => void;
   addFigmaContexts: (
     threadRef: ComposerThreadTarget,
     records: ReadonlyArray<FigmaContextRecord>,
     options?: ComposerContextAddOptions,
+  ) => void;
+  setFigmaContexts: (
+    threadRef: ComposerThreadTarget,
+    records: ReadonlyArray<FigmaContextRecord>,
   ) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
@@ -4056,6 +4064,26 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
+        setJiraContexts: (threadRef, records) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const jiraContexts = records.filter(isJiraContextRecord).map((record) => ({ ...record }));
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const retainedIds = new Set(jiraContexts.map((record) => record.contextId));
+            let prompt = existing.prompt;
+            for (const previous of existing.jiraContexts) {
+              if (retainedIds.has(previous.contextId)) continue;
+              prompt = removeInlineContextReference(prompt, previous.contextId).prompt;
+            }
+            prompt = ensureInlineContextReferences(prompt, jiraContexts.map(jiraContextReference));
+            const nextDraft = { ...existing, prompt, jiraContexts };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         addFigmaContexts: (threadRef, records, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
@@ -4096,6 +4124,31 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 },
               },
             };
+          });
+        },
+        setFigmaContexts: (threadRef, records) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const figmaContexts = records
+            .filter(isFigmaContextRecord)
+            .map((record) => ({ ...record }));
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const retainedIds = new Set(figmaContexts.map((record) => record.contextId));
+            let prompt = existing.prompt;
+            for (const previous of existing.figmaContexts) {
+              if (retainedIds.has(previous.contextId)) continue;
+              prompt = removeInlineContextReference(prompt, previous.contextId).prompt;
+            }
+            prompt = ensureInlineContextReferences(
+              prompt,
+              figmaContexts.map(figmaContextReference),
+            );
+            const nextDraft = { ...existing, prompt, figmaContexts };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
         removeReviewComment: (threadRef, commentId) => {

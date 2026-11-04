@@ -95,6 +95,8 @@ import {
   approvalRedirectNotice,
   loadBalancingSendWarning,
   multipleModelSendBlock,
+  referencedFigmaContexts,
+  referencedJiraContexts,
   referencedThreadContexts,
 } from "./composerSend.logic";
 import { usePlanFollowUpSend } from "./useProposedPlanSend";
@@ -643,6 +645,14 @@ export function useComposerSend(input: ComposerSendInput) {
           previewAnnotations: composerPreviewAnnotations,
           threadContexts: composerThreadContexts,
           environmentContexts: composerEnvironmentContexts,
+          jiraContexts: referencedJiraContexts({
+            prompt: promptForSend,
+            jiraContexts: composerJiraContexts,
+          }),
+          figmaContexts: referencedFigmaContexts({
+            prompt: promptForSend,
+            figmaContexts: composerFigmaContexts,
+          }),
         },
         setThreadError,
       );

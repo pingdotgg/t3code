@@ -82,6 +82,14 @@ const make = Effect.gen(function* () {
             const payload = hasMetadata
               ? yield* session.callTool("get_metadata", { fileKey })
               : yield* session.callTool("get_figma_data", { fileKey });
+            if (mcpResultIsError(payload)) {
+              return yield* Effect.fail(
+                new MentionIndexMcpError(
+                  mcpResultErrorMessage(payload) ??
+                    `Figma MCP tool returned isError for file ${fileKey}`,
+                ),
+              );
+            }
             rows.push(...extractFigmaRows(fileKey, payload, now));
             if (rows.length >= MAX_ROWS) break;
           }
@@ -151,6 +159,24 @@ function stringOf(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+export function mcpResultIsError(payload: unknown): boolean {
+  const record = asRecord(payload);
+  return record !== null && record.isError === true;
+}
+
+function mcpResultErrorMessage(payload: unknown): string | undefined {
+  const record = asRecord(payload);
+  if (record === null) return undefined;
+  const content = record.content;
+  if (!Array.isArray(content)) return stringOf(record.message);
+  const texts = content.flatMap((entry) => {
+    const item = asRecord(entry);
+    const text = item === null ? undefined : stringOf(item.text);
+    return text === undefined ? [] : [text];
+  });
+  return texts[0] ?? stringOf(record.message);
+}
+
 function textFromMcpResult(payload: unknown): unknown {
   const record = asRecord(payload);
   if (record === null) return payload;
@@ -169,6 +195,22 @@ function textFromMcpResult(payload: unknown): unknown {
   } catch {
     return joined;
   }
+}
+
+/** Lightweight extract of name/id from page-like XML nodes in get_metadata text. */
+export function pagesFromFigmaXml(xml: string): ReadonlyArray<{ id: string; name: string }> {
+  const pages: Array<{ id: string; name: string }> = [];
+  const tagRe = /<(canvas|page)\b([^>]*)\/?>/giu;
+  for (const match of xml.matchAll(tagRe)) {
+    const attrs = match[2] ?? "";
+    const id =
+      attrs.match(/\bid\s*=\s*"([^"]+)"/iu)?.[1] ?? attrs.match(/\bid\s*=\s*'([^']+)'/iu)?.[1];
+    const name =
+      attrs.match(/\bname\s*=\s*"([^"]+)"/iu)?.[1] ?? attrs.match(/\bname\s*=\s*'([^']+)'/iu)?.[1];
+    if (id === undefined || name === undefined) continue;
+    pages.push({ id, name });
+  }
+  return pages;
 }
 
 export function extractFigmaRows(
@@ -198,7 +240,7 @@ export function extractFigmaRows(
     },
   ];
 
-  const pages =
+  const structuredPages =
     (Array.isArray(record.pages)
       ? record.pages
       : Array.isArray(asRecord(record.document)?.children)
@@ -206,6 +248,14 @@ export function extractFigmaRows(
         : Array.isArray(record.nodes)
           ? (record.nodes as unknown[])
           : []) ?? [];
+
+  const xmlPages =
+    structuredPages.length === 0 && typeof root === "string" ? pagesFromFigmaXml(root) : [];
+
+  const pages =
+    structuredPages.length > 0
+      ? structuredPages
+      : xmlPages.map((page) => ({ id: page.id, name: page.name }));
 
   for (const page of pages.slice(0, 40)) {
     const pageRecord = asRecord(page);

@@ -1318,6 +1318,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.setEnvironmentContexts,
   );
+  const setComposerDraftJiraContexts = useComposerDraftStore((store) => store.setJiraContexts);
+  const setComposerDraftFigmaContexts = useComposerDraftStore((store) => store.setFigmaContexts);
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
     const wanted = new Set(contextIds);
     const copiedFiles = new Map<string, File>();
@@ -1686,6 +1688,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       restoredEnvironments.length > 0
     ) {
       setComposerDraftEnvironmentContexts(composerDraftTarget, nextEnvironments);
+    }
+
+    const liveJiraIds = new Set<string>(composerJiraContexts.map((record) => record.contextId));
+    const restoredJira = [...referenced].flatMap((contextId) => {
+      if (liveJiraIds.has(contextId)) return [];
+      const record = retained.jira.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextJira = [
+      ...composerJiraContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredJira,
+    ];
+    for (const record of composerJiraContexts) {
+      if (!referenced.has(record.contextId)) retained.jira.set(record.contextId, record);
+    }
+    if (nextJira.length !== composerJiraContexts.length || restoredJira.length > 0) {
+      setComposerDraftJiraContexts(composerDraftTarget, nextJira);
+    }
+
+    const liveFigmaIds = new Set<string>(composerFigmaContexts.map((record) => record.contextId));
+    const restoredFigma = [...referenced].flatMap((contextId) => {
+      if (liveFigmaIds.has(contextId)) return [];
+      const record = retained.figma.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextFigma = [
+      ...composerFigmaContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredFigma,
+    ];
+    for (const record of composerFigmaContexts) {
+      if (!referenced.has(record.contextId)) retained.figma.set(record.contextId, record);
+    }
+    if (nextFigma.length !== composerFigmaContexts.length || restoredFigma.length > 0) {
+      setComposerDraftFigmaContexts(composerDraftTarget, nextFigma);
     }
 
     for (const comment of composerReviewComments) {
