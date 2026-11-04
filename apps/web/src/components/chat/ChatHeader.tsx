@@ -292,7 +292,7 @@ export const ChatHeader = memo(function ChatHeader({
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
-        {activeProject ? (
+        {activeProject && !isServerThread ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <Tooltip>
