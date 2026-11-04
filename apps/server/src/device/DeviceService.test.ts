@@ -18,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -534,6 +535,11 @@ describe("device setup consent", () => {
   );
 });
 
+const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
+  read: (references) => Effect.succeed(references.map(() => undefined)),
+  invalidate: () => Effect.void,
+});
+
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
@@ -635,6 +641,57 @@ it.effect("hides Android discovery failures when the host has no Android SDK", (
     yield* Ref.set(androidAvailable, true);
     const withSdk = yield* service.list;
     expect(withSdk.hostStatusDetail).toBe(`${avdmanagerFailure.message}\niOS discovery failed.`);
+  }).pipe(Effect.scoped),
+);
+
+// The hub reports `error` as a util.inspect of Node's exec error.
+const simctlMessage = "[apple-utils] Failed to run `xcrun simctl list devices --json`:";
+const simctlCause =
+  "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=60): Unable to connect to CoreSimulatorService [xcrun shim fail mode]";
+const simctlError = `Error: Command failed: xcrun simctl list devices --json
+${simctlCause}
+
+    at genericNodeError (node:internal/errors:986:15)
+    at wrappedFn (node:internal/errors:540:14)
+    at ChildProcess.exithandler (node:child_process:417:12)
+    at ChildProcess._handle.onexit (node:internal/child_process:335:5) {
+  code: 1,
+  killed: false,
+  signal: null,
+  cmd: 'xcrun simctl list devices --json',
+  stdout: '',
+  stderr: '${simctlCause}\\n'
+}`;
+const avdmanager = "/Users/test/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager";
+const avdmanagerError = `Error: spawn ${avdmanager} ENOENT
+    at ChildProcess._handle.onexit (node:internal/child_process:316:19)
+    at onErrorNT (node:internal/child_process:524:16) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'spawn ${avdmanager}',
+  path: '${avdmanager}',
+  spawnargs: [ 'list', 'avd' ],
+  cmd: '${avdmanager} list avd',
+  stdout: '',
+  stderr: ''
+}`;
+
+it.effect("keeps the cause from the hub's error in discovery warnings, without the stack", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [
+      { message: simctlMessage, error: simctlError },
+      { message: "[android-utils] Failed to run `avdmanager list avd`:", error: avdmanagerError },
+    ]);
+    const state = yield* service.configure({ enabled: true });
+    expect(state.hostStatusDetail).toBe(
+      [
+        `${simctlMessage} Error: Command failed: xcrun simctl list devices --json ${simctlCause}`,
+        `[android-utils] Failed to run \`avdmanager list avd\`: Error: spawn ${avdmanager} ENOENT`,
+      ].join("\n"),
+    );
+    expect(state.hostStatusDetail).not.toContain("    at ");
+    expect(state.hostStatusDetail).not.toContain("stderr:");
   }).pipe(Effect.scoped),
 );
 
@@ -1385,7 +1442,14 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     expect(removedFiles).toHaveLength(1);
   }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
   ),
 );
 
@@ -1443,6 +1507,7 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
     Effect.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({ enableDeviceSupport: true }),
+        layerSecretResolver,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
         NodeCrypto.layer,
         NetService.layer,

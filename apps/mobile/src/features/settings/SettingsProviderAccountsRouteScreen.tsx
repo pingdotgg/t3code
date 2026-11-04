@@ -29,7 +29,7 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -37,6 +37,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
+  const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
@@ -44,7 +45,7 @@ export function SettingsProviderAccountsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Providers" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="Providers" menus={[environmentMenu]}>
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
@@ -215,6 +216,9 @@ function ProviderAccount({
     !active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate);
   const showCallback =
     Boolean(url) && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction);
+  const usesCredentials =
+    provider.driver === "antigravity" &&
+    (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
   const status =
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message
@@ -228,7 +232,9 @@ function ProviderAccount({
               ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
               : !provider.installed
                 ? "Not installed"
-                : "Not signed in";
+                : usesCredentials
+                  ? "Connect to load models"
+                  : "Not signed in";
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -339,8 +345,8 @@ function ProviderAccount({
   ) : canSignIn && !signedIn ? (
     <ControlPill
       variant="primary"
-      label="Sign in"
-      accessibilityLabel={`Sign in to ${name}`}
+      label={usesCredentials ? "Connect" : "Sign in"}
+      accessibilityLabel={usesCredentials ? `Connect to ${name}` : `Sign in to ${name}`}
       disabled={signInDisabled}
       onPress={() => startSignIn()}
     />

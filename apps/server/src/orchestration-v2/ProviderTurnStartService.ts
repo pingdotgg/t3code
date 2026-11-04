@@ -33,6 +33,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import {
@@ -148,6 +149,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -496,13 +498,22 @@ export const layer: Layer.Layer<
               } satisfies OrchestrationV2DomainEvent;
             }),
           );
-          yield* eventSink.writeIfRunCurrent({
+          const written = yield* eventSink.writeIfRunCurrent({
             threadId: projection.thread.id,
             runId,
             activeAttemptId: attempt.id,
             expectedStatus: "starting",
             events,
           });
+          // A steering restart that cannot start still ends a run whose earlier turns counted.
+          if (written.committed) {
+            yield* turnAnalytics.runSettled({
+              runId,
+              status,
+              completedAt: now,
+              childrenRunning: false,
+            });
+          }
         },
       );
       const settleStartFailure = Effect.fn("ProviderTurnStartService.settleStartFailure")(
@@ -1139,10 +1150,24 @@ export const layer: Layer.Layer<
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
           if (!sourceBusy) {
+            // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
+            const rolledBackAttemptIds = new Set(
+              sourceProjection.attempts
+                .filter((attempt) =>
+                  sourceProjection.runs.some(
+                    (candidate) =>
+                      candidate.id === attempt.runId && candidate.status === "rolled_back",
+                  ),
+                )
+                .map((attempt) => attempt.id),
+            );
             return yield* loadFromProvider(
               session.forkThread({
                 sourceProviderThread,
-                sourceProviderTurns: sourceProjection.providerTurns,
+                sourceProviderTurns: sourceProjection.providerTurns.filter(
+                  (turn) =>
+                    turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
+                ),
                 targetThreadId: projection.thread.id,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,
@@ -1311,6 +1336,14 @@ export const layer: Layer.Layer<
         resumedHandoffContext = undefined;
         resumedRetryHandoff = [];
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+        // Another client is still writing to the native thread. A fresh
+        // session here would silently split the conversation from it.
+        if (
+          resumed._tag === "Failure" &&
+          resumed.failure._tag === "ProviderAdapterThreadInUseError"
+        ) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
 
         yield* Effect.logWarning("Recovering provider context in a fresh native session", {
           driver: session.driver,

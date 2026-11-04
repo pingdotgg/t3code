@@ -2,15 +2,7 @@ import * as Predicate from "effect/Predicate";
 import * as EffectRecord from "effect/Record";
 import * as Redacted from "effect/Redacted";
 
-export type Primitive =
-  | never
-  | undefined
-  | null
-  | boolean
-  | number
-  | string
-  | bigint
-  | symbol;
+export type Primitive = undefined | null | boolean | number | string | bigint | symbol;
 
 export const isPrimitive = (value: any): value is Primitive =>
   value === undefined ||
@@ -21,9 +13,7 @@ export const isPrimitive = (value: any): value is Primitive =>
   typeof value === "symbol" ||
   typeof value === "bigint";
 
-export const isPlainObject = (
-  value: unknown,
-): value is Record<string, unknown> => {
+export const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (!Predicate.isObject(value)) return false;
   return Object.getPrototypeOf(value) === Object.prototype;
 };
@@ -42,9 +32,7 @@ export const isPlainObject = (
  * (#1082). Resources and Outputs are detected structurally *before* this
  * gate, so dependencies declared in plain props are unaffected.
  */
-export const isPlainData = (
-  value: unknown,
-): value is Record<string, unknown> | unknown[] => {
+export const isPlainData = (value: unknown): value is Record<string, unknown> | unknown[] => {
   if (Array.isArray(value)) return true;
   if (typeof value !== "object" || value === null) return false;
   const proto = Object.getPrototypeOf(value);
@@ -72,9 +60,7 @@ export const mapPlainData = (
   try {
     return Array.isArray(value)
       ? value.map(walk)
-      : Object.fromEntries(
-          Object.entries(value).map(([key, child]) => [key, walk(child)]),
-        );
+      : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, walk(child)]));
   } finally {
     ancestors.delete(value);
   }
@@ -93,12 +79,11 @@ export const stripFields = <T>(value: T, empty: null | undefined): T => {
 
 export const stripNullFields = <T>(value: T): T => stripFields(value, null);
 
-export const stripUndefinedFields = <T>(value: T): T =>
-  stripFields(value, undefined);
+export const stripUndefinedFields = <T>(value: T): T => stripFields(value, undefined);
 
 type UnwrapRedacted<T> =
   T extends Redacted.Redacted<infer U>
-    ? U
+    ? UnwrapRedacted<U>
     : T extends Record<string, any>
       ? { [K in keyof T]: UnwrapRedacted<T[K]> }
       : T extends Array<infer U>
@@ -107,7 +92,7 @@ type UnwrapRedacted<T> =
 
 export const unwrapRedacted = <T>(value: T): UnwrapRedacted<T> => {
   if (Redacted.isRedacted(value)) {
-    return Redacted.value(value) as UnwrapRedacted<T>;
+    return value.pipe(Redacted.value, unwrapRedacted) as UnwrapRedacted<T>;
   }
   if (Array.isArray(value)) {
     return value.map(unwrapRedacted) as UnwrapRedacted<T>;
