@@ -466,6 +466,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "boring-sidebar-flush-rows",
+    title: "Align threads with project icon",
+    to: "/settings/labs",
+    searchTerms: ["sidebar folder indent indentation flush left align spacing margin compact"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
