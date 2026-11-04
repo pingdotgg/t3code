@@ -11,6 +11,7 @@ import {
   type ScheduledTaskUpsertInput,
   SecretRef,
   ThreadId,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -912,6 +913,61 @@ it.effect("a run interrupted right after it reserves the task does not block the
       const second = yield* service.runNow({ id: task.id });
       assert.equal(second.threadId, ThreadId.make("thread:launched"));
       assert.equal(yield* Ref.get(launches), 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run launches with the stored model options, such as Codex's priority tier", () =>
+  Effect.gen(function* () {
+    const launched = yield* Ref.make<Array<ModelSelection>>([]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.update(launched, (all) => [...all, input.modelSelection]).pipe(
+                Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    const modelSelection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6.1-terra",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "priority" },
+      ],
+    };
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:priority-tier"),
+        title: "Dispatch",
+        prompt: "Dispatch the issue",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const stored = (yield* service.list()).tasks.find((entry) => entry.id === task.id);
+      assert.deepEqual(stored?.modelSelection, modelSelection);
+      yield* service.runNow({ id: task.id });
+      assert.deepEqual(yield* Ref.get(launched), [modelSelection]);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
