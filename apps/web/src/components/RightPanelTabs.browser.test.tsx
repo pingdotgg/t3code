@@ -6,6 +6,8 @@ import { render } from "../../test/render";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+
 import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 
@@ -61,6 +63,10 @@ function panel(activeSurface: RightPanelSurface) {
       <div data-testid="surface-content">
         {/* Stands in for ServerBrowserSurface, whose page canvas handles thumb buttons itself. */}
         <canvas data-testid="page-canvas" onMouseUp={(event) => event.preventDefault()} />
+        <InputGroup>
+          <InputGroupInput aria-label="Address" />
+          <InputGroupAddon data-testid="address-addon" align="inline-end" />
+        </InputGroup>
       </div>
     ),
   };
@@ -73,11 +79,15 @@ function releaseThumbButton(
   target: Element,
   button: 3 | 4,
 ): { focusMoved: boolean; routerMoved: boolean } {
+  const focused = document.activeElement;
   const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button });
   const up = new MouseEvent("mouseup", { bubbles: true, cancelable: true, button });
   target.dispatchEvent(down);
   target.dispatchEvent(up);
-  return { focusMoved: !down.defaultPrevented, routerMoved: !up.defaultPrevented };
+  return {
+    focusMoved: !down.defaultPrevented || document.activeElement !== focused,
+    routerMoved: !up.defaultPrevented,
+  };
 }
 
 const STAYS_PUT = { focusMoved: false, routerMoved: false };
@@ -103,10 +113,12 @@ describe("right panel thumb buttons", () => {
 
     expect(releaseThumbButton(tabStrip, 3)).toEqual(STAYS_PUT);
     expect(releaseThumbButton(content, 4)).toEqual(STAYS_PUT);
-    expect(actions).toEqual(["back", "forward"]);
+    // The address addon focuses its input on press; a thumb press must leave focus alone.
+    expect(releaseThumbButton(screen.getByTestId("address-addon").element(), 3)).toEqual(STAYS_PUT);
+    expect(actions).toEqual(["back", "forward", "back"]);
 
     // The page canvas already went back in the tab; the panel must not go back a second time.
     releaseThumbButton(screen.getByTestId("page-canvas").element(), 3);
-    expect(actions).toEqual(["back", "forward"]);
+    expect(actions).toEqual(["back", "forward", "back"]);
   });
 });
