@@ -718,12 +718,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
 
       const decodedInitialize = Schema.decodeEffect(Schema.fromJsonString(InitializeRequest));
       const decodedExt = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
-      const firstIsInitialize = yield* decodedInitialize(firstOutbound).pipe(
-        Effect.match({
-          onFailure: () => false,
-          onSuccess: () => true,
-        }),
-      );
+      const firstIsInitialize = yield* decodedInitialize(firstOutbound).pipe(Effect.isSuccess);
 
       const initializeRequest = firstIsInitialize
         ? yield* decodedInitialize(firstOutbound)
