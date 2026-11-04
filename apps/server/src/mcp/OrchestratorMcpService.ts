@@ -266,13 +266,18 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     enabled: task.enabled,
     projectId: task.projectId,
     boundThreadId: task.threadId,
-    target: {
-      providerInstanceId: task.modelSelection.instanceId,
-      model: task.modelSelection.model,
-      ...(task.modelSelection.options === undefined
-        ? {}
-        : { options: task.modelSelection.options }),
-    },
+    // A bound run follows its thread's current model, so the stored one would mislead.
+    ...(task.threadId !== null
+      ? {}
+      : {
+          target: {
+            providerInstanceId: task.modelSelection.instanceId,
+            model: task.modelSelection.model,
+            ...(task.modelSelection.options === undefined
+              ? {}
+              : { options: task.modelSelection.options }),
+          },
+        }),
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -1997,10 +2002,18 @@ const make = Effect.gen(function* () {
     "OrchestratorMcpService.scheduledTaskModelSelection",
   )(function* (
     projectId: ProjectId,
+    bound: boolean,
     base: ModelSelection,
     target: OrchestratorMcpScheduledTaskTarget | undefined,
   ) {
     if (target === undefined) return base;
+    // Bound runs follow the thread's current model, so a target would never run.
+    if (bound) {
+      return yield* failure(
+        "invalid_request",
+        "A bound task runs on its thread's current model. Pass bindToCurrentThread=false to choose one.",
+      );
+    }
     const resolved = yield* resolveTargetRechecking({
       parent: { thread: { modelSelection: base, projectId } },
       target,
@@ -2028,6 +2041,7 @@ const make = Effect.gen(function* () {
       }
       const modelSelection = yield* scheduledTaskModelSelection(
         projectId,
+        bindToCurrentThread,
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)),
         input.target,
       );
@@ -2125,6 +2139,7 @@ const make = Effect.gen(function* () {
           workspaceStrategy,
           modelSelection: yield* scheduledTaskModelSelection(
             existing.projectId,
+            threadId !== null,
             existing.modelSelection,
             input.target,
           ),

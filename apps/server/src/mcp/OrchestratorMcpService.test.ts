@@ -3017,7 +3017,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         },
       })),
     };
-    const service = (saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>) =>
+    const bound: ScheduledTask = {
+      ...existing,
+      threadId: ThreadId.make("thread:scheduled-model-bound"),
+    };
+    const service = (
+      saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
+      stored: ScheduledTask = existing,
+    ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(
@@ -3031,7 +3038,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mergeAll(
             NodeServices.layer,
             NodeCrypto.layer,
-            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(null),
+            }),
             ServerSettings.layerTest(),
             providerRegistryLayer([codex]),
             adapterRegistryLayer([codexInstanceId]),
@@ -3046,10 +3055,16 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-              list: () => Effect.succeed({ tasks: [existing] }),
+              list: () => Effect.succeed({ tasks: [stored] }),
               upsert: (input) =>
                 Ref.update(saved, (selections) => [...selections, input.modelSelection]).pipe(
-                  Effect.as({ task: { ...existing, modelSelection: input.modelSelection } }),
+                  Effect.as({
+                    task: {
+                      ...stored,
+                      threadId: input.threadId ?? null,
+                      modelSelection: input.modelSelection,
+                    },
+                  }),
                 ),
             }),
           ),
@@ -3057,11 +3072,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
     const savedSelections = <E>(
       run: (mcp: OrchestratorMcpService.OrchestratorMcpServiceShape) => Effect.Effect<unknown, E>,
+      stored: ScheduledTask = existing,
     ) =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(saved)),
+          Effect.provide(service(saved, stored)),
         );
         yield* run(mcp);
         return yield* Ref.get(saved);
@@ -3133,6 +3149,40 @@ describe("OrchestratorMcpService provider resolution", () => {
           model: "gpt-5",
           options: [{ id: "reasoningEffort", value: "low" }],
         });
+      }),
+    );
+
+    it.effect("refuses a target for a bound task, whose runs use the thread's model", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved, bound)),
+        );
+        const error = yield* mcp
+          .updateScheduledTask(client, {
+            scheduledTaskId: bound.id,
+            target: { model: "gpt-5-mini" },
+          })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "invalid_request");
+        assert.deepEqual(yield* Ref.get(saved), []);
+        const listed = yield* mcp.listScheduledTasks(client, { projectId });
+        assert.isUndefined(listed.tasks[0]?.target);
+      }),
+    );
+
+    it.effect("takes a target in the update that unbinds a task", () =>
+      Effect.gen(function* () {
+        const saved = yield* savedSelections(
+          (mcp) =>
+            mcp.updateScheduledTask(client, {
+              scheduledTaskId: bound.id,
+              bindToCurrentThread: false,
+              target: { model: "gpt-5-mini" },
+            }),
+          bound,
+        );
+        assert.deepEqual(saved, [{ instanceId: codexInstanceId, model: "gpt-5-mini" }]);
       }),
     );
 

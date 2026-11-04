@@ -670,7 +670,8 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   ),
   target: Schema.optional(
     OrchestratorMcpScheduledTaskTarget.annotate({
-      description: "Model and options, as in `delegate_task`.",
+      description:
+        "Model and options, as in `delegate_task`. Unbound tasks only: a bound run uses its thread's model.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
@@ -694,11 +695,13 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
-  target: Schema.Struct({
-    providerInstanceId: ProviderInstanceId,
-    model: Schema.String,
-    options: Schema.optional(Schema.Array(ProviderOptionSelection)),
-  }),
+  target: Schema.optional(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      model: Schema.String,
+      options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+    }),
+  ).annotate({ description: "Absent for a bound task, which runs on its thread's model." }),
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
