@@ -1159,7 +1159,8 @@ const make = Effect.gen(function* () {
         const active = isActiveRun(run);
         const providerTurn = records.providerTurns.findLast(
           (turn) =>
-            turn.runAttemptId === run.activeAttemptId && (!active || turn.status === "running"),
+            turn.runAttemptId === run.activeAttemptId &&
+            (!active || run.status === "running" || turn.status === "running"),
         );
         const commandId = CommandId.make(
           `server:force-stop:${run.id}:${yield* Clock.currentTimeMillis}`,
