@@ -21,6 +21,7 @@ import { threadEnvironment, environmentThreadShells } from "./threads";
 import { environmentShell } from "./shell";
 import { createOfflineOutbox } from "./offlineOutbox";
 import { offlineOutboxStorage } from "./offlineOutboxStorage";
+import { waitForAtomValue } from "./waitForAtomValue";
 
 export const offlineMessages = createOfflineOutbox({
   ...offlineOutboxStorage,
@@ -128,6 +129,18 @@ export const offlineMessages = createOfflineOutbox({
       { reportFailure: false },
     );
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    const settingsSynced = await waitForAtomValue({
+      registry: appAtomRegistry,
+      atom: environmentThreadShells.threadShellAtom(
+        scopeThreadRef(message.environmentId, message.input.threadId),
+      ),
+      predicate: (thread) =>
+        thread?.runtimeMode === message.input.runtimeMode &&
+        thread.interactionMode === message.input.interactionMode,
+      timeoutMs: 5_000,
+    });
+    if (!settingsSynced)
+      throw new Error("Thread settings have not synchronized. Reconnect and retry.");
     releaseDraftAttachments(message.attachments);
   },
 });
