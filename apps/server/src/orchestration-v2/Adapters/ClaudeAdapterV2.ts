@@ -8664,8 +8664,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const now = yield* DateTime.now;
             const nativeItemId =
               stopHook.uuid ??
-              (yield* crypto
-                .randomUUIDv4()
+              (yield* random
+                .uuidV4()
                 .pipe(
                   Effect.mapError((cause) => queryRunnerError(cause, "allocateStopHookItemId")),
                 ));
