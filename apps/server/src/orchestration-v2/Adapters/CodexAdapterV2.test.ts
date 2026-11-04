@@ -3649,6 +3649,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               dispatchMode: { type: "start_immediately" },
             });
             yield* worker.drain();
+            assert.isNull((yield* Ref.get(driver.state)).failure);
             yield* Fiber.join(retrying);
             assert.equal(
               (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
@@ -3719,6 +3720,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   method: "thread/resume",
                   params: {
                     threadId: nativeThreadId,
+                    modelProvider: "openai",
                     excludeTurns: true,
                     cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
                     model: CODEX_TEST_MODEL_SELECTION.model,
