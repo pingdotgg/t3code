@@ -702,7 +702,7 @@ const make = Effect.gen(function* () {
           confirmedTranscriptThreadIds.add(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
-        const now = yield* DateTime.now;
+        const importedAt = yield* DateTime.now;
         const messages = yield* listMessages(threadId);
         // Hint the index to skip V1 events without scanning their payloads.
         const existingRows = yield* sql<{ readonly event_id: string }>`
@@ -737,14 +737,15 @@ const make = Effect.gen(function* () {
             { discard: true },
           );
           yield* eventSink.write({
-            events: batch.flatMap((message) => messageEvents(message, now)),
+            events: batch.flatMap((message) => messageEvents(message, importedAt)),
           });
           yield* Effect.yieldNow;
         }
+        const now = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
           UPDATE orchestration_v2_legacy_imports
           SET
-            transcript_imported_at = ${DateTime.formatIso(now)},
+            transcript_imported_at = ${now},
             imported_message_count = ${messages.length},
             last_error = NULL
           WHERE thread_id = ${threadId}
