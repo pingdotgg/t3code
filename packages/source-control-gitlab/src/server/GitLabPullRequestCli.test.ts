@@ -1151,44 +1151,47 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("offers the project's and its groups' labels, marking those already applied", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation(({ args }) =>
-        Effect.succeed(
-          output(
-            args[1]?.includes("/labels?")
-              ? JSON.stringify([
-                  { name: "bug", color: "#d9534f", description: "Something is broken" },
-                  { name: "docs", color: null, description: null },
-                  { name: "legacy", color: null, description: null, archived: true },
-                  { name: "wontfix", color: null, description: null, archived: true },
-                ])
-              : mergeRequestJson({ labels: ["bug", "wontfix"] }),
+  it.effect(
+    "offers the project's and its groups' labels, marking those already applied, and keeps an applied label past the page",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1]?.includes("/labels?")
+                ? JSON.stringify([
+                    { name: "bug", color: "#d9534f", description: "Something is broken" },
+                    { name: "docs", color: null, description: null },
+                    { name: "legacy", color: null, description: null, archived: true },
+                    { name: "wontfix", color: null, description: null, archived: true },
+                  ])
+                : mergeRequestJson({ labels: ["bug", "wontfix", "stale"] }),
+            ),
           ),
-        ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const list = yield* cli.listLabelCandidates({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-      });
+        const list = yield* cli.listLabelCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(
-        mockedExecute.mock.calls
-          .map(([call]) => call.args[1])
-          .find((path) => path?.includes("/labels?")),
-      ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
-      expect(list).toEqual({
-        candidates: [
-          { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
-          { name: "docs", color: null, description: null, isApplied: false },
-          { name: "wontfix", color: null, description: null, isApplied: true },
-        ],
-        truncated: false,
-      });
-    }),
+        expect(
+          mockedExecute.mock.calls
+            .map(([call]) => call.args[1])
+            .find((path) => path?.includes("/labels?")),
+        ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
+        expect(list).toEqual({
+          candidates: [
+            { name: "stale", color: null, description: null, isApplied: true },
+            { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
+            { name: "docs", color: null, description: null, isApplied: false },
+            { name: "wontfix", color: null, description: null, isApplied: true },
+          ],
+          truncated: false,
+        });
+      }),
   );
 
   it.effect("adds labels the project has in one write", () =>
