@@ -3140,7 +3140,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
-    readonly reportedModels?: ReadonlyArray<ClaudeSdk.ModelInfo>;
+    readonly reportedModels?: Ref.Ref<ReadonlyArray<ClaudeSdk.ModelInfo>>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3205,7 +3205,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         idAllocator,
         ...(options?.reportedModels === undefined
           ? {}
-          : { reportedModels: yield* Ref.make(options.reportedModels) }),
+          : { reportedModels: options.reportedModels }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -8638,16 +8638,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("records the root model Claude reports for each turn, not the requested one", () =>
     Effect.gen(function* () {
+      const discoveredAlias = {
+        value: "gateway/best",
+        resolvedModel: "gateway/claude-future",
+        displayName: "Best",
+        description: "",
+      };
+      const reportedModels = yield* Ref.make<ReadonlyArray<ClaudeSdk.ModelInfo>>([discoveredAlias]);
       const harness = yield* makeWakeHarnessWithOptions({
         freshQueueOnReopen: true,
-        reportedModels: [
-          {
-            value: "gateway/best",
-            resolvedModel: "gateway/claude-future",
-            displayName: "Best",
-            description: "",
-          },
-        ],
+        reportedModels,
       });
       const executed = () => {
         const { model, modelSubstituted } = lastProviderTurn(harness.events);
@@ -8797,10 +8797,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               text: "Use the alias.",
             }),
           );
-          yield* Queue.offerAll(harness.processQueues.at(-1) ?? harness.sdkMessages, [
+          yield* harness.offerAndWait(
             usageStreamFrame({
               type: "message_start",
               message: { id: `alias-model-${ordinal}`, model: reported, usage: zeroUsage },
+            }),
+          );
+          if (ordinal === 7) yield* Ref.set(reportedModels, []);
+          yield* Queue.offerAll(harness.processQueues.at(-1) ?? harness.sdkMessages, [
+            makeAssistantErrorFrame({
+              uuid: `00000000-0000-4000-8000-00000000068${ordinal}`,
+              error: undefined,
+              model: reported,
             }),
             makeResultFrame({
               uuid: `00000000-0000-4000-8000-00000000067${ordinal}`,
@@ -8824,6 +8832,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.deepEqual(yield* aliasTurn(8, "claude-sonnet-4-6", "gateway/best"), {
         model: "claude-sonnet-4-6",
         modelSubstituted: true,
+      });
+      yield* Ref.set(reportedModels, [{ ...discoveredAlias, resolvedModel: "claude-sonnet-4-6" }]);
+      assert.deepEqual(yield* aliasTurn(9, "claude-sonnet-4-6", "gateway/best"), {
+        model: "claude-sonnet-4-6",
+        modelSubstituted: false,
       });
     }).pipe(
       Effect.scoped,

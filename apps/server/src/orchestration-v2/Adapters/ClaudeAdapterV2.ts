@@ -4321,6 +4321,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  readonly reportedModels: ReadonlyArray<ModelInfo>;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly nativeThreadId: string;
@@ -5966,17 +5967,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ...executedModelField(input.context),
         });
 
-        // Untraced: it runs for every root assistant frame.
-        const recordExecutedModel = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          model: unknown,
-        ) {
+        const recordExecutedModel = (context: ActiveClaudeTurnContext, model: unknown) => {
           const reported = typeof model === "string" ? model.trim() : "";
           // "<synthetic>" identifies CLI notices, not a model.
           if (reported.length > 0 && reported !== "<synthetic>") {
-            const discovered = adapterOptions.reportedModels
-              ? yield* Ref.get(adapterOptions.reportedModels)
-              : [];
+            const discovered = context.reportedModels;
             const executed = resolveClaudeModelSlug(subagentModelCatalog, reported, discovered);
             // An alias such as `opus` requests the model its canonical slug names.
             const requested = resolveClaudeModelSlug(
@@ -5986,7 +5981,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             context.executedModel = { model: executed, modelSubstituted: requested !== executed };
           }
-        });
+        };
 
         const buildToolCallArtifacts = (input: {
           readonly context: ActiveClaudeTurnContext | null;
@@ -8960,7 +8955,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             message.subtype === "init" &&
             context === (yield* Ref.get(activeTurn))
           ) {
-            yield* recordExecutedModel(context, message.model);
+            recordExecutedModel(context, message.model);
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
@@ -8990,7 +8985,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const event = message.event;
             const reasoning = context.reasoning;
             if (event.type === "message_start") {
-              yield* recordExecutedModel(context, event.message.model);
+              recordExecutedModel(context, event.message.model);
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
@@ -9099,7 +9094,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (message.message.model && message.message.model !== "<synthetic>") {
                 context.rootModels.add(message.message.model);
               }
-              yield* recordExecutedModel(context, message.message.model);
+              recordExecutedModel(context, message.message.model);
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
@@ -11165,8 +11160,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
+            const reportedModels = adapterOptions.reportedModels
+              ? yield* Ref.get(adapterOptions.reportedModels)
+              : [];
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
+              // Continuations consume the existing query's output, including its model identity.
+              reportedModels: isClaudeProviderContinuationTurn(turnInput)
+                ? (querySession.lastTurn?.reportedModels ?? reportedModels)
+                : reportedModels,
               input: turnInput,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
