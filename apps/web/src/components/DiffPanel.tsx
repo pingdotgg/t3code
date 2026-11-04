@@ -1427,7 +1427,6 @@ export default function DiffPanel({
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={codeViewReveal.attach}
                     codeViewKey={codeViewMountKey}
-
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
