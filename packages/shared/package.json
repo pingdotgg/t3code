@@ -131,6 +131,14 @@
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
     },
+    "./assistantStreaming": {
+      "types": "./src/assistantStreaming.ts",
+      "import": "./src/assistantStreaming.ts"
+    },
+    "./wireProjection": {
+      "types": "./src/wireProjection.ts",
+      "import": "./src/wireProjection.ts"
+    },
     "./htmlRender": {
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"

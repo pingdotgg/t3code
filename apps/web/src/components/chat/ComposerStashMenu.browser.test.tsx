@@ -5,6 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { BackgroundThreadContext } from "./backgroundThread";
 
 function Composer({ dialog = false }: { dialog?: boolean }) {
   const composerFormRef = useRef<HTMLFormElement>(null);
@@ -107,4 +108,36 @@ it("leaves dialog, unrelated input and question button shortcuts alone while the
   expect(stash().element().textContent).toContain("first prompt");
   expect(stash().element().textContent).toContain("second prompt");
   await expect.element(editor()).toHaveValue("Unsent draft");
+});
+
+it("preserves the stash under an app modal and resumes keyboard restoration afterward", async () => {
+  await using screen = await render(
+    <BackgroundThreadContext value={true}>
+      <Composer />
+    </BackgroundThreadContext>,
+  );
+  for (const key of ["ArrowDown", "Enter", "Escape"]) {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    await act(() => {
+      document.body.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+  }
+  await expect.element(editor()).toHaveValue("Unsent draft");
+  expect(stash().element().textContent).toContain("first prompt");
+  expect(stash().element().textContent).toContain("second prompt");
+
+  await screen.rerender(
+    <BackgroundThreadContext value={false}>
+      <Composer />
+    </BackgroundThreadContext>,
+  );
+  await act(() => {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  await act(() => {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  await expect.element(editor()).toHaveValue("second prompt");
+  await expect.element(stash()).not.toBeInTheDocument();
 });
