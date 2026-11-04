@@ -2335,12 +2335,36 @@ it.live("a viewer whose backlog is replaced still gets the page's semantics", ()
       for (let index = 0; index < 80; index += 1) {
         session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
       }
+      yield* operator.input({
+        type: "accessibilityAction",
+        document: "stale-document",
+        node: "missing-node",
+        action: "activate",
+      });
       yield* operator.input({ type: "takeControl" });
       const backlog = yield* Queue.takeAll(operator.output);
       expect(backlog.map((output) => output._tag)).toContain("control");
       expect(backlog.filter((output) => output._tag === "accessibility")).toEqual([
         expect.objectContaining({ document: expect.objectContaining({ version: 1 }) }),
       ]);
+      expect(backlog.findIndex((output) => output._tag === "accessibilityNotice")).toBeGreaterThan(
+        backlog.findIndex((output) => output._tag === "accessibility"),
+      );
+      yield* operator.input({
+        type: "accessibilityAction",
+        document: "stale-document",
+        node: "missing-node",
+        action: "activate",
+      });
+      yield* operator.accessibility(false);
+      yield* operator.accessibility(true);
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.input({ type: "takeControl" });
+      const refreshed = yield* Queue.takeAll(operator.output);
+      expect(refreshed.map((output) => output._tag)).not.toContain("accessibilityNotice");
+      expect(refreshed.filter((output) => output._tag === "accessibility")).toHaveLength(1);
       yield* operator.input({ type: "releaseControl" });
     }),
   ).pipe(Effect.provide(layer)),

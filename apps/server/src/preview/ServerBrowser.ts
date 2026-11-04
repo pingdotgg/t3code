@@ -2544,24 +2544,42 @@ const make = Effect.gen(function* () {
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          [
+            "gone",
+            "reconnect",
+            "control",
+            "viewport",
+            "fileChooser",
+            "accessibilityNotice",
+          ].includes(next._tag)
+        ) {
           const dropped = Effect.runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
           // Without its latest size and control the viewer cannot map input at all.
           // Semantics are only resent when they change, so the newest must survive.
+          // The mobile view clears notices on document updates, so feedback follows the snapshot.
           const latest: ReadonlyArray<ServerBrowserViewerOutput["_tag"]> =
             next._tag === "gone"
               ? ["control", "viewport"]
-              : ["control", "viewport", "accessibility"];
-          const state = latest.flatMap((tag) => items.findLast((item) => item._tag === tag) ?? []);
+              : ["control", "viewport", "accessibility", "accessibilityNotice"];
+          const documentIndex = items.findLastIndex((item) => item._tag === "accessibility");
+          const state = latest.flatMap(
+            (tag) =>
+              items.findLast(
+                (item, index) =>
+                  item._tag === tag && (tag !== "accessibilityNotice" || index > documentIndex),
+              ) ?? [],
+          );
           // Everything else is one-time; if it no longer fits, the oldest goes first.
           const rest = items.filter(
             (item) =>
               item._tag !== "frame" &&
               item._tag !== "control" &&
               item._tag !== "viewport" &&
-              item._tag !== "accessibility",
+              item._tag !== "accessibility" &&
+              item._tag !== "accessibilityNotice",
           );
           for (const item of [...rest.slice(state.length - VIEWER_OUTPUT_LIMIT), ...state])
             Queue.offerUnsafe(output, item);
