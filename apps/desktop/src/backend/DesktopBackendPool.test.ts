@@ -3,11 +3,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -26,6 +28,14 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
     Layer.provideMerge(
       Layer.mergeAll(
         FileSystem.layerNoop({}),
+        Path.layer,
+        Layer.succeed(
+          DesktopEnvironment.DesktopEnvironment,
+          DesktopEnvironment.DesktopEnvironment.of({
+            stateDir: "/tmp/state",
+            backendCwd: "/repo",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
@@ -61,6 +71,7 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
           currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
+          setBootstrapSecret: () => Effect.void,
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
         DesktopState.layer,

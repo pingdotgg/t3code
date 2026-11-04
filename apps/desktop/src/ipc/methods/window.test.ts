@@ -74,6 +74,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartScheduled: false,
   }),
   waitForReady: () => Effect.succeed(true),
+  attachExternal: () => Effect.void,
 };
 
 const backendConfigurationLayer = Layer.succeed(
@@ -83,6 +84,7 @@ const backendConfigurationLayer = Layer.succeed(
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),
     currentBootstrapToken: Effect.succeed("current-window-token"),
+    setBootstrapSecret: () => Effect.void,
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 

@@ -213,6 +213,7 @@ export interface DesktopBackendSnapshot {
   readonly activePid: Option.Option<number>;
   readonly restartAttempt: number;
   readonly restartScheduled: boolean;
+  readonly isExternal?: boolean;
 }
 
 export type BackendInstanceId = string & Brand.Brand<"BackendInstanceId">;
@@ -238,6 +239,10 @@ export interface DesktopBackendInstance {
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  readonly attachExternal: (
+    config: DesktopBackendStartConfig,
+    pid?: Option.Option<number>,
+  ) => Effect.Effect<void>;
 }
 
 export interface BackendInstanceSpec {
@@ -271,6 +276,8 @@ interface BackendManagerState {
   readonly preflightFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
+  readonly isExternal?: boolean;
+  readonly externalPid?: Option.Option<number>;
 }
 
 const initialState: BackendManagerState = {
@@ -282,6 +289,8 @@ const initialState: BackendManagerState = {
   preflightFailureAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
+  isExternal: false,
+  externalPid: Option.none(),
 };
 
 const activePid = (active: Option.Option<ActiveBackendRun>): Option.Option<number> =>
@@ -655,9 +664,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     Effect.map((current): DesktopBackendSnapshot => ({
       desiredRunning: current.desiredRunning,
       ready: current.ready,
-      activePid: activePid(current.active),
+      activePid: current.isExternal
+        ? (current.externalPid ?? Option.none())
+        : activePid(current.active),
       restartAttempt: current.restartAttempt,
       restartScheduled: Option.isSome(current.restartFiber),
+      ...(current.isExternal ? { isExternal: true } : {}),
     })),
   );
   const currentConfig = SubscriptionRef.get(state).pipe(Effect.map((current) => current.config));
@@ -681,6 +693,16 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     mutex.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
+        if (current.isExternal && current.ready) {
+          if (!current.desiredRunning) {
+            yield* SubscriptionRef.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: true,
+            }));
+          }
+          return;
+        }
+
         if (Option.isSome(current.active)) {
           if (!current.desiredRunning) {
             yield* SubscriptionRef.update(state, (latest) => ({
@@ -724,6 +746,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          isExternal: false,
+          externalPid: Option.none<number>(),
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -1070,6 +1094,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ready: false,
               active,
               restartFiber: Option.none<Fiber.Fiber<void, never>>(),
+              isExternal: false,
+              externalPid: Option.none<number>(),
             },
           ] as const;
         });
@@ -1141,6 +1167,24 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
+  const attachExternal = Effect.fn("desktop.backendInstance.attachExternal")(function* (
+    config: DesktopBackendStartConfig,
+    pid: Option.Option<number> = Option.none(),
+  ) {
+    yield* cancelRestart;
+    yield* SubscriptionRef.update(state, (latest) => ({
+      ...latest,
+      desiredRunning: true,
+      ready: true,
+      config: Option.some(config),
+      active: Option.none(),
+      restartAttempt: 0,
+      isExternal: true,
+      externalPid: pid,
+    }));
+    yield* (spec.onReady?.(config.httpBaseUrl) ?? Effect.void).pipe(Effect.ignore);
+  });
+
   const waitForReady = Effect.fn("DesktopBackendManager.waitForReady")(
     (timeout: Duration.Duration) =>
       SubscriptionRef.changes(state).pipe(
@@ -1164,5 +1208,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    attachExternal,
   } satisfies DesktopBackendInstance;
 });

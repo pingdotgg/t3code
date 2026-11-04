@@ -956,3 +956,29 @@ export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateEr
     return `Server update failed: ${this.reason}`;
   }
 }
+
+export const PersistedServerRuntimeState = Schema.Struct({
+  version: Schema.Literal(1),
+  pid: Schema.Int,
+  ownerId: Schema.optional(Schema.String),
+  host: Schema.optional(Schema.String),
+  privateNetworkOnly: Schema.optional(Schema.Boolean),
+  port: Schema.Int,
+  origin: Schema.String,
+  devUrl: Schema.optional(Schema.String),
+  startedAt: Schema.String,
+  serviceManaged: Schema.optional(Schema.Boolean),
+  serverVersion: Schema.optional(Schema.String),
+  desktopBootstrapToken: Schema.optional(Schema.String),
+  desktopBootstrapSecret: Schema.optional(Schema.String),
+  managedPolicy: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        source: Schema.String,
+        organization: Schema.String,
+        fingerprint: Schema.String,
+      }),
+    ),
+  ),
+});
+export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;

@@ -5,35 +5,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { PersistedServerRuntimeState } from "@t3tools/contracts";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
-export const PersistedServerRuntimeState = Schema.Struct({
-  version: Schema.Literal(1),
-  pid: Schema.Int,
-  ownerId: Schema.optional(Schema.String),
-  host: Schema.optional(Schema.String),
-  privateNetworkOnly: Schema.optional(Schema.Boolean),
-  port: Schema.Int,
-  origin: Schema.String,
-  // Dev is single-origin: browsers must pair through this URL, not `origin`.
-  devUrl: Schema.optional(Schema.String),
-  startedAt: Schema.String,
-  serviceManaged: Schema.optional(Schema.Boolean),
-  serverVersion: Schema.optional(Schema.String),
-  // The managed policy this server loaded at startup, null for none; absent from older servers.
-  managedPolicy: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        source: Schema.String,
-        organization: Schema.String,
-        fingerprint: Schema.String,
-      }),
-    ),
-  ),
-});
-export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
+export { PersistedServerRuntimeState };
 
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
@@ -65,7 +42,10 @@ export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<
     ServerConfig.ServerConfig["Service"],
     "host" | "privateNetworkOnly" | "devUrl"
-  >;
+  > &
+    Partial<
+      Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapSecret" | "desktopBootstrapToken">
+    >;
   readonly port: number;
   readonly serviceManaged?: boolean;
   readonly managedPolicy?: PersistedServerRuntimeState["managedPolicy"];
@@ -82,6 +62,12 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
     serverVersion: packageJson.version,
     ...(input.managedPolicy === undefined ? {} : { managedPolicy: input.managedPolicy }),
+    ...(input.config.desktopBootstrapSecret
+      ? { desktopBootstrapSecret: input.config.desktopBootstrapSecret }
+      : {}),
+    ...(input.config.desktopBootstrapToken
+      ? { desktopBootstrapToken: input.config.desktopBootstrapToken }
+      : {}),
   }));
 
 export const persistServerRuntimeState = (input: {

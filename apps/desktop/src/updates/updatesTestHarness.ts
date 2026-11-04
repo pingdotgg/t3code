@@ -157,6 +157,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartScheduled: false,
     })),
     waitForReady: () => Effect.succeed(true),
+    attachExternal: () => Effect.void,
   };
   const layerBackend = DesktopBackendPool.layerTest(
     options.backendInstances ??

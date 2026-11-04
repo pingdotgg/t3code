@@ -275,6 +275,29 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
+  it.effect("setBootstrapSecret makes derived tokens match the attached server", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const attachedSecret = "0123456789abcdef0123456789abcdef";
+
+        yield* configuration.setBootstrapSecret(attachedSecret);
+
+        assert.equal(
+          yield* configuration.currentBootstrapToken,
+          currentDesktopBootstrapToken(attachedSecret, yield* Clock.currentTimeMillis),
+        );
+
+        const resolved = yield* configuration.resolvePrimary;
+        assert.equal(resolved.bootstrap.desktopBootstrapSecret, attachedSecret);
+        assert.equal(
+          resolved.bootstrap.desktopBootstrapToken,
+          currentDesktopBootstrapToken(attachedSecret, yield* Clock.currentTimeMillis),
+        );
+      }),
+    ),
+  );
+
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

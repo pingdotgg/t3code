@@ -31,6 +31,7 @@ function makeStubInstance(input: {
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
+    attachExternal: () => Effect.void,
   };
 }
 
@@ -72,6 +73,7 @@ const layerBackendConfiguration = Layer.succeed(
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),
     currentBootstrapToken: Effect.die("unexpected currentBootstrapToken"),
+    setBootstrapSecret: () => Effect.void,
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 

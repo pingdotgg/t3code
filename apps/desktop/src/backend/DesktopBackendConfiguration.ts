@@ -53,6 +53,7 @@ export class DesktopBackendConfiguration extends Context.Service<
     >;
     readonly resolvePrimaryLabel: Effect.Effect<string>;
     readonly currentBootstrapToken: Effect.Effect<string, PlatformError.PlatformError>;
+    readonly setBootstrapSecret: (secret: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
@@ -811,6 +812,9 @@ export const make = Effect.gen(function* () {
 
   return DesktopBackendConfiguration.of({
     currentBootstrapToken,
+    setBootstrapSecret: Effect.fn("DesktopBackendConfiguration.setBootstrapSecret")(
+      (secret: string) => SynchronizedRef.set(secretRef, Option.some(secret)),
+    ),
     resolvePrimary: Effect.gen(function* () {
       const { useWsl, wslRequested } = yield* describePrimary;
       if (useWsl) {
