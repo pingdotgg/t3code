@@ -37,6 +37,7 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { QuickUsagePopover } from "../usage/QuickUsagePopover";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -243,10 +244,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/settings" });
   };
 
-  const handleUsageClick = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+  const handleUsageOpenFull = () => {
     void navigate({ to: "/usage" });
   };
 
@@ -278,11 +276,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          <SidebarMenuItem className="shrink-0">
+            <QuickUsagePopover
+              trigger={<ChartNoAxesColumnIcon />}
+              onOpenFull={handleUsageOpenFull}
+            />
+          </SidebarMenuItem>
         </>
       )}
       <SidebarThreadUndoNotice />
