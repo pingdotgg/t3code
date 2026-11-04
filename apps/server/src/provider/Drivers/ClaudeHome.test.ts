@@ -245,4 +245,78 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }
     }),
   );
+
+  it.effect("labels a session from managed settings and their drop-ins", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      for (const [platform, directory] of [
+        ["linux", "/etc/claude-code"],
+        ["win32", "C:/Program Files/ClaudeCode"],
+      ] as const) {
+        const managed = new Map<string, string>();
+        const normalize = (file: string) => file.replaceAll("\\", "/");
+        const managedFileSystem = FileSystem.makeNoop({
+          ...fileSystem,
+          readFileString: (file, ...args) =>
+            normalize(file).startsWith(`${directory}/`)
+              ? managed.has(normalize(file))
+                ? Effect.succeed(managed.get(normalize(file))!)
+                : fileSystem.readFileString(path.join(homePath, "missing"))
+              : fileSystem.readFileString(file, ...args),
+          readDirectory: (file) =>
+            normalize(file) === `${directory}/managed-settings.d`
+              ? Effect.succeed(
+                  [...managed.keys()]
+                    .filter((key) => key.includes("/managed-settings.d/"))
+                    .map((key) => path.basename(key)),
+                )
+              : fileSystem.readDirectory(file),
+        });
+        const entrypoint = resolveClaudeSessionEnvironment({ homePath }, {}, undefined).pipe(
+          Effect.map((resolved) => resolved.CLAUDE_CODE_ENTRYPOINT),
+          Effect.provideService(FileSystem.FileSystem, managedFileSystem),
+          Effect.provideService(HostProcess.Platform, platform),
+        );
+        const dropIn = (name: string, key: string) =>
+          managed.set(
+            `${directory}/managed-settings.d/${name}`,
+            JSON.stringify({ env: { ANTHROPIC_API_KEY: key } }),
+          );
+
+        expect(yield* entrypoint).toBe("t3-code");
+        // Claude Code skips hidden files and names that do not end in .json.
+        dropIn(".hidden.json", "key");
+        dropIn("notes.txt", "key");
+        expect(yield* entrypoint).toBe("t3-code");
+        dropIn("10-auth.json", "key");
+        expect(yield* entrypoint).toBeUndefined();
+        // Drop-ins apply in sorted order, after managed-settings.json.
+        dropIn("20-clear.json", "");
+        expect(yield* entrypoint).toBe("t3-code");
+        managed.clear();
+        managed.set(
+          `${directory}/managed-settings.json`,
+          JSON.stringify({ env: { ANTHROPIC_API_KEY: "key" } }),
+        );
+        expect(yield* entrypoint).toBeUndefined();
+        dropIn("10-clear.json", "");
+        expect(yield* entrypoint).toBe("t3-code");
+
+        // Capability probes read the same managed settings.
+        managed.clear();
+        dropIn("10-auth.json", "key");
+        const probeEnvironment = yield* mergeClaudeProcessEnvironment(
+          { homePath },
+          undefined,
+          {},
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, managedFileSystem),
+          Effect.provideService(HostProcess.Platform, platform),
+        );
+        expect(probeEnvironment.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+      }
+    }),
+  );
 });
