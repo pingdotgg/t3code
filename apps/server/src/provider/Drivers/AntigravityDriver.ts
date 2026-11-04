@@ -370,17 +370,16 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime: makeDisposableRuntime,
       // A new sign-in may be another account; drop any in-flight quota read first.
       onAuthenticated: (started, runtime) =>
-        fileSystem.remove(path.join(profileDirectory, ".signed_out")).pipe(
-          Effect.ignore,
-          Effect.andThen(Effect.suspend(() => provider.onSignedIn)),
-          Effect.andThen(publishCatalog(started, runtime)),
-        ),
+        fileSystem
+          .remove(path.join(profileDirectory, ".signed_out"))
+          .pipe(
+            Effect.ignore,
+            Effect.andThen(Effect.suspend(() => provider.onSignedIn)),
+            Effect.andThen(publishCatalog(started, runtime)),
+          ),
       onSignedOut: fileSystem
         .writeFileString(path.join(profileDirectory, ".signed_out"), "signed_out")
-        .pipe(
-          Effect.ignore,
-          Effect.andThen(Effect.suspend(() => provider.onSignedOut)),
-        ),
+        .pipe(Effect.ignore, Effect.andThen(Effect.suspend(() => provider.onSignedOut))),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 
@@ -445,10 +444,10 @@ export const AntigravityDriver: ProviderDriver<
         case "agent-platform": {
           const authenticated = Boolean(
             (auth.apiKey && auth.apiKey.trim().length > 0) ||
-              (auth.gcpProject &&
-                auth.gcpProject.trim().length > 0 &&
-                auth.gcpLocation &&
-                auth.gcpLocation.trim().length > 0),
+            (auth.gcpProject &&
+              auth.gcpProject.trim().length > 0 &&
+              auth.gcpLocation &&
+              auth.gcpLocation.trim().length > 0),
           );
           return {
             authenticated,
@@ -497,8 +496,8 @@ export const AntigravityDriver: ProviderDriver<
           const parsedToken = Option.getOrUndefined(decodeAntigravityToken(tokenContent));
           const hasValidToken = Boolean(
             parsedToken &&
-              parsedToken.client_id.trim().length > 0 &&
-              parsedToken.refresh_token.trim().length > 0,
+            parsedToken.client_id.trim().length > 0 &&
+            parsedToken.refresh_token.trim().length > 0,
           );
 
           if (!hasValidToken) {
@@ -525,7 +524,9 @@ export const AntigravityDriver: ProviderDriver<
             const accountsContent = yield* fileSystem
               .readFileString(accountsPath)
               .pipe(Effect.orElseSucceed(() => ""));
-            const parsedAccounts = Option.getOrUndefined(decodeAntigravityAccounts(accountsContent));
+            const parsedAccounts = Option.getOrUndefined(
+              decodeAntigravityAccounts(accountsContent),
+            );
             if (parsedAccounts && parsedAccounts.active.trim().length > 0) {
               email = parsedAccounts.active.trim();
             }

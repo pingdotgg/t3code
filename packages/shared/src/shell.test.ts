@@ -932,6 +932,46 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       });
     }),
   );
+
+  it.effect("resolves relative PATH candidates against the supplied child cwd", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dirA = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-a-" });
+        const dirB = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-cwd-b-" });
+        const binDirA = path.join(dirA, "node_modules", ".bin");
+        const binDirB = path.join(dirB, "node_modules", ".bin");
+        yield* fs.makeDirectory(binDirA, { recursive: true });
+        yield* fs.makeDirectory(binDirB, { recursive: true });
+        const exeA = path.join(binDirA, "my-tool.exe");
+        const exeB = path.join(binDirB, "my-tool.exe");
+        yield* fs.writeFileString(exeA, "");
+        yield* fs.writeFileString(exeB, "");
+
+        const cache = new Map();
+        const env = { PATH: "node_modules\\.bin", PATHEXT: ".EXE" };
+
+        const resolvedA = yield* resolveSpawnCommand("my-tool.exe", ["--version"], {
+          env,
+          cwd: dirA,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(CommandResolutionCache, cache),
+        );
+        const resolvedB = yield* resolveSpawnCommand("my-tool.exe", ["--version"], {
+          env,
+          cwd: dirB,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(CommandResolutionCache, cache),
+        );
+
+        expect(resolvedA.command).toBe(exeA);
+        expect(resolvedB.command).toBe(exeB);
+      }),
+    ),
+  );
 });
 
 effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {

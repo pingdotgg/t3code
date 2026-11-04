@@ -331,7 +331,7 @@ describe("provider enabled defaults", () => {
     expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
     expect(
       resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
-    ).toBe(true);
+    ).toBe(false);
     expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
     expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
       false,

@@ -74,6 +74,7 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd?: string,
 ) => string | undefined;
 
 function resolveWellKnownToolCandidate(
@@ -96,7 +97,13 @@ function resolveWellKnownToolCandidate(
       const candidates: string[] = [];
       if (localAppData) {
         candidates.push(
-          path.join(localAppData, "Programs", "@opencode-aidesktop", "resources", "opencode-cli.exe"),
+          path.join(
+            localAppData,
+            "Programs",
+            "@opencode-aidesktop",
+            "resources",
+            "opencode-cli.exe",
+          ),
           path.join(localAppData, "OpenCode", "opencode-cli.exe"),
           path.join(localAppData, "OpenCode", "opencode.exe"),
           path.join(localAppData, "Programs", "OpenCode", "resources", "opencode-cli.exe"),
@@ -126,7 +133,14 @@ function resolveWellKnownToolCandidate(
         "/Applications/OpenCode AI.app/Contents/Resources/opencode-cli",
         ...(home
           ? [
-              path.join(home, "Applications", "OpenCode.app", "Contents", "Resources", "opencode-cli"),
+              path.join(
+                home,
+                "Applications",
+                "OpenCode.app",
+                "Contents",
+                "Resources",
+                "opencode-cli",
+              ),
               path.join(home, ".local", "bin", "opencode"),
             ]
           : []),
@@ -157,7 +171,16 @@ function resolveWellKnownToolCandidate(
       const candidates: string[] = [];
       if (localAppData) {
         candidates.push(
-          path.join(localAppData, "Programs", "Grok Bot", "resources", "app.asar.unpacked", "dist", "native", "grok.exe"),
+          path.join(
+            localAppData,
+            "Programs",
+            "Grok Bot",
+            "resources",
+            "app.asar.unpacked",
+            "dist",
+            "native",
+            "grok.exe",
+          ),
           path.join(localAppData, "Programs", "grok", "grok.exe"),
           path.join(localAppData, "npm", "grok.cmd"),
         );
@@ -180,10 +203,7 @@ function resolveWellKnownToolCandidate(
         "/Applications/Grok.app/Contents/Resources/grok",
         "/Applications/Grok Bot.app/Contents/Resources/grok",
         ...(home
-          ? [
-              path.join(home, ".grok", "bin", "grok"),
-              path.join(home, ".local", "bin", "grok"),
-            ]
+          ? [path.join(home, ".grok", "bin", "grok"), path.join(home, ".local", "bin", "grok")]
           : []),
         "/opt/homebrew/bin/grok",
         "/usr/local/bin/grok",
@@ -195,10 +215,7 @@ function resolveWellKnownToolCandidate(
       const home = env.HOME?.trim();
       const candidates = [
         ...(home
-          ? [
-              path.join(home, ".grok", "bin", "grok"),
-              path.join(home, ".local", "bin", "grok"),
-            ]
+          ? [path.join(home, ".grok", "bin", "grok"), path.join(home, ".local", "bin", "grok")]
           : []),
         "/usr/local/bin/grok",
       ];
@@ -215,6 +232,7 @@ function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd?: string,
 ): string | undefined {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
@@ -224,6 +242,8 @@ function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
+  const resolveAgainstCwd = (candidate: string) =>
+    cwd && !path.isAbsolute(candidate) ? path.resolve(cwd, candidate) : candidate;
   const isExecutable = (candidate: string) => {
     try {
       if (!NodeFS.statSync(candidate).isFile()) return false;
@@ -237,14 +257,18 @@ function resolveSpawnExecutableWithNode(
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    for (const candidate of candidates) {
+      const resolvedCandidate = resolveAgainstCwd(candidate);
+      if (isExecutable(resolvedCandidate)) return resolvedCandidate;
+    }
+    return undefined;
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
-      const candidatePath = path.join(normalizedPathEntry, candidate);
+      const candidatePath = resolveAgainstCwd(path.join(normalizedPathEntry, candidate));
       if (isExecutable(candidatePath)) return candidatePath;
     }
   }
@@ -958,6 +982,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
+  readonly cwd?: string;
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
 }
@@ -1002,6 +1027,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     env.LOCALAPPDATA ?? "",
     env.APPDATA ?? "",
     env.MSYSTEM ? "msystem" : "",
+    options.cwd ?? "",
     command,
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
@@ -1010,7 +1036,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
+    const found = resolveExecutable(command, platform, env, options.cwd);
     resolvedExecutable =
       found === undefined
         ? null

@@ -437,40 +437,45 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
-export const syncAntigravityGlobalCredentials = Effect.fn(
-  "syncAntigravityGlobalCredentials",
-)(function* (input: {
-  readonly profileDirectory: string;
-  readonly userHome: string;
-}) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const signedOutMarker = path.join(input.profileDirectory, ".signed_out");
-  const isSignedOut = yield* fs.exists(signedOutMarker).pipe(Effect.orElseSucceed(() => false));
-  if (isSignedOut) return;
+export const syncAntigravityGlobalCredentials = Effect.fn("syncAntigravityGlobalCredentials")(
+  function* (input: { readonly profileDirectory: string; readonly userHome: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const signedOutMarker = path.join(input.profileDirectory, ".signed_out");
+    const isSignedOut = yield* fs.exists(signedOutMarker).pipe(Effect.orElseSucceed(() => false));
+    if (isSignedOut) return;
 
-  const profileTokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
-  const userTokenPath = path.join(input.userHome, ".gemini", "antigravity-acp", "acp_token.json");
-  const profileAccountsPath = path.join(input.profileDirectory, "google_accounts.json");
-  const userAccountsPath = path.join(input.userHome, ".gemini", "google_accounts.json");
+    const profileTokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
+    const userTokenPath = path.join(input.userHome, ".gemini", "antigravity-acp", "acp_token.json");
+    const profileAccountsPath = path.join(input.profileDirectory, "google_accounts.json");
+    const userAccountsPath = path.join(input.userHome, ".gemini", "google_accounts.json");
 
-  const profileHasToken = yield* fs.exists(profileTokenPath).pipe(Effect.orElseSucceed(() => false));
-  if (!profileHasToken) {
-    const userHasToken = yield* fs.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false));
-    if (userHasToken) {
-      yield* fs.makeDirectory(path.dirname(profileTokenPath), { recursive: true }).pipe(Effect.ignore);
-      yield* fs.copyFile(userTokenPath, profileTokenPath).pipe(Effect.ignore);
+    const profileHasToken = yield* fs
+      .exists(profileTokenPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!profileHasToken) {
+      const userHasToken = yield* fs.exists(userTokenPath).pipe(Effect.orElseSucceed(() => false));
+      if (userHasToken) {
+        yield* fs
+          .makeDirectory(path.dirname(profileTokenPath), { recursive: true })
+          .pipe(Effect.ignore);
+        yield* fs.copyFile(userTokenPath, profileTokenPath).pipe(Effect.ignore);
+      }
     }
-  }
 
-  const profileHasAccounts = yield* fs.exists(profileAccountsPath).pipe(Effect.orElseSucceed(() => false));
-  if (!profileHasAccounts) {
-    const userHasAccounts = yield* fs.exists(userAccountsPath).pipe(Effect.orElseSucceed(() => false));
-    if (userHasAccounts) {
-      yield* fs.copyFile(userAccountsPath, profileAccountsPath).pipe(Effect.ignore);
+    const profileHasAccounts = yield* fs
+      .exists(profileAccountsPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!profileHasAccounts) {
+      const userHasAccounts = yield* fs
+        .exists(userAccountsPath)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (userHasAccounts) {
+        yield* fs.copyFile(userAccountsPath, profileAccountsPath).pipe(Effect.ignore);
+      }
     }
-  }
-});
+  },
+);
 
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {

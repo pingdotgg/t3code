@@ -466,7 +466,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const auth = { type: "gemini-api-key", label: "Gemini API key" };
-        const harness = yield* makeHarness({ auth });
+        const harness = yield* makeHarness({
+          auth,
+          probeAuth: Effect.succeed({ authenticated: false }),
+        });
         yield* harness.initialize;
         for (const clear of [harness.provider.onSignedOut, harness.provider.onAuthRequired]) {
           yield* harness.provider.onSessionStarted(started, "/workspace");

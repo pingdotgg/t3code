@@ -169,21 +169,18 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
           return stampIdentity(disabledDraft);
         }
 
-        const probed = yield* options
-          .probe(effectiveConfig, processEnv, spawner, httpClient)
-          .pipe(
-            Effect.orElseSucceed(() => ({
-              installed: false,
-              status: "warning" as const,
-              auth: { status: "unknown" as const, label: options.displayName },
-              message: `Could not verify ${options.displayName} status.`,
-              version: null,
-              models: [] as ReadonlyArray<ServerProviderModel>,
-            })),
-          );
+        const probed = yield* options.probe(effectiveConfig, processEnv, spawner, httpClient).pipe(
+          Effect.orElseSucceed(() => ({
+            installed: false,
+            status: "warning" as const,
+            auth: { status: "unknown" as const, label: options.displayName },
+            message: `Could not verify ${options.displayName} status.`,
+            version: null,
+            models: [] as ReadonlyArray<ServerProviderModel>,
+          })),
+        );
 
-        const status =
-          probed.status === "ready" ? ("warning" as const) : probed.status;
+        const status = probed.status === "ready" ? ("warning" as const) : probed.status;
         const message =
           probed.status === "ready"
             ? `${options.displayName} is configured, but live orchestration sessions are not supported yet.`
@@ -247,6 +244,27 @@ function createStandaloneDriver<Config extends { enabled?: boolean }>(
   };
 }
 
+export function normalizeOllamaEndpoint(rawHost: string): string {
+  const trimmed = rawHost.trim().replace(/\/+$/, "");
+  if (trimmed.length === 0) {
+    return "http://localhost:11434";
+  }
+  const hasExplicitScheme = /^https?:\/\//i.test(trimmed);
+  const withScheme = hasExplicitScheme ? trimmed : `http://${trimmed}`;
+  if (!hasExplicitScheme) {
+    try {
+      const parsed = new URL(withScheme);
+      if (parsed.port === "") {
+        parsed.port = "11434";
+        return parsed.toString().replace(/\/+$/, "");
+      }
+    } catch {
+      // Fall back to withScheme if URL parsing fails
+    }
+  }
+  return withScheme.replace(/\/+$/, "");
+}
+
 const probeOllama = Effect.fn("probeOllama")(function* (
   config: OllamaSettings,
   env: NodeJS.ProcessEnv,
@@ -255,25 +273,32 @@ const probeOllama = Effect.fn("probeOllama")(function* (
 ): Effect.fn.Return<StandaloneProbeResult> {
   const configuredEndpoint = config.apiEndpoint?.trim();
   const rawHost = configuredEndpoint || env.OLLAMA_HOST?.trim() || "http://localhost:11434";
-  const normalizedHost = rawHost.startsWith("http://") || rawHost.startsWith("https://")
-    ? rawHost
-    : `http://${rawHost}`;
-  const trimmedEndpoint = normalizedHost.replace(/\/+$/, "");
+  const trimmedEndpoint = normalizeOllamaEndpoint(rawHost);
   const builtInModels: ReadonlyArray<ServerProviderModel> = [
     { slug: "llama3.3", name: "Llama 3.3", isDefault: true, isCustom: false, capabilities: null },
-    { slug: "deepseek-r1", name: "DeepSeek R1", isDefault: false, isCustom: false, capabilities: null },
-    { slug: "qwen2.5-coder", name: "Qwen 2.5 Coder", isDefault: false, isCustom: false, capabilities: null },
+    {
+      slug: "deepseek-r1",
+      name: "DeepSeek R1",
+      isDefault: false,
+      isCustom: false,
+      capabilities: null,
+    },
+    {
+      slug: "qwen2.5-coder",
+      name: "Qwen 2.5 Coder",
+      isDefault: false,
+      isCustom: false,
+      capabilities: null,
+    },
   ];
   const models = providerModelsFromSettings(builtInModels, config.customModels, null);
 
   // Ping Ollama version endpoint
-  const reachable = yield* httpClient
-    .get(`${trimmedEndpoint}/api/version`)
-    .pipe(
-      Effect.timeout("2 seconds"),
-      Effect.map((res: { readonly status: number }) => res.status === 200),
-      Effect.orElseSucceed(() => false),
-    );
+  const reachable = yield* httpClient.get(`${trimmedEndpoint}/api/version`).pipe(
+    Effect.timeout("2 seconds"),
+    Effect.map((res: { readonly status: number }) => res.status === 200),
+    Effect.orElseSucceed(() => false),
+  );
 
   if (reachable) {
     return {
@@ -285,20 +310,19 @@ const probeOllama = Effect.fn("probeOllama")(function* (
   }
 
   // Try CLI check if HTTP ping failed
-  const cliCheck = yield* spawner
-    .exitCode(ChildProcess.make("ollama", ["--version"]))
-    .pipe(
-      Effect.map((code) => Number(code) === 0),
-      Effect.timeout("2 seconds"),
-      Effect.orElseSucceed(() => false),
-    );
+  const cliCheck = yield* spawner.exitCode(ChildProcess.make("ollama", ["--version"])).pipe(
+    Effect.map((code) => Number(code) === 0),
+    Effect.timeout("2 seconds"),
+    Effect.orElseSucceed(() => false),
+  );
 
   if (cliCheck) {
     return {
       installed: true,
       status: "warning",
       auth: { status: "unknown", label: "Ollama" },
-      message: "Ollama CLI is installed, but the server is not responding at the configured endpoint.",
+      message:
+        "Ollama CLI is installed, but the server is not responding at the configured endpoint.",
       models,
     };
   }
@@ -331,13 +355,11 @@ const probeZed = Effect.fn("probeZed")(function* (
   ];
   const models = providerModelsFromSettings(builtInModels, config.customModels, null);
 
-  const cliCheck = yield* spawner
-    .exitCode(ChildProcess.make(binary, ["--version"]))
-    .pipe(
-      Effect.map((code) => Number(code) === 0),
-      Effect.timeout("2 seconds"),
-      Effect.orElseSucceed(() => false),
-    );
+  const cliCheck = yield* spawner.exitCode(ChildProcess.make(binary, ["--version"])).pipe(
+    Effect.map((code) => Number(code) === 0),
+    Effect.timeout("2 seconds"),
+    Effect.orElseSucceed(() => false),
+  );
 
   if (cliCheck) {
     return {
@@ -357,13 +379,12 @@ const probeZed = Effect.fn("probeZed")(function* (
   };
 });
 
-export const ZedDriver: ProviderDriver<ZedSettings, StandaloneDriverEnv> =
-  createStandaloneDriver({
-    driverKind: ProviderDriverKind.make("zed"),
-    displayName: "Zed",
-    configSchema: ZedSettings,
-    probe: probeZed,
-  });
+export const ZedDriver: ProviderDriver<ZedSettings, StandaloneDriverEnv> = createStandaloneDriver({
+  driverKind: ProviderDriverKind.make("zed"),
+  displayName: "Zed",
+  configSchema: ZedSettings,
+  probe: probeZed,
+});
 
 export const CloudflareDriver: ProviderDriver<CloudflareSettings, StandaloneDriverEnv> =
   createStandaloneDriver({

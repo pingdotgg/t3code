@@ -303,10 +303,7 @@ const readGrokCachedModels = Effect.fn("GrokProviderStatus.readGrokCachedModels"
     const path = yield* Path.Path;
     const home =
       environment.GROK_HOME?.trim() ||
-      path.join(
-        environment.HOME || environment.USERPROFILE || "",
-        ".grok",
-      );
+      path.join(environment.HOME || environment.USERPROFILE || "", ".grok");
     const cachePath = path.join(home, "models_cache.json");
     const content = yield* fs.readFileString(cachePath).pipe(
       Effect.catchTags({
@@ -349,10 +346,7 @@ const readGrokCachedVersion = Effect.fn("GrokProviderStatus.readGrokCachedVersio
     const path = yield* Path.Path;
     const home =
       environment.GROK_HOME?.trim() ||
-      path.join(
-        environment.HOME || environment.USERPROFILE || "",
-        ".grok",
-      );
+      path.join(environment.HOME || environment.USERPROFILE || "", ".grok");
     const cachePath = path.join(home, "models_cache.json");
     const content = yield* fs.readFileString(cachePath).pipe(
       Effect.catchTags({
