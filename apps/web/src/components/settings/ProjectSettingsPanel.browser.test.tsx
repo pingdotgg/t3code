@@ -307,7 +307,7 @@ const removeCheckout = (screen: Screen, root: string) =>
   screen.container.querySelector<HTMLButtonElement>(`[aria-label="Remove checkout ${root}"]`)!;
 const removeAll = (screen: Screen) =>
   [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Remove all entries"),
+    button.textContent?.includes("Remove project"),
   )!;
 
 async function grant(id: EnvironmentId, result: SessionResult) {
@@ -577,7 +577,7 @@ it("opens the fallback search target across all environments from a checkout", a
 });
 
 describe("project settings scope", () => {
-  const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
+  const scopeMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
   const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
   const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
 
@@ -586,7 +586,7 @@ describe("project settings scope", () => {
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using _screen = await mountSettings({});
 
-    await userEvent.click(environmentMenu());
+    await userEvent.click(scopeMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
   });
@@ -597,7 +597,7 @@ describe("project settings scope", () => {
     await using _screen = await mountSettings({ project: projectKey() });
 
     await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
-    await userEvent.click(environmentMenu());
+    await userEvent.click(scopeMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).not.toBeInTheDocument();
   });
@@ -607,7 +607,7 @@ describe("project settings scope", () => {
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using screen = await mountSettings({ project: "removed-project" });
 
-    await userEvent.click(environmentMenu());
+    await userEvent.click(scopeMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
     await userEvent.click(remoteOption());
@@ -636,7 +636,6 @@ describe("project settings scope", () => {
     });
 
     await expect.element(page.getByText(message, { exact: true })).toBeVisible();
-    await expect.element(page.getByRole("button", { name: /^Project scope:/ })).toBeVisible();
     await expect
       .element(page.getByRole("button", { name: "Environment scope: remote" }))
       .toBeVisible();
@@ -647,7 +646,7 @@ describe("project settings scope", () => {
       .toHaveValue("Shared repo");
     expect(screen.router.state.location.search).toEqual({ project: key });
     await expect
-      .element(page.getByRole("button", { name: "Environment scope: All environments" }))
+      .element(page.getByRole("button", { name: "Project scope: Shared repo", exact: true }))
       .toBeVisible();
     await expect.element(page.getByText(message, { exact: true })).not.toBeInTheDocument();
     await expect

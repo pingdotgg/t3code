@@ -1,13 +1,14 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { useLocation } from "@tanstack/react-router";
-import { CheckIcon, ChevronDownIcon, LayersIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, LayersIcon, RotateCcwIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 
+import { readLocalApi } from "../../localApi";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   Combobox,
   ComboboxEmpty,
@@ -26,9 +27,12 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { RESETTABLE_PROJECT_OVERRIDE_KEYS, summarizeProjectOverrides } from "./scopedSettings";
+import { useClearProjectOverridesOn } from "./useScopedSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
+  SETTINGS_DEVICE_ONLY_PATHS,
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
@@ -37,22 +41,9 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentAddress,
-  settingsScopeEnvironmentLabel,
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
-
-export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
-  "/settings/general",
-  "/settings/appearance",
-  "/settings/chat",
-  "/settings/diffs",
-  "/settings/snap-shot",
-  "/settings/connections",
-  // Network access and authorized clients belong to the environment serving this app.
-  "/settings/access",
-  "/settings/about",
-]);
 
 interface SettingsScopeMenuProps {
   readonly value: SettingsScopeSearch;
@@ -62,9 +53,8 @@ interface SettingsScopeMenuProps {
   readonly onChange: (next: SettingsScopeSearch) => void;
 }
 
-export function SettingsScopeSentence() {
+export function SettingsScopeSentence({ pathname }: { pathname: string }) {
   const scope = useOptionalSettingsScope();
-  const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const props: SettingsScopeMenuProps = {
@@ -75,12 +65,12 @@ export function SettingsScopeSentence() {
     onChange: scope.selectScope,
   };
   return (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
-      <span className="flex min-w-0 items-center gap-1.5">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-meta text-muted-foreground sm:px-4">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5 max-sm:flex-wrap">
         <span className="shrink-0">Applying settings for</span>
         <ProjectScopeMenu {...props} />
       </span>
-      <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5 max-sm:flex-wrap">
         <span className="shrink-0">
           {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
         </span>
@@ -93,7 +83,8 @@ export function SettingsScopeSentence() {
 interface ScopeOption {
   value: string;
   label: string;
-  secondary?: string;
+  secondary?: string | readonly string[];
+  archived?: boolean;
   icon?: ReactNode;
   offline?: boolean;
 }
@@ -105,13 +96,22 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate">{option.label}</span>
         {option.secondary ? (
-          <span className="block whitespace-pre-line text-meta text-muted-foreground">
-            {option.secondary}
+          <span className="flex min-w-0 flex-col text-meta text-muted-foreground">
+            {(Array.isArray(option.secondary) ? option.secondary : [option.secondary]).map(
+              (detail) => (
+                <span key={detail} className="block truncate">
+                  {detail}
+                </span>
+              ),
+            )}
           </span>
         ) : null}
       </span>
+      {option.archived ? (
+        <span className="shrink-0 text-meta text-muted-foreground">Archived</span>
+      ) : null}
       {option.offline ? (
-        <span className="shrink-0 text-meta text-muted-foreground">Offline</span>
+        <span className="shrink-0 text-meta text-dim-foreground">Offline</span>
       ) : null}
     </>
   );
@@ -126,7 +126,11 @@ function ScopeMenu({
   allOption,
   searchLabel,
   onChange,
+  footer,
+  detail,
 }: {
+  footer?: ReactNode;
+  detail?: string;
   ariaLabel: string;
   icon: ReactNode;
   label: string;
@@ -141,11 +145,21 @@ function ScopeMenu({
   const trigger = (
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
-      render={<Button variant="secondary" size="sm" />}
-      className="min-w-0 max-w-72"
+      render={<Button variant="secondary" size="xs" />}
+      className="min-w-0 max-w-72 shrink"
     >
       {icon}
-      <span className="min-w-0 truncate">{label}</span>
+      {detail ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate" />}>{label}</TooltipTrigger>
+          <TooltipPopup>
+            <span className="block">{label}</span>
+            <span className="block">{detail}</span>
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        <span className="min-w-0 truncate">{label}</span>
+      )}
       <ChevronDownIcon
         aria-hidden
         strokeWidth={1.75}
@@ -194,6 +208,7 @@ function ScopeMenu({
               </ComboboxItem>
             )}
           </ComboboxList>
+          {footer}
         </ComboboxPopup>
       </Combobox>
     );
@@ -201,7 +216,7 @@ function ScopeMenu({
   return (
     <Menu>
       {trigger}
-      <MenuPopup align="start" variant="scope">
+      <MenuPopup align="start">
         <div className="w-72 max-w-full">
           <MenuRadioGroup
             value={value}
@@ -221,6 +236,7 @@ function ScopeMenu({
               </Fragment>
             ))}
           </MenuRadioGroup>
+          {footer}
         </div>
       </MenuPopup>
     </Menu>
@@ -263,13 +279,14 @@ function EnvironmentScopeMenu({
       }
       label={
         selected
-          ? settingsScopeEnvironmentLabel(selected, environments)
+          ? settingsScopeEnvironmentLabels(selected, environments).primary
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
             : singleEnvironment
               ? "No environments"
               : "All environments"
       }
+      detail={selected ? settingsScopeEnvironmentLabels(selected, environments).secondary : ""}
       value={environmentValue}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
       searchLabel="Search environments"
@@ -309,7 +326,9 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
   const selected = groups.find((group) => group.projectKey === value.project);
   const projects = projectScopeMenuGroups(groups, value).map((group) => ({
     group,
-    machines: settingsScopeProjectMachines(group, environments, true).join(", "),
+    machines: settingsScopeProjectMachines(group, environments, true).flatMap(
+      ({ primary, secondary }) => [primary, secondary].filter(Boolean),
+    ),
   }));
   return (
     <ScopeMenu
@@ -319,6 +338,7 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
       value={projectAxisValue(value)}
       onChange={(next) => onChange(selectProjectAxis(value, next))}
       searchLabel="Search projects"
+      footer={<ProjectScopeReset value={value} groups={groups} environments={environments} />}
       allOption={{ value: ALL_PROJECTS_VALUE, label: "All projects" }}
       options={projects.map(({ group, machines }) => {
         const sameName = projects.filter(
@@ -329,18 +349,82 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
         const location =
           sameName.length === 0
             ? environments.length > 1
-              ? group.workspaceRoot
-              : ""
-            : sameName.some((other) => other.machines === machines)
-              ? `${machines}\n${group.workspaceRoot}`
+              ? [group.workspaceRoot]
+              : []
+            : sameName.some((other) => JSON.stringify(other.machines) === JSON.stringify(machines))
+              ? [group.workspaceRoot, ...machines]
               : machines;
         return {
           value: group.projectKey,
           label: group.displayName,
-          secondary: group.archived ? ["Archived", location].filter(Boolean).join("\n") : location,
+          secondary: location,
+          archived: group.archived,
           icon: <ProjectFavicon project={group} className="size-3.5 shrink-0" />,
         };
       })}
     />
+  );
+}
+
+/** Keep the override reset from the former header picker in the project scope menu. */
+function ProjectScopeReset({
+  value,
+  groups,
+  environments,
+}: Pick<SettingsScopeMenuProps, "value" | "groups" | "environments">) {
+  const resolved = resolveSettingsScope(value, groups, environments);
+  const environmentValue = environmentAxisValue(
+    value,
+    resolved.kind === "checkout" ? resolved.environmentId : null,
+  );
+  const selectedEnvironment = environments.find(
+    (environment) => environment.environmentId === environmentValue,
+  );
+  const clearOverrides = useClearProjectOverridesOn();
+  // Overrides on the environments the selection covers: one, or every connected one.
+  const overrideEnvironments = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      (environmentValue === ALL_ENVIRONMENTS_VALUE ||
+        environment.environmentId === environmentValue),
+  );
+  const overrides = summarizeProjectOverrides(groups, overrideEnvironments);
+  const overriddenProjectCount = overrides.countByProjectKey.size;
+
+  const resetOverrides = async () => {
+    const environmentNames =
+      environmentValue === ALL_ENVIRONMENTS_VALUE
+        ? "every connected environment"
+        : selectedEnvironment
+          ? settingsScopeEnvironmentLabels(selectedEnvironment, environments).primary
+          : "this environment";
+    const confirmed =
+      (await readLocalApi()?.dialogs.confirm(
+        [
+          `Reset settings overrides for ${overriddenProjectCount} ${overriddenProjectCount === 1 ? "project" : "projects"} on ${environmentNames}?`,
+          "They will follow the environment settings again. Project actions are kept.",
+        ].join("\n"),
+        { variant: "destructive" },
+      )) ?? false;
+    if (!confirmed) return;
+    clearOverrides(overrideEnvironments, overrides.entries, RESETTABLE_PROJECT_OVERRIDE_KEYS);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-border px-3.5 py-2">
+      <p className="min-w-0 flex-1 text-meta text-dim-foreground">
+        {overriddenProjectCount === 0
+          ? "No project overrides settings"
+          : `${overriddenProjectCount} ${overriddenProjectCount === 1 ? "project overrides" : "projects override"} some settings`}
+      </p>
+      <Button
+        size="xs"
+        variant="secondary"
+        disabled={overriddenProjectCount === 0}
+        onClick={() => void resetOverrides()}
+      >
+        <RotateCcwIcon />
+        Reset overrides
+      </Button>
+    </div>
   );
 }

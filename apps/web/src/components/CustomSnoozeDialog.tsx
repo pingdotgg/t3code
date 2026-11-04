@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
+import { useNowMinute } from "../hooks/useNowMinute";
 import {
   localSnoozeDate,
   localSnoozeTime,
@@ -8,15 +9,14 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
-import { CalendarIcon, Settings2Icon } from "lucide-react";
+import { AlarmClockIcon, CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
-import { useNowMinute } from "../hooks/useNowMinute";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
+import { SubmitKbd } from "./SubmitKbd";
 import { Label } from "./ui/label";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
 import {
   NumberField,
   NumberFieldGroup,
@@ -62,6 +62,41 @@ export function CustomSnoozeDialogHost() {
   return request ? <CustomSnoozeDialog /> : null;
 }
 
+type DurationParts = { readonly days: number; readonly hours: number; readonly minutes: number };
+
+const DURATION_FIELDS = [
+  { key: "days", label: "Days" },
+  { key: "hours", label: "Hours" },
+  { key: "minutes", label: "Minutes" },
+] as const;
+
+function durationMinutes(parts: DurationParts): number {
+  return parts.days * 24 * 60 + parts.hours * 60 + parts.minutes;
+}
+
+/** "today at 6:12 PM", "tomorrow at 9:00 AM", or "on Mon, Sep 29 at 9:00 AM". */
+function formatReturnTime(wake: Date, now: Date): string {
+  const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const dayOffset = Math.round(
+    (new Date(wake).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000,
+  );
+  if (dayOffset === 0) return `today at ${time}`;
+  if (dayOffset === 1) return `tomorrow at ${time}`;
+  const day = wake.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(wake.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `on ${day} at ${time}`;
+}
+
+/** The current time, refreshed each minute while mounted so a live label never goes stale. */
+function useMinuteClock(): Date {
+  const now = useNowMinute();
+  return new Date(`${now}:00Z`);
+}
+
 function CustomSnoozeDialog() {
   const id = useId();
   const navigate = useNavigate();
@@ -69,15 +104,19 @@ function CustomSnoozeDialog() {
   const nowMinute = useNowMinute();
   // Follows the clock so a dialog left open past midnight stops offering yesterday.
   const today = startOfLocalDay(Date.parse(`${nowMinute}Z`));
-  const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
+  const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("duration");
   const [date, setDate] = useState(initial);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [time, setTime] = useState(localSnoozeTime(initial));
-  const [amount, setAmount] = useState("2");
-  const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
+  const [duration, setDuration] = useState<DurationParts>({ days: 0, hours: 2, minutes: 0 });
   const [error, setError] = useState<string | null>(null);
+  const now = useMinuteClock();
+  const totalMinutes = durationMinutes(duration);
   const input: CustomSnoozeInput =
-    mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
+    mode === "date"
+      ? { mode, date: localSnoozeDate(date), time }
+      : { mode, amount: String(totalMinutes), unit: "minutes" };
+  const wakeAt = mode === "duration" ? resolveCustomSnooze(input, now) : null;
   return (
     <Dialog
       open
@@ -85,7 +124,7 @@ function CustomSnoozeDialog() {
         if (!open) finish(null);
       }}
     >
-      <DialogPopup className="sm:max-w-sm">
+      <DialogPopup className="sm:max-w-100">
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
@@ -118,8 +157,8 @@ function CustomSnoozeDialog() {
                   setError(null);
                 }}
               >
+                <Toggle value="duration">Snooze for</Toggle>
                 <Toggle value="date">Date and time</Toggle>
-                <Toggle value="duration">Duration</Toggle>
               </ToggleGroup>
               <div className="flex flex-col gap-4">
                 {mode === "date" ? (
@@ -130,6 +169,7 @@ function CustomSnoozeDialog() {
                         <PopoverTrigger
                           render={
                             <Button
+                              size="standard"
                               id={`${id}-date`}
                               variant="secondary"
                               className="w-full justify-between"
@@ -177,45 +217,54 @@ function CustomSnoozeDialog() {
                     </Label>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <NumberField
-                      id={`${id}-amount`}
-                      min={0}
-                      step="any"
-                      value={amount === "" ? null : Number(amount)}
-                      onValueChange={(value) => {
-                        setAmount(value === null ? "" : String(value));
-                        setError(null);
-                      }}
-                    >
-                      <Label htmlFor={`${id}-amount`}>Snooze for</Label>
-                      <NumberFieldGroup>
-                        <NumberFieldDecrement aria-label="Decrease duration" />
-                        <NumberFieldInput required />
-                        <NumberFieldIncrement aria-label="Increase duration" />
-                      </NumberFieldGroup>
-                    </NumberField>
-                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-unit`}>
-                      Unit
-                      <Select
-                        value={unit}
-                        items={{ minutes: "Minutes", hours: "Hours", days: "Days" }}
-                        onValueChange={(value) => {
-                          if (value === "minutes" || value === "hours" || value === "days")
-                            setUnit(value);
-                          setError(null);
-                        }}
-                      >
-                        <SelectTrigger id={`${id}-unit`} className="min-w-0">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectPopup>
-                          <SelectItem value="minutes">Minutes</SelectItem>
-                          <SelectItem value="hours">Hours</SelectItem>
-                          <SelectItem value="days">Days</SelectItem>
-                        </SelectPopup>
-                      </Select>
-                    </Label>
+                  <div className="flex flex-col gap-4">
+                    <fieldset className="flex min-w-0 flex-col gap-1.5">
+                      <legend className="mb-1.5 text-muted-foreground text-label">Duration</legend>
+                      <div className="grid grid-cols-3 gap-2">
+                        {DURATION_FIELDS.map((field) => (
+                          <NumberField
+                            size="sm"
+                            key={field.key}
+                            id={`${id}-${field.key}`}
+                            min={0}
+                            step={1}
+                            value={duration[field.key]}
+                            onValueChange={(value) => {
+                              setDuration((current) => ({
+                                ...current,
+                                [field.key]: Math.max(0, Math.floor(value ?? 0)),
+                              }));
+                              setError(null);
+                            }}
+                          >
+                            <NumberFieldGroup>
+                              <NumberFieldDecrement
+                                aria-label={`Fewer ${field.label.toLowerCase()}`}
+                              />
+                              <NumberFieldInput aria-label={field.label} />
+                              <NumberFieldIncrement
+                                aria-label={`More ${field.label.toLowerCase()}`}
+                              />
+                            </NumberFieldGroup>
+                            <label
+                              htmlFor={`${id}-${field.key}`}
+                              className="text-dim-foreground text-meta"
+                            >
+                              {field.label}
+                            </label>
+                          </NumberField>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <p className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-body surface-selected-soft">
+                      <AlarmClockIcon
+                        aria-hidden
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                      {wakeAt
+                        ? `Returns ${formatReturnTime(new Date(wakeAt), now)}`
+                        : "Set a duration longer than zero."}
+                    </p>
                   </div>
                 )}
               </div>
@@ -228,6 +277,7 @@ function CustomSnoozeDialog() {
           </DialogPanel>
           <DialogFooter>
             <Button
+              size="standard"
               type="button"
               variant="ghost-muted"
               className="sm:mr-auto"
@@ -242,10 +292,13 @@ function CustomSnoozeDialog() {
               <Settings2Icon />
               Edit snooze options
             </Button>
-            <Button type="button" variant="secondary" onClick={() => finish(null)}>
+            <Button size="standard" type="button" variant="secondary" onClick={() => finish(null)}>
               Cancel
             </Button>
-            <Button type="submit">Snooze</Button>
+            <Button size="standard" type="submit">
+              Snooze
+              <SubmitKbd />
+            </Button>
           </DialogFooter>
         </form>
       </DialogPopup>

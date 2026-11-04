@@ -1,27 +1,45 @@
-import { Alert, AlertDescription } from "../ui/alert";
+import { Link2Icon, OctagonAlertIcon, UnlinkIcon, XIcon } from "lucide-react";
 import type { AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import React, { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { connectPairing } from "../../connection/onboarding";
 import {
+  isPrimaryEnvironmentRequestError,
   peekPairingTokenFromUrl,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
 } from "../../environments/primary";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { Kbd } from "../ui/kbd";
+import { Spinner } from "../ui/spinner";
+import {
+  StandaloneCardHeader,
+  StandaloneCardNote,
+  StandalonePage,
+  StandalonePageIcon,
+} from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function PairingPendingSurface() {
   return (
-    <StandalonePage>
-      <StandalonePageHeader
+    <StandalonePage tone="plain" size="card">
+      <StandalonePageIcon>
+        <Link2Icon />
+      </StandalonePageIcon>
+      <StandaloneCardHeader
         title="Pairing with this environment"
         description="Validating the pairing link and preparing your session."
       />
+      <div className="flex justify-end">
+        <Button disabled size="standard">
+          <Spinner />
+          Pairing…
+        </Button>
+      </div>
     </StandalonePage>
   );
 }
@@ -37,23 +55,25 @@ export function PairingRouteSurface({
 }) {
   const [autoPairToken] = useState(peekPairingTokenFromUrl);
   const [credential, setCredential] = useState(autoPairToken ?? "");
-  const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
+  const [failure, setFailure] = useState<PairingFailure | null>(() =>
+    initialErrorMessage ? { title: "Could not pair", message: initialErrorMessage } : null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
 
   const submitCredential = async (nextCredential: string) => {
     setIsSubmitting(true);
-    setErrorMessage("");
+    setFailure(null);
 
     const submitError = await submitServerAuthCredential(nextCredential).then(
       () => null,
-      (error) => errorMessageFromUnknown(error),
+      (error) => describePairingFailure(error),
     );
 
     setIsSubmitting(false);
 
     if (submitError) {
-      setErrorMessage(submitError);
+      setFailure(submitError);
       return;
     }
 
@@ -82,57 +102,70 @@ export function PairingRouteSurface({
     autoSubmit(autoPairToken);
   }, [autoPairToken]);
 
+  const failed = failure !== null;
+
   return (
-    <StandalonePage>
-      <StandalonePageHeader
-        title="Pair with this environment"
+    <StandalonePage tone="plain" size="card">
+      <StandalonePageIcon tone={failed ? "error" : "default"}>
+        {failed ? <UnlinkIcon /> : <Link2Icon />}
+      </StandalonePageIcon>
+      <StandaloneCardHeader
+        title={failed ? "Pairing failed" : "Pairing backend"}
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
-      <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor="pairing-token">
-            Pairing token
-          </label>
-          <Input
-            id="pairing-token"
-            font="mono"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect="off"
-            disabled={isSubmitting}
-            nativeInput
-            onChange={(event) => setCredential(event.currentTarget.value)}
-            placeholder="Paste a one-time token or pairing secret"
-            spellCheck={false}
-            value={credential}
-          />
-        </div>
-
-        {errorMessage ? (
-          <Alert variant="error">
-            <AlertDescription>{errorMessage}</AlertDescription>
+      <form className="flex flex-col gap-4" onSubmit={(event) => void handleSubmit(event)}>
+        {failure ? (
+          <Alert variant="error" controlAlignment="first-line">
+            <OctagonAlertIcon />
+            <AlertTitle>{failure.title}</AlertTitle>
+            <AlertDescription>{failure.message}</AlertDescription>
+            <AlertAction>
+              <Button
+                aria-label="Dismiss"
+                onClick={() => setFailure(null)}
+                size="icon-xs"
+                variant="ghost-muted"
+              >
+                <XIcon />
+              </Button>
+            </AlertAction>
           </Alert>
         ) : null}
 
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={isSubmitting} size="sm" type="submit">
-            {isSubmitting ? "Pairing..." : "Continue"}
-          </Button>
+        <Input
+          id="pairing-token"
+          aria-label="Pairing token"
+          font="mono"
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          disabled={isSubmitting}
+          nativeInput
+          onChange={(event) => setCredential(event.currentTarget.value)}
+          placeholder="Paste a one-time token or pairing secret"
+          spellCheck={false}
+          value={credential}
+        />
+
+        <div className="flex flex-wrap justify-end gap-2">
           <Button
             disabled={isSubmitting}
             onClick={() => window.location.reload()}
-            size="sm"
+            size="standard"
             variant="secondary"
           >
             Reload app
           </Button>
+          <Button disabled={isSubmitting} size="standard" type="submit">
+            {isSubmitting ? <Spinner /> : null}
+            {isSubmitting ? "Pairing…" : failed ? "Try again" : "Continue"}
+            {isSubmitting ? null : <Kbd>⏎</Kbd>}
+          </Button>
         </div>
       </form>
 
-      <div className="mt-6 py-3 text-xs leading-relaxed text-dim-foreground">
-        {describeSupportedMethods(auth.bootstrapMethods)}
-      </div>
+      <StandaloneCardNote>{describeSupportedMethods(auth.bootstrapMethods)}</StandaloneCardNote>
     </StandalonePage>
   );
 }
@@ -150,6 +183,7 @@ export function HostedPairingRouteSurface() {
       ? "Connecting to this backend."
       : "This pairing link is missing its backend host or token.",
   );
+  const [errorTitle, setErrorTitle] = useState("Pairing link incomplete");
   const [canRetry, setCanRetry] = useState(false);
   const submitAttemptedRef = useRef(false);
   const tokenSubmittedRef = useRef(false);
@@ -157,6 +191,7 @@ export function HostedPairingRouteSurface() {
   const submitHostedPairingRequest = async () => {
     if (!request) {
       setStatus("error");
+      setErrorTitle("Pairing link incomplete");
       setMessage("This pairing link is missing its backend host or token.");
       setCanRetry(false);
       return;
@@ -164,6 +199,7 @@ export function HostedPairingRouteSurface() {
 
     if (tokenSubmittedRef.current) {
       setStatus("error");
+      setErrorTitle("Token already used");
       setMessage("This one-time pairing token was already submitted. Request a new pairing link.");
       setCanRetry(false);
       return;
@@ -186,6 +222,7 @@ export function HostedPairingRouteSurface() {
 
     tokenSubmittedRef.current = false;
     setStatus("error");
+    setErrorTitle("Could not pair");
     setCanRetry(true);
     setMessage(
       `${errorMessageFromUnknown(squashAtomCommandFailure(result))} If the backend accepted this one-time token, request a new pairing link before retrying.`,
@@ -208,8 +245,11 @@ export function HostedPairingRouteSurface() {
   }, []);
 
   return (
-    <StandalonePage>
-      <StandalonePageHeader
+    <StandalonePage tone="plain" size="card">
+      <StandalonePageIcon tone={status === "error" ? "error" : "default"}>
+        {status === "error" ? <UnlinkIcon /> : <Link2Icon />}
+      </StandalonePageIcon>
+      <StandaloneCardHeader
         title={
           status === "paired"
             ? "Backend paired"
@@ -217,42 +257,94 @@ export function HostedPairingRouteSurface() {
               ? "Pairing failed"
               : "Pairing backend"
         }
-        description={message}
+        description={status === "error" ? "This browser could not pair with the backend." : message}
       />
 
+      {status === "error" ? (
+        <Alert variant="error" controlAlignment="first-line">
+          <OctagonAlertIcon />
+          <AlertTitle>{errorTitle}</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      ) : null}
+
       {request ? (
-        <div className="mt-5 rounded-control surface-well px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+        <div className="rounded-control surface-well px-3 py-2.5 text-meta leading-relaxed text-muted-foreground">
           Host: <span className="font-mono text-foreground">{request.host}</span>
         </div>
       ) : null}
 
-      {status === "error" ? (
-        <Alert variant="error" className="mt-5">
-          <AlertDescription>
-            Verify the backend is reachable from this browser, supports CORS for hosted clients, and
-            is served over HTTPS when opening this page from HTTPS.
-          </AlertDescription>
-        </Alert>
+      {status === "pairing" || canRetry || status === "paired" ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          {status === "pairing" ? (
+            <Button disabled size="standard">
+              <Spinner />
+              Pairing…
+            </Button>
+          ) : canRetry ? (
+            <Button size="standard" onClick={() => void submitHostedPairingRequest()}>
+              Try again
+            </Button>
+          ) : null}
+          {status === "paired" ? (
+            <Button
+              size="standard"
+              variant="secondary"
+              onClick={() => (window.location.href = "/")}
+            >
+              Open app
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        {status === "pairing" ? (
-          <Button disabled size="sm">
-            Pairing...
-          </Button>
-        ) : canRetry ? (
-          <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
-            Try again
-          </Button>
-        ) : null}
-        {status === "paired" ? (
-          <Button size="sm" variant="secondary" onClick={() => (window.location.href = "/")}>
-            Open app
-          </Button>
-        ) : null}
-      </div>
+      {status === "error" && canRetry ? (
+        <StandaloneCardNote>
+          Verify the backend is reachable from this browser, supports CORS for hosted clients, and
+          is served over HTTPS when opening this page from HTTPS.
+        </StandaloneCardNote>
+      ) : null}
     </StandalonePage>
   );
+}
+
+interface PairingFailure {
+  readonly title: string;
+  readonly message: string;
+}
+
+/** Names the failure the user can act on; the server reports expired and used tokens alike. */
+function describePairingFailure(error: unknown): PairingFailure {
+  const tag =
+    typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : null;
+  switch (tag) {
+    case "PrimaryEnvironmentPairingCredentialRejectedError":
+      return {
+        title: "Token not accepted",
+        message:
+          "This token is invalid, expired, or already used. Request a new pairing link and try again.",
+      };
+    case "PrimaryEnvironmentPairingCredentialRequiredError":
+      return { title: "Token required", message: "Paste a pairing token to continue." };
+    case "PrimaryEnvironmentAuthSessionTimeoutError":
+      return {
+        title: "Session did not start",
+        message: "The server accepted the token but the session did not start. Reload the app.",
+      };
+    case "PrimaryEnvironmentRequestError":
+      return isPrimaryEnvironmentRequestError(error) && error.responded
+        ? {
+            title: `Server error (HTTP ${error.status})`,
+            message: "This T3 Code server answered with an error. Try again, or check its logs.",
+          }
+        : {
+            title: "Server unreachable",
+            message:
+              "Could not reach this T3 Code server. Check that it is running and reachable from this browser.",
+          };
+    default:
+      return { title: "Could not pair", message: errorMessageFromUnknown(error) };
+  }
 }
 
 function errorMessageFromUnknown(error: unknown): string {

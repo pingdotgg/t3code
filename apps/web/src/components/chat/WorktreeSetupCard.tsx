@@ -7,17 +7,24 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
   CircleAlertIcon,
+  CircleCheckIcon,
   CircleIcon,
+  CircleXIcon,
+  FolderIcon,
+  GitBranchIcon,
+  GitBranchPlusIcon,
   LaptopIcon,
   MinusIcon,
+  PlayIcon,
+  RotateCcwIcon,
   TerminalIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -30,6 +37,8 @@ interface WorktreeSetupCardProps {
   onCancel: (() => void) | null;
   onWorkLocally: (() => void) | null;
   onOpenTerminal: (() => void) | null;
+  /** Runs a failed setup script again. Absent or null when a rerun is not possible. */
+  onRetry?: (() => void) | null;
 }
 
 function elapsedMs(startedAt: string | null, endMs: number): number | null {
@@ -124,101 +133,112 @@ function headerLabel(snapshot: WorktreeSetupSnapshot): string {
   }
 }
 
-function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function HeaderIcon({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+  switch (snapshot.phase) {
+    case "running":
+      return (
+        <span className="inline-flex shrink-0 text-info-foreground">
+          <Spinner size="md" />
+        </span>
+      );
+    case "done":
+      return snapshot.stages.some((stage) => stage.status === "failed") ? (
+        <TriangleAlertIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
+      ) : (
+        <CircleCheckIcon aria-hidden className="size-4 shrink-0 text-success-foreground" />
+      );
+    case "failed":
+      return <CircleXIcon aria-hidden className="size-4 shrink-0 text-error-foreground" />;
+    case "cancelled":
+      return <MinusIcon aria-hidden className="size-4 shrink-0 text-dim-foreground" />;
+  }
+}
+
+/** The stage in progress, such as "Checking out 45%", shown beside the running header. */
+function runningStageLabel(snapshot: WorktreeSetupSnapshot): string | null {
+  if (snapshot.phase !== "running") return null;
+  const stage = snapshot.stages.find((entry) => entry.status === "running");
+  if (!stage || stage.id === "setup-script") return null;
+  const label = worktreeSetupStageLabel(stage.id);
+  return stage.percent !== null ? `${label} ${stage.percent}%` : label;
+}
+
+function CardHeader({
+  snapshot,
+  totalElapsed,
+}: {
+  snapshot: WorktreeSetupSnapshot;
+  totalElapsed: ReactNode;
+}) {
   const running = snapshot.phase === "running";
-  const failed = snapshot.phase === "failed";
-  const finishedWithFailedStage =
-    snapshot.phase === "done" && snapshot.stages.some((stage) => stage.status === "failed");
   const text = headerLabel(snapshot);
-  const tone = failed
-    ? "text-error-foreground"
-    : finishedWithFailedStage
-      ? "text-warning-foreground"
-      : "text-muted-foreground";
+  const stageLabel = runningStageLabel(snapshot);
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
-      <div
-        className={cn(
-          "flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed tabular-nums",
-          tone,
-        )}
+    <div className="flex min-h-10 min-w-0 items-center gap-2 border-b border-hairline px-3.5 py-2.5 text-label tabular-nums">
+      <HeaderIcon snapshot={snapshot} />
+      <span
+        ref={running ? observeVisibleAnimation : undefined}
+        className="relative min-w-0 shrink overflow-hidden whitespace-nowrap font-medium text-strong-foreground"
       >
-        <span
-          ref={running ? observeVisibleAnimation : undefined}
-          className="relative min-w-0 shrink overflow-hidden whitespace-nowrap"
-        >
-          <span className="block truncate">{text}</span>
-          {running ? <ShimmerOverlay>{text}</ShimmerOverlay> : null}
+        <span className="block truncate">{text}</span>
+        {running ? <ShimmerOverlay>{text}</ShimmerOverlay> : null}
+      </span>
+      {stageLabel ? (
+        <span className="min-w-0 truncate text-meta text-dim-foreground">{stageLabel}</span>
+      ) : null}
+      {totalElapsed !== null ? (
+        <span className="ml-auto shrink-0 text-meta text-dim-foreground">
+          {running ? "Working for " : "took "}
+          {totalElapsed}
         </span>
-        <span className="ml-auto shrink-0 text-xs text-dim-foreground empty:hidden">
-          <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={running} />
-        </span>
-      </div>
+      ) : null}
     </div>
   );
 }
 
-function StageRow({
-  stage,
-  setupRunning,
-  setupEndedAt,
-  scriptName,
+function DetailRow({
+  label,
+  icon,
+  children,
+  trailing,
 }: {
-  stage: WorktreeSetupStage;
-  setupRunning: boolean;
-  setupEndedAt: string | null;
-  scriptName: string | null;
+  label: string;
+  icon: ReactNode;
+  children: ReactNode;
+  trailing?: ReactNode;
 }) {
-  const label =
-    stage.id === "setup-script" && scriptName ? scriptName : worktreeSetupStageLabel(stage.id);
-  const running = stage.status === "running";
-  const trailing =
-    stage.status === "pending"
-      ? null
-      : stage.status === "skipped"
-        ? (stage.detail ?? "skipped")
-        : stage.id === "checkout" && running && stage.percent !== null
-          ? `${stage.percent}%`
-          : stage.detail;
   return (
-    <WorkLogRow
-      data-worktree-setup-stage={stage.id}
-      data-worktree-setup-status={stage.status}
-      icon={
-        <span className={cn("text-icon-muted", stage.status === "pending" && "opacity-40")}>
-          <StageIcon status={stage.status} />
+    <div className="flex min-h-4.5 min-w-0 items-center gap-2.5 text-meta">
+      <dt className="w-14 shrink-0 text-dim-foreground">{label}</dt>
+      <dd className="flex min-w-0 flex-1 items-center gap-2.5">
+        <span aria-hidden className="shrink-0 text-muted-foreground [&>svg]:size-3.5">
+          {icon}
         </span>
-      }
-      label={
-        <span
-          ref={running ? observeVisibleAnimation : undefined}
-          className={cn("relative block truncate", stageRowClassName(stage.status))}
-        >
-          {label}
-          {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
-        </span>
-      }
-      trailing={
-        <>
-          {trailing ? (
-            <span className="min-w-0 truncate text-xs text-dim-foreground tabular-nums">
-              {trailing}
-            </span>
-          ) : null}
-          {stage.status !== "skipped" && stage.status !== "pending" ? (
-            <span className="shrink-0 text-xs text-dim-foreground tabular-nums empty:hidden">
-              <Elapsed
-                startedAt={stage.startedAt}
-                // A stage interrupted by the setup ending stops with it.
-                endedAt={stage.endedAt ?? setupEndedAt}
-                live={setupRunning}
-              />
-            </span>
-          ) : null}
-        </>
-      }
-    />
+        <span className="min-w-0 flex-1 font-mono text-foreground">{children}</span>
+        {trailing}
+      </dd>
+    </div>
   );
+}
+
+/** "exit 1" for a script that exited non-zero, from the tracker's "exited with 1" detail. */
+function setupStatusChip(stage: WorktreeSetupStage): ReactNode {
+  switch (stage.status) {
+    case "running":
+      return <Badge variant="info">running</Badge>;
+    case "done":
+      return <Badge variant="success">done</Badge>;
+    case "failed": {
+      const exitCode = stage.detail?.match(/exited with (\d+)/)?.[1];
+      return <Badge variant="error">{exitCode ? `exit ${exitCode}` : "failed"}</Badge>;
+    }
+    case "warning":
+      return <Badge variant="warning">warning</Badge>;
+    case "skipped":
+      return <Badge variant="secondary">skipped</Badge>;
+    case "pending":
+      return <Badge variant="unavailable">pending</Badge>;
+  }
 }
 
 const OUTPUT_TAIL_LINES = 4;
@@ -232,10 +252,8 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   return (
     <pre
       className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-control border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
-        failed
-          ? "border-error/20 bg-error/10 text-error-foreground"
-          : "border-border surface-card text-muted-foreground",
+        "overflow-hidden rounded-control surface-well px-2.5 py-1.5 font-mono text-caption leading-relaxed select-text",
+        failed ? "text-error-foreground" : "text-muted-foreground",
       )}
     >
       {rows.map(({ slot, line }) => (
@@ -247,44 +265,15 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   );
 }
 
-function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
-  return (
-    <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-dim-foreground">
-      {snapshot.branch ? (
-        <>
-          <dt className="text-foreground">Branch</dt>
-          <dd className="min-w-0 font-mono">
-            <MiddleTruncate value={snapshot.branch} className="flex" />
-          </dd>
-        </>
-      ) : null}
-      {snapshot.baseRef ? (
-        <>
-          <dt className="text-foreground">Base</dt>
-          <dd className="min-w-0 font-mono">
-            <MiddleTruncate value={snapshot.baseRef} className="flex" />
-          </dd>
-        </>
-      ) : null}
-      {snapshot.worktreePath ? (
-        <>
-          <dt className="text-foreground">Path</dt>
-          <dd className="min-w-0 font-mono">
-            <MiddleTruncate value={snapshot.worktreePath} className="flex" />
-          </dd>
-        </>
-      ) : null}
-      {snapshot.setupScript ? (
-        <>
-          <dt className="text-foreground">Setup</dt>
-          <dd className="truncate font-mono">{snapshot.setupScript.command}</dd>
-        </>
-      ) : null}
-    </dl>
-  );
-}
-
-function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+function CollapsedSummaryRow({
+  snapshot,
+  totalElapsed,
+  trailing,
+}: {
+  snapshot: WorktreeSetupSnapshot;
+  totalElapsed: ReactNode;
+  trailing: ReactNode;
+}) {
   const status: WorktreeSetupStage["status"] =
     snapshot.phase === "failed" || snapshot.phase === "cancelled"
       ? "failed"
@@ -303,9 +292,14 @@ function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) 
       }
       label={<span className={stageRowClassName(status)}>{label}</span>}
       trailing={
-        <span className="shrink-0 text-xs text-dim-foreground tabular-nums empty:hidden">
-          <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={false} />
-        </span>
+        <>
+          {totalElapsed !== null ? (
+            <span className="shrink-0 text-meta text-dim-foreground tabular-nums">
+              {totalElapsed}
+            </span>
+          ) : null}
+          {trailing}
+        </>
       }
     />
   );
@@ -316,79 +310,134 @@ export function WorktreeSetupCard({
   onCancel,
   onWorkLocally,
   onOpenTerminal,
+  onRetry = null,
   embedded = false,
 }: WorktreeSetupCardProps & {
+  /**
+   * The agent's turn is live and owns the "Working for" header. A settled setup that outlives
+   * the handoff (a failed script) collapses to a single row; a script still running shows the
+   * card in the working header's popover.
+   */
   embedded?: boolean;
 }) {
   const running = snapshot.phase === "running";
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const totalElapsed = (
+    <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={running} />
+  );
   const setupStage = snapshot.stages.find((stage) => stage.id === "setup-script");
   const showTerminal = onOpenTerminal && setupStage && setupStage.status !== "pending";
   const collapsed = embedded && !running;
-  const showHeader = !embedded && !running && snapshot.phase !== "done";
+  const canRetry = onRetry !== null && !running && setupStage?.status === "failed";
+  // The tail box mounts with the script's first output line at its full fixed height, so the
+  // card grows once instead of with each line, and a script that ends before printing anything
+  // never flashes an empty box. A failed script keeps it so the last lines explain the failure.
   const showTail =
     setupStage !== undefined &&
     (setupStage.status === "failed" ||
       (setupStage.status === "running" && setupStage.tail.length > 0));
+  const failedStage =
+    snapshot.phase === "failed"
+      ? snapshot.stages.find((stage) => stage.status === "failed")
+      : undefined;
+  const retryButton = canRetry ? (
+    <Button type="button" size="xs" variant="secondary" onClick={onRetry}>
+      <RotateCcwIcon aria-hidden />
+      Retry
+    </Button>
+  ) : null;
 
+  if (collapsed) {
+    return (
+      <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
+        <CollapsedSummaryRow
+          snapshot={snapshot}
+          totalElapsed={totalElapsed}
+          trailing={retryButton}
+        />
+      </section>
+    );
+  }
+
+  const hasActions = showTerminal || onWorkLocally || (onCancel && running);
   return (
-    <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
-      {showHeader ? <SetupHeaderRow snapshot={snapshot} /> : null}
-      {collapsed ? (
-        <CollapsedSummaryRow snapshot={snapshot} />
-      ) : (
-        <div className={showHeader ? "pt-1.5" : undefined}>
-          {snapshot.stages.map((stage) => (
-            <div key={stage.id}>
-              <StageRow
-                stage={stage}
-                setupRunning={running}
-                setupEndedAt={snapshot.endedAt}
-                scriptName={snapshot.setupScript?.name ?? null}
-              />
-              {stage.id === "setup-script" && showTail ? (
-                <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
-              ) : null}
+    <section
+      aria-label="Worktree setup"
+      data-worktree-setup-phase={snapshot.phase}
+      className="overflow-hidden rounded-card surface-card"
+    >
+      <CardHeader snapshot={snapshot} totalElapsed={totalElapsed} />
+      <div className="flex flex-col gap-2.5 px-3.5 py-2.5">
+        <dl className="flex flex-col gap-1.5">
+          {snapshot.baseRef ? (
+            <DetailRow label="Base" icon={<GitBranchIcon />}>
+              <MiddleTruncate value={snapshot.baseRef} className="flex" />
+            </DetailRow>
+          ) : null}
+          {snapshot.branch ? (
+            <DetailRow label="Branch" icon={<GitBranchPlusIcon />}>
+              <MiddleTruncate value={snapshot.branch} className="flex" />
+            </DetailRow>
+          ) : null}
+          {snapshot.worktreePath ? (
+            <DetailRow label="Path" icon={<FolderIcon />}>
+              <MiddleTruncate value={snapshot.worktreePath} className="flex" />
+            </DetailRow>
+          ) : null}
+          {setupStage && setupStage.status !== "skipped" ? (
+            <div className="mt-1.5">
+              <DetailRow
+                label="Setup"
+                icon={<PlayIcon />}
+                trailing={
+                  <span className="flex shrink-0 items-center gap-2">
+                    {setupStatusChip(setupStage)}
+                    {retryButton}
+                  </span>
+                }
+              >
+                <span className="block truncate">
+                  {snapshot.setupScript?.command ?? snapshot.setupScript?.name ?? "Setup script"}
+                </span>
+              </DetailRow>
             </div>
-          ))}
-        </div>
-      )}
+          ) : null}
+        </dl>
 
-      {snapshot.phase === "failed" && snapshot.error ? (
-        <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
-      ) : null}
+        {setupStage && showTail ? (
+          <OutputTail lines={setupStage.tail} failed={setupStage.status === "failed"} />
+        ) : null}
 
-      <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen((open) => !open)}
-        >
-          <MorphIcon aria-hidden icon={detailsOpen ? ChevronDown : ChevronRight} />
-          Details
-        </Button>
-        {showTerminal ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
-            <TerminalIcon aria-hidden />
-            Open terminal
-          </Button>
+        {snapshot.phase === "failed" && (snapshot.error || failedStage) ? (
+          <p className="text-meta text-error-foreground">
+            {failedStage ? `${worktreeSetupStageLabel(failedStage.id)} failed` : null}
+            {failedStage && (snapshot.error ?? failedStage.detail) ? ": " : null}
+            {snapshot.error ?? failedStage?.detail}
+          </p>
         ) : null}
-        {onWorkLocally ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
-            <LaptopIcon aria-hidden />
-            Work locally
-          </Button>
-        ) : null}
-        {onCancel && running ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
-            <XIcon aria-hidden />
-            Cancel
-          </Button>
+
+        {hasActions ? (
+          <div className="-mx-2 flex flex-wrap items-center gap-0.5">
+            {showTerminal ? (
+              <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
+                <TerminalIcon aria-hidden />
+                Open terminal
+              </Button>
+            ) : null}
+            {onWorkLocally ? (
+              <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
+                <LaptopIcon aria-hidden />
+                Work locally
+              </Button>
+            ) : null}
+            {onCancel && running ? (
+              <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
+                <XIcon aria-hidden />
+                Cancel
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
-      {detailsOpen ? <SetupDetails snapshot={snapshot} /> : null}
     </section>
   );
 }
