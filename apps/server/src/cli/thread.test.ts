@@ -1,8 +1,19 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
+import {
+  readLatestMessages,
+  resolveProject,
+  type ThreadTools,
+  titleFromMessage,
+  waitForRun,
+} from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -165,3 +176,43 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+
+const git = Effect.fn("test.git")(function* (cwd: string, args: ReadonlyArray<string>) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const exitCode = yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }));
+  assert.strictEqual(Number(exitCode), 0, `git ${args.join(" ")}`);
+});
+
+it.live("resolves a path inside a git worktree of the project's repository to that project", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-worktree-" });
+    const repo = path.join(root, "sample");
+    const worktree = path.join(root, "worktrees", "sample", "t3-8ff64c24");
+    yield* fileSystem.makeDirectory(path.join(repo, "pkg"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(repo, "pkg", "index.ts"), "export {};\n");
+    yield* git(repo, ["init", "--quiet", "-b", "main"]);
+    yield* git(repo, ["add", "."]);
+    yield* git(repo, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.test",
+      "commit",
+      "--quiet",
+      "-m",
+      "initial",
+    ]);
+    yield* git(repo, ["worktree", "add", "--quiet", "-b", "t3/8ff64c24", worktree]);
+    const project = { id: ProjectId.make("project-sample"), title: "sample", workspaceRoot: repo };
+    const resolveFrom = (workingDirectory: string, identifier: string) =>
+      resolveProject(
+        scriptedTools({ t3_project_list: [{ projects: [project], nextCursor: null }] }).tools,
+        identifier,
+      ).pipe(Effect.provideService(HostProcess.WorkingDirectory, workingDirectory));
+
+    assert.deepStrictEqual(yield* resolveFrom(worktree, "."), project);
+    assert.deepStrictEqual(yield* resolveFrom(path.join(worktree, "pkg"), "."), project);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

@@ -273,7 +273,7 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
 });
 
 /** A project id, or a path inside a project's folder (deepest project wins). */
-const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
+export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
 ) {
