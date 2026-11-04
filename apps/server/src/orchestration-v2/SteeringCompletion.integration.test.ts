@@ -1622,6 +1622,91 @@ it.effect("a run records its workspace when it is scoped, before its turn starts
   ),
 );
 
+// A run's turn starts in the thread's workspace of that moment. A worktree switch before it starts,
+// or a message queued behind it, can leave the thread's shared scope naming another one.
+it.effect.each([
+  { flow: "switched before its turn starts", queueNext: false, switchBack: false },
+  { flow: "switched, with a message queued behind it", queueNext: true, switchBack: false },
+  { flow: "switched and back, with a message queued behind it", queueNext: true, switchBack: true },
+])("a run's checkpoint is taken where its turn ran ($flow)", ({ flow, queueNext, switchBack }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = `turn-workspace-${flow}`.replaceAll(" ", "-").replaceAll(",", "");
+      const { cwd, started, layer } = yield* nextTurnSelectionHarness(name);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const other = yield* repoWorktree(cwd, "switched");
+        const threadId = ThreadId.make(`thread:${name}`);
+        const send = (id: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text: id,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        const switchTo = (worktreePath: string, id: string) =>
+          orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(id),
+            threadId,
+            worktreePath,
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: "Turn workspace",
+          modelSelection: runSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* send("first");
+        yield* switchTo(other, "switch");
+        if (queueNext) yield* send("next");
+        if (switchBack) yield* switchTo(cwd, "switch-back");
+        yield* worker.drain();
+        const first = started[0]!;
+        const ranIn = switchBack ? cwd : other;
+        assert.equal(first.runtimePolicy.cwd, ranIn);
+        yield* fs.writeFileString(path.join(ranIn, "edited-by-first.txt"), "first\n");
+
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
+          threadId,
+          runId: first.runId,
+        });
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.runs.find((run) => run.id === first.runId)?.workspaceCwd, ranIn);
+        const checkpoint = projection.checkpoints.find(
+          (candidate) => candidate.runId === first.runId,
+        );
+        assert.equal(checkpoint?.status, "ready");
+        assert.deepEqual(
+          checkpoint?.files.map((file) => file.path),
+          ["edited-by-first.txt"],
+        );
+      }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
+    }),
+  ),
+);
+
 it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
   Effect.scoped(
     Effect.gen(function* () {

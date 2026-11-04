@@ -1449,12 +1449,14 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
+      // The turn runs where the thread is now. The thread's scope follows its latest root run, which
+      // may be queued behind this one or predate a worktree switch; this run's checkpoints stay here.
+      const workspaceCwd = resolvedRuntimePolicy.cwd ?? checkpointScope.cwd;
       const runningRun: OrchestrationV2Run = {
         ...run,
         status: "running",
         startedAt: now,
-        // The thread's scope follows its latest root run; this run's checkpoints stay here.
-        workspaceCwd: checkpointScope.cwd,
+        workspaceCwd,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
@@ -1687,7 +1689,8 @@ export const layer: Layer.Layer<
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,
-        checkpointScope,
+        // The baseline taken as the turn starts belongs in the same workspace.
+        checkpointScope: { ...checkpointScope, cwd: workspaceCwd },
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
