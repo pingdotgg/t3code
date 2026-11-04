@@ -3460,14 +3460,15 @@ describe("PiAdapterV2", () => {
         args: { questions: [question] },
       });
       // The RPC dialog walker in @juicesharp/rpiv-ask-user-question asks multi-select this way.
-      const title = [
-        `[Build next] ${question.question}`,
-        question.options
-          .map((option, index) => `${index + 1}. ${option.label} — ${option.description}`)
-          .join("\n"),
-        'Enter the numbers of all that apply, comma-separated (e.g. "1,3").',
-      ].join("\n\n");
-      const ask = Effect.fnUntraced(function* (id: string) {
+      const titleFor = (options: typeof question.options) =>
+        [
+          `[Build next] ${question.question}`,
+          options
+            .map((option, index) => `${index + 1}. ${option.label} — ${option.description}`)
+            .join("\n"),
+          'Enter the numbers of all that apply, comma-separated (e.g. "1,3").',
+        ].join("\n\n");
+      const ask = Effect.fnUntraced(function* (id: string, title = titleFor(question.options)) {
         yield* fake.emit({
           type: "extension_ui_request",
           id,
@@ -3513,6 +3514,19 @@ describe("PiAdapterV2", () => {
       });
       // A leading semicolon makes the extension read the reply as custom text, not option 2.
       assert.equal((yield* fake.takeRequest("extension_ui_response"))["value"], "; 2");
+
+      const reordered = [question.options[2]!, question.options[0]!];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask_again",
+        toolName: "ask_user_question",
+        args: { questions: [{ ...question, options: reordered }] },
+      });
+      const third = yield* ask("ui-multi-again", titleFor(reordered));
+      assert.deepEqual(
+        decodeUserInputQuestions(third.questions)[0]?.options.map((option) => option.label),
+        ["Subscriptions", "Bills"],
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

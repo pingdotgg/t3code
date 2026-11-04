@@ -3453,7 +3453,15 @@ function piAskUserMultiSelectQuestion(
       const options = recordField(question, "options");
       if (recordField(question, "multiSelect") !== true || text === undefined) continue;
       if (!Array.isArray(options) || options.length === 0) continue;
-      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}\n\n`)) continue;
+      // The title lists the options, so it only matches the call whose options the user sees.
+      const list = options
+        .map(
+          (option, index) =>
+            // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
+            `${index + 1}. ${recordString(option, "label")} — ${recordString(option, "description")}`,
+        )
+        .join("\n");
+      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}\n\n${list}\n\n`)) continue;
       return {
         id: questionId,
         header: header?.trim() || "Question",
