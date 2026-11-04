@@ -1292,14 +1292,32 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
-function elicitationContent(
+function elicitationAnswerValue(
+  answer: string,
+  schema: Record<string, unknown> | undefined,
+): EffectAcpSchema.ElicitationContentValue {
+  if (schema?.type === "boolean") {
+    return answer === "true" ? true : answer === "false" ? false : answer;
+  }
+  if (schema?.type === "number" || schema?.type === "integer") {
+    const parsed = answer.trim() === "" ? Number.NaN : Number(answer);
+    const valid =
+      schema.type === "integer" ? Number.isSafeInteger(parsed) : Number.isFinite(parsed);
+    return valid ? parsed : answer;
+  }
+  return answer;
+}
+
+export function elicitationContent(
   answers: ProviderUserInputAnswers,
-  allowedKeys: ReadonlySet<string>,
+  properties: Record<string, unknown>,
 ): Record<string, EffectAcpSchema.ElicitationContentValue> {
   const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
   for (const [key, value] of Object.entries(answers)) {
-    if (!allowedKeys.has(key)) continue;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    if (!Object.hasOwn(properties, key)) continue;
+    if (typeof value === "string") {
+      content[key] = elicitationAnswerValue(value, unknownRecord(properties[key]));
+    } else if (typeof value === "number" || typeof value === "boolean") {
       content[key] = value;
     } else if (Array.isArray(value)) {
       content[key] = value.filter((entry): entry is string => typeof entry === "string");
@@ -6670,10 +6688,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : (nativeForm?.respond(userInput.answers) ??
                     ({
                       action: "accept",
-                      content: elicitationContent(
-                        userInput.answers,
-                        new Set(Object.keys(properties)),
-                      ),
+                      content: elicitationContent(userInput.answers, properties),
                     } as const));
               yield* userInput.acknowledgeNativeResponse;
               return response;
