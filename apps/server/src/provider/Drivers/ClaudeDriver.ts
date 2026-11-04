@@ -260,7 +260,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
                   return models === undefined
                     ? provider
-                    : applyClaudeGatewayModels(provider, models, catalog);
+                    : applyClaudeGatewayModels(
+                        provider,
+                        models,
+                        catalog,
+                        effectiveConfig.customModels,
+                      );
                 }),
               ),
             ),

@@ -480,9 +480,10 @@ export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSetti
     );
     Object.assign(
       settingsEnv,
-      yield* decodeSettingsEnv(contents)
-        .pipe(Effect.orElseSucceed(() => undefined))
-        .pipe(Effect.map((settings) => settings?.env)),
+      yield* decodeSettingsEnv(contents).pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.map((settings) => settings?.env),
+      ),
     );
     for (const [name, value] of Object.entries(parsed?.env ?? {})) {
       if (typeof value === "string") env[name] = value;

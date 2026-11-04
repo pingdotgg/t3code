@@ -1,8 +1,9 @@
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings, CustomModelSetting } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess } from "effect/process";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   spawnAndCollect,
@@ -129,7 +130,9 @@ export function applyClaudeGatewayModels(
   provider: ServerProviderDraft,
   models: ReadonlyArray<GatewayModel>,
   catalog: ClaudeModelCatalog,
+  customModels: ReadonlyArray<CustomModelSetting> = [],
 ): ServerProviderDraft {
+  const saved = new Set(readCustomModelEntries(customModels).map((model) => model.slug));
   const known = new Map(provider.models.map((model) => [model.slug, model]));
   const unavailable = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const offered = new Set(models.map((model) => model.id));
@@ -140,7 +143,11 @@ export function applyClaudeGatewayModels(
     ...provider,
     models: [
       ...models
-        .filter((model) => !unavailable.has(resolveClaudeModelSlug(catalog, model.id)))
+        .filter(
+          (model) =>
+            known.get(model.id)?.isCustom ||
+            !unavailable.has(resolveClaudeModelSlug(catalog, model.id)),
+        )
         .map((model) => {
           const metadata =
             known.get(model.id) ?? known.get(resolveClaudeModelSlug(catalog, model.id));
@@ -153,7 +160,9 @@ export function applyClaudeGatewayModels(
                 capabilities: { optionDescriptors: [] },
               };
         }),
-      ...provider.models.filter((model) => model.isCustom && !offered.has(model.slug)),
+      ...provider.models.filter(
+        (model) => (model.isCustom || saved.has(model.slug)) && !offered.has(model.slug),
+      ),
     ],
     ...(provider.updateRequiredModels
       ? {
