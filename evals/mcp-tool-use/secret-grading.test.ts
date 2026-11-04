@@ -2054,6 +2054,31 @@ it("keeps the earlier script when a Write or Edit fails", () => {
   assert.deepEqual(sources.at(-1), [`cat ${F}\n`]);
 });
 
+it("reads a program's copy call and suffix chain as code", () => {
+  const verdicts = (cmd: string) => classifyFileUse(cmd, [F]).map((use) => use.verdict);
+  const heredoc = (body: string) => `python3 - <<'EOF'\nimport shutil\n${body}\nEOF`;
+  assert.notInclude(
+    verdicts(heredoc(`# shutil.copyfile('${F}', '/tmp/x')\nprint(len(open('${F}').read()))`)),
+    "copy (program copies the file)",
+  );
+  assert.notInclude(
+    verdicts(heredoc(`print("shutil.copyfile('x', 'y')"); print(len(open('${F}').read()))`)),
+    "copy (program copies the file)",
+  );
+  assert.include(
+    verdicts(heredoc(`shutil.copyfile('${F}', '/tmp/x')`)),
+    "copy (program copies the file)",
+  );
+  const node = (log: string) =>
+    `node -e "const v = require('fs').readFileSync('${F}', 'utf8'); console.log(${log})"`;
+  for (const log of ["v.trim().length", "v.trim().toString().length"])
+    assert.isFalse(
+      verdicts(node(log)).some((verdict) => verdict.startsWith("print")),
+      log,
+    );
+  assert.isTrue(verdicts(node("v.trim()")).some((verdict) => verdict.startsWith("print")));
+});
+
 it("passes a child shell only the variables it inherits", () => {
   const verdicts = (cmd: string, scripts?: Map<string, string>) =>
     classifyFileUse(cmd, [F], scripts).map((use) => use.verdict);

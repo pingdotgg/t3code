@@ -1067,12 +1067,21 @@ const valueFlow = (
   if (TEST_BEFORE.test(code.slice(from, start)) || TEST_AFTER.test(code.slice(end)))
     return "hidden";
   let state = initial;
-  const method = /^\s*\??\.\s*([A-Za-z_$][\w$]*)\s*(\()?/.exec(code.slice(end));
-  if (method) {
+  // The whole suffix chain, as in `.trim().length`: any hiding step hides the value.
+  let next = end;
+  for (;;) {
+    const method = /^\s*\??\.\s*([A-Za-z_$][\w$]*)\s*(\()?/.exec(code.slice(next));
+    if (!method) break;
     const called = `x.${method[1]}`;
     if (HIDES.test(called) || (!method[2] && method[1] === "length")) return "hidden";
     if (!method[2] || !PASS_THROUGH.test(called)) state = "maybe";
-  } else if (/^\s*\[/.test(code.slice(end))) state = "maybe";
+    next += method[0].length;
+    if (!method[2]) continue;
+    for (let depth = 1; next < code.length && depth > 0; next++)
+      if (code[next] === "(") depth++;
+      else if (code[next] === ")") depth--;
+  }
+  if (/^\s*\[/.test(code.slice(next))) state = "maybe";
   for (let i = start - 1, depth = 0; i >= from; i--) {
     const c = code[i]!;
     if (/[)\]}]/.test(c)) depth++;
@@ -1553,13 +1562,17 @@ export const classifyFileUse = (
       stages: [],
     },
   ) => {
-    if (
-      program
-        .split(/[;\n]/)
-        .some((statement) => COPY_CALL.test(statement) && new RegExp(fileRef()).test(statement))
-    ) {
-      add("copy (program copies the file)", at);
-      return;
+    // The call is matched in code, outside comments and strings; the path in the raw statement.
+    const known = programLanguage(head);
+    const code = known === undefined ? program : maskProgram(program, known);
+    let offset = 0;
+    for (const statement of code.split(/[;\n]/)) {
+      const raw = program.slice(offset, offset + statement.length);
+      offset += statement.length + 1;
+      if (COPY_CALL.test(statement) && new RegExp(fileRef()).test(raw)) {
+        add("copy (program copies the file)", at);
+        return;
+      }
     }
     const printed = (verdict: string, where: string) => {
       if (
