@@ -77,6 +77,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -1036,6 +1037,7 @@ function timelineItem(input: {
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -2372,35 +2374,33 @@ const make = Effect.gen(function* () {
           "An authenticated external client with thread write access is required.",
         );
       }
+      if (input.target.environmentId !== undefined || input.target.projectId !== undefined) {
+        return yield* failure(
+          "invalid_request",
+          "Ensured children must inherit the local parent's project and checkout.",
+        );
+      }
       const { target: parent, limits } = yield* loadScopedThread(scope, input.parentThreadId);
       yield* resolveRuntimeMode(limits.runtimeMode, parent.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, parent.thread.interactionMode);
       const options = input.target.options?.toSorted((a, b) =>
         a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
       );
-      const requestSha256 = Buffer.from(
-        yield* crypto
-          .digest(
-            "SHA-256",
-            new TextEncoder().encode(
-              stableStringify({
-                ...input,
-                target: { ...input.target, options },
-              }),
-            ),
-          )
-          .pipe(Effect.orDie),
-      ).toString("hex");
-      const identity = Buffer.from(
-        yield* crypto
-          .digest(
-            "SHA-256",
-            new TextEncoder().encode(
-              stableStringify([scope.environmentId, input.parentThreadId, input.requestKey]),
-            ),
-          )
-          .pipe(Effect.orDie),
-      ).toString("hex");
+      const requestSha256 = yield* digest.digestHex(
+        Digest.sha256,
+        new TextEncoder().encode(
+          stableStringify({
+            ...input,
+            target: { ...input.target, options },
+          }),
+        ),
+      );
+      const identity = yield* digest.digestHex(
+        Digest.sha256,
+        new TextEncoder().encode(
+          stableStringify([scope.environmentId, input.parentThreadId, input.requestKey]),
+        ),
+      );
       const commandId = CommandId.make(`command:mcp:ensure-child:${identity}`);
       const existing = parent.subagents.find(
         (task) =>

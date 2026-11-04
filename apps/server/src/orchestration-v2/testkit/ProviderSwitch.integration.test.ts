@@ -36,8 +36,10 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as ThreadLaunchService from "../ThreadLaunchService.ts";
@@ -3594,6 +3596,8 @@ const withEnsureHost = Effect.fn("test.ensureChildHost")(function* <A, E, R>(
         registry,
         settings,
         NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(ProjectService.ProjectService)({}),
@@ -4046,6 +4050,18 @@ describe("ensure_child_task", () => {
           ];
           for (const caller of callers)
             yield* service.ensureChildTask(caller, input).pipe(Effect.flip);
+          for (const destination of [
+            { environmentId: EnvironmentId.make("other-environment") },
+            { projectId: ProjectId.make("other-project") },
+          ]) {
+            const rejected = yield* service
+              .ensureChildTask(ensureClient, {
+                ...input,
+                target: { ...input.target, ...destination },
+              })
+              .pipe(Effect.flip);
+            assert.equal(rejected.code, "invalid_request");
+          }
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           assert.equal((yield* orchestrator.getThreadProjection(threadId)).subagents.length, 0);
         }),
