@@ -19,7 +19,7 @@ function settledReviewSummary(activity: PullRequestActivity): string {
       if (opener === undefined) return [];
       const who = opener.author?.login ?? "ghost";
       const state = thread.isResolved ? "resolved" : "outdated";
-      return [`- ${thread.path} (${state}, ${who}): ${oneLine(opener.body)}`];
+      return [`- ${thread.path ?? "overview"} (${state}, ${who}): ${oneLine(opener.body)}`];
     })
     .join("\n");
 }

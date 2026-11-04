@@ -831,7 +831,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads a positioned discussion as a thread anchored to its line", () =>
+  it.effect("reads a positioned discussion at its line and an overview thread at no file", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -864,6 +864,19 @@ layer("GitLabPullRequestCli.layer", (it) => {
                 ],
               },
               { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
+              {
+                id: "ghi789",
+                notes: [
+                  {
+                    id: 4,
+                    body: "the README should mention this",
+                    created_at: "2026-07-02Z",
+                    resolvable: true,
+                    resolved: false,
+                    position: null,
+                  },
+                ],
+              },
             ]),
           ),
         ),
@@ -876,7 +889,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(threads.length, 1);
+      expect(threads.map(({ id }) => id)).toEqual(["abc123", "ghi789"]);
       expect(threads[0]).toMatchObject({
         id: "abc123",
         path: "src/a.ts",
@@ -884,6 +897,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         side: "right",
         isResolved: true,
       });
+      expect(threads[1]).toMatchObject({ path: null, line: null, isResolved: false });
       assert.strictEqual(threads[0]?.comments.length, 2);
     }),
   );

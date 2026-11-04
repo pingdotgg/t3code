@@ -546,8 +546,30 @@ export function decodeDiscussionsJson(
     if (!Exit.isSuccess(discussion)) continue;
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
-    const position = root?.position;
-    if (root === undefined || !position || position.position_type !== "text") continue;
+    if (root === undefined) continue;
+    const comments = notes.map((note) => ({
+      id: String(note.id),
+      author: toActor(note.author),
+      body: note.body ?? "",
+      createdAt: note.created_at,
+      url: null,
+    }));
+    const position = root.position;
+    if (!position) {
+      // A thread started on the overview: resolvable, unlike a single comment.
+      if (root.resolvable !== true) continue;
+      threads.push({
+        id: discussion.value.id,
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: root.resolved === true,
+        isOutdated: false,
+        comments,
+      });
+      continue;
+    }
+    if (position.position_type !== "text") continue;
     const side = position.new_line === null || position.new_line === undefined ? "left" : "right";
     const path = trimmed(side === "left" ? position.old_path : position.new_path);
     const line = side === "left" ? position.old_line : position.new_line;
@@ -559,13 +581,7 @@ export function decodeDiscussionsJson(
       side,
       isResolved: root.resolved === true,
       isOutdated: false,
-      comments: notes.map((note) => ({
-        id: String(note.id),
-        author: toActor(note.author),
-        body: note.body ?? "",
-        createdAt: note.created_at,
-        url: null,
-      })),
+      comments,
     });
   }
   return Result.succeed({ threads, rawCount: decoded.success.length });

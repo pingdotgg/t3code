@@ -73,7 +73,7 @@ export function annotatePullRequestDiff(
     anchors.set(anchor.id, rows);
   };
   for (const thread of threads) {
-    if (thread.isOutdated) continue;
+    if (thread.isOutdated || thread.path === null) continue;
     const anchor =
       thread.line === null
         ? firstByPath.get(thread.path)

@@ -56,6 +56,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   });
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
   const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
+  const filePath = thread?.path ?? null;
   const [body, setBody] = useState("");
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();
@@ -181,20 +182,24 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             {activity.isPending && !thread ? <AppActivityIndicator /> : null}
             {thread ? (
               <View className="gap-2 pb-4">
-                <Text selectable className="font-mono text-xs text-foreground-muted">
-                  {thread.path}
-                  {thread.line ? `:${thread.line}` : ""}
-                </Text>
+                {thread.path === null ? null : (
+                  <Text selectable className="font-mono text-xs text-foreground-muted">
+                    {thread.path}
+                    {thread.line ? `:${thread.line}` : ""}
+                  </Text>
+                )}
                 <Text className="text-xs text-foreground-muted">
                   {thread.isResolved ? "Resolved" : "Unresolved"}
                   {thread.isOutdated ? " · Outdated" : ""}
                 </Text>
-                <Button
-                  label="View file diff"
-                  onPress={() =>
-                    navigation.navigate("PullRequestFile", { ...params, path: thread.path })
-                  }
-                />
+                {filePath === null ? null : (
+                  <Button
+                    label="View file diff"
+                    onPress={() =>
+                      navigation.navigate("PullRequestFile", { ...params, path: filePath })
+                    }
+                  />
+                )}
               </View>
             ) : !activity.isPending ? (
               <Text>This discussion is no longer available.</Text>
