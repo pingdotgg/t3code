@@ -194,6 +194,9 @@ export const splitTests = (tests: Iterable<string>) => {
 };
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+export const checkInputFiles = (files: ReadonlyArray<string>) =>
+  files.filter((file) => !file.startsWith(".repos/"));
+
 // A flag wins over its environment variable; either must be a positive integer.
 const override = Effect.fn("checkChanged.override")(function* (
   flagName: string,
@@ -317,7 +320,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     return true;
   }
 
-  const present = yield* Effect.filter(files, (file) => fs.exists(inRoot(file)));
+  const present = yield* Effect.filter(checkInputFiles(files), (file) => fs.exists(inRoot(file)));
   const code = present.filter((file) => CODE.test(file));
   const packages = readWorkspace();
   const { affected, outputs } = decide(files, packages, false);

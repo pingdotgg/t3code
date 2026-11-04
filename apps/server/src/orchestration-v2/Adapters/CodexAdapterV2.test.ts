@@ -8646,8 +8646,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const forkThreadId = "archived-fork-target";
       const forkParams = {
         threadId: nativeThreadId,
+        modelProvider: "openai",
         lastTurnId: "native-turn-first",
-        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+        config: {
+          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+          [T3_THREAD_ENV_KEY]: "thread-archived-fork-target",
+        },
       };
       const exchange = (
         id: number,
