@@ -1,7 +1,7 @@
 import { act, render, type Screen } from "../../../test/render";
-import { AuthSourceControlWriteScope, EnvironmentId } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 const permissions = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -26,6 +26,22 @@ vi.mock(import("~/state/session"), async (original) => {
   };
 });
 
+vi.mock(import("~/state/pullRequests"), async (original) => ({
+  ...(await original()),
+  usePullRequestFilterOptions: (targets: ReadonlyArray<unknown>) => ({
+    labels: [],
+    authors:
+      targets.length === 0
+        ? []
+        : [
+            { login: "julius", name: "Julius", avatarUrl: null },
+            { login: "theo", name: "Theo", avatarUrl: null },
+          ],
+    error: null,
+    isPending: false,
+  }),
+}));
+
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 
 const secondary = EnvironmentId.make("secondary");
@@ -45,6 +61,7 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       value={options?.value ?? "Original description"}
       cwd="/repo"
       environmentId={secondary}
+      mentionProjectId={ProjectId.make("project")}
       label="Pull request description"
       saving={false}
       allowEmpty={options?.allowEmpty ?? false}
@@ -87,4 +104,24 @@ it("keeps an edited draft through revocation and saves it after access returns w
   await grant(true);
   await clickSave(screen);
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
+});
+
+it("completes an @mention on Enter and closes the list on Escape without leaving the editor", async () => {
+  setup();
+  permissions.allowed.add(secondary);
+  await using screen = await openEditor({ value: "" });
+  const textarea = screen.container.querySelector("textarea")!;
+  await userEvent.type(textarea, "Thanks @ju");
+  await expect.element(page.getByRole("option", { name: /julius/ })).toBeVisible();
+
+  await userEvent.keyboard("{Enter}");
+  expect(textarea.value).toBe("Thanks @julius ");
+  expect(screen.container.ownerDocument.querySelector('[role="listbox"]')).toBeNull();
+
+  await userEvent.type(textarea, "and @");
+  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  expect(screen.container.ownerDocument.querySelector('[role="listbox"]')).toBeNull();
+  expect(onCancel).not.toHaveBeenCalled();
+  expect(onSave).not.toHaveBeenCalled();
 });

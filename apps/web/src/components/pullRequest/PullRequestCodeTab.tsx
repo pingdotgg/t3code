@@ -1028,6 +1028,9 @@ function PullRequestCodeTab({
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
+          mentionScope={
+            canCommentOnLines ? { environmentId, projectId: reference.projectId } : null
+          }
           submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
           {...(canCommentOnLines && onAddToAgentSelection
             ? {

@@ -28,6 +28,8 @@ import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { PullRequestMentionSuggestions } from "./PullRequestMentionSuggestions";
+import { usePullRequestMentions } from "./usePullRequestMentions";
 
 export function PullRequestDiscussionScreen({
   route,
@@ -57,6 +59,12 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
   const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
   const [body, setBody] = useState("");
+  const mentions = usePullRequestMentions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: body,
+    onChangeValue: setBody,
+  });
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();
   const [busy, setBusy] = useState(false);
@@ -239,7 +247,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
           </ScrollView>
         </ScrollViewMarker>
         {canReply ? (
-          <View className="absolute inset-x-4 bottom-0" style={{ paddingBottom: bottomInset }}>
+          <View
+            className="absolute inset-x-4 bottom-0 gap-2"
+            style={{ paddingBottom: bottomInset }}
+          >
+            <PullRequestMentionSuggestions mentions={mentions} />
             <GlassSurface
               chrome="none"
               onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
@@ -247,6 +259,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             >
               <TextInput
                 accessibilityLabel="Discussion reply"
+                selection={mentions.selection}
+                onSelectionChange={mentions.onSelectionChange}
+                onBlur={mentions.onBlur}
                 multiline
                 maxLength={65536}
                 placeholder="Reply…"

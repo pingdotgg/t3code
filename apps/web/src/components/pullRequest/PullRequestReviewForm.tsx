@@ -9,7 +9,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
 import {
@@ -17,6 +16,7 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
@@ -131,13 +131,14 @@ export function PullRequestReviewForm({
 
   return (
     <>
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        mentionScope={{ environmentId, projectId: reference.projectId }}
         rows={3}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onValueChange={(next) => setSummary(reviewKey, next)}
       />
       <div className="mt-2 flex justify-end gap-2">
         {offered.length > 1 ? (

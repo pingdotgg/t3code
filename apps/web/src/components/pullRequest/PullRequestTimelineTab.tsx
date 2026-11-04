@@ -263,6 +263,7 @@ function ConversationCard({
             value={editable.body}
             cwd={cwd}
             environmentId={reactions.environmentId}
+            mentionProjectId={reactions.reference.projectId}
             threadRef={reactions.threadRef}
             label="Edit comment"
             saving={saving}

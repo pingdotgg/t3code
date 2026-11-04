@@ -5,6 +5,7 @@ import {
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
+  ProjectId,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
@@ -157,6 +158,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -181,6 +183,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        mentionProjectId={editing.projectId}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -515,6 +518,7 @@ export function PullRequestSummaryTab({
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    projectId: reference.projectId,
     threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -764,6 +768,7 @@ export function PullRequestSummaryTab({
               value={detail.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
+              mentionProjectId={reference.projectId}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}

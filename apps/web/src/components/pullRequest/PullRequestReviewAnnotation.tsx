@@ -18,7 +18,6 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
-import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -29,6 +28,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -284,6 +284,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
+                    mentionProjectId={reference.projectId}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -324,13 +325,14 @@ export function ReviewThreadCard({
           {canReply ? (
             replying ? (
               <div className="mt-2">
-                <Textarea
+                <PullRequestMarkdownTextarea
                   autoFocus
                   size="sm"
+                  mentionScope={{ environmentId, projectId: reference.projectId }}
                   value={reply}
                   placeholder="Reply"
                   aria-label="Reply to this conversation"
-                  onChange={(event) => setReply(event.target.value)}
+                  onValueChange={setReply}
                   onKeyDown={(event) =>
                     submitKeys({
                       value: reply,

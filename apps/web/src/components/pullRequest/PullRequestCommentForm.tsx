@@ -7,9 +7,9 @@ import { useState, type RefObject } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
@@ -85,15 +85,16 @@ export function PullRequestCommentForm({
 
   return (
     <div className="space-y-2">
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        mentionScope={{ environmentId, projectId: reference.projectId }}
         // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
         value={body}
         rows={3}
         placeholder="Leave a comment"
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
-        onChange={(event) => setBody(event.target.value)}
+        onValueChange={setBody}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (

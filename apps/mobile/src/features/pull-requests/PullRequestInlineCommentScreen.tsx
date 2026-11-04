@@ -15,6 +15,8 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { PullRequestMentionSuggestions } from "./PullRequestMentionSuggestions";
+import { usePullRequestMentions } from "./usePullRequestMentions";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -31,6 +33,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const saved = store.draft.comments.find((draft) => draft.id === params.draftId);
   const [editedBody, setBody] = useState<string | null>(null);
   const body = editedBody ?? saved?.body ?? "";
+  const mentions = usePullRequestMentions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value: body,
+    onChangeValue: setBody,
+  });
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
@@ -101,8 +109,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           {params.code}
         </Text>
       </View>
+      <PullRequestMentionSuggestions mentions={mentions} />
       <TextInput
         multiline
+        selection={mentions.selection}
+        onSelectionChange={mentions.onSelectionChange}
+        onBlur={mentions.onBlur}
         editable={store.ready && !busy}
         autoFocus
         accessibilityLabel="Inline review comment"

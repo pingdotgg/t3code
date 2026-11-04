@@ -62,6 +62,7 @@ export function PullRequestGuideTab({
       : {
           canComment,
           rangeComments,
+          mentionScope: { environmentId, projectId: reference.projectId },
           pending,
           onComment: ({ path, oldPath, position, startPosition, body }) =>
             addComment(reviewKey, {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  type ProjectId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
@@ -9,14 +10,15 @@ import { cn } from "~/lib/utils";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdownTextarea } from "./PullRequestMarkdownTextarea";
 
 export function PullRequestMarkdownEditor({
   value,
   cwd,
   environmentId,
+  mentionProjectId,
   threadRef = null,
   placeholder,
   label,
@@ -29,6 +31,7 @@ export function PullRequestMarkdownEditor({
   readonly value: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly mentionProjectId: ProjectId | null;
   readonly threadRef?: ScopedThreadRef | null;
   readonly placeholder?: string | undefined;
   readonly label: string;
@@ -102,14 +105,17 @@ export function PullRequestMarkdownEditor({
           )}
         </div>
       ) : (
-        <Textarea
+        <PullRequestMarkdownTextarea
           autoFocus
           disabled={saving}
+          mentionScope={
+            mentionProjectId === null ? null : { environmentId, projectId: mentionProjectId }
+          }
           value={draft}
           rows={6}
           placeholder={placeholder}
           aria-label={label}
-          onChange={(event) => setDraft(event.target.value)}
+          onValueChange={setDraft}
         />
       )}
       <div className="flex justify-end gap-2">
