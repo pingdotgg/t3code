@@ -520,6 +520,7 @@ function involvementParams(input: {
  * GitLab's `labels` asks for every label it names, so only groups of one go to it; a group of
  * alternatives is left for the service to narrow. A comma would split a name in two, and `None`
  * and `Any` mean "unlabeled" and "labeled" to GitLab rather than labels of those names.
+ * Review filters go only where GitLab returns every row the service's exact filter keeps.
  */
 function filterParams(input: {
   readonly filters?: PullRequestListFilters | undefined;
@@ -548,6 +549,11 @@ function filterParams(input: {
     ...(filters.draft === undefined
       ? []
       : [["wip", filters.draft === "only" ? "yes" : "no"] as const]),
+    ...(filters.review === "approved"
+      ? [["approved_by_usernames[]", "Any"] as const]
+      : filters.review === "none"
+        ? [["approved_by_ids[]", "None"] as const]
+        : []),
   ];
 }
 

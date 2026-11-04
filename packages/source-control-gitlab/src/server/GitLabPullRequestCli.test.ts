@@ -215,6 +215,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           excludedLabels: ["wontfix", "stale", "any"],
           author: "@me",
           draft: "only",
+          review: "approved",
         },
       });
 
@@ -223,6 +224,36 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(params.get("not[labels]")).toBe("wontfix,stale");
       expect(params.get("author_username")).toBe("bilal");
       expect(params.get("wip")).toBe("yes");
+      expect(params.get("approved_by_usernames[]")).toBe("Any");
+    }),
+  );
+
+  it.effect("narrows by approval only where GitLab returns every row the decision keeps", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const reviews = ["none", "review-required", "changes-requested"] as const;
+      for (const review of reviews) {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(1, 1))));
+        yield* cli.listMergeRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          filters: { review },
+        });
+      }
+
+      const sent = reviews.map((_, call) => {
+        const params = new URLSearchParams((argsOfCall(call)[1] ?? "").split("?")[1]);
+        return [params.get("approved_by_ids[]"), params.get("approved_by_usernames[]")];
+      });
+      expect(sent).toEqual([
+        ["None", null],
+        [null, null],
+        [null, null],
+      ]);
     }),
   );
 
