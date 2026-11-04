@@ -41,16 +41,18 @@ export const makeCodexIsolatedRuntime = Effect.fn("makeCodexIsolatedRuntime")(fu
             instanceId: options.instanceId,
             operation: "runtime",
             detail: cause.detail,
+            cause,
           }),
       ),
     );
     yield* fs.makeDirectory(homePath, { recursive: true, mode: 0o700 }).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "runtime",
             detail: "Could not prepare the separate Codex home.",
+            cause,
           }),
       ),
     );
