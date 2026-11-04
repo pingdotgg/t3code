@@ -1722,6 +1722,24 @@ const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefine
   return rows.map((row) => row.detail);
 });
 
+// SQLite's plan wording changes between versions, so only the index name and the absence of a
+// temporary B-tree are pinned.
+const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessageOrdinalIndex")(
+  function* (statement: string | undefined) {
+    const plan = yield* queryPlan(statement);
+    assert.isTrue(
+      plan.some((detail) =>
+        detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx"),
+      ),
+      plan.join("\n"),
+    );
+    assert.isFalse(
+      plan.some((detail) => detail.includes("TEMP B-TREE")),
+      plan.join("\n"),
+    );
+  },
+);
+
 // Each message's first item orders it, not the stored message order (the assistant reply is stored
 // first); the message-ordinal statement reads those ordinals through migration 80's index.
 const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
@@ -1815,11 +1833,8 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   const indexed = yield* store
     .getThreadRecords(threadId, ["messages"])
     .pipe(Effect.withTracer(tracer));
-  assert.deepEqual(
-    yield* queryPlan(statements.find((statement) => statement.includes("MIN(ordinal) AS ordinal"))),
-    [
-      "SEARCH orchestration_v2_projection_turn_items USING INDEX orchestration_v2_projection_turn_items_message_ordinal_idx (thread_id=?)",
-    ],
+  yield* assertReadsThroughMessageOrdinalIndex(
+    statements.find((statement) => statement.includes("MIN(ordinal) AS ordinal")),
   );
   assert.deepEqual(
     indexed.messages.map((message) => message.id),
@@ -1848,11 +1863,7 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
       statement.includes("MIN(ordinal) AS ordinal"),
     );
     assert.include(bounded, "IN (SELECT value FROM json_each(");
-    assert.deepEqual(yield* queryPlan(bounded), [
-      "SEARCH orchestration_v2_projection_turn_items USING INDEX orchestration_v2_projection_turn_items_message_ordinal_idx (thread_id=? AND <expr>=?)",
-      "LIST SUBQUERY 1",
-      "SCAN json_each VIRTUAL TABLE INDEX 1:",
-    ]);
+    yield* assertReadsThroughMessageOrdinalIndex(bounded);
     const rows = yield* sql.unsafe<{ readonly message_id: string }>(bounded!, [
       threadId,
       JSON.stringify(loaded),

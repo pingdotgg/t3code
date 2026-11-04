@@ -16,9 +16,9 @@ const unindexedOrdinalsOf = (threadId: string) => `
   ORDER BY message_id
 `;
 
-const ordinalsOf = (threadId: string, from: string) => `
+const ordinalsOf = (threadId: string) => `
   SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
-  FROM ${from}
+  FROM orchestration_v2_projection_turn_items
   WHERE thread_id = '${threadId}' AND type IN ('user_message', 'assistant_message')
     AND json_valid(payload_json)
   GROUP BY json_extract(payload_json, '$.messageId')
@@ -43,16 +43,6 @@ const insertTurnItem = (
         '2026-11-01T00:00:00.000Z', ${payloadJson}
       )
     `;
-  });
-
-const usesTheIndex = (query: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const plan = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
-    assert.include(
-      plan[0]?.detail,
-      "USING INDEX orchestration_v2_projection_turn_items_message_ordinal_idx",
-    );
   });
 
 it.effect(
@@ -100,11 +90,9 @@ it.effect(
       assert.deepEqual(yield* index(), created);
       assert.deepEqual(yield* runMigrations(), []);
 
-      const indexed = "orchestration_v2_projection_turn_items";
-      yield* usesTheIndex(ordinalsOf("thread-a", indexed));
-      assert.deepEqual(yield* sql.unsafe(ordinalsOf("thread-a", indexed)), expected);
+      assert.deepEqual(yield* sql.unsafe(ordinalsOf("thread-a")), expected);
       assert.deepEqual(
-        yield* sql.unsafe(ordinalsOf("thread-b", indexed)),
+        yield* sql.unsafe(ordinalsOf("thread-b")),
         yield* sql.unsafe(unindexedOrdinalsOf("thread-b")),
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -129,10 +117,6 @@ it.effect("migrates over a message whose payload is not JSON, and takes one afte
       WHERE turn_item_id = 'ok-2'
     `;
 
-    const indexed = "orchestration_v2_projection_turn_items";
-    yield* usesTheIndex(ordinalsOf("thread-a", indexed));
-    assert.deepEqual(yield* sql.unsafe(ordinalsOf("thread-a", indexed)), [
-      { message_id: "m1", ordinal: 2 },
-    ]);
+    assert.deepEqual(yield* sql.unsafe(ordinalsOf("thread-a")), [{ message_id: "m1", ordinal: 2 }]);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
