@@ -111,9 +111,9 @@ describe("Claude Agent SDK replay fixtures", () => {
     }),
   );
 
-  // regression: #5297 a Stop hook's additionalContext continuation hid the answer before it.
-  // Recorded live: the CLI emits no user frame for the hook, only a second assistant message.
-  it.effect("marks a Stop hook continuation between the answer and the reply", () =>
+  // regression: #5297 a Stop hook continuation hid the answer before it. Recorded live: an
+  // additionalContext hook shows up only as a hook_response; a blocking one also sends a user frame.
+  it.effect("marks each Stop hook continuation between the answer and the reply", () =>
     runClaudeReplayFixture({
       fixtureName: "claude_stop_hook_continuation",
       buildInput: claudeStopHookContinuationInput,
@@ -134,13 +134,15 @@ describe("Claude Agent SDK replay fixtures", () => {
             item.type === "assistant_message"
               ? [item.text.trim()]
               : item.type === "notification"
-                ? [`notification:${item.summary}`]
+                ? [`notification:${item.summary}: ${item.detail}`]
                 : [],
           );
           assert.deepEqual(items, [
             "STOP_HOOK_ANSWER",
-            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}`,
+            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}: Reply with exactly: STOP_HOOK_REPLY`,
             "STOP_HOOK_REPLY",
+            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}: Reply with exactly: STOP_HOOK_BLOCK_REPLY`,
+            "STOP_HOOK_BLOCK_REPLY",
           ]);
         },
       },
