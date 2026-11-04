@@ -22,14 +22,20 @@ const LANGUAGE_FILLER_WORDS: Readonly<Record<string, readonly string[]>> = {
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function removeSpeechFillerWords(text: string, language?: string): string {
+export function removeSpeechFillerWords(
+  text: string,
+  language?: string,
+  correctionCue?: string,
+): string {
   const baseLanguage = language?.split(/[-_]/, 1)[0]?.toLowerCase();
   const words = [
     ...UNIVERSAL_FILLER_WORDS,
     ...(baseLanguage ? (LANGUAGE_FILLER_WORDS[baseLanguage] ?? []) : []),
   ];
   let filtered = text;
+  const protectedWord = correctionCue?.trim().toLowerCase();
   for (const word of words) {
+    if (word === protectedWord) continue;
     const pattern = new RegExp(
       `(?<![\\p{L}\\p{N}_])${escapeRegex(word)}(?![\\p{L}\\p{N}_])[,.]?`,
       "giu",

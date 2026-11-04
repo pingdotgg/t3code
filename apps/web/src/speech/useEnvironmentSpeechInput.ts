@@ -240,7 +240,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         } = latestRef.current;
         const cleanupGrant = current.cleanup === false ? null : readCleanupGrant();
         const cleanupEnabled = cleanupGrant !== null;
-        const cue = cleanupEnabled ? settings.speechCorrectionWord : "";
+        const cue =
+          cleanupEnabled && latestRef.current.cleanupPrepared ? settings.speechCorrectionWord : "";
         const speechCustomWords = resolveSpeechVocabulary({
           personal: settings.speechCustomWords,
           project,
@@ -262,6 +263,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
           speechCustomWords,
           speechRemoveFillerWords: settings.speechRemoveFillerWords,
+          ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
         };
       },
       getMicrophoneId: () => latestRef.current.clientSettings.voiceMicrophone,
