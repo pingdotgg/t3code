@@ -3,7 +3,32 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
-export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+// Shells drop NUL, and Git for Windows sh drops CR, while reading script source.
+const printfEscaped = (value: string) =>
+  value.replaceAll("\\", "\\\\").replaceAll("\r", "\\0015").replaceAll("\0", "\\0000");
+
+interface RemoteDeviceOptions {
+  readonly nodeBootstrap?: boolean;
+}
+
+/** Send shell syntax over stdin so the SSH login shell never reinterprets it. */
+export const remoteDeviceCommand = (
+  script: string,
+  stdin?: string,
+  options?: RemoteDeviceOptions,
+) => ({
+  remoteCommandArgs: ["sh", "-s"],
+  stdin:
+    remoteDeviceEnvironment(options) +
+    (stdin === undefined
+      ? `${script} </dev/null\n`
+      : `printf %b ${quoteRemoteArg(printfEscaped(stdin))} | { ${script}; }\n`),
+});
+
+export const remoteDeviceEnvironment = (
+  options?: RemoteDeviceOptions,
+) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+${options?.nodeBootstrap ? `node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
@@ -38,6 +63,53 @@ const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
+// Windows cannot spawn npm.cmd directly. Keep npm paired with a compatible Node,
+// including lifecycle children, without putting paths or arguments in a shell.
+const runNpm = (args, options) => {
+  if (process.platform !== 'win32') return run('npm', args, options);
+  const env = { ...process.env, ...options?.env };
+  const pathKeys = Object.keys(env).filter(key => key.toLowerCase() === 'path');
+  const inheritedPath = pathKeys.map(key => env[key]).filter(Boolean).join(path.delimiter);
+  for (const key of pathKeys) delete env[key];
+  const directories = [path.dirname(process.execPath), ...inheritedPath.split(path.delimiter)];
+  const failures = [];
+  for (const directory of [...new Set(directories.filter(Boolean).map(dir => dir.replace(/^"|"$/g, '')))]) {
+    const npmRoot = path.join(directory, 'node_modules', 'npm');
+    const entry = path.join(npmRoot, 'bin', 'npm-cli.js');
+    if (!fs.existsSync(entry)) continue;
+    let npm, semver;
+    try {
+      npm = JSON.parse(fs.readFileSync(path.join(npmRoot, 'package.json'), 'utf8'));
+      if (typeof npm?.engines?.node !== 'string') throw Error('package.json has no engines.node');
+      semver = require(path.join(npmRoot, 'node_modules', 'semver'));
+    } catch (error) {
+      failures.push('npm at ' + entry + ': ' + error.message);
+      continue;
+    }
+    const sibling = path.join(directory, 'node.exe');
+    const nodes = [...new Set([...(fs.existsSync(sibling) ? [sibling] : []), process.execPath])];
+    for (const node of nodes) {
+      const version = node === process.execPath ? null : run(node, ['-p', 'process.versions.node']);
+      if (version && (version.error || version.status !== 0)) {
+        failures.push('Node at ' + node + ': ' + commandFailure(version));
+        continue;
+      }
+      const nodeVersion = version ? version.stdout.trim() : process.versions.node;
+      if (!semver.satisfies(nodeVersion, '>=22') || !semver.satisfies(nodeVersion, npm.engines.node)) {
+        failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node);
+        continue;
+      }
+      return run(node, [entry, ...args], { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } });
+    }
+  }
+  if (failures.length) throw Error('No compatible Node 22+ and npm pair: ' + failures.join('; '));
+  throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
+};
+const commandFailure = result => [
+  result.error?.message,
+  result.signal ? 'signal ' + result.signal : result.status !== null ? 'exit code ' + result.status : null,
+  (result.stderr?.trim() || result.stdout?.trim())?.slice(-2000),
+].filter(Boolean).join(': ');
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
 const toolVersions = (name, requiredVersion, entry, record) => {
@@ -119,8 +191,8 @@ async function install(name, version, entry) {
   try {
     if (complete()) return file;
     staging = fs.mkdtempSync(path.join(path.dirname(dir), '.install-'));
-    const result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-    if (result.status !== 0) throw Error('Installing ' + name + ': ' + (result.error?.message || result.stderr?.slice(-2000)));
+    const result = runNpm(['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
+    if (result.error || result.status !== 0) throw Error('Installing ' + name + ': ' + commandFailure(result));
     if (!fs.existsSync(path.join(staging, 'node_modules', name, entry))) throw Error('Missing installed entry for ' + name);
     fs.writeFileSync(path.join(staging, '.install-complete'), version);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -139,8 +211,9 @@ async function install(name, version, entry) {
     { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
   ];
   if (mode === 'probe') {
-    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
-    if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
+    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
+    const npm = runNpm(['--version']);
+    if (npm.error || npm.status !== 0) throw Error(npm.error?.code === 'ENOENT' ? 'npm is missing from the non-interactive SSH PATH: ' + npm.error.message : 'npm probe failed: ' + commandFailure(npm));
     console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
