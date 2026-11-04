@@ -60,6 +60,7 @@ import {
   type ThemeMode,
 } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
+import { useCloseAppModal } from "../sidebar/mainAppLocation";
 
 const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
@@ -635,7 +636,12 @@ export function ThemeLibrary({
   /** Rendered at the end of the "Appearance mode" title row. */
   restoreAction?: ReactNode;
 }) {
-  const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const startThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const closeAppModal = useCloseAppModal();
+  const openThemeEditor: typeof startThemeEditor = (session) => {
+    startThemeEditor(session);
+    void closeAppModal();
+  };
   const environmentThemes = useEnvironmentThemeDefinitions();
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
@@ -957,7 +963,7 @@ export function ThemeLibrary({
     <div className="space-y-7">
       <div className="space-y-2.5">
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
-          <h3 className="text-meta text-dim-foreground">
+          <h3 className="text-title text-dim-foreground">
             {searchableSetting("color-scheme").title}
           </h3>
           {/* The ghost button hangs by its 8px inline inset so its text ends on the card edge. */}
@@ -967,14 +973,14 @@ export function ThemeLibrary({
       </div>
       <div className="space-y-2.5">
         <div className="flex min-h-6.5 flex-wrap items-center justify-between gap-3">
-          <h3 className="text-meta text-dim-foreground">{searchableSetting("theme").title}</h3>
+          <h3 className="text-title text-dim-foreground">{searchableSetting("theme").title}</h3>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
+            <Button size="sm" variant="secondary" onClick={() => onImportOpenChange(true)}>
               <UploadIcon />
               Import
             </Button>
             <Button
-              size="xs"
+              size="sm"
               variant="secondary"
               onClick={() =>
                 openThemeEditor({
@@ -1055,7 +1061,8 @@ export function ThemeLibrary({
                 const checkboxId = `remove-theme-${customTheme.id}`;
                 return (
                   <label
-                    className="group relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 has-checked:border-ring has-checked:surface-selected hover:surface-ghost-hover"
+                    className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 data-checked:border-ring data-checked:surface-selected hover:surface-ghost-hover"
+                    data-checked={checked ? "" : undefined}
                     htmlFor={checkboxId}
                     key={customTheme.id}
                   >
@@ -1075,7 +1082,12 @@ export function ThemeLibrary({
                           );
                         }}
                       />
-                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
+                      <CheckIcon
+                        className={cn(
+                          "pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground sm:size-3",
+                          checked ? "opacity-100" : "opacity-0",
+                        )}
+                      />
                     </span>
                     <span className="flex min-h-12 items-center justify-center gap-1">
                       {card.previews.map((preview) => (

@@ -14,11 +14,13 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentCatalog } from "../connection/catalog";
 import { effectiveShortcutsForCommand, resolveShortcutCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
+import { isModalDialogOpen } from "../lib/modalDialog";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
   planNextReopen,
+  closedChatTarget,
   pullRequestsSearchForRestore,
   reopenClosedView,
 } from "../reopenClosedView";
@@ -37,6 +39,11 @@ import { environmentShell } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
+  isThreadlessSurfacesRef,
+  readThreadlessHome,
+  threadlessSurfacesProjectRef,
+} from "../threadlessSurfaces";
+import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveThreadRouteTarget,
@@ -47,7 +54,6 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
   "sidebar.toggle",
-  "rightPanel.toggle",
   "preview.focusUrl",
 ] as const;
 
@@ -96,10 +102,18 @@ export function ReopenClosedViewShortcut() {
           panel,
         };
       }
+      // A threadless surface's owner is its project, or nothing to lose.
+      const threadlessProject = threadlessSurfacesProjectRef(ref);
       return {
         environmentKnown: catalog.entries.has(ref.environmentId),
         catalogReady: catalog.isReady,
-        ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
+        ownerExists: isThreadlessSurfacesRef(ref)
+          ? threadlessProject === null || readProject(threadlessProject) !== null
+          : readThreadShell(ref) !== null ||
+            drafts.getDraftThreadByRef(ref) !== null ||
+            (entry.kind === "chat" &&
+              entry.draftId !== undefined &&
+              drafts.getDraftSession(entry.draftId) !== null),
         sideChatExists:
           entry.kind !== "panel-tab" ||
           entry.surface.kind !== "side-chat" ||
@@ -116,12 +130,31 @@ export function ReopenClosedViewShortcut() {
     const globalPullRequests = isGlobalPullRequests(ref);
     const thread = globalPullRequests ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
-    const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
-    if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
+    const ownerProject = owner
+      ? scopeProjectRef(ref.environmentId, owner.projectId)
+      : threadlessSurfacesProjectRef(ref);
+    const project = ownerProject ? readProject(ownerProject) : null;
+    // A project-less threadless ref's files are the server's home.
+    const workspaceAvailable = project !== null || readThreadlessHome(ref) !== null;
+    if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable }))) {
       useClosedViewStore.getState().defer(restore.id);
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (restore.kind === "chat") {
+      const target = closedChatTarget(restore);
+      if (target.kind === "draft")
+        await navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(target.draftId),
+        });
+      else
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(target.threadRef),
+        });
+      return;
+    }
     if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
@@ -131,7 +164,8 @@ export function ReopenClosedViewShortcut() {
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
-    } else {
+    } else if (!isThreadlessSurfacesRef(ref)) {
+      // A threadless surface has no route; its tab shows it.
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       if (draftId !== null)
         await navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) });
@@ -157,6 +191,7 @@ export function ReopenClosedViewShortcut() {
       if (
         event.defaultPrevented ||
         isCommandPaletteOpen() ||
+        isModalDialogOpen() ||
         useClosedViewStore.getState().entries.length === 0 ||
         (event.target instanceof HTMLElement && event.target.closest("[data-keybinding-capture]"))
       )
@@ -178,7 +213,8 @@ export function ReopenClosedViewShortcut() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "view.reopenClosed" && !isCommandPaletteOpen()) enqueueReopen();
+      if (action === "view.reopenClosed" && !isCommandPaletteOpen() && !isModalDialogOpen())
+        enqueueReopen();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);

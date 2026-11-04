@@ -16,14 +16,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
 
 const PROVIDER_UPDATE_PILL_STYLES = {
-  loading:
-    "bg-update/12 text-update-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-update/18",
-  success:
-    "bg-update/12 text-update-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-update/18",
-  warning:
-    "bg-warning/12 text-warning-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
-  error:
-    "bg-destructive/12 text-error-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
+  loading: "bg-update/12 text-update-foreground",
+  success: "bg-update/12 text-update-foreground",
+  warning: "bg-warning/12 text-warning-foreground",
+  error: "bg-destructive/12 text-error-foreground",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
@@ -140,7 +136,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-control text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
+      className={`relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-control text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -169,7 +165,6 @@ export function SidebarProviderUpdatePill() {
             <button
               type="button"
               aria-label={displayedView.description}
-              data-provider-update-main
               className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
               onClick={openProviderSettings}
             >

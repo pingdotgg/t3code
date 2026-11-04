@@ -24,7 +24,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
-import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { useOpenLayoutPage } from "../../layout/pageNavigation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
@@ -135,6 +135,7 @@ function SidebarUtilityItem({
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const openLayoutPage = useOpenLayoutPage();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
@@ -147,14 +148,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handlePullRequestsClick = () => {
     closeMobileSidebar();
-    void navigate({
-      to: "/pull-requests",
-      search: readPullRequestListPreferences(),
-    });
+    void openLayoutPage("pull-requests");
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
-    void navigate({ to: "/settings" });
+    void navigate({ to: "/settings", search: { pane: undefined } });
   };
 
   const handleUsageClick = () => {
