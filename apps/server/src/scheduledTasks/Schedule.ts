@@ -29,6 +29,27 @@ function isInsideWindow(
   return time >= startMs && time < endMs;
 }
 
+function nextWindowStart(
+  from: DateTime.DateTime,
+  start: { readonly hour: number; readonly minute: number },
+  end: { readonly hour: number; readonly minute: number },
+  weekdays: ReadonlyArray<number> | undefined,
+): DateTime.DateTime | null {
+  for (let offset = 0; offset <= 8; offset += 1) {
+    const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
+      hour: start.hour,
+      minute: start.minute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
+    // A missing local time, such as 02:30 on a spring-forward morning, shifts forward.
+    if (!isInsideWindow(candidate, weekdays, start, end)) continue;
+    return candidate;
+  }
+  return null;
+}
+
 function nextLocalTime(
   from: DateTime.DateTime,
   time: { readonly hour: number; readonly minute: number },
@@ -73,7 +94,7 @@ export function nextScheduledRunAt(
     const end = parseTimeOfDay(window.end);
     if (start === null || end === null) return null;
     if (isInsideWindow(candidate, window.weekdays, start, end)) return candidate;
-    return nextLocalTime(from, start, window.weekdays);
+    return nextWindowStart(from, start, end, window.weekdays);
   }
 
   const time = parseTimeOfDay(schedule.timeOfDay);
