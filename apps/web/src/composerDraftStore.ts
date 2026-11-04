@@ -4372,10 +4372,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Moved images still use these blob URLs at the destination; do not revoke them.
             const nextSource: ComposerThreadDraftState = {
               ...source,
-              prompt: ensureInlineContextReferences(
-                "",
-                source.terminalContexts.map(terminalContextReference),
-              ),
+              prompt: ensureInlineContextReferences("", [
+                ...source.terminalContexts.map(terminalContextReference),
+                ...source.reviewComments.map(reviewCommentContextReference),
+                ...source.threadContexts.map(threadContextReference),
+                ...source.environmentContexts.map(environmentContextReference),
+                ...source.jiraContexts.map(jiraContextReference),
+                ...source.figmaContexts.map(figmaContextReference),
+                ...source.previewAnnotations.map(previewAnnotationContextReference),
+              ]),
               images: retainedImages,
               files: retainedFiles,
               nonPersistedImageIds: source.nonPersistedImageIds.filter(

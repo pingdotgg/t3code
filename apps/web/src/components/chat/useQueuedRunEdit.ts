@@ -39,6 +39,7 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { buildMessageContext } from "../../lib/composerContextRecords";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
@@ -127,11 +128,16 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
-    const keptRecords = (editing.context?.records ?? []).filter(
-      (record) =>
-        !("attachmentId" in record) ||
-        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
-    );
+    const referencedIds = new Set(collectInlineContextIds(content.prompt));
+    const keptRecords = (editing.context?.records ?? []).filter((record) => {
+      if ("attachmentId" in record) {
+        return editing.existingAttachments.some(
+          (attachment) => attachment.id === record.attachmentId,
+        );
+      }
+      // Drop chip contexts the edit removed from the prompt (e.g. deleted Jira/Figma).
+      return referencedIds.has(record.contextId);
+    });
     const newRecords =
       buildMessageContext({
         terminalContexts: content.terminalContexts.filter(
