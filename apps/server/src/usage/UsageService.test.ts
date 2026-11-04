@@ -1203,6 +1203,50 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("returns other providers' usage while Muse home discovery is still pending", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const museStarted = yield* Deferred.make<void>();
+      using _create = vi
+        .spyOn(MuseSdk, "createMuseSdkHostEffect")
+        .mockImplementation(() =>
+          Deferred.succeed(museStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        );
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const read = yield* Effect.forkChild(service.readSummary(WINDOW));
+        yield* Deferred.await(museStarted);
+        return yield* Fiber.join(read);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-muse-pending",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("muse")]: {
+                  driver: ProviderDriverKind.make("muse"),
+                  enabled: false,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 5);
+      assert.deepStrictEqual(
+        summary.sources
+          .filter((source) => source.fingerprint.provider === "muse")
+          .map((source) => source.refreshing),
+        [true],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reports missing Pi history and skips malformed records without losing valid usage", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
