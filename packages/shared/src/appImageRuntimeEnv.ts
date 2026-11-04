@@ -1,10 +1,11 @@
 const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
-const APPIMAGE_PATH_LIKE_ENV_KEYS = [
-  "PATH",
-  "LD_LIBRARY_PATH",
-  "XDG_DATA_DIRS",
-  "GSETTINGS_SCHEMA_DIR",
-] as const;
+// ld.so also splits LD_LIBRARY_PATH on semicolons.
+const APPIMAGE_PATH_LIKE_ENV_SEPARATORS = {
+  PATH: /:/,
+  LD_LIBRARY_PATH: /[:;]/,
+  XDG_DATA_DIRS: /:/,
+  GSETTINGS_SCHEMA_DIR: /:/,
+} as const;
 
 function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
   return segment === appDir || segment.startsWith(`${appDir}/`);
@@ -21,13 +22,14 @@ export function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessE
 
   const appDir = env.APPDIR?.replace(/\/+$/, "");
   if (appDir) {
-    for (const key of APPIMAGE_PATH_LIKE_ENV_KEYS) {
+    for (const [key, separator] of Object.entries(APPIMAGE_PATH_LIKE_ENV_SEPARATORS)) {
       const value = scrubbed[key];
       if (value === undefined) continue;
+      // Empty entries mean the current directory, so they stay unless nothing else does.
       const kept = value
-        .split(":")
-        .filter((segment) => segment.length > 0 && !isPathSegmentUnderAppDir(segment, appDir));
-      if (kept.length > 0) {
+        .split(separator)
+        .filter((segment) => !isPathSegmentUnderAppDir(segment, appDir));
+      if (kept.some((segment) => segment.length > 0)) {
         scrubbed[key] = kept.join(":");
       } else {
         delete scrubbed[key];
