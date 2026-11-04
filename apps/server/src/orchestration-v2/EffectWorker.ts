@@ -556,22 +556,35 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "delegated-tasks.stop":
-            return threads
-              .stopDelegatedTasks({
+            return Effect.logInfo(
+              "Waiting for delegated-task Stop cleanup before later thread work",
+              {
+                effectId: effect.id,
                 threadId: effect.threadId,
-                commandId: effect.commandId,
-                reason: effect.request.reason,
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              },
+            ).pipe(
+              Effect.andThen(
+                threads.stopDelegatedTasks({
+                  threadId: effect.threadId,
+                  commandId: effect.commandId,
+                  reason: effect.request.reason,
+                }),
+              ),
+              Effect.tap(() =>
+                Effect.logInfo("Delegated-task Stop cleanup completed", {
+                  effectId: effect.id,
+                  threadId: effect.threadId,
+                }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
         }
       }),
     });

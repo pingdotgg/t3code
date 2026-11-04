@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderThread,
@@ -21,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -78,6 +80,72 @@ it("stamps authoritative provenance on commands that create threads or messages"
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
+);
+
+it.effect(
+  "stops a wide delegation tree within the effect deadline without abandoning descendants",
+  () =>
+    Effect.gen(function* () {
+      const parent = ThreadId.make("thread:wide-stop");
+      const children = Array.from({ length: 34 }, (_, index) =>
+        ThreadId.make(`thread:child:${index}`),
+      );
+      const grandchild = ThreadId.make("thread:grandchild");
+      const started = yield* Deferred.make<void>();
+      const releaseGrandchild = yield* Deferred.make<void>();
+      const grandchildStarted = yield* Deferred.make<void>();
+      const stopped: Array<ThreadId> = [];
+      const task = (childThreadId: ThreadId) => ({
+        id: NodeId.make(`task:${childThreadId}`),
+        origin: "app_owned",
+        childThreadId,
+      });
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: (threadId) =>
+              Effect.succeed({
+                subagents:
+                  threadId === parent
+                    ? [...children.map(task), task(children[0]!)]
+                    : threadId === children[0]
+                      ? [task(grandchild)]
+                      : [],
+              } as unknown as OrchestrationV2ThreadProjection),
+            dispatch: (command) =>
+              Effect.gen(function* () {
+                if (command.type !== "thread.stop") return yield* Effect.die("Unexpected command");
+                yield* Deferred.succeed(started, undefined);
+                if (command.threadId === grandchild) {
+                  yield* Deferred.succeed(grandchildStarted, undefined);
+                  yield* Deferred.await(releaseGrandchild);
+                } else {
+                  yield* Effect.sleep("2 seconds");
+                }
+                stopped.push(command.threadId);
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const walk = yield* service
+        .stopDelegatedTasks({ threadId: parent, commandId: CommandId.make("stop-wide") })
+        .pipe(Effect.timeout("30 seconds"), Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("28 seconds");
+      expect(stopped).toHaveLength(34);
+      expect(walk.pollUnsafe()).toBeUndefined();
+      yield* Deferred.await(grandchildStarted);
+      yield* Deferred.succeed(releaseGrandchild, undefined);
+      expect(Exit.isSuccess(yield* Fiber.await(walk))).toBe(true);
+      expect(new Set(stopped)).toEqual(new Set([...children, grandchild]));
+    }),
 );
 
 const layerDispatchChokepointTest =
