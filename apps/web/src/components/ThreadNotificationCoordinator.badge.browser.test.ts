@@ -66,6 +66,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   getClientSettings: (() => ({
     notificationMode: state.mode,
     inAppNotificationsEnabled: state.inApp,
+    notificationBadgeColor: "#e5484d",
   })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
@@ -106,6 +107,7 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
+  lastVisitedAt: null as string | null,
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
@@ -163,7 +165,7 @@ function toV2ThreadShell(input: typeof thread) {
     archivedAt: input.archivedAt ? DateTime.makeUnsafe(input.archivedAt) : null,
     settledOverride: null,
     settledAt: null,
-    lastVisitedAt: null,
+    lastVisitedAt: input.lastVisitedAt ? DateTime.makeUnsafe(input.lastVisitedAt) : null,
     deletedAt: null,
   };
 }
@@ -226,7 +228,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     await using app = setup();
     app.start();
     state.shells.set("one", shell({ [flag]: true }));
-    expect(state.badge).toHaveBeenLastCalledWith(1);
+    expect(state.badge).toHaveBeenLastCalledWith(1, "#e5484d");
     const notification = TestNotification.sent[0]!;
     notification.dispatchEvent(new Event("click"));
     expect(state.navigate).toHaveBeenCalledWith({
@@ -235,7 +237,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     });
     state.mode = "sound";
     app.changeSettings();
-    expect(state.badge).toHaveBeenLastCalledWith(0);
+    expect(state.badge).toHaveBeenLastCalledWith(0, "#e5484d");
     expect(notification.close).toHaveBeenCalled();
   },
 );
@@ -252,6 +254,35 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("restores unread counts, acknowledges only visited completions, and retains open requests", async () => {
+  await using app = setup();
+  const done = {
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+  };
+  state.shells.set("one", shell({ ...done, id: "a" }, { ...done, id: "b" }));
+  state.shells.set("two", shell({ hasPendingUserInput: true }));
+  app.start();
+  expect(state.badge).toHaveBeenLastCalledWith(3, "#e5484d");
+  expect(TestNotification.sent).toHaveLength(0);
+  focused = true;
+  window.dispatchEvent(new Event("focus"));
+  expect(state.badge).toHaveBeenLastCalledWith(3, "#e5484d");
+  state.shells.set(
+    "one",
+    shell({ ...done, id: "a", lastVisitedAt: "2026-09-13T07:00:02.000Z" }, { ...done, id: "b" }),
+  );
+  expect(state.badge).toHaveBeenLastCalledWith(2, "#e5484d");
+  state.shells.set(
+    "two",
+    shell({ hasPendingUserInput: true, lastVisitedAt: "2026-09-13T07:00:02.000Z" }),
+  );
+  expect(state.badge).toHaveBeenLastCalledWith(2, "#e5484d");
+  state.shells.set("two", shell());
+  expect(state.badge).toHaveBeenLastCalledWith(1, "#e5484d");
+  state.shells.set("one", shell({ ...done, id: "b", archivedAt: "2026-09-13T07:00:03.000Z" }));
+  expect(state.badge).toHaveBeenLastCalledWith(0, "#e5484d");
 });
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(

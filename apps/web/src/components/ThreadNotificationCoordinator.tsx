@@ -22,6 +22,7 @@ import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
+import { useUiStateStore } from "../uiStateStore";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -75,7 +76,6 @@ export function startThreadNotifications(
   ) => {
     pending.get(notification.tag)?.notification.close();
     pending.set(notification.tag, { environmentId, threadId, notification });
-    setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
   const openToasts = new Map<string, Array<ToastId>>();
@@ -103,12 +103,71 @@ export function startThreadNotifications(
       entry.notification.close();
       pending.delete(tag);
     }
-    if (count !== pending.size) setNotificationBadge(pending.size);
+    if (count !== pending.size) syncBadge();
   };
   const clearPending = () => {
     for (const { notification } of pending.values()) notification.close();
     pending.clear();
-    setNotificationBadge(0);
+  };
+
+  const needsBadge = ({ thread, status, settled }: NotificationState) => {
+    if (thread.archivedAt !== null) return false;
+    if (
+      thread.hasPendingApprovals ||
+      thread.hasPendingUserInput ||
+      thread.pendingSubagentRequest ||
+      (thread.pendingGuestMessageCount ?? 0) > 0 ||
+      status === "input" ||
+      status === "approval" ||
+      status === "request" ||
+      status === "limited"
+    )
+      return true;
+    const eventAt = settled
+      ? thread.latestRun?.completedAt
+      : status === "failed"
+        ? (thread.latestRun?.completedAt ?? thread.runtime?.updatedAt)
+        : null;
+    if (!eventAt) return false;
+    const visitedAt =
+      thread.lastVisitedAt === undefined
+        ? useUiStateStore.getState().threadLastVisitedAtById[
+            threadKey({ environmentId: thread.environmentId, threadId: thread.id })
+          ]
+        : thread.lastVisitedAt;
+    return (
+      Number.isFinite(Date.parse(eventAt)) &&
+      (!visitedAt || Date.parse(eventAt) > Date.parse(visitedAt))
+    );
+  };
+  let lastBadgeCount = -1;
+  let lastBadgeColor: string | undefined;
+  const syncBadge = () => {
+    const settings = getClientSettings();
+    const hidden = registry.get(environmentThreadShells.hiddenThreadKeysAtom);
+    const live = registry.get(environmentThreadShells.anyEnvironmentHidingAtom)
+      ? new Set(registry.get(environmentThreadShells.threadRefsAtom).map(threadKey))
+      : null;
+    const keys = new Set<string>();
+    if (hasDesktopNotifications(settings.notificationMode)) {
+      for (const [environmentId, entry] of watched) {
+        for (const state of entry.previous.values()) {
+          const key = threadKey({ environmentId, threadId: state.thread.id });
+          if (!hidden.has(key) && (live === null || live.has(key)) && needsBadge(state))
+            keys.add(key);
+        }
+      }
+    }
+    for (const [tag, entry] of pending) {
+      if (keys.has(threadKey(entry))) continue;
+      entry.notification.close();
+      pending.delete(tag);
+    }
+    if (lastBadgeCount !== keys.size || lastBadgeColor !== settings.notificationBadgeColor) {
+      lastBadgeCount = keys.size;
+      lastBadgeColor = settings.notificationBadgeColor;
+      setNotificationBadge(keys.size, settings.notificationBadgeColor);
+    }
   };
 
   const present = (
@@ -283,6 +342,11 @@ export function startThreadNotifications(
         quiet: state.raw.latestRunStopRequested === true,
       });
     }
+    if (
+      previous.size !== next.size ||
+      changed.some(([prior, state]) => !prior || needsBadge(prior) !== needsBadge(state))
+    )
+      syncBadge();
   };
 
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
@@ -344,6 +408,7 @@ export function startThreadNotifications(
     for (const environmentId of environmentIds) {
       if (!watched.has(environmentId)) watched.set(environmentId, watchEnvironment(environmentId));
     }
+    syncBadge();
   };
 
   const pruneRemovedEnvironments = () => {
@@ -354,7 +419,7 @@ export function startThreadNotifications(
       entry.notification.close();
       pending.delete(tag);
     }
-    if (count !== pending.size) setNotificationBadge(pending.size);
+    if (count !== pending.size) syncBadge();
   };
 
   // Listeners that only exist for some notification modes, rebuilt when the mode changes.
@@ -367,15 +432,6 @@ export function startThreadNotifications(
     stopModeListeners();
     clearPending();
     const stops: Array<() => void> = [];
-    if (hasDesktopNotifications(nextMode)) {
-      const unsubscribeBadgeClear = window.desktopBridge?.onNotificationBadgeClear(clearPending);
-      window.addEventListener("focus", clearPending);
-      stops.push(() => {
-        unsubscribeBadgeClear?.();
-        window.removeEventListener("focus", clearPending);
-        clearPending();
-      });
-    }
     if (hasNotificationSound(nextMode)) {
       document.addEventListener("pointerdown", unlockNotificationAudio);
       document.addEventListener("keydown", unlockNotificationAudio);
@@ -401,19 +457,29 @@ export function startThreadNotifications(
       syncEnvironments();
     },
   );
+  const onHidden = () => {
+    closeHiddenPending();
+    syncBadge();
+  };
   const unsubscribeHidden = [
-    registry.subscribe(environmentThreadShells.hiddenThreadKeysAtom, closeHiddenPending),
-    registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, closeHiddenPending),
-    registry.subscribe(environmentThreadShells.threadRefsAtom, closeHiddenPending),
+    registry.subscribe(environmentThreadShells.hiddenThreadKeysAtom, onHidden),
+    registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, onHidden),
+    registry.subscribe(environmentThreadShells.threadRefsAtom, onHidden),
   ];
+  const unsubscribeVisits = useUiStateStore.subscribe((state, previous) => {
+    if (state.threadLastVisitedAtById !== previous.threadLastVisitedAtById) syncBadge();
+  });
   onSettings();
 
   return () => {
     unsubscribeSettings();
+    unsubscribeVisits();
     unsubscribeEnvironmentIds();
     for (const unsubscribe of unsubscribeHidden) unsubscribe();
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();
+    clearPending();
+    setNotificationBadge(0);
   };
 }

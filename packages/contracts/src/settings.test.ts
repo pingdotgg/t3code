@@ -305,6 +305,11 @@ describe("resolveIdleCompaction", () => {
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
+    expect(decodeClientSettings({}).notificationBadgeColor).toBe("#e5484d");
+    expect(decodeClientSettings({ notificationBadgeColor: "#112233" }).notificationBadgeColor).toBe(
+      "#112233",
+    );
+    expect(() => decodeClientSettingsPatch({ notificationBadgeColor: "red" })).toThrow();
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");

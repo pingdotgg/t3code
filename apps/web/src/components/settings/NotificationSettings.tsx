@@ -4,10 +4,12 @@ import { useState } from "react";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
+  notificationBadgeForeground,
   NOTIFICATION_MODE_LABELS,
   unlockNotificationAudio,
 } from "../../threadNotifications";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Input } from "../ui/input";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -76,6 +78,35 @@ export function NotificationSettings() {
             ))}
           </SelectPopup>
         </Select>
+      }
+    />
+  );
+}
+
+export function NotificationBadgeColorSettings() {
+  const color = useScopedSettings((settings) => settings.notificationBadgeColor);
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("notification-badge-color")}
+      description="Color of the Windows taskbar and browser tab counter. Unread completions clear when viewed; unanswered requests stay counted. macOS and Linux control their own badge colors."
+      control={
+        <div className="flex items-center gap-3">
+          <span
+            className="flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+            style={{ backgroundColor: color, color: notificationBadgeForeground(color) }}
+            aria-hidden
+          >
+            1
+          </span>
+          <Input
+            nativeInput
+            type="color"
+            aria-label="Notification badge color"
+            value={color}
+            onChange={(event) => updateSettings({ notificationBadgeColor: event.target.value })}
+          />
+        </div>
       }
     />
   );

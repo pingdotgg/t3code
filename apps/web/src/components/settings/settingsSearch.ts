@@ -534,6 +534,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "notification-badge-color",
+    title: "Notification badge color",
+    to: "/settings/general",
+    searchTerms: ["taskbar badge counter color colour unread logo Windows"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",

@@ -38,7 +38,17 @@ export function threadNotificationTag(environmentId: EnvironmentId, threadId: Th
 let originalFavicon: HTMLLinkElement | undefined;
 let badgeFavicon: HTMLLinkElement | undefined;
 
-export function setNotificationBadge(count: number) {
+export function notificationBadgeForeground(color: string) {
+  const rgb = Number.parseInt(color.slice(1), 16);
+  const luminance = [rgb >> 16, (rgb >> 8) & 255, rgb & 255].reduce((sum, channel, index) => {
+    const value = channel / 255;
+    const linear = value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    return sum + linear * [0.2126, 0.7152, 0.0722][index]!;
+  }, 0);
+  return luminance > 0.179 ? "black" : "white";
+}
+
+export function setNotificationBadge(count: number, color = "#e5484d") {
   const bridge = window.desktopBridge;
   let image: string | null = null;
   if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {
@@ -46,11 +56,11 @@ export function setNotificationBadge(count: number) {
     canvas.width = canvas.height = 64;
     const context = canvas.getContext("2d");
     if (context) {
-      context.fillStyle = "#e5484d";
+      context.fillStyle = color;
       context.beginPath();
       context.arc(32, 32, 28, 0, Math.PI * 2);
       context.fill();
-      context.fillStyle = "white";
+      context.fillStyle = notificationBadgeForeground(color);
       context.font = `600 ${count > 9 ? 30 : 40}px "Segoe UI", sans-serif`;
       context.textAlign = "center";
       context.textBaseline = "middle";

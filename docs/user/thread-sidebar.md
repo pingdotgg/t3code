@@ -3,6 +3,14 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+On web and desktop, enable **Settings → General → Thread notifications** to show
+a counter for unread completions and outstanding requests. Viewing a completed
+thread in the active window removes that thread from the count. Questions and
+approvals remain counted until resolved; opening another thread or returning to
+the app does not dismiss them. The count is restored when you reopen the app.
+**Notification badge color** customizes the Windows taskbar and browser tab
+counter on this device. macOS and Linux use their system badge colors.
+
 ## Start a thread
 
 On web and desktop, **New thread** opens the project picker when you have multiple

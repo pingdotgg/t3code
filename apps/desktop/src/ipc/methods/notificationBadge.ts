@@ -22,7 +22,6 @@ function applyNotificationBadge(
   { count, image }: typeof NotificationBadge.Type,
 ): void {
   try {
-    if (Electron.BrowserWindow.getFocusedWindow()) count = 0;
     if (platform === "win32") {
       const overlay = count > 0 && image ? Electron.nativeImage.createFromDataURL(image) : null;
       for (const window of Electron.BrowserWindow.getAllWindows()) {
@@ -57,14 +56,9 @@ export const installNotificationBadge = Effect.fn("desktop.ipc.installNotificati
         channel: SET_NOTIFICATION_BADGE_CHANNEL,
         payload: NotificationBadge,
         result: Schema.Void,
-        handler: (badge) =>
-          Effect.sync(() => {
-            if (badge.count > 0 && Electron.BrowserWindow.getFocusedWindow()) clear();
-            else applyNotificationBadge(platform, badge);
-          }),
+        handler: (badge) => Effect.sync(() => applyNotificationBadge(platform, badge)),
       }),
     );
-    yield* app.on("browser-window-focus", clear);
     yield* app.on("before-quit", clear);
     yield* Effect.addFinalizer(() => Effect.sync(clear));
   },

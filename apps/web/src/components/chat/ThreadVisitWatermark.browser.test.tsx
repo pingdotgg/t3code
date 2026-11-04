@@ -54,6 +54,9 @@ function visitedThreadIds() {
 }
 
 it("records the visit of the next thread at once after switching threads", async () => {
+  let focused = true;
+  using _focus = vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+  using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   mocks.visitRun.mockReset();
   mocks.visitRun.mockResolvedValue(AsyncResult.success(undefined));
   setShell(threadA, "2026-01-02T00:00:00.000Z");
@@ -79,4 +82,16 @@ it("records the visit of the next thread at once after switching threads", async
   // Thread A's throttle must not hold back B's first watermark: leaving B
   // within the throttle window would otherwise keep it unread.
   expect(visitedThreadIds()).toEqual(["a", "b"]);
+  focused = false;
+  window.dispatchEvent(new Event("blur"));
+  await screen.rerender(
+    <AppAtomRegistryProvider>
+      <ThreadVisitWatermark threadRef={threadB} />
+    </AppAtomRegistryProvider>,
+  );
+  setShell(threadB, "2026-01-04T00:00:00.000Z");
+  expect(visitedThreadIds()).toEqual(["a", "b"]);
+  focused = true;
+  window.dispatchEvent(new Event("focus"));
+  await vi.waitFor(() => expect(visitedThreadIds()).toEqual(["a", "b", "b"]));
 });

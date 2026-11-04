@@ -351,6 +351,9 @@ export type ModelPreferences = {
 };
 
 export const ClientSettingsSchema = Schema.Struct({
+  notificationBadgeColor: Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("#e5484d")),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1761,6 +1764,9 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  notificationBadgeColor: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
+  ),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
