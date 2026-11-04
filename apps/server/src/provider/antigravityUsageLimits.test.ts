@@ -165,11 +165,16 @@ describe("Antigravity subscription limits", () => {
           userId: "google-account" as string | undefined,
         };
         const { probe, requests, writeToken } = yield* fixture(options);
-        yield* probe;
-        yield* TestClock.adjust("55 minutes");
+        const first = yield* probe;
+        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+        expect(quotaCalls()).toBe(2);
+        yield* TestClock.adjust("4 minutes");
+        const cached = yield* probe;
+        expect(cached.checkedAt).toBe(first.checkedAt);
+        expect(quotaCalls()).toBe(2);
+        yield* TestClock.adjust("51 minutes");
         options.summaryStatus = 429;
         yield* probe;
-        const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
         expect(quotaCalls()).toBe(4);
         yield* TestClock.adjust("5 minutes");
         if (!userInfoAvailable) options.userId = undefined;
