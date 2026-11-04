@@ -46,7 +46,10 @@ describe("StyledDiffCodeView", () => {
     );
     const renderedItem = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element;
     await vi.waitFor(() => expect(renderedItem()).toBeTruthy());
-    const rows = renderedItem()!.shadowRoot?.querySelectorAll("[data-line]") ?? [];
+    await vi.waitFor(() =>
+      expect(renderedItem()?.shadowRoot?.querySelectorAll("[data-line]").length).toBeGreaterThan(0),
+    );
+    const rows = renderedItem()!.shadowRoot!.querySelectorAll("[data-line]");
     expect(rows.length).toBeLessThan(LINE_COUNT);
 
     renderedItem()!.dispatchEvent(
