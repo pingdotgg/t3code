@@ -7,7 +7,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { pickSavedUsage, type SavedUsage, trimSavedUsage, saveUsage } from "./savedUsage";
+import {
+  loadSavedUsage,
+  pickSavedUsage,
+  type SavedUsage,
+  trimSavedUsage,
+  saveUsage,
+} from "./savedUsage";
 
 const bucket = (day: string, hourStart?: string): UsageBucket => ({
   day: UsageDay.make(day),
@@ -212,6 +218,42 @@ describe("saveUsage", () => {
       expect(open).toHaveBeenCalledTimes(2);
     } finally {
       warning.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps reads of one window under different model filters side by side", async () => {
+    const stored = new Map<string, unknown>();
+    const succeed = (result: unknown, then?: () => void) => {
+      const request = Object.assign(new EventTarget(), { result });
+      queueMicrotask(() => {
+        request.dispatchEvent(new Event("success"));
+        if (then) queueMicrotask(then);
+      });
+      return request;
+    };
+    const database = {
+      transaction: () => {
+        const transaction: EventTarget & { objectStore?: () => unknown } = new EventTarget();
+        const complete = () => transaction.dispatchEvent(new Event("complete"));
+        transaction.objectStore = () => ({
+          get: (key: string) => succeed(stored.get(key), complete),
+          put: (value: unknown, key: string) => stored.set(key, structuredClone(value)),
+        });
+        return transaction;
+      },
+    };
+    vi.stubGlobal("indexedDB", { open: () => succeed(database) });
+    try {
+      const filtered = { ...month.input, modelFilter: { exclude: [{ model: "claude-opus-5-5" }] } };
+      expect(await saveUsage("env", month)).toBe(true);
+      expect(await saveUsage("env", { ...month, input: filtered })).toBe(true);
+      const saved = await loadSavedUsage("env");
+      expect(saved.map((entry) => entry.input.modelFilter ?? null)).toEqual([
+        filtered.modelFilter,
+        null,
+      ]);
+    } finally {
       vi.unstubAllGlobals();
     }
   });

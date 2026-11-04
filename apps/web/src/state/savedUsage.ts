@@ -72,6 +72,7 @@ const windowKey = (input: UsageSummaryInput) =>
     input.resolution ?? "day",
     input.sinceTime ?? null,
     input.untilTime ?? null,
+    input.modelFilter ?? null,
   ]);
 
 function decodeSaved(stored: unknown): readonly SavedUsage[] {
