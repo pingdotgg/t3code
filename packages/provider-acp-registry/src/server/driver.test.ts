@@ -12,6 +12,7 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  probeAcpRegistryWorkspaceForCwd,
 } from "./driver.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -429,6 +430,138 @@ describe("acpRegistrySnapshotReadiness", () => {
         auth: { status: "unknown" },
         message: "Checking ACP authentication, models, and commands in the background...",
       });
+    }),
+  );
+});
+
+describe("probeAcpRegistryWorkspaceForCwd", () => {
+  const probedMachineSnapshot = buildCheckedAcpRegistrySnapshot({
+    ...identity,
+    settings: decodeSettings({ agentId: "test-agent" }),
+    checkedAt: "2026-08-13T10:00:00.000Z",
+    inspection: {
+      status: "ready",
+      agentId: "test-agent",
+      version: "1.0.0",
+      distribution: "npx",
+    },
+    probe: {
+      probe: {
+        instanceId: identity.instanceId,
+        ready: true as const,
+        icon: null,
+        authMethods: [],
+        models: [],
+        currentModelId: null,
+        configOptions: [],
+        sessionManagement: noSessionManagement,
+      },
+      slashCommands: [{ name: "review" }],
+      skills: [],
+    },
+  });
+  const workspaceInput = {
+    instanceId: identity.instanceId,
+    settings: decodeSettings({ agentId: "test-agent" }),
+    cwd: "/project",
+    environment: { PATH: "/provider/bin" },
+  };
+
+  it.effect("probes with the requested cwd and overlays the advertised commands", () =>
+    Effect.gen(function* () {
+      const cwds: Array<string> = [];
+      const workspace = yield* probeAcpRegistryWorkspaceForCwd(
+        { ...workspaceInput, machineSnapshot: probedMachineSnapshot },
+        (input) =>
+          Effect.sync(() => {
+            cwds.push(input.cwd);
+            return {
+              probe: {
+                instanceId: identity.instanceId,
+                ready: true as const,
+                icon: null,
+                authMethods: [],
+                models: [],
+                currentModelId: null,
+                configOptions: [],
+                sessionManagement: noSessionManagement,
+              },
+              slashCommands: [{ name: "grill-me" }, { name: "grilling" }],
+              skills: [{ name: "grill", path: "acp://skill/grill", scope: "agent", enabled: true }],
+            };
+          }),
+      );
+
+      expect(cwds).toEqual(["/project"]);
+      expect(workspace.slashCommands).toEqual([{ name: "grill-me" }, { name: "grilling" }]);
+      expect(workspace.skills).toEqual([
+        { name: "grill", path: "acp://skill/grill", scope: "agent", enabled: true },
+      ]);
+      expect(workspace.slashCommandsPending).toBe(false);
+    }),
+  );
+
+  it.effect("keeps the machine commands pending when the workspace probe fails", () =>
+    Effect.gen(function* () {
+      const workspace = yield* probeAcpRegistryWorkspaceForCwd(
+        { ...workspaceInput, machineSnapshot: probedMachineSnapshot },
+        () =>
+          Effect.fail(
+            new AcpRegistryOperationError({
+              reason: "probe_failed",
+              message: "The ACP agent could not create a test session.",
+            }),
+          ),
+      );
+
+      expect(workspace.slashCommands).toEqual([{ name: "review" }]);
+      expect(workspace.skills).toEqual([]);
+      expect(workspace.slashCommandsPending).toBe(true);
+    }),
+  );
+
+  it.effect("treats an empty workspace advertisement as not pending", () =>
+    Effect.gen(function* () {
+      const workspace = yield* probeAcpRegistryWorkspaceForCwd(
+        { ...workspaceInput, machineSnapshot: probedMachineSnapshot },
+        () =>
+          Effect.succeed({
+            probe: {
+              instanceId: identity.instanceId,
+              ready: true as const,
+              icon: null,
+              authMethods: [],
+              models: [],
+              currentModelId: null,
+              configOptions: [],
+              sessionManagement: noSessionManagement,
+            },
+            slashCommands: [],
+            skills: [],
+          }),
+      );
+
+      expect(workspace.slashCommands).toEqual([]);
+      expect(workspace.slashCommandsPending).toBeUndefined();
+    }),
+  );
+
+  it.effect("skips the probe when the machine snapshot is not installed", () =>
+    Effect.gen(function* () {
+      const notInstalled = buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "test-agent" }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: { status: "missing_runner", version: null, distribution: "local" },
+      });
+      const workspace = yield* probeAcpRegistryWorkspaceForCwd(
+        { ...workspaceInput, machineSnapshot: notInstalled },
+        () => Effect.die(new Error("unexpected workspace probe")),
+      );
+
+      expect(workspace.installed).toBe(false);
+      expect(workspace.slashCommands).toEqual(notInstalled.slashCommands);
+      expect(workspace.slashCommandsPending).toBe(false);
     }),
   );
 });
