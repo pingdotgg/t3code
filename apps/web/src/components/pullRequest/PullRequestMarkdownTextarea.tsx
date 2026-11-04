@@ -38,6 +38,15 @@ type Completion =
       readonly token: string;
       readonly candidate: PullRequestReferenceCandidate;
     };
+// About a full list of suggestions. The popup fits itself to the space it opens into, so it never
+// flips once results grow it; the side is picked up front from the room a full list needs.
+const SUGGESTION_LIST_HEIGHT = 320;
+
+function suggestionSide(target: HTMLTextAreaElement): "top" | "bottom" {
+  const rect = target.getBoundingClientRect();
+  const below = window.innerHeight - rect.bottom;
+  return below < SUGGESTION_LIST_HEIGHT && rect.top > below ? "top" : "bottom";
+}
 
 const COMPLETION_SEARCH_DEBOUNCE_MS = 200;
 const COMPLETION_SUGGESTION_LIMIT = 8;
@@ -172,6 +181,7 @@ export function PullRequestMarkdownTextarea({
   const listId = useId();
   const [element, setElement] = useState<HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState<number | null>(null);
+  const [side, setSide] = useState<"top" | "bottom">("bottom");
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [highlight, setHighlight] = useState({ query: "", index: 0 });
 
@@ -193,6 +203,7 @@ export function PullRequestMarkdownTextarea({
   const optionId = (token: string) => `${listId}-${token}`;
 
   const syncCaret = (target: HTMLTextAreaElement) => {
+    setSide(suggestionSide(target));
     setCaret(target.selectionStart === target.selectionEnd ? target.selectionStart : null);
   };
 
@@ -281,7 +292,7 @@ export function PullRequestMarkdownTextarea({
       >
         <PopoverPopup
           anchor={element}
-          side="bottom"
+          side={side}
           align="start"
           padding="compact"
           width={trigger?.kind === "reference" ? "md" : "sm"}
