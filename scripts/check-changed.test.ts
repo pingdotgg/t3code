@@ -312,7 +312,13 @@ function launcherFixture() {
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
-    JSON.stringify({ type: "module", scripts: { "knip:check": "knip --include files" } }),
+    JSON.stringify({
+      type: "module",
+      scripts: {
+        "knip:check:files": "knip --include files",
+        "knip:check:exports": "knip --exports",
+      },
+    }),
   );
   write("packages/example/package.json", JSON.stringify({ name: "example" }));
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
