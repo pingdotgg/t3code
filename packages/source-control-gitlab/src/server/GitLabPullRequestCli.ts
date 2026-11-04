@@ -1021,8 +1021,9 @@ export const make = Effect.gen(function* () {
           remove_source_branch: true,
         }),
       ).pipe(
-        // Leaving the branch behind would make every retry fail on creating it again.
-        Effect.tapError(() =>
+        // Leaving the branch behind would make every retry fail on creating it again. Runs on
+        // interruption too, which a cancelled request or a dropped socket causes.
+        Effect.onError(() =>
           api({
             cwd: input.cwd,
             host: input.host,

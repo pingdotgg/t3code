@@ -522,20 +522,23 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect.each([
-    ["the revert conflicts", "/revert"],
-    ["opening the merge request fails", "/merge_requests"],
-  ] as const)("deletes the revert branch when %s", ([, failingPath]) =>
+    ["the revert conflicts", "/revert", "Failure"],
+    ["opening the merge request fails", "/merge_requests", "Failure"],
+    ["the request is interrupted", "/revert", "Interrupt"],
+  ] as const)("deletes the revert branch when %s", ([, failingPath, outcome]) =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(({ args, cwd }) =>
         args[1]?.endsWith(failingPath) && args.includes("POST")
-          ? Effect.fail(
-              new GitLabCli.GitLabCliCommandError({
-                operation: "execute",
-                command: "glab",
-                cwd,
-                cause: new Error("GitLab rejected the write"),
-              }),
-            )
+          ? outcome === "Interrupt"
+            ? Effect.interrupt
+            : Effect.fail(
+                new GitLabCli.GitLabCliCommandError({
+                  operation: "execute",
+                  command: "glab",
+                  cwd,
+                  cause: new Error("GitLab rejected the write"),
+                }),
+              )
           : Effect.succeed(
               output(
                 mergeRequestJson({
@@ -548,7 +551,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const result = yield* Effect.result(
+      const exit = yield* Effect.exit(
         cli.runMergeRequestAction({
           cwd: "/w",
           repository: "acme/web",
@@ -557,7 +560,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         }),
       );
 
-      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitLabCliCommandError" } });
+      expect(exit._tag).toBe("Failure");
       expect(mockedExecute.mock.calls.at(-1)?.[0].args.slice(1, 4)).toEqual([
         "projects/acme%2Fweb/repository/branches/revert-abc12345",
         "--method",
