@@ -1,10 +1,10 @@
 # Maintainer: maria-rcks <maria at kuuro dot net>
 
 pkgname=t3code-nightly-bin
-pkgver=0.0.34_nightly.20260814.1095
+pkgver=0.1.8_nightly.20261104.4179
 pkgrel=1
 pkgdesc='Nightly desktop control surface for local coding agents'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/pingdotgg/t3code'
 license=('MIT')
 depends=(
@@ -44,15 +44,15 @@ conflicts=('t3code-nightly' 't3code')
 options=('!debug' '!strip')
 
 _upstream_version="${pkgver/_nightly./-nightly.}"
-_appimage="T3-Code-${_upstream_version}-x86_64.AppImage"
-source=(
-  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_appimage"
-  "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${_upstream_version}/LICENSE"
-)
-sha256sums=(
-  'c4dea5bba9ed0b51b2f60f2d4a4867e61d62b57c50ea66f2792a73112e054566' # AppImage
-  '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
-)
+_appimage="T3-Code-${_upstream_version}-${CARCH/aarch64/arm64}.AppImage"
+_asset_x86_64="T3-Code-0.1.8-nightly.20261104.4179-x86_64.AppImage"
+_asset_aarch64="T3-Code-0.1.8-nightly.20261104.4179-arm64.AppImage"
+source=("${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${_upstream_version}/LICENSE")
+sha256sums=('935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43') # upstream license
+source_x86_64=("T3-Code-${_upstream_version}-x86_64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_asset_x86_64")
+sha256sums_x86_64=('6d145972076801efb21dc9e2a3e0fb2ac55d786bc2df2b0ebbe48ed1c3323046')
+source_aarch64=("T3-Code-${_upstream_version}-arm64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_asset_aarch64")
+sha256sums_aarch64=('b80f1cd55a391caa4da94b94209750ce68586d474f8cc5ee983a2bf6ae6e8be3')
 
 prepare() {
   chmod +x "$srcdir/$_appimage"
