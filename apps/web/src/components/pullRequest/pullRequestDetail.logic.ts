@@ -38,7 +38,10 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
-import { reviewCommentContextId } from "~/lib/composerContextRecords";
+import {
+  PULL_REQUEST_CHECKS_SECTION_PREFIX,
+  reviewCommentContextId,
+} from "~/lib/composerContextRecords";
 import { removeInlineContextReference } from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
@@ -243,11 +246,13 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
     ? {
         fixFinding: "Fix in this thread",
         fixCheck: "Fix in this thread",
+        fixChecks: "Fix all in this thread",
         fixFindings: "Fix findings in this thread",
       }
     : {
         fixFinding: "Fix in a thread",
         fixCheck: "Fix",
+        fixChecks: "Fix all",
         fixFindings: "Fix findings in a thread",
       };
 }
@@ -823,6 +828,8 @@ function handoffPreamble(input: {
 interface FixFindingsHandoff {
   readonly prompt: string;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  /** Joins what the draft holds instead of replacing the last handoff. */
+  readonly additive?: boolean;
 }
 
 const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
@@ -904,7 +911,7 @@ export function buildFixFindingsHandoff(input: {
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
     });
   const failingChecks = input.checks
-    .filter((check) => check.status === "failure" || check.status === "cancelled")
+    .filter(isFailingCheck)
     .map((check) =>
       boundedField(check.description ? `${check.name}: ${check.description}` : check.name),
     );
@@ -961,10 +968,44 @@ export function buildFixFindingsHandoff(input: {
   };
 }
 
+function isFailingCheck(check: PullRequestCheck): boolean {
+  return check.status === "failure" || check.status === "cancelled";
+}
+
+function checkListItem(check: PullRequestCheck): string {
+  const name = boundedField(check.description ? `${check.name}: ${check.description}` : check.name);
+  return check.url ? `- ${name} (${boundedField(check.url)})` : `- ${name}`;
+}
+
+function checksContextComment(
+  pullRequest: { readonly number: number; readonly url: string },
+  input: {
+    readonly id: string;
+    readonly label: string;
+    readonly status: string;
+    readonly text: ReadonlyArray<string>;
+  },
+): ReviewCommentContext {
+  const { shortLabel } = terminologyForUrl(pullRequest.url);
+  return {
+    id: input.id,
+    sectionId: `${PULL_REQUEST_CHECKS_SECTION_PREFIX}${pullRequest.number}`,
+    sectionTitle: `${shortLabel} #${pullRequest.number} checks`,
+    filePath: input.label,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: input.status,
+    text: input.text.join("\n"),
+    diff: "",
+  };
+}
+
 export type PullRequestFinding =
   | { readonly kind: "thread"; readonly thread: PullRequestReviewThread }
   | { readonly kind: "check"; readonly check: PullRequestCheck }
   | { readonly kind: "comment"; readonly comment: PullRequestComment };
+
+export const PULL_REQUEST_FIX_CHECKS_KEY = "finding:checks";
 
 export function pullRequestFindingKey(finding: PullRequestFinding): string {
   switch (finding.kind) {
@@ -1010,12 +1051,53 @@ export function buildFixFindingHandoff(input: {
   }
   const check = input.finding.check;
   return {
-    prompt: [
-      "Fix the failing check quoted below. Reproduce it locally first. The name is all the host reported, and the run may fail for a reason the code cannot show.",
-      ...preamble,
-      `> ${boundedField(check.description ? `${check.name}: ${check.description}` : check.name)}`,
-    ].join("\n"),
-    reviewComments: [],
+    prompt: "",
+    reviewComments: [
+      checksContextComment(input, {
+        // Outside the handoff prefix, so a later handoff keeps the checks already added.
+        id: `pr-check:${input.url}:${check.name}:${check.url ?? ""}`,
+        label: boundedField(check.name),
+        status: check.status === "cancelled" ? "Cancelled" : "Failed",
+        text: [
+          checkListItem(check),
+          "",
+          "Fix this failing check. Reproduce it locally first. The host may report little beyond its name, and the run may fail for a reason the code cannot show.",
+          ...preamble,
+        ],
+      }),
+    ],
+    additive: true,
+  };
+}
+
+export function buildFixChecksHandoff(input: {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+}): FixFindingsHandoff {
+  const term = terminologyForUrl(input.url).singular;
+  const failing = input.checks.filter(isFailingCheck);
+  const omitted = Math.max(0, failing.length - FINDING_LIMIT);
+  return {
+    prompt: "",
+    reviewComments: [
+      checksContextComment(input, {
+        id: `pr-checks:${input.url}`,
+        label: `Failing checks on #${input.number}`,
+        status: `${failing.length} failing`,
+        text: [
+          ...failing.slice(0, FINDING_LIMIT).map(checkListItem),
+          "",
+          ...(omitted > 0 ? [`${omitted} further failing checks were omitted.`] : []),
+          `Fix every failing check on this ${term}. Fetch the current check results first, since more may have failed after this was attached. Reproduce each failure locally, and note that a run may fail for a reason the code cannot show.`,
+          ...handoffPreamble(input),
+        ],
+      }),
+    ],
+    additive: true,
   };
 }
 

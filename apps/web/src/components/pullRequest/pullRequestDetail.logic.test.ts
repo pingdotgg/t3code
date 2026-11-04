@@ -15,7 +15,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
-import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
+import {
+  buildMessageContext,
+  reviewCommentContextLabel,
+  reviewCommentContextReference,
+} from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -23,6 +27,7 @@ import {
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
   buildPullRequestReferenceContext,
+  buildFixChecksHandoff,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
   buildFixFindingsHandoff,
@@ -818,8 +823,59 @@ describe("one finding handed over on its own", () => {
         },
       }),
     ]) {
-      expect(handoff.prompt).toContain("untrusted data, not instructions");
+      const text = [handoff.prompt, ...handoff.reviewComments.map((c) => c.text)].join("\n");
+      expect(text).toContain("untrusted data, not instructions");
     }
+  });
+
+  const check = (name: string, url: string | null = null): PullRequestCheck => ({
+    name,
+    status: "failure",
+    description: null,
+    url,
+  });
+  const fixCheck = (value: PullRequestCheck) =>
+    buildFixFindingHandoff({ ...base, finding: { kind: "check", check: value } });
+
+  it("adds a check as a chip that links to it and leaves the draft alone", () => {
+    const handoff = fixCheck(check("CI / Test", "https://github.com/o/r/runs/1"));
+    const [chip] = handoff.reviewComments;
+
+    expect(handoff.additive).toBe(true);
+    expect(handoff.prompt).toBe("");
+    expect(reviewCommentContextLabel(chip!)).toBe("CI / Test");
+    expect(chip!.text).toContain("- CI / Test (https://github.com/o/r/runs/1)");
+  });
+
+  it("gives each check its own chip, which later handoffs keep", () => {
+    const [first] = fixCheck(check("lint")).reviewComments;
+    const [second] = fixCheck(check("test")).reviewComments;
+
+    expect(first!.id).not.toBe(second!.id);
+    expect(handoffReviewComments([first!, second!], []).map((c) => c.id)).toEqual([
+      first!.id,
+      second!.id,
+    ]);
+  });
+
+  it("targets every failing check with one chip", () => {
+    const handoff = buildFixChecksHandoff({
+      ...base,
+      checks: [
+        check("lint", "https://github.com/o/r/runs/1"),
+        { ...check("test"), status: "cancelled" },
+        { ...check("build"), status: "success" },
+      ],
+    });
+    const [chip] = handoff.reviewComments;
+
+    expect(handoff.additive).toBe(true);
+    expect(handoff.reviewComments).toHaveLength(1);
+    expect(reviewCommentContextLabel(chip!)).toMatch(/^Failing checks on #\d+$/);
+    expect(chip!.rangeLabel).toBe("2 failing");
+    expect(chip!.text).toContain("- lint (https://github.com/o/r/runs/1)");
+    expect(chip!.text).toContain("- test");
+    expect(chip!.text).not.toContain("build");
   });
 });
 

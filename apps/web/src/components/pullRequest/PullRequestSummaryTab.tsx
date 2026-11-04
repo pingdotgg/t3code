@@ -64,6 +64,8 @@ import {
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
+  PULL_REQUEST_FIX_CHECKS_KEY,
+  classifyPullRequestChecks,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -388,7 +390,9 @@ export function PullRequestSummaryTab({
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
+  fixChecksLabel = "Fix all",
   onFixFinding,
+  onFixChecks,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -403,7 +407,9 @@ export function PullRequestSummaryTab({
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   fixCheckLabel?: string;
+  fixChecksLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  onFixChecks?: () => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -791,7 +797,25 @@ export function PullRequestSummaryTab({
         </div>
       </Section>
 
-      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+      <Section
+        key={`checks:${detail.url}`}
+        title="Checks"
+        defaultOpen={false}
+        actions={
+          onFixChecks && !checksStale && classifyPullRequestChecks(detail.checks) === "failing" ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              disabled={pendingFinding !== null && pendingFinding !== undefined}
+              onClick={onFixChecks}
+            >
+              <HammerIcon className="size-3" />
+              {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : fixChecksLabel}
+            </Button>
+          ) : undefined
+        }
+      >
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>

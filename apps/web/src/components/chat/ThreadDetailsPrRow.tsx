@@ -33,7 +33,7 @@ import {
 } from "~/state/query";
 
 import {
-  buildFixFindingsHandoff,
+  buildFixChecksHandoff,
   buildResolveConflictsPrompt,
   classifyPullRequestChecks,
   describePullRequestChecks,
@@ -206,16 +206,13 @@ export function ThreadDetailsPrRow({
     if (detail === null) return;
     void startHandoff(
       "findings",
-      buildFixFindingsHandoff({
+      buildFixChecksHandoff({
         number: detail.number,
         title: detail.title,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
-        reviewThreads: [],
-        comments: [],
         checks: detail.checks,
-        commentsTruncated: false,
       }),
     );
   };

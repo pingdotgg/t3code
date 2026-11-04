@@ -239,6 +239,7 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
 export interface PullRequestThreadTask {
   prompt: string;
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
+  additive?: boolean;
 }
 
 export type PullRequestHandoffDetail = Pick<
@@ -283,6 +284,12 @@ export function usePullRequestHandoffs({
     if (session === null) return null;
     const store = useComposerDraftStore.getState();
     if (task === null) return session;
+    if (task.additive === true) {
+      for (const comment of task.reviewComments ?? []) {
+        store.addReviewComment(session.draftId, comment);
+      }
+      return session;
+    }
     const draft = store.getComposerDraft(session.draftId);
     const existingComments = draft?.reviewComments ?? [];
     const prompt = handoffPrompt(
