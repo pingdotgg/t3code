@@ -84,11 +84,11 @@ Reopen(s, c) ==
                !.finishes = [x \in Chats |-> IF x \in up /\ s.done[x] /= "open" THEN 0 ELSE @[x]],
                !.landed = [x \in Chats |-> IF x \in up /\ s.done[x] /= "open" THEN 0 ELSE @[x]]]
 
-\* dispatchMessage: starts a run, or queues it behind the active or queued ones. A user's
-\* client message releases a held queue (heldRunsToRelease); any other joins the hold.
+\* dispatchMessage: starts a run, or queues it behind the active one (queueBehindRun). A
+\* user's client message releases a held queue (heldRunsToRelease); any other joins the hold.
 StartOrQueue(s, c, release) ==
-  IF s.turn[c] = "idle" /\ s.queued[c] = 0
-    THEN [s EXCEPT !.turn[c] = "running"]
+  IF s.turn[c] = "idle"
+    THEN [s EXCEPT !.turn[c] = "running", !.held[c] = @ /\ ~release]
     ELSE [s EXCEPT !.queued[c] = @ + 1, !.held[c] = @ /\ ~release]
 
 \* message.dispatch from the user into side chat c.
@@ -150,7 +150,7 @@ Spec == Init /\ [][Next]_vars /\ \A x \in Chats : WF_vars(RunEnds(x)) /\ WF_vars
         /\ \A r \in 1..MaxRequests, c \in Chats : WF_vars(OutcomeComplete(<<c, r>>))
 
 ---------------------------------------------------------------------------------
-\* THE PROPERTY: a side chat is finished exactly once each time it is open, gets the outcome
+\* THE PROPERTY: a side chat is finished at most once each time it is open, gets the outcome
 \* of that finish, and once finished has nothing queued or running except a turn being stopped.
 
 FinishedOnce == \A c \in Chats : finishes[c] <= 1
