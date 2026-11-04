@@ -1,0 +1,33 @@
+# windows-tests.yml run on blacksmith-8vcpu-windows-2025, commit e6b2278d, file src/process/externalLauncher.windows-smoke.test.ts
+# https://github.com/pingdotgg/t3code/commit/e6b2278d66228a10cc05a133ca0a0ea2cb57348b/checks?check_suite_id=113458962153
+2026-11-04T16:47:16.3277008Z env:
+2026-11-04T16:47:16.3277147Z   BLACKSMITH_RUNNER_MESSAGE_WAIT_MS: 230
+2026-11-04T16:47:16.3277335Z   BLACKSMITH_RUNNER_ACQUIRE_JOB_MS: 539
+2026-11-04T16:47:16.3277494Z   GITHUB_REPO_NAME: pingdotgg/t3code
+2026-11-04T16:47:16.3277648Z ##[endgroup]
+2026-11-04T16:47:16.5351145Z note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+2026-11-04T16:47:16.7545032Z 
+2026-11-04T16:47:16.7546684Z  RUN  v5.0.5 C:/runner/_work/t3code/t3code/apps/server
+2026-11-04T16:47:16.7546937Z 
+2026-11-04T16:47:17.8131568Z stdout | src/process/externalLauncher.windows-smoke.test.ts > real Windows PowerShell runs the plain -Command browser script intact (folder verb: none)
+2026-11-04T16:47:17.8132357Z [30954] spawned args: [["-NoProfile","-NonInteractive","-Command","$ProgressPreference = 'SilentlyContinue'; Start 'http://localhost:3773/pair?a=1&b=%20x;c=`d#token=a''b$c\"q'"]]
+2026-11-04T16:47:17.8132915Z [30954] PowerShell recorded: Start-Process|http://localhost:3773/pair?a=1&b=%20x;c=`d#token=a'b$c"q|
+2026-11-04T16:47:17.8133198Z 
+2026-11-04T16:47:18.0205726Z stdout | src/process/externalLauncher.windows-smoke.test.ts > real Windows PowerShell runs the plain -Command reveal script intact (folder verb: none)
+2026-11-04T16:47:18.0208435Z [30954] spawned args: [["-NoProfile","-NonInteractive","-Command","$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉\\clip [1].mp4' + '\"') }"]]
+2026-11-04T16:47:18.0210314Z [30954] PowerShell recorded: Start-Process|explorer.exe|/select,"C:\T3 smoke\author's $media & 50% ;x`tick é漢字🎉\clip [1].mp4"
+2026-11-04T16:47:18.0211226Z 
+2026-11-04T16:47:18.1755097Z stdout | src/process/externalLauncher.windows-smoke.test.ts > real Windows PowerShell runs the plain -Command reveal script intact (folder verb: empty)
+2026-11-04T16:47:18.1756510Z [30954] spawned args: [["-NoProfile","-NonInteractive","-Command","$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉\\clip [1].mp4' + '\"') }"]]
+2026-11-04T16:47:18.1757563Z [30954] PowerShell recorded: Start-Process|explorer.exe|/select,"C:\T3 smoke\author's $media & 50% ;x`tick é漢字🎉\clip [1].mp4"
+2026-11-04T16:47:18.1757832Z 
+2026-11-04T16:47:18.3174485Z stdout | src/process/externalLauncher.windows-smoke.test.ts > real Windows PowerShell runs the plain -Command reveal script intact (folder verb: open)
+2026-11-04T16:47:18.3176023Z [30954] spawned args: [["-NoProfile","-NonInteractive","-Command","$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\T3 smoke\\author''s $media & 50% ;x`tick é漢字🎉\\clip [1].mp4' + '\"') }"]]
+2026-11-04T16:47:18.3177072Z [30954] PowerShell recorded: Invoke-Item|C:\T3 smoke\author's $media & 50% ;x`tick é漢字🎉
+2026-11-04T16:47:18.3177276Z 
+2026-11-04T16:47:18.3185251Z  ✓ src/process/externalLauncher.windows-smoke.test.ts (4 tests) 660ms
+2026-11-04T16:47:18.3221957Z 
+2026-11-04T16:47:18.3224076Z  Test Files  1 passed (1)
+2026-11-04T16:47:18.3224378Z       Tests  4 passed (4)
+2026-11-04T16:47:18.3224599Z    Start at  16:47:16
+2026-11-04T16:47:18.3226394Z    Duration  1.55s (tests 45%, transform 31%, import 20%, setup 4%)
