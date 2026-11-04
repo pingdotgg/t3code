@@ -129,7 +129,7 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
-    let androidDiscoveryIncomplete = false;
+    let physicalAndroidDiscoveryIncomplete = false;
     // The hub returns before reading ADB when avdmanager is missing or fails.
     if (
       !androidAvailable ||
@@ -148,7 +148,7 @@ export const makeDeviceHubOperations = (options: {
             continue;
           const properties = yield* run("adb", ["-s", serial, "shell", "getprop"]);
           if (properties.code !== 0) {
-            androidDiscoveryIncomplete = true;
+            physicalAndroidDiscoveryIncomplete = true;
             details.push(
               `Could not read a connected Android device (adb getprop, exit code ${properties.code}).`,
             );
@@ -171,12 +171,13 @@ export const makeDeviceHubOperations = (options: {
           });
         }
       } else if (connected.code !== 127) {
-        androidDiscoveryIncomplete = true;
+        physicalAndroidDiscoveryIncomplete = true;
         details.push(
           `Could not list connected Android devices (adb devices -l, exit code ${connected.code}).`,
         );
       }
     }
+    let androidDiscoveryIncomplete = physicalAndroidDiscoveryIncomplete;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
@@ -206,6 +207,7 @@ export const makeDeviceHubOperations = (options: {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
+      physicalAndroidDiscoveryIncomplete,
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 

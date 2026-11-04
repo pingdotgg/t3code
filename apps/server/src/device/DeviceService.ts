@@ -531,11 +531,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
-    const { devices, detail, androidDiscoveryIncomplete } = yield* ready.devices.list;
+    const { devices, detail, androidDiscoveryIncomplete, physicalAndroidDiscoveryIncomplete } =
+      yield* ready.devices.list;
     return {
       devices: devices.map((device): DeviceSummary => ({ ...device, hostId: ready.hostId })),
       detail,
       androidDiscoveryIncomplete,
+      physicalAndroidDiscoveryIncomplete,
     };
   });
 
@@ -546,7 +548,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const sessionKey = (session: DeviceSession) =>
       `${session.hostId}\u0000${session.deviceId}\u0000${session.threadId}\u0000${session.openedAt}`;
     const before = new Set((yield* SynchronizedRef.get(stateRef)).state.sessions.map(sessionKey));
-    const { devices, detail, androidDiscoveryIncomplete } = yield* fetchDevices(ready);
+    const { devices, detail, androidDiscoveryIncomplete, physicalAndroidDiscoveryIncomplete } =
+      yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
@@ -560,7 +563,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ...state.devices.filter(
               (device) =>
                 device.hostId !== ready.hostId ||
-                (androidDiscoveryIncomplete &&
+                (physicalAndroidDiscoveryIncomplete &&
                   device.platform === "android" &&
                   device.physical &&
                   !devices.some((listed) => listed.id === device.id)),

@@ -110,6 +110,7 @@ export interface DeviceOperations {
       readonly detail: string | undefined;
       /** Some Android devices could not be listed; the rest are. */
       readonly androidDiscoveryIncomplete?: boolean;
+      readonly physicalAndroidDiscoveryIncomplete?: boolean;
     },
     DeviceOperationError
   >;

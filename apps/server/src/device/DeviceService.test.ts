@@ -1247,6 +1247,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
       ].map((device) => ({ ...device, booted: true, version: "test" }));
       let omitPhysical = false;
+      let hubDiscoveryFailed = true;
       const http = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -1255,7 +1256,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
               simulators: hubDevices.slice(0, 1),
               emulators: hubDevices.slice(1).filter((device) => !omitPhysical || !device.physical),
               errors:
-                omitPhysical && enumeration.code !== 0
+                omitPhysical && hubDiscoveryFailed
                   ? [{ message: "[android-utils] Failed to list devices:" }]
                   : [],
             }),
@@ -1333,6 +1334,16 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
       omitPhysical = true;
+      hubDiscoveryFailed = false;
+      enumeration = { code: 1, stdout: "", stderr: "AVD enumeration failed" };
+      const disconnectedDuringAvdFailure = yield* service.list;
+      expect(disconnectedDuringAvdFailure.devices.some((device) => device.id === "phone")).toBe(
+        false,
+      );
+      expect(disconnectedDuringAvdFailure.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(
+        true,
+      );
+      enumeration = { code: 0, stdout: "", stderr: "" };
       const disconnected = yield* service.list;
       expect(disconnected.devices.some((device) => device.id === "phone")).toBe(false);
       expect(disconnected.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBeUndefined();
