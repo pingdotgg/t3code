@@ -1,16 +1,14 @@
+import * as NodePath from "node:path";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import type * as Scope from "effect/Scope";
-import * as NodePath from "node:path";
 import type { BuildOutput } from "./BuildOutput.ts";
 import { loadProjectModule } from "./Loader.ts";
 
-export class DeployTargetError extends Data.TaggedError<"DeployTargetError">(
-  "DeployTargetError",
-)<{
+export class DeployTargetError extends Data.TaggedError<"DeployTargetError">("DeployTargetError")<{
   /** The target platform involved (e.g. "cloudflare"), when known. */
   readonly platform?: string | undefined;
   readonly message: string;
@@ -111,6 +109,8 @@ export interface DeployTargetBuildContext extends DeployTargetContext {
 }
 
 export interface DeployTargetFinishContext extends DeployTargetContext {
+  /** Resolved URL pathname mounting the client-assets directory. @default "/" */
+  readonly assetBasePath?: string | undefined;
   /**
    * Absolute path of the on-disk server entry the framework's adapt step
    * produced, for finishing passes that re-bundle from disk (e.g. SvelteKit's
@@ -134,9 +134,7 @@ export interface DeployTargetServer {
    * Optional direct dispatch into the server (e.g. miniflare's
    * `dispatchFetch`). Callers fall back to plain HTTP `fetch` against `url`.
    */
-  readonly fetch?:
-    | ((path: string, init?: RequestInit) => Promise<Response>)
-    | undefined;
+  readonly fetch?: ((path: string, init?: RequestInit) => Promise<Response>) | undefined;
 }
 
 /**
@@ -198,11 +196,7 @@ export interface DeployTarget<Config = unknown> {
   readonly serve?:
     | ((
         context: DeployTargetServeContext,
-      ) => Effect.Effect<
-        DeployTargetServer,
-        DeployTargetError,
-        Scope.Scope | DeployTargetServices
-      >)
+      ) => Effect.Effect<DeployTargetServer, DeployTargetError, Scope.Scope | DeployTargetServices>)
     | undefined;
 }
 
@@ -211,8 +205,7 @@ export interface DeployTarget<Config = unknown> {
  * (including framework-specific extensions) while checking it against the
  * {@link DeployTarget} contract.
  */
-export const makeDeployTarget = <T extends DeployTarget>(target: T): T =>
-  target;
+export const makeDeployTarget = <T extends DeployTarget>(target: T): T => target;
 
 /** Structural guard for {@link DeployTarget} values. */
 export const isDeployTarget = (value: unknown): value is DeployTarget =>
@@ -232,10 +225,10 @@ export const isDeployTarget = (value: unknown): value is DeployTarget =>
  *   loaded from the *project's* `node_modules`; the module must
  *   default-export (or named-export `target`) a target value or factory
  */
-export type DeployTargetInput<
-  T extends DeployTarget = DeployTarget,
-  Config = unknown,
-> = T | ((config: Config) => T) | string;
+export type DeployTargetInput<T extends DeployTarget = DeployTarget, Config = unknown> =
+  | T
+  | ((config: Config) => T)
+  | string;
 
 /** The exports a target module may provide (see {@link resolveDeployTarget}). */
 interface DeployTargetModule {
@@ -264,21 +257,18 @@ export const resolveDeployTarget: <T extends DeployTarget, Config>(
   root: string,
   input: DeployTargetInput<T, Config>,
   config: Config,
-) => Effect.Effect<T, DeployTargetError> = Effect.fn(function* <
-  T extends DeployTarget,
-  Config,
->(root: string, input: DeployTargetInput<T, Config>, config: Config) {
+) => Effect.Effect<T, DeployTargetError> = Effect.fn(function* <T extends DeployTarget, Config>(
+  root: string,
+  input: DeployTargetInput<T, Config>,
+  config: Config,
+) {
   let candidate: unknown = input;
   let specifier = "the provided deploy target";
   if (typeof input === "string") {
     specifier = input;
-    const module_ = yield* loadProjectModule<DeployTargetModule>(
-      root,
-      input,
-    ).pipe(
+    const module_ = yield* loadProjectModule<DeployTargetModule>(root, input).pipe(
       Effect.mapError(
-        (error) =>
-          new DeployTargetError({ message: error.message, cause: error.cause }),
+        (error) => new DeployTargetError({ message: error.message, cause: error.cause }),
       ),
     );
     candidate = module_.default ?? module_.target;
@@ -287,7 +277,7 @@ export const resolveDeployTarget: <T extends DeployTarget, Config>(
     candidate = (candidate as (config: Config) => T)(config);
   }
   if (!isDeployTarget(candidate)) {
-    return yield* Effect.fail(invalidTarget(specifier));
+    return yield* invalidTarget(specifier);
   }
   return candidate as T;
 });
@@ -301,6 +291,4 @@ export const applyDeployTargetFinish = (
   output: BuildOutput,
   context: DeployTargetFinishContext,
 ): Effect.Effect<BuildOutput, DeployTargetError, DeployTargetServices> =>
-  target?.finish !== undefined
-    ? target.finish(output, context)
-    : Effect.succeed(output);
+  target?.finish !== undefined ? target.finish(output, context) : Effect.succeed(output);

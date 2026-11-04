@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -314,7 +315,7 @@ const withStores = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
   return effect.pipe(Effect.provide(EventSink.layer.pipe(Layer.provideMerge(stores))));
 };
 
-it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginEventFeed", (it) => {
   describe("delivery", () => {
     it.effect(
       "keeps a newly enabled cursor when reconciliation sees an older catalogue snapshot",

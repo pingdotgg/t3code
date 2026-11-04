@@ -1,0 +1,102 @@
+---
+title: Domain
+description: A domain-driven design framework for Effect. Model your business as commands, aggregates, events, views, projections and policies, test it in memory, and run it on Cloudflare Durable Objects.
+---
+
+import DAG from "../../../components/DAG.astro";
+
+`@alchemy.run/domain` models your business in its own terms. Commands ask for changes, aggregates decide them, and events record what happened. Views, projections and policies then answer questions, feed your own stores, and apply the business's rules about what to do next.
+
+The same model runs in memory for tests and on Cloudflare Durable Objects in production, with one ordered partition per key.
+
+<DAG
+  nodes={[
+    { id: "commands", label: "Commands", type: "change something", kind: "command", col: 0, row: 0 },
+    { id: "aggregates", label: "Aggregates", type: "decide", kind: "aggregate", col: 1, row: 0 },
+    { id: "events", label: "Events", type: "the record", kind: "event", col: 2, row: 0 },
+    { id: "views", label: "Views", type: "answer reads", kind: "view", col: 1, row: 1 },
+    { id: "queries", label: "Queries", type: "read the views", kind: "query", col: 0, row: 1 },
+  ]}
+  edges={[
+    { from: "commands", to: "aggregates" },
+    { from: "aggregates", to: "events" },
+    { from: "events", to: "views", dashed: true },
+    { from: "views", to: "queries" },
+  ]}
+/>
+
+## A taste
+
+A command declares what it asks for and every way it can end:
+
+```typescript title="src/DepositMoney.command.ts"
+export class MoneyDeposited extends Domain.Event("MoneyDeposited", {
+  amount: Schema.Int,
+  balanceAfter: Schema.Int,
+}) {}
+
+export class DepositMoney extends Domain.Command("DepositMoney", {
+  target: AccountId,
+  input: { amount: Schema.Int },
+  events: [MoneyDeposited],
+  rejects: [NotOpen],
+  reply: { balance: Schema.Int },
+}) {}
+```
+
+The account aggregate decides it against its current state:
+
+```typescript title="src/Account.aggregate.ts"
+DepositMoney: (s, cmd) =>
+  s._tag !== "Open"
+    ? new NotOpen()
+    : [new MoneyDeposited({ amount: cmd.amount, balanceAfter: s.balance + cmd.amount })],
+```
+
+And a story tests it in memory, in the business's own words: given this history, when this command, then these events.
+
+```typescript title="test/Account.test.ts"
+it.effect("deposits into an open account and replies with the balance", () =>
+  story(
+    Story.given(account, new AccountOpened({ owner: "sam" })),
+    Story.when(account, new DepositMoney({ amount: 100 })),
+    Story.then(account, new MoneyDeposited({ amount: 100, balanceAfter: 100 })),
+    Story.replied({ balance: 100 }),
+  ),
+);
+```
+
+## Build it with your coding agent
+
+The `alchemy-domain` skill teaches a coding agent how to turn requirements into a model, lay out the project, test it with stories, host it on Cloudflare and drive it from foldkit.
+
+Ship it with your dependencies, so the skill always matches the alchemy version you have installed:
+
+```sh
+bun add -d skills-npm
+bunx skills-npm setup
+```
+
+`setup` adds a `prepare` script. Every install then links the skills your packages ship into each coding agent's skills folder.
+
+Or install it from GitHub, for any agent:
+
+```sh
+npx skills add alchemy-run/alchemy --skill alchemy-domain
+```
+
+In Claude Code, it's also a plugin:
+
+```text
+/plugin install alchemy --marketplace alchemy-run/alchemy
+```
+
+A skill installed from GitHub follows the repository's main branch, so update it when you upgrade alchemy.
+
+## Where to start
+
+**New to domain-driven design?** [What is Domain-Driven Design?](/domain/what-is-ddd) introduces the ideas one at a time, with the bank as the example.
+
+**Want to build one?** The [tutorial](/domain/tutorial/part-1) builds a bank step by step, from a single account on your machine to an Api deployed on Cloudflare with a browser app.
+
+**Want the whole picture?** The concepts read as a manual, one building block per chapter, starting with [Domain Model](/domain/model) and ending with [Story](/domain/story). Each chapter explains the idea, how to find it in your business, and how to write it: [Command](/domain/command), [Event](/domain/event), [Aggregate](/domain/aggregate), [View](/domain/view), [Projection](/domain/projection), [Stream](/domain/stream), [Policy](/domain/policy), [Saga](/domain/saga), [External System](/domain/external-system) and [Api](/domain/api).
