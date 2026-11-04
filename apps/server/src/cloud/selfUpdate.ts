@@ -44,6 +44,7 @@ import {
 import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 // A staged runtime's cold start can take over a minute on a loaded, swapping host.
 const PREFLIGHT_TIMEOUT = Duration.minutes(3);
@@ -183,7 +184,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     }
     if (capability === null) {
       return yield* failWith(
-        "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
+        `Remote updates require the T3 Code background service. Run \`${T3_LEARN_COMMAND} service install\` on the server machine.`,
       );
     }
 

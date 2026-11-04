@@ -10,7 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { T3_LEARN_TAILSCALE_SERVE_PORT } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_COMMAND, T3_LEARN_TAILSCALE_SERVE_PORT } from "@t3tools/shared/t3LearnIdentity";
 import {
   buildTailscaleHttpsBaseUrl,
   ensureTailscaleServe,
@@ -74,7 +74,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${T3_LEARN_COMMAND} serve\`, or connect this machine with T3 Connect: \`${T3_LEARN_COMMAND} connect\`.`,
     ].join("\n");
   }
 }
@@ -86,7 +86,7 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `Pair with a ${T3_LEARN_COMMAND} CLI at ${this.serverVersion} instead.`,
     ].join("\n");
   }
 }
@@ -522,7 +522,7 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
-            "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
+            `This URL is only reachable from this machine. To reach it from your other devices, run \`${T3_LEARN_COMMAND} up\`, or re-run with --tailscale.`,
           );
         } else if (target.state.privateNetworkOnly) {
           notes.push(

@@ -30,6 +30,7 @@ import {
 } from "./connect.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 type Route = "connect" | "lan";
 type Routes = Readonly<Record<Route, boolean>>;
@@ -142,7 +143,7 @@ const formatSetup = (setup: Setup) => {
             setup.connect
               ? "on · your T3 account"
               : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
+                ? `off · link revoked. Run \`${T3_LEARN_COMMAND} connect\`.`
                 : "off",
           ] as const,
         ]),
@@ -162,7 +163,7 @@ const formatSetup = (setup: Setup) => {
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
     ...(setup.lanFromOldDefault
-      ? ["Older installs keep LAN access on. Turn it off: `t3 up --no-lan`."]
+      ? [`Older installs keep LAN access on. Turn it off: \`${T3_LEARN_COMMAND} up --no-lan\`.`]
       : []),
   ];
   return [
@@ -236,7 +237,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       cause: "routes",
       userMessage: `No terminal. Choose access with ${
         before.connect === null ? "--lan" : "--connect or --lan"
-      }, or use --yes for the default. See \`t3 up --help\`.`,
+      }, or use --yes for the default. See \`${T3_LEARN_COMMAND} up --help\`.`,
     });
   }
   if (routes.connect && !current.connect) yield* requireConnectAllowed;
@@ -363,7 +364,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${T3_LEARN_COMMAND} up\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -382,7 +383,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
       if (!confirmed) {
-        yield* Console.log("Run `t3 service restart` to turn T3 Connect off.");
+        yield* Console.log(`Run \`${T3_LEARN_COMMAND} service restart\` to turn T3 Connect off.`);
       } else {
         if (!interactive && !stopped) {
           yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
@@ -439,11 +440,20 @@ export const upCommand = Command.make("up", {
     "Set up remote access and the T3 Code background service. Access flags skip the question, and routes not named keep their settings. Without a terminal, a needed restart runs without asking and stops running agent turns.",
   ),
   Command.withExamples([
-    { command: "t3 up", description: "Choose remote access." },
-    { command: "t3 up --connect", description: "Turn on T3 Connect. Keep other settings." },
-    { command: "t3 up --lan", description: "Allow LAN access with pairing codes." },
-    { command: "t3 up --no-lan", description: "Stop LAN access." },
-    { command: "t3 up --yes", description: "Take the defaults with no questions." },
+    { command: `${T3_LEARN_COMMAND} up`, description: "Choose remote access." },
+    {
+      command: `${T3_LEARN_COMMAND} up --connect`,
+      description: "Turn on T3 Connect. Keep other settings.",
+    },
+    {
+      command: `${T3_LEARN_COMMAND} up --lan`,
+      description: "Allow LAN access with pairing codes.",
+    },
+    { command: `${T3_LEARN_COMMAND} up --no-lan`, description: "Stop LAN access." },
+    {
+      command: `${T3_LEARN_COMMAND} up --yes`,
+      description: "Take the defaults with no questions.",
+    },
     { command: "t3 status --json", description: "Read the settings from a script." },
   ]),
   Command.withHandler((flags) => runCloudCommand(flags, setUp(flags), { quietLogs: true })),
@@ -453,7 +463,9 @@ export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Set up T3 Connect for this machine. Same as `t3 up --connect`."),
+  Command.withDescription(
+    `Set up T3 Connect for this machine. Same as \`${T3_LEARN_COMMAND} up --connect\`.`,
+  ),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -513,7 +525,7 @@ export const statusCommand = Command.make("status", {
       yield* Console.log(
         flags.json
           ? setupJson(setup)
-          : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
+          : `This machine\n${formatSetup(setup)}\n\nChange access: \`${T3_LEARN_COMMAND} up\`.`,
       );
     }),
   ),

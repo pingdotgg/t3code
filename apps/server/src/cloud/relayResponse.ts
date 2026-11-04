@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 /** Only unavailable is retryable. Descriptions expose relay explanations and trace IDs, never request details. */
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
@@ -64,7 +65,7 @@ function recoveryHint(error: RelayProtectedError): string {
     case "RelayEnvironmentLinkLimitExceededError":
       return "Unlink an unused environment in T3 Connect, then restart T3 Code on this machine.";
     case "RelayAuthInvalidError":
-      return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart T3 Code after signing in.";
+      return `Run \`${T3_LEARN_COMMAND} connect login\` to check this machine's authorization. If the stored credential was revoked, sign out with \`${T3_LEARN_COMMAND} connect logout\`, then run \`${T3_LEARN_COMMAND} connect\` again. Restart T3 Code after signing in.`;
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
       return "Check this machine's date and time, update T3 Code, then restart it.";

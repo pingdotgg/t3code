@@ -54,6 +54,7 @@ import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -193,11 +194,11 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         ? "pending server startup"
         : "not provisioned";
   const nextStep = !status.authenticated
-    ? "Run `t3 connect link` to authorize and enable T3 Connect."
+    ? `Run \`${T3_LEARN_COMMAND} connect link\` to authorize and enable T3 Connect.`
     : status.revoked
-      ? "Run `t3 connect link` to link this environment again."
+      ? `Run \`${T3_LEARN_COMMAND} connect link\` to link this environment again.`
       : !status.desired
-        ? "Run `t3 connect link` to enable T3 Connect."
+        ? `Run \`${T3_LEARN_COMMAND} connect link\` to enable T3 Connect.`
         : !status.linked
           ? "Start T3 to provision the environment link and launch its managed tunnel."
           : undefined;
@@ -215,7 +216,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.reachability === null
         ? [
             "",
-            "No running server answered, so reachability was not checked. Check the background service with `t3 service status`.",
+            `No running server answered, so reachability was not checked. Check the background service with \`${T3_LEARN_COMMAND} service status\`.`,
           ]
         : status.reachability.status === "reachable"
           ? [
@@ -382,7 +383,7 @@ export const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(
   yield* Console.error(
     formatAlertBox(
       last === null
-        ? "✕ Could not check T3 Connect\n  The T3 server on this machine did not answer.\n  Fix: run `t3 service status`, then `t3 connect status`."
+        ? `✕ Could not check T3 Connect\n  The T3 server on this machine did not answer.\n  Fix: run \`${T3_LEARN_COMMAND} service status\`, then \`${T3_LEARN_COMMAND} connect status\`.`
         : formatReachabilityFailure(last),
     ),
   );
@@ -469,11 +470,11 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       yield* Console.warn(
         input.clearAuthorization
           ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
-          : "Could not revoke the relay-side environment record yet.\nRun `t3 connect unlink` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.",
+          : `Could not revoke the relay-side environment record yet.\nRun \`${T3_LEARN_COMMAND} connect unlink\` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.`,
       );
     } else if (input.relayResult.value.status === "not-authenticated") {
       yield* Console.warn(
-        "The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run `t3 connect login` and retry.",
+        `The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run \`${T3_LEARN_COMMAND} connect login\` and retry.`,
       );
     } else if (input.relayResult.value.status === "revoked") {
       yield* Console.log("Revoked the relay-side environment record.");
@@ -502,7 +503,7 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
 
   if (options.clearAuthorization) {
     yield* Console.log(
-      "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
+      `Signed out of T3 Connect locally.\nThe background service is managed separately with \`${T3_LEARN_COMMAND} service\`.`,
     );
   }
   return liveResult;
@@ -760,7 +761,7 @@ const connectPublishCommand = Command.make("publish", {
 
         if (!(yield* tokens.hasCredential)) {
           yield* Console.log(
-            "Run `t3 connect login` first so this environment can be authorized to publish.",
+            `Run \`${T3_LEARN_COMMAND} connect login\` first so this environment can be authorized to publish.`,
           );
           return;
         }

@@ -36,6 +36,7 @@ import {
   type CloudCliOAuthConfig,
 } from "./publicConfig.ts";
 import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";
 const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
@@ -218,7 +219,7 @@ export class CloudCliCredentialRefreshError extends Schema.TaggedError<CloudCliC
     return this.requiresLogin
       ? `Could not refresh the T3 Connect CLI credential${
           this.oauthErrorCode === undefined ? "" : ` (OAuth error: ${this.oauthErrorCode})`
-        }. Run \`t3 connect login\` to authorize again.`
+        }. Run \`${T3_LEARN_COMMAND} connect login\` to authorize again.`
       : "Could not refresh the T3 Connect CLI credential.";
   }
 }
