@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
+import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   type ServerClientSessionRecord,
@@ -65,6 +65,22 @@ export function missingTailscaleEndpointDescription(
   return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
     ? "Turn on Network access to detect Tailscale."
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
+}
+
+export function resolveTailscaleServeBaseUrl(
+  endpoint: Pick<AdvertisedEndpoint, "httpBaseUrl"> | null,
+  port: number,
+  isPortValid: boolean,
+): string | null {
+  if (!endpoint) return null;
+  if (!isPortValid) return endpoint.httpBaseUrl;
+  try {
+    const url = new URL(endpoint.httpBaseUrl);
+    url.port = String(port);
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    return endpoint.httpBaseUrl;
+  }
 }
 
 export function isWslSettingsRowVisible(input: {

@@ -1,6 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   GitCommandError,
   ProjectId,
@@ -317,6 +316,19 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
+  it("orders host timestamps by instant across offsets and fractional seconds", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      createdAt: "2026-07-05T01:00:00+02:00",
+      commits: [{ oid: "commit", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" }],
+      comments: [{ ...TIMELINE_SOURCE.comments[0]!, createdAt: "2026-07-05T00:30:00.5Z" }],
+      mergedAt: null,
+      closedAt: null,
+    });
+
+    expect(events.map((event) => event.id)).toEqual(["c1", "commit", "created"]);
+  });
+
   it("drops a body that is nothing but a bot's HTML comment, and keeps one that says more", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
@@ -858,14 +870,6 @@ describe("asking about a change rather than working on it", () => {
     });
     expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
     expect(context?.records[0]).toMatchObject({ pullRequest: base });
-    const legacyText = serializeLegacyContextMessage({
-      text: submission.text,
-      records: context!.records,
-    });
-    expect(legacyText).toContain(base.url);
-    expect(legacyText).toContain(prose);
-    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
-    expect(legacyText).not.toContain("t3-context://");
   });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -221,7 +222,7 @@ const layerBase = Layer.mergeAll(
     Layer.provideMerge(VcsProcess.layer),
   ),
   SqlitePersistence.layerMemory,
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 type Repositories = Effect.Success<typeof makeRepositories>;
 
@@ -462,6 +463,55 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const result = yield* service.get(reference);
         assert.strictEqual(result.guide?.headSha, repositories.headSha);
         assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
+    ),
+  );
+
+  it.effect("keeps excerpts despite the checkout's diff driver and a failing hook", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          `${repositories.workspace}/.git/info/attributes`,
+          "feature.txt diff=blank\n",
+        );
+        yield* git(repositories.workspace, ["config", "diff.blank.textconv", "true"]);
+        const hook = `${repositories.workspace}/.git/hooks/post-checkout`;
+        yield* fs.writeFileString(hook, "#!/bin/sh\nexit 1\n");
+        yield* fs.chmod(hook, 0o755);
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () =>
+              Effect.succeed({
+                stops: [
+                  {
+                    title: "The feature",
+                    summary: "The change.",
+                    attention: null,
+                    excerpts: [{ path: "feature.txt", side: "new", start: 1, end: 3, caption: "" }],
+                    files: [],
+                    notes: [],
+                    questions: [],
+                  },
+                ],
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const runs = yield* watchRuns;
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+        assert.notStrictEqual(result.run?._tag, "Failed", JSON.stringify(result.run));
+        assert.deepStrictEqual(result.guide?.stops[0]?.excerpts, [
+          { path: "feature.txt", side: "new", start: 1, end: 3, caption: "" },
+        ]);
       }),
     ),
   );

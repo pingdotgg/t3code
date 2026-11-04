@@ -21,6 +21,7 @@ export interface AndroidHeaderAction {
   readonly disabled?: boolean;
   readonly loading?: boolean;
   readonly selected?: boolean;
+  readonly subtitle?: string;
   readonly destructive?: boolean;
   readonly overflowOnly?: boolean;
 }
@@ -178,10 +179,11 @@ export function AndroidScreenHeader(props: {
                   actions={overflowActions.map((action, index) => ({
                     id: String(index),
                     title: action.accessibilityLabel,
+                    subtitle: action.subtitle,
+                    state: action.selected ? "on" : undefined,
                     attributes: {
                       disabled: Boolean(action.disabled),
                       destructive: action.destructive,
-                      state: action.selected ? "on" : undefined,
                     },
                   }))}
                   onPressAction={({ nativeEvent }) =>
@@ -205,10 +207,4 @@ export function AndroidScreenHeader(props: {
       />
     </View>
   );
-}
-
-export function AndroidSheetHeader(
-  props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
-) {
-  return <AndroidScreenHeader {...props} embedded />;
 }

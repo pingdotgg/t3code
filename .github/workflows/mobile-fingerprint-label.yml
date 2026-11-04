@@ -1,0 +1,189 @@
+name: Mobile Fingerprint Label
+
+# Trusted half of mobile-fingerprint-check.yml. That workflow runs PR code
+# (fork PRs included) with a read-only token and records which platforms'
+# fingerprints changed. This one runs from main with a write token and syncs
+# the "📱 Native Change" label. It never checks out or runs PR code.
+#
+# A PR can edit the check workflow it runs under, so the recorded result is
+# untrusted data: it is validated, and at worst a PR mislabels itself.
+
+on:
+  workflow_run:
+    workflows: [Mobile Fingerprint Check]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: Sync native change label
+    # A cancelled run was superseded by a newer push, whose run labels instead.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - id: pr
+        name: Resolve the pull request behind the check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const results = artifacts.filter(
+              (artifact) => artifact.name === "fingerprint-result" && !artifact.expired,
+            );
+            if (results.length !== 1) {
+              core.info(`Expected one fingerprint-result artifact; found ${results.length}. Skipping.`);
+              return;
+            }
+
+            // workflow_run.pull_requests and the commit-to-PR lookup are both
+            // empty for fork PRs, so list open PRs by head owner and branch.
+            // Requiring the PR's current head to be the checked commit keeps a
+            // slow run for an older push from overwriting a newer result.
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${run.head_repository?.owner?.login}:${run.head_branch}`,
+              per_page: 100,
+            });
+            const matching = open.filter(
+              (candidate) =>
+                candidate.state === "open" &&
+                candidate.head.sha === run.head_sha &&
+                candidate.head.ref === run.head_branch &&
+                candidate.head.repo?.full_name === run.head_repository?.full_name,
+            );
+            if (matching.length !== 1) {
+              core.info(`Expected one open PR at ${run.head_sha}; found ${matching.length}. Skipping.`);
+              return;
+            }
+
+            core.setOutput("artifact_id", String(results[0].id));
+            core.setOutput("pr_number", String(matching[0].number));
+
+      # Read the archive as bytes; never extract PR-produced files into a
+      # workspace this job runs code from.
+      - id: result
+        name: Read changed platforms
+        if: steps.pr.outputs.pr_number != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.pr.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$RUNNER_TEMP/fingerprint-result.zip"
+          changed="$(unzip -p "$RUNNER_TEMP/fingerprint-result.zip" changed-platforms)"
+          if [[ ! "$changed" =~ ^((ios|android)( (ios|android))?)?$ ]]; then
+            echo "Unexpected changed-platforms value '$changed'." >&2
+            exit 1
+          fi
+          echo "changed_platforms=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Sync native change label
+        if: steps.pr.outputs.pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          CHANGED_PLATFORMS: ${{ steps.result.outputs.changed_platforms }}
+        with:
+          script: |
+            const managedLabel = {
+              name: "📱 Native Change",
+              color: "d93f0b",
+              description:
+                "Changes the native fingerprint; merging blocks production OTAs until a new store build ships.",
+            };
+            const nativeChanged = (process.env.CHANGED_PLATFORMS ?? "").trim() !== "";
+            const issueNumber = Number(process.env.PR_NUMBER);
+
+            try {
+              const { data: existing } = await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: managedLabel.name,
+              });
+
+              if (
+                existing.color !== managedLabel.color ||
+                (existing.description ?? "") !== managedLabel.description
+              ) {
+                await github.rest.issues.updateLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+              }
+            }
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const hasLabel = currentLabels.some((label) => label.name === managedLabel.name);
+
+            if (nativeChanged && !hasLabel) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [managedLabel.name],
+              });
+            } else if (!nativeChanged && hasLabel) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: managedLabel.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            core.info(
+              `PR #${issueNumber}: native fingerprint ${nativeChanged ? `changed (${process.env.CHANGED_PLATFORMS})` : "unchanged"}`,
+            );
