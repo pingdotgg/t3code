@@ -94,6 +94,10 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-failed", failed: [check("lint", "failure")] },
     ]);
     assert.deepEqual(evaluatePullRequestWatch(settled.next, finished, noRemarks).changes, []);
+    const late = detail({ checks: [...finished.checks, check("docs", "pending")] });
+    const lateRun = evaluatePullRequestWatch(settled.next, late, noRemarks);
+    const lateDone = detail({ checks: [...finished.checks, check("docs", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(lateRun.next, lateDone, noRemarks).changes, []);
 
     const second = detail({ checks: [check("lint", "failure"), check("test", "failure"), bot] });
     const test = evaluatePullRequestWatch(lint.next, second, noRemarks);

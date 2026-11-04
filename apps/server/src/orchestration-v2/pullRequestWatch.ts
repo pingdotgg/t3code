@@ -93,7 +93,8 @@ export function evaluatePullRequestWatch(
       if (pending.length === 0 && owedBefore.length > 0 && newlyFailed.length === 0) {
         changes.push({ kind: "checks-failed", failed });
       }
-      owedChecks = pending.map((check) => check.name);
+      const owing = newlyFailed.length > 0 || owedBefore.length > 0;
+      owedChecks = owing ? pending.map((check) => check.name) : [];
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
