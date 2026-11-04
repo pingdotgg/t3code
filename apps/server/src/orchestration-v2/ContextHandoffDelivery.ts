@@ -13,6 +13,12 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 
+import { isSideChatNotesHandoff } from "./sideChat/notes.ts";
+import {
+  isSideChatOpeningHandoff,
+  isSideChatLateSummaryHandoff,
+} from "./sideChat/sideChatOpening.ts";
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
@@ -52,18 +58,23 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
       return { context: "", delivered: Effect.void, unsent: Effect.void };
-    const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
+    const availableBudget = typeof input.budget === "number" ? input.budget : yield* input.budget;
+    const budget = pending.every((handoff) => input.optional?.(handoff) === true)
+      ? Math.max(4_000, availableBudget)
+      : availableBudget;
     const plan = (handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>) => {
       let coverage = handoffs
-        .map(
-          (handoff) =>
-            `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
-              handoff.history?.coverage ??
-              (input.historyThreadId === undefined
-                ? `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
-                : `From thread ${input.historyThreadId} (the lesson). Recover history with t3_thread_read({threadId:"${input.historyThreadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition.`)
-            }`,
+        .map((handoff) =>
+          isSideChatNotesHandoff(handoff)
+            ? ""
+            : `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
+                handoff.history?.coverage ??
+                (input.historyThreadId === undefined
+                  ? `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
+                  : `From thread ${input.historyThreadId} (the lesson). Recover history with t3_thread_read({threadId:"${input.historyThreadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition.`)
+              }`,
         )
+        .filter((part) => part !== "")
         .join("\n");
       if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
         const strategies = Array.from(new Set(handoffs.map((handoff) => handoff.strategy)));
@@ -81,6 +92,25 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         .filter((handoff) => handoff.history === undefined)
         .map((handoff) => handoff.summaryText)
         .join("\n\n");
+      const sideChatOnly = handoffs.every(
+        (handoff) =>
+          handoff.history === undefined &&
+          (isSideChatNotesHandoff(handoff) ||
+            isSideChatOpeningHandoff(handoff) ||
+            isSideChatLateSummaryHandoff(handoff)),
+      );
+      if (sideChatOnly) {
+        const context = [coverage, oldContext].filter((part) => part !== "").join("\n");
+        const summariesIncluded = historyCost(messages, context) <= budget;
+        return {
+          selected: {
+            messages,
+            context: summariesIncluded ? context : coverage,
+            omittedItemIds: [],
+          },
+          summariesIncluded,
+        };
+      }
       const fullCoverage =
         oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
           ? `${coverage}\n${oldContext}`
@@ -117,6 +147,14 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       planned = plan(remaining);
     }
     const { selected } = planned;
+    if (
+      !planned.summariesIncluded &&
+      remaining.some(
+        (handoff) => handoff.history === undefined && isSideChatOpeningHandoff(handoff),
+      )
+    ) {
+      return yield* new ContextHandoffBudgetError();
+    }
     if (!planned.summariesIncluded && input.quiet !== true) {
       yield* Effect.logWarning(
         "Dropped context handoff summary because it exceeded the context budget",

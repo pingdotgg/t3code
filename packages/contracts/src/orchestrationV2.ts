@@ -1250,6 +1250,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
   ),
+  sideChatNoteDeliveries: Schema.optional(Schema.Record(ThreadId, Schema.String)),
   delivery: Schema.optional(
     Schema.Struct({
       nativeThreadId: Schema.String,

@@ -67,6 +67,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -181,6 +182,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const eventSink = yield* EventSink.EventSinkV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -432,7 +434,19 @@ export const layer: Layer.Layer<
         (handoff) =>
           !isSideChatHandoff(handoff) &&
           (handoff.transferId == null || !subagentResultTransfers.has(handoff.transferId)) &&
-          isPendingForRun(handoff),
+          isPendingForRun(handoff) &&
+          !(
+            isSideChatNotesHandoff(handoff) &&
+            handoff.targetRunId !== run.id &&
+            (projection.contextHandoffs.some(
+              (current) => current.targetRunId === run.id && isSideChatNotesHandoff(current),
+            ) ||
+              (handoff.sideChatNoteDeliveries !== undefined &&
+                Object.entries(handoff.sideChatNoteDeliveries).every(
+                  ([threadId, requestId]) =>
+                    projection.thread.sideChatNoteDeliveries?.[threadId as ThreadId] === requestId,
+                )))
+          ),
       );
       // Carried forward until a provider turn accepts it, also after a provider switch.
       const sideChatHandoff = projection.contextHandoffs.find(
@@ -1061,7 +1075,8 @@ export const layer: Layer.Layer<
           missedRunIds,
           budget: Effect.gen(function* () {
             return handoffBudget({
-              tokenCap,
+              tokenCap:
+                projection.thread.sideChat === undefined ? tokenCap : Math.max(32_000, tokenCap),
               modelContextWindow,
               userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
               attachments: message.attachments,
@@ -1756,26 +1771,59 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
-        handoff: OrchestrationV2ContextHandoff,
-      ) {
-        const updatedAt = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: yield* idAllocator.allocate.event({
+      const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(
+        function* (handoff: OrchestrationV2ContextHandoff) {
+          const updatedAt = yield* DateTime.now;
+          const noteDeliveries =
+            handoff.delivery !== undefined && handoff.delivery.status !== "pending"
+              ? handoff.sideChatNoteDeliveries
+              : undefined;
+          const thread =
+            noteDeliveries === undefined
+              ? undefined
+              : yield* projectionStore.getThread(projection.thread.id);
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({
+                  threadId: projection.thread.id,
+                }),
+                type: "context-handoff.updated",
                 threadId: projection.thread.id,
-              }),
-              type: "context-handoff.updated",
-              threadId: projection.thread.id,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: updatedAt,
-              payload: { ...handoff, updatedAt },
-            },
-          ],
-        });
-      });
+                runId: run.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: updatedAt,
+                payload: { ...handoff, updatedAt },
+              },
+              ...(thread === undefined
+                ? []
+                : [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId: thread.id }),
+                      type: "thread.metadata-updated" as const,
+                      threadId: thread.id,
+                      providerInstanceId: thread.providerInstanceId,
+                      occurredAt: updatedAt,
+                      payload: {
+                        ...thread,
+                        sideChatNoteDeliveries: {
+                          ...thread.sideChatNoteDeliveries,
+                          ...noteDeliveries,
+                        },
+                      },
+                    },
+                  ]),
+            ],
+          });
+        },
+        (effect, handoff) => {
+          if (handoff.sideChatNoteDeliveries === undefined) return effect;
+          const locked = threadDispatch.withLock(projection.thread.id, effect);
+          return lessonSideChat === undefined
+            ? locked
+            : threadDispatch.withLock(lessonSideChat.lessonThreadId, locked);
+        },
+      );
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
@@ -1983,4 +2031,4 @@ export const layer: Layer.Layer<
       ),
     });
   }),
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));

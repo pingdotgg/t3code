@@ -653,11 +653,11 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("drops side-chat notes that do not fit instead of failing the turn", () =>
+  it.effect("drops side-chat notes that exceed their allowance instead of failing the turn", () =>
     Effect.gen(function* () {
       let calls = 0;
       const result = yield* deliverContextHandoffs({
-        handoffs: [notesHandoff("They had not met observation spaces before.")],
+        handoffs: [notesHandoff("x".repeat(5_000))],
         providerThread,
         budget: 0,
         optional: isSideChatNotesHandoff,

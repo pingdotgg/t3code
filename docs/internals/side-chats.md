@@ -73,8 +73,11 @@ completions it waits for take the lesson's lock. The wait holds one of the worke
 notes need a lane slot and a worker slot of their own, so four waiting turn starts would hold every
 slot. `SIDE_CHAT_WAIT_CAP_MS` bounds that; a turn that misses it goes ahead and the note rides the next
 user message. The cap counts from the send (a queued message waits once), from Done for a parent's
-note, and from its start for the opening. Notes and late summaries that do not fit the budget are
-dropped whole ([context handoffs](./context-handoffs.md)). Snapshots and live events strip every
+note, and from its start for the opening. Optional notes and late summaries have a 4 KB minimum
+allowance when they are the only pending handoffs. Notes too large to fit remain undelivered for the
+next user message; delivery is recorded after provider acceptance. Openings get at least a 32 KB
+cap and fail the turn if their full text cannot fit. History-less side-chat context omits the
+transcript footer; notes carry only their own text, while openings keep a capped lesson pointer. Snapshots and live events strip every
 handoff's `summary`; the side-chat dividers fetch theirs with `orchestration.getTurnItem` when
 expanded ([WireProjection](../../apps/server/src/orchestration-v2/WireProjection.ts)).
 
