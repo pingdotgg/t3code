@@ -182,6 +182,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
 
 interface DiffPanelScrollPosition {
   selection: DiffPanelSelection;
+  requestedFilePaths: ReadonlyArray<string>;
   fileKey: string;
   filePath: string;
   offset: number;

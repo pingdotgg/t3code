@@ -143,3 +143,56 @@ it("preserves deletion and addition patches for a file replaced by a symlink", a
   await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Pending files: 0")).toBeVisible();
 });
+
+it("restores previously loaded files without filling unvisited gaps", async () => {
+  state.patches.clear();
+  const source: ReviewDiffPreviewSource = {
+    id: "branch",
+    kind: "branch-range",
+    title: "Changes",
+    baseRef: "main",
+    headRef: "dev",
+    diff: "",
+    diffHash: "lazy",
+    truncated: true,
+    files: Array.from({ length: 10 }, (_, index) => ({
+      path: `file-${index}.ts`,
+      previousPath: null,
+      additions: 1,
+      deletions: 0,
+    })),
+  };
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  function View() {
+    const result = useReviewFilePatches({
+      environmentId: EnvironmentId.make("env"),
+      cwd: "/project",
+      source,
+      baseRef: null,
+      ignoreWhitespace: false,
+      theme: "dark",
+      previewInput: undefined,
+      preview: null,
+      restoredFilePath: "file-8.ts",
+      restoredFilePaths: [
+        "file-0.ts",
+        "file-1.ts",
+        "file-2.ts",
+        "file-3.ts",
+        "file-4.ts",
+        "file-5.ts",
+        "file-8.ts",
+      ],
+    });
+    return <output>{[...result.requestedFilePaths].join(",")}</output>;
+  }
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <View />
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(screen.getByRole("status"))
+    .toHaveTextContent("file-0.ts,file-1.ts,file-2.ts,file-3.ts,file-4.ts,file-5.ts,file-8.ts");
+});

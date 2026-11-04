@@ -29,6 +29,7 @@ export function useReviewFilePatches({
   previewInput,
   preview,
   restoredFilePath,
+  restoredFilePaths,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -40,6 +41,7 @@ export function useReviewFilePatches({
   previewInput: ReviewDiffPreviewInput | undefined;
   preview: RenderablePatch | null;
   restoredFilePath?: string | undefined;
+  restoredFilePaths?: ReadonlyArray<string> | undefined;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -69,6 +71,7 @@ export function useReviewFilePatches({
     scope,
     requested,
     restoredFilePath,
+    restoredFilePaths,
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
@@ -155,6 +158,7 @@ export function useReviewFilePatches({
     }),
   );
   return {
+    requestedFilePaths: queries.map(({ index }) => files[index]!.path),
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
@@ -175,6 +179,7 @@ function reviewFileQueries({
   scope,
   requested,
   restoredFilePath,
+  restoredFilePaths,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -185,12 +190,14 @@ function reviewFileQueries({
   scope: string;
   requested: { scope: string; paths: string[] };
   restoredFilePath: string | undefined;
+  restoredFilePaths: ReadonlyArray<string> | undefined;
 }) {
   const files = sortedReviewFiles(source);
   const paths = new Set([
     ...files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path),
     ...(requested.scope === scope ? requested.paths : []),
     ...(restoredFilePath ? [restoredFilePath] : []),
+    ...(restoredFilePaths ?? []),
   ]);
   const queries =
     !environmentId || !cwd || !source

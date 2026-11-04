@@ -630,6 +630,7 @@ export default function DiffPanel({
     requestFile,
     renderableFiles,
     remainingFileCount,
+    requestedFilePaths,
     loadNextFiles,
   } = useReviewFilePatches({
     environmentId: activeThread?.environmentId,
@@ -642,6 +643,7 @@ export default function DiffPanel({
     previewInput: branchDiffPreviewInput,
     preview: renderablePatch,
     restoredFilePath: initialScrollPosition?.filePath,
+    restoredFilePaths: initialScrollPosition?.requestedFilePaths,
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
   const diffRefreshKey = `diff:${activeThreadRefreshKey ?? ""}`;
@@ -1475,6 +1477,7 @@ export default function DiffPanel({
                         if (top === undefined || top > scrollTop) continue;
                         useDiffPanelSessionStore.getState().saveScrollPosition(scrollScopeKey, {
                           selection: diffSelection,
+                          requestedFilePaths,
                           fileKey: file.fileKey,
                           filePath: file.filePath,
                           offset: top - scrollTop,
