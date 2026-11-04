@@ -75,4 +75,16 @@ describe("pastesCopiedComposerContext", () => {
       ),
     ).toBe(false);
   });
+
+  it("ignores a copied fragment the pasted text does not reference", () => {
+    const target = threadChipCopyTarget(thread, "Fix the login flow");
+    expect(
+      pastesCopiedComposerContext(
+        clipboard({
+          "text/plain": "See https://app.t3.codes/threads/env-1/thread-2",
+          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment(target.fragment!)!,
+        }),
+      ),
+    ).toBe(false);
+  });
 });
