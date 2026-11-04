@@ -157,6 +157,27 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+export const OrchestratorMcpEnsureChildTaskInput = Schema.Struct({
+  parentThreadId: ThreadId,
+  anchorRunId: RunId,
+  requestKey: OrchestratorMcpClientRequestId,
+  task: OrchestratorMcpPrompt,
+  target: OrchestratorMcpTarget,
+});
+export type OrchestratorMcpEnsureChildTaskInput = typeof OrchestratorMcpEnsureChildTaskInput.Type;
+
+export const OrchestratorMcpEnsureChildTaskResult = Schema.Struct({
+  requestKey: Schema.String,
+  requestSha256: Schema.String,
+  parentThreadId: ThreadId,
+  anchorRunId: RunId,
+  taskId: NodeId,
+  childThreadId: ThreadId,
+  initialChildRunId: RunId,
+  status: OrchestratorMcpDelegatedTaskStatus,
+});
+export type OrchestratorMcpEnsureChildTaskResult = typeof OrchestratorMcpEnsureChildTaskResult.Type;
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
@@ -411,6 +432,9 @@ export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Typ
 
 export const OrchestratorMcpThreadRun = Schema.Struct({
   runId: RunId,
+  delegatedTaskId: Schema.optional(NodeId),
+  restartContinuationOfRunId: Schema.optional(RunId),
+  options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   ordinal: PositiveInt,
   status: OrchestrationV2RunStatus,
   providerInstanceId: ProviderInstanceId,

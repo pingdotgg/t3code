@@ -1,3 +1,4 @@
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import {
   CommandId,
   type RunId,
@@ -19,6 +20,8 @@ import {
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
+  type OrchestratorMcpEnsureChildTaskInput,
+  type OrchestratorMcpEnsureChildTaskResult,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
@@ -142,6 +145,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
+  readonly ensureChildTask: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpEnsureChildTaskInput,
+  ) => Effect.Effect<OrchestratorMcpEnsureChildTaskResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
@@ -932,9 +939,26 @@ function threadDetail(
   };
 }
 
-function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
+function threadRun(
+  run: OrchestrationV2Run,
+  thread: OrchestrationV2ThreadProjection["thread"],
+): OrchestratorMcpThreadRun {
+  // Initial app-owned tasks are bound by the native fork; follow-ups carry a run-level binding.
+  const delegatedTaskId =
+    run.delegatedTaskId ??
+    (run.ordinal === 1 &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.creationSource !== "provider" &&
+    thread.forkedFrom?.type === "node"
+      ? thread.forkedFrom.nodeId
+      : undefined);
   return {
     runId: run.id,
+    ...(delegatedTaskId === undefined ? {} : { delegatedTaskId }),
+    ...(run.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: run.restartContinuationOfRunId }),
+    ...(run.modelSelection.options === undefined ? {} : { options: run.modelSelection.options }),
     ordinal: run.ordinal,
     status: run.status,
     providerInstanceId: run.modelSelection.instanceId,
@@ -2140,6 +2164,117 @@ const make = Effect.gen(function* () {
         },
       };
     }),
+    ensureChildTask: Effect.fn("OrchestratorMcpService.ensureChildTask")(function* (scope, input) {
+      yield* requireCapability(scope);
+      if (
+        scope.thread !== undefined ||
+        scope.client === undefined ||
+        scope.client.access === "read-only"
+      ) {
+        return yield* failure(
+          "capability_denied",
+          "An authenticated external client with thread write access is required.",
+        );
+      }
+      const { target: parent, limits } = yield* loadScopedThread(scope, input.parentThreadId);
+      yield* resolveRuntimeMode(limits.runtimeMode, parent.thread.runtimeMode);
+      yield* resolveInteractionMode(limits.interactionMode, parent.thread.interactionMode);
+      const options = input.target.options?.toSorted((a, b) =>
+        a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      );
+      const requestSha256 = Buffer.from(
+        yield* crypto
+          .digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              stableStringify({
+                ...input,
+                target: { ...input.target, options },
+              }),
+            ),
+          )
+          .pipe(Effect.orDie),
+      ).toString("hex");
+      const identity = Buffer.from(
+        yield* crypto
+          .digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              stableStringify([scope.environmentId, input.parentThreadId, input.requestKey]),
+            ),
+          )
+          .pipe(Effect.orDie),
+      ).toString("hex");
+      const commandId = CommandId.make(`command:mcp:ensure-child:${identity}`);
+      const existing = parent.subagents.find(
+        (task) =>
+          task.ensuredRequest?.environmentId === scope.environmentId &&
+          task.ensuredRequest.requestKey === input.requestKey,
+      );
+      if (existing !== undefined && existing.ensuredRequest?.requestSha256 !== requestSha256) {
+        return yield* failure("invalid_request", "requestKey already exists with different input.");
+      }
+      const anchor = parent.runs.find((run) => run.id === input.anchorRunId);
+      if (anchor?.rootNodeId == null) {
+        return yield* failure(
+          "invalid_request",
+          "anchorRunId must belong to the parent and have a native root node.",
+        );
+      }
+      const target = yield* resolveTargetRechecking({
+        parent,
+        target: input.target,
+        providers: yield* loadProviders,
+        skipProjectEnablementFilter: yield* threadManagement.hasReceipt(commandId),
+      });
+      const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, undefined, target);
+      const result = yield* threadManagement
+        .dispatch({
+          type: "delegated_task.ensure",
+          createdBy: "system",
+          creationSource: "mcp",
+          commandId,
+          parentThreadId: parent.thread.id,
+          parentRunId: anchor.id,
+          parentNodeId: anchor.rootNodeId,
+          task: input.task,
+          modelSelection: target.modelSelection,
+          runtimeMode,
+          interactionMode: parent.thread.interactionMode,
+          ensuredRequest: {
+            environmentId: scope.environmentId,
+            requestKey: input.requestKey,
+            requestSha256,
+          },
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const taskEvent = result.storedEvents.find(
+        (stored) => stored.event.type === "subagent.updated",
+      );
+      const runEvent = result.storedEvents.find((stored) => stored.event.type === "run.created");
+      if (
+        taskEvent?.event.type !== "subagent.updated" ||
+        runEvent?.event.type !== "run.created" ||
+        taskEvent.event.payload.childThreadId !== runEvent.event.threadId
+      ) {
+        return yield* failure("orchestration_error", "Ensured child receipt is incomplete.");
+      }
+      const task = taskEvent.event.payload;
+      if (task.ensuredRequest?.requestSha256 !== requestSha256) {
+        return yield* failure("invalid_request", "requestKey already exists with different input.");
+      }
+      const status = (existing ?? task).status;
+      return {
+        requestKey: input.requestKey,
+        requestSha256,
+        parentThreadId: parent.thread.id,
+        anchorRunId: anchor.id,
+        taskId: task.id,
+        childThreadId: runEvent.event.threadId,
+        initialChildRunId: runEvent.event.payload.id,
+        status: status === "idle" || status === "pending" ? "queued" : status,
+      };
+    }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
       const parentRun = parent.runs
@@ -2806,7 +2941,7 @@ const make = Effect.gen(function* () {
         recentRuns: target.runs
           .toSorted((left, right) => right.ordinal - left.ordinal)
           .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map(threadRun),
+          .map((run) => threadRun(run, target.thread)),
         items: page.map((row) =>
           timelineItem({
             row,

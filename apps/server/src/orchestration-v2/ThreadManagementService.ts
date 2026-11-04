@@ -100,6 +100,7 @@ function existingThreadIdsForCommand(
         ? [command.sourceThreadId]
         : [command.sourceThreadId, command.targetThreadId];
     case "delegated_task.request":
+    case "delegated_task.ensure":
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
     case "delegated_task.completion-delivery.dispose":
@@ -655,6 +656,7 @@ const make = Effect.gen(function* () {
           ),
         );
       case "delegated_task.request":
+      case "delegated_task.ensure":
         return orchestrator.getThreadRecords(command.parentThreadId, []).pipe(
           Effect.flatMap((parent) =>
             assertProviderInstanceEnabled({

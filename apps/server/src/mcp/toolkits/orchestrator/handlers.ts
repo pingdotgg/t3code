@@ -16,6 +16,15 @@ const handlers = {
       return yield* service.capabilities(scope, input);
     }),
   ),
+  ensure_child_task: McpToolAccess.writesThreads(
+    (input) => [input.parentThreadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.ensureChildTask(scope, input);
+      }),
+  ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

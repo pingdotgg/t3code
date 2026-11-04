@@ -4,6 +4,8 @@ import {
   OrchestrationV2StopWorkflowInput,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
+  OrchestratorMcpEnsureChildTaskInput,
+  OrchestratorMcpEnsureChildTaskResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -64,6 +66,18 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
+
+const EnsureChildTaskTool = Tool.make("ensure_child_task", {
+  description:
+    "Authenticated external clients only. Ensure one native child task in the parent's checkout with fresh context, anchored to a verified active, completed or technically failed run without an explicit Stop. Reuse requestKey and identical input after a lost response. The key is durable across sessions; changed input is rejected. Explicit Stop, suspension, archive and deletion prevent new starts. Read the child's native result with t3_thread_read; this operation does not wake the parent.",
+  parameters: OrchestratorMcpEnsureChildTaskInput,
+  success: OrchestratorMcpEnsureChildTaskResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Destructive, true);
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
@@ -276,6 +290,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
+  EnsureChildTaskTool,
   TaskStatusTool,
   TaskCancelTool,
   WorkflowStopTool,

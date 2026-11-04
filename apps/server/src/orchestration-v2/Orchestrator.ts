@@ -491,6 +491,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
+    case "delegated_task.ensure":
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
     case "delegated_task.completion-delivery.dispose":
@@ -6894,7 +6895,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
-      command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "delegated_task.request" | "delegated_task.ensure" }
+      >,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
@@ -6919,7 +6923,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
-      if (parentRun === undefined || !isBlockingRun(parentRun)) {
+      if (
+        parentRun === undefined ||
+        (command.type === "delegated_task.request"
+          ? !isBlockingRun(parentRun)
+          : (!isBlockingRun(parentRun) &&
+              parentRun.status !== "completed" &&
+              parentRun.status !== "failed") ||
+            parentProjection.thread.archivedAt !== null ||
+            parentProjection.thread.deletedAt !== null ||
+            parentProjection.thread.snoozedUntil != null ||
+            parentProjection.thread.settledOverride === "settled" ||
+            parentRun.delegatedCompletion?.disposition === "stopped")
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -6996,6 +7012,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {
+        ...(command.type === "delegated_task.ensure"
+          ? {
+              ensuredRequest: command.ensuredRequest,
+              // External clients consume the native result without waking a model parent.
+              completionDelivery: { state: "disposed" as const, observedByRunId: null },
+            }
+          : {}),
         id: taskNodeId,
         threadId: command.parentThreadId,
         runId: parentRun.id,
@@ -11544,6 +11567,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadMergeBack(command, events);
         break;
       case "delegated_task.request":
+      case "delegated_task.ensure":
         yield* dispatchDelegatedTaskRequest(command, events, effects);
         break;
       case "delegated_task.wake-policy":

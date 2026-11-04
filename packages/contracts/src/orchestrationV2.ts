@@ -695,7 +695,14 @@ export const OrchestrationV2SubagentWorkflow = Schema.Struct({
 });
 export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
 
+export const OrchestrationV2EnsuredChildRequest = Schema.Struct({
+  environmentId: Schema.String,
+  requestKey: TrimmedNonEmptyString,
+  requestSha256: Schema.String,
+});
+
 export const OrchestrationV2Subagent = Schema.Struct({
+  ensuredRequest: Schema.optional(OrchestrationV2EnsuredChildRequest),
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -3014,6 +3021,25 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.ensure"),
+    ...OrchestrationV2CreationFields,
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    parentRunId: RunId,
+    parentNodeId: NodeId,
+    ensuredRequest: OrchestrationV2EnsuredChildRequest,
+    task: TrimmedNonEmptyString,
+    title: Schema.optional(TrimmedNonEmptyString),
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    // Omitted behaves as "settled_only" (no wake while the parent has a live
+    // run); producers that want fire-and-forget wakes must set "always".
+    completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    createdAt: Schema.optional(Schema.DateTimeUtc),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
