@@ -18,7 +18,12 @@ const decodeServiceConfig = Schema.decodeUnknownOption(
 function isRegisteredService(registeredUrl: string, serverUrl: string): boolean {
   const registered = URL.parse(registeredUrl);
   const configured = URL.parse(serverUrl);
-  if (registered === null || configured === null || registered.port !== configured.port) {
+  if (
+    registered === null ||
+    configured === null ||
+    registered.protocol !== configured.protocol ||
+    registered.port !== configured.port
+  ) {
     return false;
   }
   // A wildcard listener covers only its own address family's loopback; `localhost` could be either.
