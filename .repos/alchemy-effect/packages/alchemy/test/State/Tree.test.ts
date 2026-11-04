@@ -1,8 +1,8 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
 import { inMemoryState } from "@/State/InMemoryState.ts";
 import type { ResourceState } from "@/State/ResourceState.ts";
 import { deleteState, listState, readState } from "@/State/Tree.ts";
-import { describe, expect, it } from "alchemy-test";
-import * as Effect from "effect/Effect";
 
 const resource = {
   resourceType: "test:resource",
@@ -19,10 +19,7 @@ const resource = {
 } as ResourceState;
 
 const state = () =>
-  inMemoryState(
-    { app: { dev: { resource } } },
-    { app: { dev: { url: "https://example.com" } } },
-  );
+  inMemoryState({ app: { dev: { resource } } }, { app: { dev: { url: "https://example.com" } } });
 
 describe("State tree", { tags: ["unit", "local"] }, () => {
   it.effect("queries state as structured data", () =>

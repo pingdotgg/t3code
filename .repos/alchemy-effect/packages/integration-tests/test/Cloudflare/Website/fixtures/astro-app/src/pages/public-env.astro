@@ -1,0 +1,6 @@
+---
+// Prerendered at build time, so only the build's env reaches the page.
+export const prerender = true;
+---
+
+<p id="public-env">{import.meta.env.PUBLIC_SITE_MARKER}</p>

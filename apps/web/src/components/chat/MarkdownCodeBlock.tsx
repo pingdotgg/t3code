@@ -65,7 +65,7 @@ export function MarkdownCodeBlockFrame({
   return (
     <Wrapper
       dir="ltr"
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className="chat-markdown-codeblock my-[0.65rem] text-start overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -331,6 +331,7 @@ function UncachedShikiCodeBlock({
   const incrementalHighlight = preserveLines
     ? createIncrementalHighlightedDocument(highlighter, language, themeName)
     : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the incremental Shiki highlighter when it is replaced or the block unmounts
   useEffect(() => () => incrementalHighlight?.dispose(), [incrementalHighlight]);
   const highlighted = (() => {
     const result = (() => {

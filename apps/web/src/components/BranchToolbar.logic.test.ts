@@ -1,7 +1,7 @@
 import { type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
-  dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
@@ -162,6 +162,18 @@ describe("resolveBranchSelectionTarget", () => {
   it("reuses an existing secondary worktree for the selected ref", () => {
     expect(
       resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo/nested-checkout/packages/app",
+        activeProjectCheckoutRoot: "/repo/nested-checkout",
+        activeWorktreePath: null,
+        refName: { isDefault: true, worktreePath: "/repo" },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo",
+      nextWorktreePath: "/repo",
+      reuseExistingWorktree: true,
+    });
+    expect(
+      resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
@@ -177,20 +189,31 @@ describe("resolveBranchSelectionTarget", () => {
   });
 
   it("switches back to the main repo when the ref already lives there", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: true,
-          worktreePath: "/repo",
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: null,
-      reuseExistingWorktree: true,
-    });
+    // A subdirectory project's own checkout is reported at the repository root.
+    // The checkout root is undefined until the project's status loads.
+    for (const [activeProjectCwd, activeWorktreePath, activeProjectCheckoutRoot] of [
+      ["/repo", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", "/repo"],
+      ["/repo/packages/app", null, "/repo"],
+      ["/repo/packages/app", "/repo/.t3/worktrees/feature-a", undefined],
+      ["/repo/packages/app", null, undefined],
+    ] as const) {
+      expect(
+        resolveBranchSelectionTarget({
+          activeProjectCwd,
+          activeProjectCheckoutRoot,
+          activeWorktreePath,
+          refName: {
+            isDefault: true,
+            worktreePath: "/repo",
+          },
+        }),
+      ).toEqual({
+        checkoutCwd: "/repo",
+        nextWorktreePath: null,
+        reuseExistingWorktree: true,
+      });
+    }
   });
 
   it("keeps checkout in the current worktree for non-default refs", () => {

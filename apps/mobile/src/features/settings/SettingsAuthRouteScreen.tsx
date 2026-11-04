@@ -36,6 +36,7 @@ function ConfiguredSettingsAuthRouteScreen() {
 
   // Clerk reports sign-out only through its auth store (the native profile view
   // and the T3 Connect page can both sign out), so this follows that store.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator when Clerk's auth store reports a sign-out from the profile view or Connect page
   useEffect(() => {
     if (hasBeenSignedIn && isLoaded && isSignedIn === false) {
       navigation.goBack();

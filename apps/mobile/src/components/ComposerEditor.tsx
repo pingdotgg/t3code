@@ -3,7 +3,7 @@ import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -11,6 +11,7 @@ import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEdit
 import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
 import {
   appendComposerDraftAttachments,
+  composerContextImportsAtom,
   createComposerDraftContextHistory,
   getComposerDraftAfterSelection,
   getComposerDraftSnapshot,
@@ -22,8 +23,11 @@ import {
   useComposerDraft,
 } from "../state/use-composer-drafts";
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
+import { startComposerDraftOperation } from "../state/composerDraftOperations";
+import { appAtomRegistry } from "../state/atom-registry";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
+import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
 import {
@@ -58,6 +62,7 @@ export function ComposerEditor({
     ? preferencesResult.value.composerEnterBehavior
     : undefined;
   const contextHistory = createComposerDraftContextHistory();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the attachment file leases held for native text undo when the history is replaced or unmounts
   useEffect(() => () => contextHistory.dispose(), [contextHistory]);
   const changeText = (text: string) => {
     const restored = contextHistory.restore(
@@ -73,33 +78,34 @@ export function ComposerEditor({
   const [selected, setSelected] = useState<{ source: string; start: number; end: number } | null>(
     null,
   );
-  const importRef = useRef<AbortController | null>(null);
-  const [importing, setImporting] = useState(false);
-  useEffect(
-    () => () => {
-      importRef.current?.abort();
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Switching drafts aborts an import owned by the previous draft.
-    [draftKey],
-  );
+  const linkedEnvironments = useLinkedEnvironments(environmentId ?? null);
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const importing = draftKey ? contextImports[draftKey] === true : false;
   const pasteContext = async (
     clipboard: Parameters<NonNullable<NativeComposerEditorProps["onPasteContext"]>>[0],
   ) => {
-    if (!draftKey || importRef.current || props.readOnly || props.editable === false) return;
+    if (
+      !draftKey ||
+      appAtomRegistry.get(composerContextImportsAtom)[draftKey] ||
+      props.readOnly ||
+      props.editable === false
+    )
+      return;
     const insertion = { text: clipboard.value, ...clipboard.selection };
-    const controller = new AbortController();
-    importRef.current = controller;
-    setImporting(true);
+    const operation = startComposerDraftOperation(draftKey);
+    const { signal } = operation;
     setComposerContextImporting(draftKey, true);
     const settled = await settlePromise(async () => {
       const retained = getComposerDraftAfterSelection(draftKey, insertion);
       const result = await importComposerContextClipboard(
         clipboard,
         retained.attachments.length,
-        controller.signal,
+        signal,
         retained.context?.records.length ?? 0,
         environmentId,
+        linkedEnvironments,
       );
+      if (signal.aborted) return;
       if (!result) {
         insertComposerDraftText(draftKey, clipboard.text, insertion);
         return;
@@ -126,10 +132,9 @@ export function ComposerEditor({
           [...warnings, "Those references are marked unavailable."].join("\n\n"),
         );
     });
+    operation.finish();
     setComposerContextImporting(draftKey, false);
-    importRef.current = null;
-    setImporting(false);
-    if (AsyncResult.isFailure(settled) && !controller.signal.aborted) {
+    if (AsyncResult.isFailure(settled) && !signal.aborted) {
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
         "Could not paste context",
