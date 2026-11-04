@@ -66,6 +66,13 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
   });
 }
 
+// `releaseChannel` is not on ProviderMaintenanceCapabilities yet; the cast goes once it lands.
+function withStableReleaseChannel(
+  capabilities: ProviderMaintenanceCapabilities,
+): ProviderMaintenanceCapabilities {
+  return { ...capabilities, releaseChannel: "stable" } as ProviderMaintenanceCapabilities;
+}
+
 const baseProvider: ServerProvider = {
   instanceId: CODEX_INSTANCE_ID,
   driver: CODEX_DRIVER,
@@ -303,6 +310,93 @@ describe("providerMaintenanceRunner", () => {
         Layer.mergeAll(
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("names the release channel in the provider updated message", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseNativeCliProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed(withStableReleaseChannel(lifecycleFor(provider))),
+      });
+
+      const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider updated from the stable release channel.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("names the release channel when the precheck finds the provider current", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.309",
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "2.1.309",
+          latestVersion: "2.1.310",
+          updateCommand: "claude update",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Update available.",
+        },
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: (instanceId) =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) =>
+              provider.instanceId === instanceId
+                ? { ...provider, version: "2.1.310", checkedAt: "2026-04-10T00:00:01.000Z" }
+                : provider,
+            ),
+          ),
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            withStableReleaseChannel(
+              makeProviderMaintenanceCapabilities({
+                provider: CODEX_DRIVER,
+                packageName: "@anthropic-ai/claude-code",
+                updateExecutable: "claude",
+                updateArgs: ["update"],
+                updateLockKey: "claudeAgent-native",
+              }),
+            ),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Already up to date on the stable release channel.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
             return { stdout: "updated" };

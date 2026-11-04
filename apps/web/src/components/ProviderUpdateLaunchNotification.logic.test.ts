@@ -354,4 +354,24 @@ describe("getProviderUpdateRunToastView", () => {
       description: "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed",
     });
   });
+
+  it("shows a single provider's update result message instead of generic copy", () => {
+    const message = "Already up to date on the stable release channel.";
+    const claude = provider({
+      driver: driver("claudeAgent"),
+      version: "2.1.311",
+      latestVersion: "2.1.311",
+      advisoryStatus: "current",
+      updateState: updateState("succeeded", message),
+    });
+
+    expect({
+      toast: getProviderUpdateRunToastView([
+        run("Mac Studio", "claudeAgent", AsyncResult.success({ providers: [claude] })),
+      ])?.description,
+      sidebarPill: getProviderUpdateSidebarPillView([claude], {
+        visibleAfterIso: sessionStartedAt,
+      })?.description,
+    }).toEqual({ toast: message, sidebarPill: message });
+  });
 });
