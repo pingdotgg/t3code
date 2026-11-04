@@ -141,8 +141,10 @@ export function DeviceStreamView(props: {
   useAtomMount(
     props.platform === "ios" && props.visible ? deviceDetailReadAtom(detailKey) : NOOP_ATOM,
   );
-  const usKeyboardLayout =
-    useAtomValue(deviceDetailAtom(detailKey)).detail?.settings.usKeyboardLayout ?? true;
+  const deviceDetail = useAtomValue(deviceDetailAtom(detailKey));
+  const layoutPending =
+    props.platform === "ios" && deviceDetail.detail === null && deviceDetail.error === null;
+  const usKeyboardLayout = deviceDetail.detail?.settings.usKeyboardLayout ?? true;
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -351,6 +353,7 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
+          if (layoutPending) return;
           client?.sendKey(event.nativeEvent, "down", usKeyboardLayout);
         }}
         onPaste={(event) => {

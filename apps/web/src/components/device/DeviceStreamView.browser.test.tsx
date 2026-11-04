@@ -14,6 +14,7 @@ vi.mock(import("./DevicePhoneViewport"), () => ({
   DevicePhoneViewport: () => <></>,
 }));
 import { DeviceStreamView } from "./DeviceStreamView";
+import { deviceDetailAtom } from "~/state/device";
 
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
@@ -69,6 +70,11 @@ function setup() {
     },
     touches,
     keys,
+    readLayout(usKeyboardLayout: boolean) {
+      const key = { environmentId: EnvironmentId.make("test"), hostId: "local", deviceId: "test" };
+      const detail = { ...key, settings: { usKeyboardLayout }, foregroundApp: null, readAt: "" };
+      registry.set(deviceDetailAtom(key), { detail, error: null });
+    },
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -226,6 +232,9 @@ it("sends Mac editing shortcuts to the simulator and leaves the rest to the brow
     host.dispatchEvent(
       new KeyboardEvent("keydown", { code, key, metaKey: true, bubbles: true, cancelable: true }),
     );
+  expect(press("KeyA", "a")).toBe(false);
+  expect(keys).toEqual([]);
+  await act(async () => input.readLayout(true));
   expect(press("KeyL", "l")).toBe(true);
   expect(keys).toEqual([]);
   expect(press("KeyA", "a")).toBe(false);
