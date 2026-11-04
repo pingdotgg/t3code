@@ -557,6 +557,9 @@ const make = Effect.gen(function* () {
             });
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
+            // The vocabulary capability guarantees plain transcription, not translation.
+            const vocabularyFor = (inference: LoadedModel) =>
+              inference.supportsVocabulary && !translateToEnglish ? customWords : [];
             const transcribeWith = (inference: LoadedModel) =>
               Effect.tryPromise({
                 try: (signal) => {
@@ -568,14 +571,7 @@ const make = Effect.gen(function* () {
                     ...(translateToEnglish
                       ? { task: "translate" as const, targetLanguage: "en" as const }
                       : {}),
-                    ...(customWords.length > 0 && inference.supportsInitialPrompt
-                      ? {
-                          family: {
-                            kind: "whisper" as const,
-                            initialPrompt: customWords.join(", "),
-                          },
-                        }
-                      : {}),
+                    ...(vocabularyFor(inference).length > 0 ? { vocabulary: customWords } : {}),
                   });
                 },
                 catch: (cause) => {
@@ -606,7 +602,7 @@ const make = Effect.gen(function* () {
               }),
             );
             const correct = makeSpeechTextCorrector(
-              inference.supportsInitialPrompt ? [] : customWords,
+              vocabularyFor(inference).length > 0 ? [] : customWords,
               dictionary,
             );
             return finalizeTranscript(
@@ -673,10 +669,8 @@ const make = Effect.gen(function* () {
     const definition = selectedModel(settings);
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
-    const correct = makeSpeechTextCorrector(
-      dictionary.map(({ term }) => term),
-      dictionary,
-    );
+    const customWords = dictionary.map(({ term }) => term);
+    let correct = makeSpeechTextCorrector(customWords, dictionary);
     const modelPath = yield* installedModelPath(definition);
     let streamModel = yield* attempt(operation, () =>
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
@@ -685,7 +679,10 @@ const make = Effect.gen(function* () {
     const beginStream = async () => {
       if (!streamModel.supportsStreaming)
         throw new Error("The selected model does not support streaming.");
-      await streamModel.begin(language === "auto" ? undefined : language);
+      const vocabulary =
+        streamModel.supportsVocabulary && customWords.length > 0 ? customWords : undefined;
+      await streamModel.begin(language === "auto" ? undefined : language, vocabulary);
+      correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
       started = true;
     };
     // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
@@ -767,7 +764,17 @@ const make = Effect.gen(function* () {
           };
         }),
       finish: run(async () => {
-        const text = await streamModel.finish();
+        let text: string;
+        try {
+          text = await streamModel.finish().catch(async (cause: unknown) => {
+            await recoverOnCpu(cause);
+            if (closed || signal.aborted) throw cause;
+            return streamModel.finish();
+          });
+        } catch (cause) {
+          started = false;
+          throw cause;
+        }
         finished = true;
         return finalizeTranscript(
           correct(text),
