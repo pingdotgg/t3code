@@ -44,8 +44,9 @@ export function resolveThreadDetailsLimits(
   const own =
     report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
     provider.usageLimits;
-  if (own && limitsNotice(own) === null) return { kind: "instance", limits: own };
-  return hubPool(provider.driver, sources, now) ?? (own ? { kind: "instance", limits: own } : null);
+  if (!own) return null;
+  if (limitsNotice(own) === null) return { kind: "instance", limits: own };
+  return hubPool(provider.driver, sources, now) ?? { kind: "instance", limits: own };
 }
 
 function hubPool(
