@@ -235,6 +235,8 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  // Reconnects replay finished tools, so each nested html_render takes a page only once.
+  readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
@@ -1033,10 +1035,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* mcpServerNameFor(turn.input.threadId),
       );
       for (const { index, input } of pages) {
-        // Taking consumes the page, so a completion seen again adds nothing.
+        const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
+        if (turn.takenPages.has(pageId)) continue;
+        turn.takenPages.add(pageId);
         const page = yield* mcpSessions.takeHtmlRender(turn.input.threadId, input);
         if (page === undefined) continue;
-        const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
         yield* emitNode(state, turn, pageId, "tool_call", "completed", startedAt, updatedAt);
         yield* emit({
           type: "turn_item.updated",
@@ -1184,6 +1187,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
