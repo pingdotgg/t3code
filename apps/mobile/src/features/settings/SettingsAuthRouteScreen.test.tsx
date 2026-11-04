@@ -54,12 +54,8 @@ function client(sessions: readonly FakeSession[]): FakeClient {
   return self;
 }
 
-it("adopts the session the native-backed client already holds instead of offering a doomed sign-in", async () => {
+function setup(refreshed: FakeClient) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const nativeSession = { id: "sess_native", status: "active" };
-  // The JS client is stale and signed out; refreshing it from the shared device
-  // token returns the session native Clerk reports as `session_exists`.
-  const refreshed = client([nativeSession]);
   const stale = { ...client([]), fetch: async () => refreshed, reload: async () => refreshed };
   harness.clerk = {
     client: stale,
@@ -69,9 +65,16 @@ it("adopts the session the native-backed client already holds instead of offerin
     },
     setActive: vi.fn(async () => {}),
   };
-
   const root = createRoot(document.createElement("div"));
   act(() => root.render(<SettingsAuthRouteScreen />));
+  return root;
+}
+
+it("adopts the session the native-backed client already holds instead of offering a doomed sign-in", async () => {
+  const nativeSession = { id: "sess_native", status: "active" };
+  // The JS client is stale and signed out; refreshing it from the shared device
+  // token returns the session native Clerk reports as `session_exists`.
+  const root = setup(client([nativeSession]));
 
   await vi.waitFor(() => {
     const activated = harness.clerk.setActive.mock.calls.map(([params]) => {
@@ -80,6 +83,16 @@ it("adopts the session the native-backed client already holds instead of offerin
     });
     expect(activated, "the native session was never activated in JS").toContain("sess_native");
   });
+
+  act(() => root.unmount());
+});
+
+it("leaves a truly signed-out user on the sign-in form", async () => {
+  const refreshed = client([]);
+  const root = setup(refreshed);
+
+  await vi.waitFor(() => expect(harness.clerk.client).toBe(refreshed));
+  expect(harness.clerk.setActive).not.toHaveBeenCalled();
 
   act(() => root.unmount());
 });

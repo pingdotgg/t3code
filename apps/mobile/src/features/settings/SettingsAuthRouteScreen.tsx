@@ -8,6 +8,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 
+import { adoptNativeClerkSession } from "../cloud/adoptNativeClerkSession";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
 
@@ -33,6 +34,14 @@ function ConfiguredSettingsAuthRouteScreen() {
   // flashing the sign-in form.
   const [hasBeenSignedIn, setHasBeenSignedIn] = useState(isSignedIn === true);
   if (isSignedIn && !hasBeenSignedIn) setHasBeenSignedIn(true);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes Clerk's JS client from the native device token once, so a session native Clerk already holds is adopted instead of AuthView failing with session_exists
+  useEffect(() => {
+    if (!isLoaded || hasBeenSignedIn) return;
+    adoptNativeClerkSession().catch((error: unknown) => {
+      console.warn("[clerk] could not refresh the client from the native session", error);
+    });
+  }, [isLoaded, hasBeenSignedIn]);
 
   // Clerk reports sign-out only through its auth store (the native profile view
   // and the T3 Connect page can both sign out), so this follows that store.
