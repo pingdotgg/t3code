@@ -23,7 +23,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,15 +36,14 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
   deriveAuthClientMetadata,
-  signPayload,
   timingSafeEqualBase64Url,
-  verifyPayloadSignature,
 } from "./utils.ts";
 import { requestUrl } from "../requestUrl.ts";
 
@@ -263,14 +261,12 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  const signingKey = yield* secretStore
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(Effect.orDie);
+  const signer = yield* PayloadSigner.fromSecret(
+    yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
+  );
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
 
-  const mac = yield* Mac.Mac;
-  const sign = (domain: string, payload: string) =>
-    signPayload(`${domain}.${payload}`, signingKey).pipe(Effect.provideService(Mac.Mac, mac));
+  const sign = (domain: string, payload: string) => signer.sign(`${domain}.${payload}`);
 
   const signClientId = (name: string, redirectUris: ReadonlyArray<string>, peerLink: boolean) => {
     const body = base64UrlEncode(
@@ -285,11 +281,7 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
     if (!body || !signature || extra !== undefined) return undefined;
-    const verified = yield* verifyPayloadSignature(
-      `mcp-client-id.${body}`,
-      signature,
-      signingKey,
-    ).pipe(Effect.provideService(Mac.Mac, mac));
+    const verified = yield* signer.verify(`mcp-client-id.${body}`, signature);
     if (!verified) return undefined;
     const json = yield* Effect.try(() => base64UrlDecodeUtf8(body)).pipe(Effect.option);
     if (Option.isNone(json)) return undefined;

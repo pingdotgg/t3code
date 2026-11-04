@@ -5,8 +5,8 @@ import {
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -45,7 +45,7 @@ const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
 export const layer = McpToolAccess.toLayer(
   AttachmentToolkit,
   Effect.gen(function* () {
-    const mac = yield* Mac.Mac;
+    const assetSigner = yield* AssetSigner.AssetSigner;
     const uploadOwners = new Map<string, { readonly owner: string; readonly issuedAt: number }>();
     return {
       // A pending upload belongs to its caller until a send claims it, so
@@ -54,7 +54,7 @@ export const layer = McpToolAccess.toLayer(
         (input) =>
           Effect.gen(function* () {
             const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
-              Effect.provideService(Mac.Mac, mac),
+              Effect.provideService(AssetSigner.AssetSigner, assetSigner),
               Effect.mapError(unavailable),
             );
             const now = yield* Clock.currentTimeMillis;
