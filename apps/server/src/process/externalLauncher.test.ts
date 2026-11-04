@@ -302,10 +302,9 @@ it.effect.skipIf(windowsHost)(
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
       assert.equal(spawned.options.detached, true);
-      const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
-      const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
+      assert.equal(spawned.args[spawned.args.length - 2], "-Command");
       assert.equal(
-        decodedCommand,
+        spawned.args[spawned.args.length - 1],
         "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -319,7 +318,11 @@ function assertPlainPowerShellLaunch(
 ) {
   assert.ok(spawned);
   assert.isTrue(spawned.command.toLowerCase().endsWith("powershell.exe"));
-  const flags = spawned.args.map((arg) => arg.toLowerCase().replace(/^[-/]+/, "-"));
+  const flags = spawned.args.map((arg) =>
+    String(arg)
+      .toLowerCase()
+      .replace(/^[-/]+/, "-"),
+  );
   assert.deepEqual(
     flags.filter((flag) => flag.length > 1 && "-encodedcommand".startsWith(flag)),
     [],
