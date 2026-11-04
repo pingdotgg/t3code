@@ -233,7 +233,7 @@ it.each([
   ["a legacy transcription host is configured", { voiceTranscriptionEnvironmentId: "env-a" }],
 ])("stays local-only when %s, even with voice-capable environments", async (_, legacy) => {
   setup();
-  mocks.settings = { ...legacy };
+  mocks.settings = { ...legacy, speechSilenceFiltering: true };
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   expectNoAudioSent();
@@ -242,21 +242,26 @@ it.each([
   expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
 });
 
-it("sends audio only to the environment the user chose, not the primary or the thread's", async () => {
-  setup({ destination: "env-a" });
-  await using _screen = await render(<Probe />);
-  expect(mocks.voice.transcriptionEnvironmentId).toBe("env-a");
-  await act(() => mocks.voice.start());
-  expect(mocks.voice.state.phase).toBe("recording");
-  await act(() => mocks.voice.stop());
-  expect(
-    new Set([...mocks.platforms, ...mocks.microphoneRequests, ...mocks.transcribeCalls]),
-  ).toEqual(new Set(["env-a"]));
-  expect(mocks.statusRequests.every((id) => id === "env-a")).toBe(true);
-  // Cleanup is a separate opt-in and stays off by default.
-  expect(mocks.cleanupCalls).toEqual([]);
-  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
-});
+it.each([true, false])(
+  "sends audio with silence filtering %s only to the chosen environment",
+  async (speechSilenceFiltering) => {
+    setup({ destination: "env-a" });
+    mocks.settings = { speechSilenceFiltering };
+    await using _screen = await render(<Probe />);
+    expect(mocks.voice.transcriptionEnvironmentId).toBe("env-a");
+    await act(() => mocks.voice.start());
+    expect(mocks.voice.state.phase).toBe("recording");
+    await act(() => mocks.voice.stop());
+    expect(
+      new Set([...mocks.platforms, ...mocks.microphoneRequests, ...mocks.transcribeCalls]),
+    ).toEqual(new Set(["env-a"]));
+    expect(mocks.statusRequests.every((id) => id === "env-a")).toBe(true);
+    expect(mocks.recordingOptions[0]?.speechSilenceFiltering).toBe(speechSilenceFiltering);
+    // Cleanup is a separate opt-in and stays off by default.
+    expect(mocks.cleanupCalls).toEqual([]);
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+  },
+);
 
 it.each([
   ["is disconnected", () => mocks.connected.delete("env-a")],

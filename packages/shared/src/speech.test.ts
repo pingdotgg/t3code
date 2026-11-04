@@ -17,6 +17,18 @@ describe("speech PCM request framing", () => {
     expect(decodeSpeechPcmRequest(pool.subarray(3))).toEqual({ pcm, options });
   });
 
+  it("accepts recordings from clients that predate silence filtering", () => {
+    const metadata = new TextEncoder().encode(JSON.stringify({
+      speechLanguage: "fr", speechTranslateToEnglish: false, speechCustomWords: [], speechRemoveFillerWords: false,
+    }));
+    const body = new Uint8Array(4 + metadata.length + 4);
+    new DataView(body.buffer).setUint32(0, metadata.length, true);
+    body.set(metadata, 4);
+    expect(decodeSpeechPcmRequest(body).options).toEqual({
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "fr", speechRemoveFillerWords: false, speechSilenceFiltering: true,
+    });
+  });
+
   it("rejects truncated frames, oversized option lengths and missing audio", () => {
     expect(() => decodeSpeechPcmRequest(new Uint8Array(3))).toThrow();
     const oversized = new Uint8Array(5);
