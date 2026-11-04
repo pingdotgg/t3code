@@ -1,7 +1,7 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
@@ -145,6 +145,18 @@ export function DeviceStreamView(props: {
   const layoutPending =
     props.platform === "ios" && deviceDetail.detail === null && deviceDetail.error === null;
   const usKeyboardLayout = deviceDetail.detail?.settings.usKeyboardLayout ?? true;
+  const heldKeys = useRef<Array<[KeyboardEvent, "down" | "up"]>>([]);
+  const sendKey = (event: KeyboardEvent, phase: "down" | "up") => {
+    if (layoutPending) heldKeys.current.push([event, phase]);
+    else client?.sendKey(event, phase, usKeyboardLayout);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends keys held while the layout read was pending to the device once it answers
+  useLayoutEffect(() => {
+    if (layoutPending) return;
+    for (const [event, phase] of heldKeys.current.splice(0)) {
+      client?.sendKey(event, phase, usKeyboardLayout);
+    }
+  }, [client, layoutPending, usKeyboardLayout]);
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -353,8 +365,7 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
-          if (layoutPending) return;
-          client?.sendKey(event.nativeEvent, "down", usKeyboardLayout);
+          sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -363,7 +374,7 @@ export function DeviceStreamView(props: {
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
-          client?.sendKey(event.nativeEvent, "up", usKeyboardLayout);
+          sendKey(event.nativeEvent, "up");
         }}
       >
         <div
