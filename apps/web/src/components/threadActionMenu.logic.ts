@@ -27,7 +27,8 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | `plugin-action:${string}`;
 
 export type DraftActionMenuId =
   | "copy"
@@ -91,6 +92,11 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** Actions enabled plugins offer on this thread's menu, in listing order. */
+  readonly pluginActions?: ReadonlyArray<{
+    readonly id: `plugin-action:${string}`;
+    readonly label: string;
+  }>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
@@ -223,6 +229,12 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.pluginActions ?? []).map((action, index) => ({
+      id: action.id,
+      label: action.label,
+      icon: "plug",
+      ...(index === 0 ? { separatorBefore: true } : {}),
+    })),
     {
       id: "copy",
       label: "Copy",

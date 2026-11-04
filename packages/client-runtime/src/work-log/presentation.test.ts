@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  pluginContextInspection,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -201,6 +202,116 @@ describe("resolveWorkEntryToolPresentation", () => {
         label: "preview_click",
         toolData: { server: "another-server", tool: "preview_click" },
       }),
+    ).toBeNull();
+  });
+});
+describe("pluginContextInspection", () => {
+  const record = (
+    fields: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>>,
+  ): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make("plugin-context"),
+    threadId: ThreadId.make("thread"),
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    type: "dynamic_tool",
+    status: "completed",
+    title: "Added context from Notes",
+    toolName: "plugin_context",
+    toolSource: { key: "plugin:acme.notes", name: "Notes", kind: "integration" },
+    input: { plugin: { id: "acme.notes", name: "Notes" } },
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
+    ...fields,
+  });
+
+  it("shows the context the provider received, attributed to its plugin", () => {
+    expect(
+      pluginContextInspection(
+        record({
+          output: {
+            context: [
+              { title: "Conventions", text: "Use tabs." },
+              { title: "Codename", text: "PERIWINKLE-42" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({
+      source: "Notes (acme.notes)",
+      blocks: [
+        { label: "Conventions", text: "Use tabs." },
+        { label: "Codename", text: "PERIWINKLE-42" },
+      ],
+    });
+    expect(pluginContextInspection(record({ output: { context: [] } }))?.blocks).toEqual([
+      { label: "Context", text: "None." },
+    ]);
+  });
+
+  it("shows why context was not added for failed and interrupted records", () => {
+    for (const status of ["failed", "interrupted"] as const) {
+      expect(
+        pluginContextInspection(
+          record({
+            status,
+            title: "Context from Notes not added",
+            output: { reason: "Notes did not answer within 5 seconds." },
+          }),
+        ),
+      ).toEqual({
+        source: "Notes (acme.notes)",
+        blocks: [{ label: "Not added", text: "Notes did not answer within 5 seconds." }],
+      });
+    }
+    expect(
+      pluginContextInspection(record({ status: "cancelled", output: undefined }))?.blocks,
+    ).toEqual([{ label: "Not added", text: "No reason was recorded." }]);
+  });
+
+  it("covers the overflow record, a pending call, and context the client did not receive", () => {
+    expect(
+      pluginContextInspection(
+        record({
+          status: "failed",
+          toolSource: { key: "plugins", name: "Plugins", kind: "integration" },
+          input: { notCalled: 3 },
+          output: { reason: "At most 4 plugins add context to one run; 3 more were not called." },
+        }),
+      ),
+    ).toEqual({
+      source: "Plugins",
+      blocks: [
+        {
+          label: "Not added",
+          text: "At most 4 plugins add context to one run; 3 more were not called.",
+        },
+      ],
+    });
+    expect(pluginContextInspection(record({ status: "running" }))?.blocks).toEqual([]);
+    expect(pluginContextInspection(record({ output: undefined }))?.blocks).toEqual([
+      { label: "Context", text: "The saved context is not available here." },
+    ]);
+  });
+
+  it("leaves every other tool to its own presentation", () => {
+    expect(pluginContextInspection(record({ toolName: "search" }))).toBeNull();
+    expect(
+      pluginContextInspection(
+        record({ toolSource: { key: "github", name: "GitHub", kind: "integration" } }),
+      ),
+    ).toBeNull();
+    expect(
+      pluginContextInspection(
+        record({
+          nativeItemRef: { driver: "claudeAgent", nativeId: "tool-1", strength: "strong" },
+        } as never),
+      ),
     ).toBeNull();
   });
 });

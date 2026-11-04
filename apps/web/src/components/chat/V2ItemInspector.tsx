@@ -11,6 +11,7 @@ import {
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
+import { pluginContextInspection } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, type ReactNode, Suspense, use } from "react";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
@@ -237,6 +238,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  const pluginContext = pluginContextInspection(item);
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -372,7 +374,19 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? (
+      {pluginContext ? (
+        <div className="space-y-2">
+          <p className="text-muted-foreground">From {pluginContext.source}</p>
+          {pluginContext.blocks.map((block) => (
+            <div key={JSON.stringify(block)}>
+              <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
+                {block.label}
+              </p>
+              <StructuredValue value={block.text} />
+            </div>
+          ))}
+        </div>
+      ) : item.type === "dynamic_tool" ? (
         <ToolCallBody
           toolName={item.toolName}
           args={item.input}

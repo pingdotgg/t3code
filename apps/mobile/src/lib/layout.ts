@@ -105,6 +105,18 @@ export function deriveThreadFeedInitialContentInset(input: {
   return { bottom: Math.max(0, input.bottomContentInset) };
 }
 
+// Overlay height offsets both the feed spacer and message anchor below the header.
+export function deriveThreadFeedTopGeometry(input: {
+  readonly usesNativeAutomaticInsets: boolean;
+  readonly headerInset: number;
+  readonly topOverlayInset: number;
+}): { readonly spacerHeight: number; readonly anchorTopInset: number } {
+  return {
+    spacerHeight: (input.usesNativeAutomaticInsets ? 0 : input.headerInset) + input.topOverlayInset,
+    anchorTopInset: input.headerInset + input.topOverlayInset,
+  };
+}
+
 export function deriveLayout(input: {
   readonly width: number;
   readonly height: number;

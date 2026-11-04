@@ -17,7 +17,6 @@ import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
@@ -35,7 +34,10 @@ import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 
+export type AddToChatResult = "inserted" | "no-composer" | "not-ready" | "dropped";
+
 interface FileBrowserPanelProps {
+  addToChat: (text: string) => AddToChatResult;
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
@@ -142,12 +144,12 @@ export default function FileBrowserPanel({
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
+  addToChat,
   hostFolder = false,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
-  const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
   const {
     entries: directoryEntries,
@@ -229,8 +231,8 @@ export default function FileBrowserPanel({
           return;
         }
         if (clicked === "add-to-chat") {
-          const composer = composerRef?.current;
-          if (!composer) {
+          const result = addToChat(`${mention} `);
+          if (result === "no-composer") {
             toastManager.add({
               type: "error",
               title: "Unable to add to chat",
@@ -238,8 +240,7 @@ export default function FileBrowserPanel({
             });
             return;
           }
-          const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
-          if (!inserted) {
+          if (result === "not-ready") {
             toastManager.add({
               type: "error",
               title: "Unable to add to chat",
@@ -256,6 +257,9 @@ export default function FileBrowserPanel({
   const loadingDirectoriesRef = useRef(loadingDirectories);
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
+  );
+  const openSelectedFile = useStableCallback((relativePath: string) =>
+    onOpenFile(panelPath(relativePath)),
   );
   const { model } = useFileTree({
     composition: {
@@ -282,7 +286,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(panelPath(selectedPath));
+        openSelectedFile(selectedPath);
       }
     },
     paths: [],
