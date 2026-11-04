@@ -1,0 +1,226 @@
+[
+  {
+    "fix": "#104",
+    "protects": "an auth refusal from a route that answered beats a silent route's timeout",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "reports a refusal from a route that answered over a silent route's timeout",
+    "sha256": "5f648270cb2dbb9e032ac4028a471be79cec84ce1865735b2ade18dc71aceec1",
+    "sources": ["packages/client-runtime/src/connection/driver.ts"]
+  },
+  {
+    "fix": "#105",
+    "protects": "direct routes connect without a T3 Connect sign-in",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "keeps retrying a silent direct route when T3 Connect asks for sign-in",
+    "sha256": "3511decd89cff733c2349111551c27ab7d7c562611a34aecd13a3febce8f17ba",
+    "sources": ["packages/client-runtime/src/connection/driver.ts"]
+  },
+  {
+    "fix": "#105",
+    "protects": "direct routes connect without a T3 Connect sign-in",
+    "test": "packages/client-runtime/src/authorization/layer.test.ts",
+    "title": "keeps direct access on a valid environment token while signed out",
+    "sha256": "557cd8503b782374f419b929413ce14de183738cacc0fbbbff87e70bc4b2092b",
+    "sources": ["packages/client-runtime/src/authorization/service.ts"]
+  },
+  {
+    "fix": "#105",
+    "protects": "direct routes connect without a T3 Connect sign-in",
+    "test": "packages/client-runtime/src/state/environmentHttpAuth.test.ts",
+    "title": "keeps a learned direct origin and marks the token request as direct",
+    "sha256": "88514cb4e951f41e25d59fda61888828f0e0e7de8ac8f174197ee3d011a9c64a",
+    "sources": ["packages/client-runtime/src/state/environmentHttpAuth.ts"]
+  },
+  {
+    "fix": "#106",
+    "protects": "a lossy mobile or tailnet path rides out packet-loss bursts",
+    "test": "packages/client-runtime/src/rpc/session.test.ts",
+    "title": "rides out a 25 second silence but closes after 30 seconds without a frame",
+    "sha256": "e21a1222c1827dc8e1a1dbcbbf21122bd2759ff87a6185ae296873266ed3f6cd",
+    "sources": [
+      "packages/client-runtime/src/rpc/protocol.ts",
+      "packages/client-runtime/src/rpc/session.ts"
+    ]
+  },
+  {
+    "fix": "#106",
+    "protects": "a lossy mobile or tailnet path rides out packet-loss bursts",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "lets a short mobile resume probe use the remote deadline before replacing",
+    "sha256": "ffb7d8c639509406f373cacfe24698b45005dc40a7030274522ba982fe5f9cc6",
+    "sources": ["packages/client-runtime/src/connection/supervisor.ts"]
+  },
+  {
+    "fix": "#108",
+    "protects": "direct routes keep and renew their token without the relay",
+    "test": "packages/client-runtime/src/authorization/layer.test.ts",
+    "title": "connects on an aging token at once and renews it through the relay behind",
+    "sha256": "0ee4bc050971e0e1a0960103a434b5688c734471c33665349cb035c6aa70f89a",
+    "sources": [
+      "packages/client-runtime/src/authorization/service.ts",
+      "packages/client-runtime/src/authorization/tokenStore.ts"
+    ]
+  },
+  {
+    "fix": "#108",
+    "protects": "direct routes keep and renew their token without the relay",
+    "test": "packages/client-runtime/src/authorization/layer.test.ts",
+    "title": "drops an aging token when the relay refuses to renew it",
+    "sha256": "5d225d7e819c7dd05e2d3250525b7a970fbed639b17daeef43d7be350f72d9bc",
+    "sources": [
+      "packages/client-runtime/src/authorization/service.ts",
+      "packages/client-runtime/src/authorization/tokenStore.ts"
+    ]
+  },
+  {
+    "fix": "#108",
+    "protects": "direct routes keep and renew their token without the relay",
+    "test": "apps/server/src/auth/EnvironmentAuth.test.ts",
+    "title": "exchanges the reusable dev token for a local scoped OAuth session",
+    "sha256": "524c6020df1fd9ffee81991420b5c7eec70168f6d165ef16c6be098cf96973b2",
+    "sources": ["apps/server/src/auth/EnvironmentAuth.ts"]
+  },
+  {
+    "fix": "#110",
+    "protects": "the server resets clients that stopped reading",
+    "test": "apps/server/src/wsClientLiveness.test.ts",
+    "title": "treats a client that stops sending as gone after the silence limit",
+    "sha256": "3f21253777486e387cad1808436cb8c612f34411f35842fc2f027e88b79a70e2",
+    "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
+  },
+  {
+    "fix": "#110",
+    "protects": "the server resets clients that stopped reading",
+    "test": "apps/server/src/wsClientLiveness.test.ts",
+    "title": "keeps a pinging client connected",
+    "sha256": "051a62477ea7369121c0b9cb4e2141ecfda81a0c122ccc22ff8aa61234b59b1e",
+    "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
+  },
+  {
+    "fix": "#110",
+    "protects": "the server resets clients that stopped reading",
+    "test": "apps/server/src/wsClientLiveness.test.ts",
+    "title": "treats a send backlog that stops draining as a stalled client",
+    "sha256": "0d6aad5f980ee8c58782d22c7e27b47707c8c8a71ba30d0b69db1be8dcd69680",
+    "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
+  },
+  {
+    "fix": "#101",
+    "protects": "failed relay attempts are traced with their real error",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "exports each relay setup as a standalone linked trace that ends at readiness",
+    "sha256": "d9600641052a0ed9f17f72f9b9c43c02fb4dc35f52962bbdea4c1ed62fe2441d",
+    "sources": ["packages/client-runtime/src/connection/supervisor.ts"]
+  },
+  {
+    "fix": "#111",
+    "protects": "a mobile resume after a screen lock replaces the stale socket",
+    "test": "apps/mobile/src/connection/app-state-wakeups.test.ts",
+    "title": "replaces the session after a screen lock whose background event arrives on resume",
+    "sha256": "cc9df8a5d32ee88cce948165ed470ad847c0c27d8249420cc25a75fc17dc01ed",
+    "sources": [
+      "apps/mobile/src/connection/app-state-wakeups.ts",
+      "apps/mobile/src/connection/platform.ts"
+    ]
+  },
+  {
+    "fix": "#111",
+    "protects": "a mobile resume after a screen lock replaces the stale socket",
+    "test": "apps/mobile/src/connection/app-state-wakeups.test.ts",
+    "title": "replaces the session after a long inactive spell with no background event",
+    "sha256": "ae5b77ff039ddf25278539a531a23284ac3a3c853bc6e2b34084cc39d240bd26",
+    "sources": [
+      "apps/mobile/src/connection/app-state-wakeups.ts",
+      "apps/mobile/src/connection/platform.ts"
+    ]
+  },
+  {
+    "fix": "#128",
+    "protects": "Tailscale Serve never takes over a route another process owns",
+    "test": "packages/tailscale/src/tailscale.test.ts",
+    "title": "reads each port's target from serve status",
+    "sha256": "d99ebbc7d856c3f3c2f556e6f46fd1c8fe1f8433ba90fd5e307132dbbefbaaf0",
+    "sources": [
+      "packages/tailscale/src/tailscale.ts",
+      "apps/server/src/environment/TailnetRouteCheck.ts",
+      "apps/server/src/server.ts"
+    ]
+  },
+  {
+    "fix": "#128",
+    "protects": "Tailscale Serve never takes over a route another process owns",
+    "test": "packages/tailscale/src/tailscale.test.ts",
+    "title": "matches a target by port across loopback aliases only",
+    "sha256": "acfc559a15aeafed581a05ee3c59af46f350925a33c289ba6c8fb4dc3f0fe52e",
+    "sources": [
+      "packages/tailscale/src/tailscale.ts",
+      "apps/server/src/environment/TailnetRouteCheck.ts",
+      "apps/server/src/server.ts"
+    ]
+  },
+  {
+    "fix": "#128",
+    "protects": "Tailscale Serve never takes over a route another process owns",
+    "test": "scripts/lib/dev-share.test.ts",
+    "title": "leaves the mapping when serve status cannot be read",
+    "sha256": "b60ff547a996daa59eed50d4332711a1d6d012e9f659475e109f62829d5673a9",
+    "sources": ["scripts/lib/dev-share.ts"]
+  },
+  {
+    "fix": "#128",
+    "protects": "Tailscale Serve never takes over a route another process owns",
+    "test": "scripts/lib/dev-share.test.ts",
+    "title": "replaces a stale mapping whose target no longer answers",
+    "sha256": "921e8952aea62262f2b942f55710c614cbbb678795a20f4f5d8f63c754093e76",
+    "sources": ["scripts/lib/dev-share.ts"]
+  },
+  {
+    "fix": "#150",
+    "protects": "one dropped permission check cannot leave a connected client read-only",
+    "test": "packages/client-runtime/src/state/session.test.ts",
+    "title": "retries a failed permission check with backoff that restarts per connection",
+    "sha256": "b3ce8e08ae694ff1fb879a06ba31d05e45b4e80be2f7fbcb06880d0e65e506b6",
+    "sources": ["packages/client-runtime/src/state/session.ts"]
+  },
+  {
+    "fix": "#150",
+    "protects": "one dropped permission check cannot leave a connected client read-only",
+    "test": "packages/client-runtime/src/state/session.test.ts",
+    "title": "retries a failed check even while the previous success is still fresh",
+    "sha256": "cce1d936fe43d1e881dc19883f13091ef869766dc694562a3a3e00ffe5eeeadd",
+    "sources": ["packages/client-runtime/src/state/session.ts"]
+  },
+  {
+    "fix": "#191",
+    "protects": "an equal route keeps a live socket, and a host that stays down shows offline",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "keeps a live socket on an earlier route of the same kind",
+    "sha256": "e13f4843eb15acb072aebd052c74792a28647161d5f268348f034657c456e2f3",
+    "sources": [
+      "packages/client-runtime/src/connection/supervisor.ts",
+      "packages/client-runtime/src/connection/presentation.ts"
+    ]
+  },
+  {
+    "fix": "#191",
+    "protects": "an equal route keeps a live socket, and a host that stays down shows offline",
+    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
+    "title": "retries a host that stays down quietly and recovers by itself",
+    "sha256": "3c204ca72b0a948abefb52e1702d06bc67695bed801a23258ed4ac0c96e77407",
+    "sources": [
+      "packages/client-runtime/src/connection/supervisor.ts",
+      "packages/client-runtime/src/connection/presentation.ts"
+    ]
+  },
+  {
+    "fix": "#191",
+    "protects": "an equal route keeps a live socket, and a host that stays down shows offline",
+    "test": "packages/client-runtime/src/connection/presentation.test.ts",
+    "title": "settles a host past its grace period as offline and a refused credential as re-pair",
+    "sha256": "a612fe5200fd43c8d501fdd2465562cbe43d0a7ef8c6ff1ff322515096095efd",
+    "sources": [
+      "packages/client-runtime/src/connection/supervisor.ts",
+      "packages/client-runtime/src/connection/presentation.ts"
+    ]
+  }
+]

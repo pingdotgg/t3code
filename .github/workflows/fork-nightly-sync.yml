@@ -49,5 +49,5 @@ jobs:
           # The upstream tip is a normal merge PR: fork changes stay on the base.
           # Never overwrite a branch on which someone may have resolved conflicts.
           git push origin "$upstream:refs/heads/$branch"
-          printf 'Merge upstream nightly `%s` into `%s`. Resolve any conflicts while retaining the fork features. Merging this PR triggers the signed fork release workflow.\n' "$tag" "$RELEASE_BRANCH" > "$RUNNER_TEMP/sync-body.md"
+          printf 'Merge upstream nightly `%s` into `%s`. Resolve any conflicts while retaining the fork features, then run `node scripts/check-fork-guards.ts --base origin/%s` on the merge and re-check every fork fix it names. Merging this PR triggers the signed fork release workflow.\n' "$tag" "$RELEASE_BRANCH" "$RELEASE_BRANCH" > "$RUNNER_TEMP/sync-body.md"
           gh pr create --repo "$GITHUB_REPOSITORY" --base "$RELEASE_BRANCH" --head "$branch" --title "chore: sync upstream $tag" --body-file "$RUNNER_TEMP/sync-body.md"

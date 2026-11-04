@@ -130,4 +130,20 @@ describe("environment session state", () => {
       expect(yield* harness.nextSettled()).toMatchObject({ _tag: "Success", value: SESSION });
     }),
   );
+
+  it.effect("retries a failed check even while the previous success is still fresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness((requestNumber) =>
+        requestNumber === 2 ? unreachable() : Promise.resolve(Response.json(SESSION)),
+      );
+      expect((yield* harness.nextSettled())._tag).toBe("Success");
+
+      // The socket comes back moments after the first check, and this one drops.
+      yield* SubscriptionRef.set(harness.transport, Option.some(rpcSession()));
+      expect((yield* harness.nextSettled())._tag).toBe("Failure");
+
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* harness.nextSettled()).toMatchObject({ _tag: "Success", value: SESSION });
+    }),
+  );
 });
