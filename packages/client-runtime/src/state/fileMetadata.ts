@@ -14,7 +14,7 @@ import * as Exit from "effect/Exit";
 import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -227,14 +227,27 @@ export function createFileMetadataAtoms<R, E>(
       input: FileMetadataInput;
     }) => revision(environmentId, input.path),
   });
+  const refreshMissing = Atom.family((query: ReturnType<typeof metadataFamily>) => {
+    const retry = query.pipe(Atom.withRefresh(METADATA_STALE_TIME_MS), Atom.setIdleTTL(0));
+    return Atom.transform(
+      query,
+      (get) => {
+        const result = get(query);
+        return AsyncResult.isSuccess(result) && result.value === null ? get(retry) : result;
+      },
+      { initialValueTarget: query },
+    ).pipe(Atom.setIdleTTL(0));
+  });
   const metadata = (target: {
     environmentId: EnvironmentId;
     input: { path: string; threadId?: ThreadId };
   }) =>
-    metadataFamily({
-      ...target,
-      input: { ...target.input, path: normalizeProjectPathForComparison(target.input.path) },
-    });
+    refreshMissing(
+      metadataFamily({
+        ...target,
+        input: { ...target.input, path: normalizeProjectPathForComparison(target.input.path) },
+      }),
+    );
 
   const rememberEntries = Effect.fnUntraced(function* (
     cwd: string,

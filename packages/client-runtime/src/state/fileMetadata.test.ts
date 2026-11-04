@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   ThreadId,
@@ -119,12 +119,15 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
-  it.effect("rechecks expired missing paths while retaining known thread entries", () =>
+  it.effect("refreshes expired mounted misses while retaining known thread entries", () =>
     Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       const h = yield* makeHarness();
       const threadId = ThreadId.make("new-directory-thread");
       h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
       const path = "/home/user/games/hl1";
+      h.registry.mount(h.atom(path, ENVIRONMENT_ID, threadId));
       h.values.set("/workspace/known", { kind: "file", byteLength: 5 });
       expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
       yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId);
@@ -132,13 +135,15 @@ describe("file metadata", () => {
       h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
       expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
       yield* TestClock.adjust(60_001);
-      h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
       expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toEqual({ kind: "directory" });
       h.registry.refresh(h.atom("/workspace/known", ENVIRONMENT_ID, threadId));
       expect(yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId)).toEqual({
         kind: "file",
         byteLength: 5,
       });
+      yield* TestClock.adjust(60_001);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
       expect(h.batches).toEqual([[path], ["/workspace/known"], [path]]);
     }).pipe(Effect.scoped),
   );
