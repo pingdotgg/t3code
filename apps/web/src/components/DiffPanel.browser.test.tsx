@@ -84,7 +84,20 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
-vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
+vi.mock("./diffs/DiffFileTree", () => ({
+  DiffFileTree: ({
+    entries,
+    onSelectFile,
+  }: {
+    entries: ReadonlyArray<{ path: string }>;
+    onSelectFile: (path: string) => void;
+  }) =>
+    entries.map(({ path }) => (
+      <button key={path} onClick={() => onSelectFile(path)}>
+        Reveal {path}
+      </button>
+    )),
+}));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
@@ -227,12 +240,16 @@ it.each([
   },
 );
 
-it.each([false, true])(
-  "expands an unloaded file on the first click with default collapse %s",
-  async (collapsed) => {
+it.each([
+  { collapsed: false, reveal: false },
+  { collapsed: true, reveal: false },
+  { collapsed: false, reveal: true },
+])(
+  "preserves file expansion with default collapse $collapsed and tree reveal $reveal",
+  async ({ collapsed, reveal }) => {
     using context = setup("origin/orphan");
     state.diffFilesCollapsed = collapsed;
-    const path = `pending-${collapsed}.txt`;
+    const path = `pending-${collapsed}-${reveal}.txt`;
     const metadata = preview();
     const source = {
       ...metadata.sources[0]!,
@@ -262,6 +279,12 @@ it.each([false, true])(
     const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    if (reveal) {
+      act(() => useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} }));
+      await userEvent.click(screen.getByRole("button", { name: "Show file tree", exact: true }));
+      await userEvent.click(screen.getByRole("button", { name: `Reveal ${path}`, exact: true }));
+      await userEvent.click(screen.getByRole("button", { name: "Hide file tree", exact: true }));
+    }
     state.diffFilesCollapsed = !collapsed;
     await screen.rerender(
       <RegistryContext.Provider value={context.registry}>

@@ -705,7 +705,7 @@ export default function DiffPanel({
         settings.diffFilesCollapsed,
       );
       if (!isDiffFileFoldCollapsed(file.fileKey, effective, current.toggledFileKeys)) {
-        return current;
+        return { ...current };
       }
       return {
         ...current,
