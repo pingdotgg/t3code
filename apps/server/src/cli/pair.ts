@@ -10,7 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { T3_LEARN_TAILSCALE_SERVE_PORT } from "@t3tools/shared/t3LearnIdentity";
+import { T3_LEARN_COMMAND, T3_LEARN_TAILSCALE_SERVE_PORT } from "@t3tools/shared/t3LearnIdentity";
 import {
   buildTailscaleHttpsBaseUrl,
   ensureTailscaleServe,
@@ -522,7 +522,7 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
-            "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
+            `This URL is only reachable from this machine. To reach it from your other devices, run \`${T3_LEARN_COMMAND} up\`, or re-run with --tailscale.`,
           );
         } else if (target.state.privateNetworkOnly) {
           notes.push(

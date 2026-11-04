@@ -54,6 +54,7 @@ import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
@@ -215,7 +216,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.reachability === null
         ? [
             "",
-            "No running server answered, so reachability was not checked. Check the background service with `t3 service status`.",
+            `No running server answered, so reachability was not checked. Check the background service with \`${T3_LEARN_COMMAND} service status\`.`,
           ]
         : status.reachability.status === "reachable"
           ? [
@@ -382,7 +383,7 @@ export const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(
   yield* Console.error(
     formatAlertBox(
       last === null
-        ? "✕ Could not check T3 Connect\n  The T3 server on this machine did not answer.\n  Fix: run `t3 service status`, then `t3 connect status`."
+        ? `✕ Could not check T3 Connect\n  The T3 server on this machine did not answer.\n  Fix: run \`${T3_LEARN_COMMAND} service status\`, then \`${T3_LEARN_COMMAND} connect status\`.`
         : formatReachabilityFailure(last),
     ),
   );
@@ -502,7 +503,7 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
 
   if (options.clearAuthorization) {
     yield* Console.log(
-      "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
+      `Signed out of T3 Connect locally.\nThe background service is managed separately with \`${T3_LEARN_COMMAND} service\`.`,
     );
   }
   return liveResult;
