@@ -1,3 +1,4 @@
+import { useConnectAuth } from "../../cloud/connectAuth";
 import { useAuth, useClerk } from "@clerk/react";
 import { MessageSquareIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -33,7 +34,7 @@ export type T3ConnectAccountPageUrl = (typeof T3_CONNECT_ACCOUNT_PAGES)[number][
 type PortalTargets = Readonly<Record<string, HTMLDivElement | undefined>>;
 
 /** Keep portals rendered while the modal can open; Clerk owns the custom-page DOM nodes. */
-export function useT3ConnectAccountPage(): {
+export function useClerkT3ConnectAccountPage(): {
   readonly open: ((page?: T3ConnectAccountPageUrl) => void) | null;
   readonly portals: ReactNode;
 } {
@@ -67,4 +68,9 @@ export function useT3ConnectAccountPage(): {
   });
 
   return { open: isSignedIn ? open : null, portals };
+}
+
+export function useT3ConnectAccountPage() {
+  const auth = useConnectAuth();
+  return { open: auth.isSignedIn ? auth.openAccount : null, portals: null };
 }

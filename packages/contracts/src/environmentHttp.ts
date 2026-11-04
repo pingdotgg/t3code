@@ -863,8 +863,26 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
+const nativeAuthEndpoint = {
+  headers: OptionalBearerHeaders,
+  query: Schema.Struct({ path: Schema.String, search: Schema.String }),
+  success: Schema.Unknown,
+  error: EnvironmentHttpCloudErrors,
+} as const;
 
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
+  .add(
+    HttpApiEndpoint.get("nativeAuthGet", "/api/connect/native-auth", nativeAuthEndpoint).middleware(
+      EnvironmentAuthenticatedAuth,
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "nativeAuthPost",
+      "/api/connect/native-auth",
+      nativeAuthEndpoint,
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
       headers: OptionalBearerHeaders,

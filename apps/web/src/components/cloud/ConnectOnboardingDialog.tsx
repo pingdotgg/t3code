@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/react";
+import { useConnectAuth as useAuth } from "../../cloud/connectAuth";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthRelayReadScope,

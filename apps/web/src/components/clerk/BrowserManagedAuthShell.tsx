@@ -1,3 +1,5 @@
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { ClerkConnectAuthProvider } from "./ClerkConnectAuthProvider";
 import { ClerkProvider } from "@clerk/react";
 import type { ReactNode } from "react";
 
@@ -13,8 +15,12 @@ export default function BrowserManagedAuthShell({
   readonly children: ReactNode;
 }) {
   return (
-    <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey}>
-      <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
-    </ClerkProvider>
+    <AppAtomRegistryProvider>
+      <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey}>
+        <ClerkConnectAuthProvider>
+          <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+        </ClerkConnectAuthProvider>
+      </ClerkProvider>
+    </AppAtomRegistryProvider>
   );
 }

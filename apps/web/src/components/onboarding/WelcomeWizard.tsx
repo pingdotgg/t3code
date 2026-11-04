@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/react";
+import { useConnectAuth as useAuth } from "../../cloud/connectAuth";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
@@ -484,7 +484,7 @@ function ConnectAccountOption({
   readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
 }) {
   const { environments } = useEnvironments();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { isLoaded, isSignedIn, canSignIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const [expanded, setExpanded] = useState(true);
   const [discoveryReady, setDiscoveryReady] = useState(false);
@@ -494,7 +494,7 @@ function ConnectAccountOption({
     <div className="rounded-lg border border-border bg-background">
       <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
         <CollapsibleTrigger
-          disabled={disabled || !isLoaded}
+          disabled={disabled || !isLoaded || (!isSignedIn && !canSignIn)}
           onClick={(event) => {
             if (!isSignedIn) {
               event.preventDefault();

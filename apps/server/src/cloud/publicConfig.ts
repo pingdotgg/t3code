@@ -202,6 +202,11 @@ export function makeCloudCliOAuthConfig({
   );
 }
 
+export const clerkPublishableKeyConfig = makePublicValueConfig(
+  "T3CODE_CLERK_PUBLISHABLE_KEY",
+  buildTimeClerkPublishableKey,
+);
+
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
 export const hasCloudPublicConfig = Boolean(

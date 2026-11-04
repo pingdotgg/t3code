@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useAuth } from "@clerk/react";
+import { useConnectAuth as useAuth } from "./connectAuth";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   AuthRelayReadScope,

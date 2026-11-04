@@ -1,3 +1,4 @@
+import * as BrowserAuth from "./BrowserAuth.ts";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -113,7 +114,55 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    const browserAuth = yield* BrowserAuth.BrowserAuth;
+    const nativeAuth = Effect.fn("nativeAuth")(function* (query: {
+      readonly path: string;
+      readonly search: string;
+    }) {
+      yield* requireEnvironmentScope(AuthRelayWriteScope);
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const response = yield* browserAuth
+        .forward({
+          ...query,
+          method: request.method === "GET" ? "GET" : "POST",
+          ...(request.method === "POST"
+            ? {
+                body: new Uint8Array(
+                  yield* request.arrayBuffer.pipe(
+                    Effect.mapError(
+                      () =>
+                        new EnvironmentHttpBadRequestError({
+                          message: "Invalid sign-in request body.",
+                        }),
+                    ),
+                  ),
+                ),
+              }
+            : {}),
+          ...(request.headers["x-t3-clerk-client"]
+            ? { clientToken: request.headers["x-t3-clerk-client"] }
+            : {}),
+          ...(request.headers["content-type"]
+            ? { contentType: request.headers["content-type"] }
+            : {}),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) => new EnvironmentHttpInternalServerError({ message: error.message }),
+          ),
+        );
+      return HttpServerResponse.text(response.body, {
+        status: response.status,
+        headers: {
+          ...CLOUD_CREDENTIAL_RESPONSE_HEADERS,
+          "content-type": "application/json",
+          ...(response.clientToken ? { "x-t3-clerk-client": response.clientToken } : {}),
+        },
+      });
+    });
     return handlers
+      .handle("nativeAuthGet", ({ query }) => nativeAuth(query))
+      .handle("nativeAuthPost", ({ query }) => nativeAuth(query))
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
           yield* requireEnvironmentScope(AuthRelayWriteScope);

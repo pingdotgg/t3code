@@ -1,3 +1,10 @@
+import * as BrowserAuth from "./BrowserAuth.ts";
+import {
+  AuthRelayWriteScope,
+  AuthSessionId,
+  EnvironmentAuthenticatedAuth,
+  EnvironmentAuthenticatedPrincipal,
+} from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -77,6 +84,7 @@ const layerConfig = Layer.effect(
 // Real credential issuance, verification, origin checks and signing; no relay or tunnel is started.
 const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
+  Layer.provide(Layer.mock(BrowserAuth.BrowserAuth)({})),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(EnvironmentKeys.layer),
@@ -288,5 +296,78 @@ describe("link proof over a non-loopback desktop transport", () => {
       const response = yield* post("/api/connect/link-proof", proofRequest);
       expect(response.status).toBe(401);
     }),
+  );
+});
+
+class ConnectTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.connect) {}
+describe("native browser sign-in route", () => {
+  it.each([true, false])(
+    "requires the environment's relay grant (allowed: %s)",
+    async (allowed) => {
+      const forwarded: Array<Parameters<BrowserAuth.BrowserAuth["Service"]["forward"]>[0]> = [];
+      const layerRoutes = HttpApiBuilder.layer(ConnectTestApi).pipe(
+        Layer.provide(ConnectHttp.layer),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(CloudLink.CloudLink)({}),
+            Layer.mock(ConnectReachability.ConnectReachability)({}),
+            Layer.succeed(BrowserAuth.BrowserAuth, {
+              forward: (input) => {
+                forwarded.push(input);
+                return Effect.succeed({
+                  status: 200,
+                  body: '{"response":{"id":"client"}}',
+                  clientToken: "Bearer clerk-client-jwt",
+                });
+              },
+            }),
+            Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
+              effect.pipe(
+                Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+                  sessionId: AuthSessionId.make("native-browser"),
+                  subject: "native-browser",
+                  method: "browser-session-cookie",
+                  scopes: new Set(allowed ? [AuthRelayWriteScope] : []),
+                }),
+              ),
+            ),
+          ),
+        ),
+        Layer.provideMerge(
+          HttpPlatform.layer.pipe(
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(Etag.layerWeak),
+          ),
+        ),
+      );
+      const { handler, dispose } = HttpRouter.toWebHandler(layerRoutes, { disableLogger: true });
+      try {
+        const response = await handler(
+          new Request("http://127.0.0.1/api/connect/native-auth?path=%2Fv1%2Fclient&search=", {
+            method: "POST",
+            headers: {
+              "content-type": "application/x-www-form-urlencoded",
+              "x-t3-clerk-client": "browser-client",
+              cookie: "environment-cookie=private",
+            },
+            body: "code=123456",
+          }),
+        );
+        expect(response.status).toBe(allowed ? 200 : 403);
+        expect(forwarded).toHaveLength(allowed ? 1 : 0);
+        if (allowed) {
+          expect(response.headers.get("cache-control")).toBe("no-store");
+          expect(response.headers.get("x-t3-clerk-client")).toBe("Bearer clerk-client-jwt");
+          expect(forwarded[0]).toMatchObject({
+            path: "/v1/client",
+            method: "POST",
+            clientToken: "browser-client",
+            body: new TextEncoder().encode("code=123456"),
+          });
+        }
+      } finally {
+        await dispose();
+      }
+    },
   );
 });

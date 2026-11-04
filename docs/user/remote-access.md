@@ -466,3 +466,5 @@ history, and saved connections are kept, and you keep working through pairing, T
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.
+
+In a locally hosted browser, use **Sign in to T3 Connect** in the Settings sidebar to connect your account and add another computer from **Settings → Connections**. This signs in the browser; remote access to the local host is configured separately.

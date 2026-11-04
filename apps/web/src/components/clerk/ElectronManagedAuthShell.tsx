@@ -1,3 +1,5 @@
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { ClerkConnectAuthProvider } from "./ClerkConnectAuthProvider";
 import { passkeys } from "@clerk/electron/passkeys";
 import { ClerkProvider } from "@clerk/electron/react";
 import type { ReactNode } from "react";
@@ -15,8 +17,16 @@ export default function ElectronManagedAuthShell({
   readonly children: ReactNode;
 }) {
   return (
-    <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
-      <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
-    </ClerkProvider>
+    <AppAtomRegistryProvider>
+      <ClerkProvider
+        appearance={clerkAppearance}
+        publishableKey={publishableKey}
+        passkeys={passkeys}
+      >
+        <ClerkConnectAuthProvider>
+          <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+        </ClerkConnectAuthProvider>
+      </ClerkProvider>
+    </AppAtomRegistryProvider>
   );
 }

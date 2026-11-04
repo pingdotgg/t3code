@@ -1,4 +1,6 @@
-import { UserButton, useAuth } from "@clerk/react";
+import { UserButton } from "@clerk/react";
+import { useConnectAuth as useAuth } from "../../cloud/connectAuth";
+import { Button } from "../ui/button";
 import { LogInIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
@@ -19,9 +21,20 @@ export function T3ConnectSidebarAvatar() {
 }
 
 function ConfiguredT3ConnectSidebarAvatar() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, mode, identity, openAccount } = useAuth();
 
   if (!isLoaded || !isSignedIn) return null;
+  if (mode === "native")
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => openAccount()}
+        title={identity ?? "T3 Connect account"}
+      >
+        Account
+      </Button>
+    );
 
   return (
     <UserButton
@@ -48,19 +61,28 @@ function ConfiguredT3ConnectSidebarAvatar() {
 }
 
 function ConfiguredT3ConnectSidebarSignIn() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+  const { isLoaded, isSignedIn, canSignIn } = useAuth();
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
 
   if (!isLoaded || isSignedIn) return null;
 
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton onClick={openAuthPrompt}>
-          <LogInIcon />
-          <span>Sign in to T3 Connect</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
+    <>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            onClick={openAuthPrompt}
+            disabled={!canSignIn}
+            title={
+              !canSignIn ? "This connection needs Manage relay permission to sign in." : undefined
+            }
+          >
+            <LogInIcon />
+            <span>Sign in to T3 Connect</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+      {authPrompt}
+    </>
   );
 }
