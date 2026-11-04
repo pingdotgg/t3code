@@ -254,7 +254,17 @@ it.each([false, true])(
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
         <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+          <PanelHostContext
+            value={{
+              threadRef: context.threadRef,
+              composerDraftTarget: context.threadRef,
+              workspaceMutationId: null,
+              visible: true,
+              sendAnnotation: () => undefined,
+            }}
+          >
+            <DiffSidePanel />
+          </PanelHostContext>
         </div>
       </RegistryContext.Provider>,
     );
