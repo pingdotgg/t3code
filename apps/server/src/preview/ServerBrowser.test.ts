@@ -341,7 +341,44 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
-const dependencies = Layer.mergeAll(
+const mockDesktopChannel = Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
+  available: true,
+  awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+  detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const onDetach = (key: { threadId: string; tabId: string }) =>
+          Queue.offerUnsafe(queue, key);
+        desktopDetaches.on("detach", onDetach);
+        desktopDetachReady.resolve();
+        return onDetach;
+      }),
+      (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
+    ),
+  ),
+  attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const onAttach = (key: { threadId: string; tabId: string }) =>
+          Queue.offerUnsafe(queue, key);
+        desktopDetaches.on("attach", onAttach);
+        return onAttach;
+      }),
+      (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+    ),
+  ),
+  isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+  endpoint: (key) =>
+    Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
+      Effect.sync(() => {
+        releasedDesktopTabs.push(key.tabId);
+        desktopReleased.resolve();
+      }),
+    ),
+  pointer: () => Effect.void,
+  turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
+});
+const sharedDependencies = Layer.mergeAll(
   Broker.layer,
   Manager.layer,
   Layer.succeed(ServerEnvironment.ServerEnvironment, {
@@ -352,48 +389,12 @@ const dependencies = Layer.mergeAll(
     executable: Effect.die("mock Chromium does not need an executable"),
     installed: Effect.die("mock Chromium does not need an executable"),
   }),
-  Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
-    available: true,
-    awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onDetach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("detach", onDetach);
-          desktopDetachReady.resolve();
-          return onDetach;
-        }),
-        (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
-      ),
-    ),
-    attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onAttach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("attach", onAttach);
-          return onAttach;
-        }),
-        (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
-      ),
-    ),
-    isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    endpoint: (key) =>
-      Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
-        Effect.sync(() => {
-          releasedDesktopTabs.push(key.tabId);
-          desktopReleased.resolve();
-        }),
-      ),
-    pointer: () => Effect.void,
-    turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
-  }),
   PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+const dependencies = Layer.merge(sharedDependencies, mockDesktopChannel);
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
 const ready = Effect.gen(function* () {
   const browser = yield* ServerBrowser.ServerBrowser;
@@ -636,7 +637,7 @@ it.effect("a server with no desktop app attached marks its tabs headless", () =>
     Effect.provide(
       ServerBrowser.layer.pipe(
         Layer.provide(DesktopChannel.layer),
-        Layer.provideMerge(dependencies),
+        Layer.provideMerge(sharedDependencies),
       ),
     ),
   ),
