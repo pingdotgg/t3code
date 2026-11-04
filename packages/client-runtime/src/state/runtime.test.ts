@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type ReviewDiffPreviewInput,
   type PreviewEvent,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
@@ -9,6 +10,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,6 +35,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
@@ -183,6 +186,63 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
   );
   return registry;
 });
+
+it.effect("keeps complete review metadata visible while a refresh is held", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let fullReads = 0;
+      const rpcSession = {
+        client: {
+          [WS_METHODS.reviewGetDiffPreview]: (input: ReviewDiffPreviewInput) =>
+            Effect.gen(function* () {
+              if (!input.trackedOnly && ++fullReads > 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return {
+                cwd: input.cwd,
+                generatedAt: DateTime.makeUnsafe(0),
+                ...(input.trackedOnly ? { incomplete: true } : {}),
+                sources: [
+                  {
+                    id: "working-tree",
+                    kind: "working-tree" as const,
+                    title: "Uncommitted",
+                    baseRef: "HEAD",
+                    headRef: null,
+                    diff: "",
+                    diffHash: String(fullReads),
+                    truncated: false,
+                    patchesDeferred: true,
+                    files: (input.trackedOnly ? ["tracked"] : ["tracked", "untracked"]).map(
+                      (path) => ({ path, previousPath: null, additions: 1, deletions: 0 }),
+                    ),
+                  },
+                ],
+              };
+            }),
+        },
+      } as unknown as RpcSession.RpcSession;
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+      const atom = createReviewEnvironmentAtoms(harness.runtime).diffPreview({
+        environmentId: QUERY_ENVIRONMENT.environmentId,
+        input: { cwd: "/project", sourceKind: "working-tree", metadataOnly: true },
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+      expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.files).toHaveLength(2);
+      registry.refresh(atom);
+      yield* Deferred.await(started);
+      yield* Effect.sync(() => {
+        const value = AsyncResult.getOrElse(registry.get(atom), () => null);
+        expect(value?.incomplete).not.toBe(true);
+        expect(value?.sources[0]!.files).toHaveLength(2);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.diffHash).toBe("2");
+    }),
+  ),
+);
 
 describe("preview event subscriptions", () => {
   it.effect("delivers every open and close when RPC events arrive in batches", () =>

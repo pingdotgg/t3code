@@ -35,6 +35,29 @@ export function createReviewEnvironmentAtoms<R, E>(
     label: "environment-data:review:diff-preview",
     tag: WS_METHODS.reviewGetDiffPreview,
     staleTimeMs: 5_000,
+    execute: Effect.fn("review.diffPreview")(function* (
+      input: ReviewDiffPreviewInput,
+      emit: (value: ReviewDiffPreviewResult) => Effect.Effect<void>,
+      previous: Option.Option<ReviewDiffPreviewResult>,
+    ) {
+      const hasCompletePreview = Option.exists(previous, (preview) => !preview.incomplete);
+      if (
+        !hasCompletePreview &&
+        input.sourceKind &&
+        !input.file &&
+        !input.commitSha &&
+        !input.trackedOnly
+      ) {
+        const tracked = yield* request(WS_METHODS.reviewGetDiffPreview, {
+          ...input,
+          trackedOnly: true,
+        });
+        // Older servers ignore trackedOnly and already return the complete preview.
+        if (!tracked.incomplete) return tracked;
+        yield* emit(tracked);
+      }
+      return yield* request(WS_METHODS.reviewGetDiffPreview, input);
+    }),
     ...(options.onDiffPreviewAnswer === undefined ? {} : { onAnswer: options.onDiffPreviewAnswer }),
   });
   // A file patch is a slice of the comparison its preview generated, so a newer preview
