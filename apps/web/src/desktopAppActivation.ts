@@ -27,6 +27,13 @@ export interface DesktopAppActivationTarget {
   readonly platform: ExecutionEnvironmentPlatformOs;
 }
 
+export function desktopActivationReady(
+  primaryReady: boolean,
+  findWslTarget: () => DesktopAppActivationTarget | null,
+): boolean {
+  return primaryReady || findWslTarget() !== null;
+}
+
 export function openedProjectDraft(
   project: ScopedProjectRef,
   draft: {

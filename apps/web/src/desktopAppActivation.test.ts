@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   handleDesktopAppActivationRequest,
   findWslActivationTarget,
+  desktopActivationReady,
   openedProjectDraft,
   type DesktopAppActivationDependencies,
 } from "./desktopAppActivation";
@@ -39,6 +40,16 @@ function dependencies(
 }
 
 describe("desktop app activation", () => {
+  it("accepts WSL requests when the primary is disconnected without routing native requests to WSL", async () => {
+    expect(desktopActivationReady(false, () => ({ environmentId, platform: "linux" }))).toBe(true);
+    expect(desktopActivationReady(false, () => null)).toBe(false);
+    expect(desktopActivationReady(true, () => null)).toBe(true);
+    const response = await handleDesktopAppActivationRequest(
+      request,
+      dependencies({ getTarget: () => null }),
+    );
+    expect(response).toMatchObject({ ok: false, code: "environment-unavailable" });
+  });
   it("waits for the target environment snapshot before looking up a project", async () => {
     let releaseSnapshot!: (ready: boolean) => void;
     const snapshot = new Promise<boolean>((resolve) => {

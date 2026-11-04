@@ -8,6 +8,7 @@ import {
   handleDesktopAppActivationRequest,
   openedProjectDraft,
   desktopAppActivationPendingAtom,
+  desktopActivationReady,
 } from "../../desktopAppActivation";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { desktopLocalBackendId } from "../../connection/desktopLocal";
@@ -71,7 +72,8 @@ export function DesktopAppActivationCoordinator() {
       bootstraps,
     );
   };
-  const ready = activation !== undefined && (primaryReady || findWslTarget(null) !== null);
+  const ready =
+    activation !== undefined && desktopActivationReady(primaryReady, () => findWslTarget(null));
 
   const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
