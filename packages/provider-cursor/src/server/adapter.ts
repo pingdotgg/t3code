@@ -910,8 +910,8 @@ interface ActiveCursorSubagent {
   readonly turnItemOrdinal: number;
   nextChildOrdinal: number;
   resultProjected: boolean;
-  /** Live nested tools were projected; skip the conversationSteps tool dump. */
-  liveProjected: boolean;
+  /** Cursor nested tool callIds already projected live; skip those in the conversationSteps dump. */
+  readonly liveToolCallIds: Set<string>;
   /** Live assistant text was projected; skip dumping task.result at completion. */
   liveAssistantProjected: boolean;
   readonly tools: Map<string, ActiveCursorToolCall>;
@@ -1725,7 +1725,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(input.context, nativeItemId)),
             nextChildOrdinal: existing?.nextChildOrdinal ?? 100,
             resultProjected: existing?.resultProjected ?? false,
-            liveProjected: existing?.liveProjected ?? false,
+            liveToolCallIds: existing?.liveToolCallIds ?? new Set(),
             liveAssistantProjected: existing?.liveAssistantProjected ?? false,
             tools: existing?.tools ?? new Map(),
             assistant: existing?.assistant ?? { current: null, nextSegment: 0 },
@@ -1884,30 +1884,31 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
             }
             subagent.tools.clear();
-            // Live taskUpdate already filled tools; only dump conversationSteps when it did not.
-            if (!subagent.liveProjected) {
-              for (const [index, nestedTool] of toolCallsFromConversationSteps(
-                result?.conversationSteps ?? [],
-              ).entries()) {
-                const callId = `${nativeItemId}:child-tool:${nestedTool.callId || index + 1}`;
-                const startedAt = task.startedAt ?? now;
-                const active: ActiveCursorToolCall = {
-                  callId,
-                  toolCall: nestedTool.toolCall,
-                  target: {
-                    threadId: childThreadId,
-                    runId: null,
-                    rootNodeId: childRootNodeId,
-                    parentNodeId: childRootNodeId,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                  },
-                  ordinal: ++subagent.nextChildOrdinal,
-                  startedAt,
-                  streamedOutput: "",
-                };
-                yield* emitToolArtifacts({ active, completed: true });
+            // Dump conversationSteps tools that never arrived as live taskUpdate nested tools.
+            for (const [index, nestedTool] of toolCallsFromConversationSteps(
+              result?.conversationSteps ?? [],
+            ).entries()) {
+              if (subagent.liveToolCallIds.has(nestedTool.callId)) {
+                continue;
               }
+              const callId = `${nativeItemId}:child-tool:${nestedTool.callId || index + 1}`;
+              const startedAt = task.startedAt ?? now;
+              const active: ActiveCursorToolCall = {
+                callId,
+                toolCall: nestedTool.toolCall,
+                target: {
+                  threadId: childThreadId,
+                  runId: null,
+                  rootNodeId: childRootNodeId,
+                  parentNodeId: childRootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                },
+                ordinal: ++subagent.nextChildOrdinal,
+                startedAt,
+                streamedOutput: "",
+              };
+              yield* emitToolArtifacts({ active, completed: true });
             }
             // Live assistant text already filled the child; keep resultSuffix / dump when it did not.
             if (
@@ -2202,7 +2203,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             case "tool-call-started":
             case "partial-tool-call":
             case "tool-call-completed": {
-              subagent.liveProjected = true;
+              subagent.liveToolCallIds.add(taskUpdate.callId);
               yield* completeSubagentAssistant(subagent);
               yield* completeSubagentReasoning(subagent);
               const nestedCallId = childToolCallId(subagent, taskUpdate.callId);

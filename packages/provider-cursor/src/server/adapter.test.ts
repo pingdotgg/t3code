@@ -1874,6 +1874,230 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("dumps conversationSteps tools that did not stream live beside ones that did", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-task-partial-live-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-task-partial-live-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-task-partial-live",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  const args = {
+                    description: "Explore",
+                    prompt: "Read files.",
+                    subagentType: { kind: "unspecified" as const },
+                    agentId: "cursor-task-agent",
+                    mode: "unspecified" as const,
+                  };
+                  yield* input.onDelta!({
+                    type: "tool-call-started",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: { type: "task", args },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-delta",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    taskUpdate: {
+                      type: "tool-call-started",
+                      modelCallId: "nested-model",
+                      callId: "nested-read-live",
+                      toolCall: {
+                        type: "read",
+                        args: { path: `${workspace}/live.json` },
+                      },
+                    },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-delta",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    taskUpdate: {
+                      type: "tool-call-completed",
+                      modelCallId: "nested-model",
+                      callId: "nested-read-live",
+                      toolCall: {
+                        type: "read",
+                        args: { path: `${workspace}/live.json` },
+                        result: {
+                          status: "success",
+                          value: { content: '{"live":true}', totalLines: 1, fileSize: 12 },
+                        },
+                      },
+                    },
+                  });
+                  yield* input.onDelta!({
+                    type: "tool-call-completed",
+                    modelCallId: "model-call",
+                    callId: "task-call",
+                    toolCall: {
+                      type: "task",
+                      args,
+                      result: {
+                        status: "success",
+                        value: {
+                          conversationSteps: [
+                            {
+                              type: "toolCall",
+                              callId: "nested-read-live",
+                              message: {
+                                type: "read",
+                                args: { path: `${workspace}/live.json` },
+                                result: {
+                                  status: "success",
+                                  value: {
+                                    content: '{"live":true}',
+                                    totalLines: 1,
+                                    fileSize: 12,
+                                  },
+                                },
+                              },
+                            },
+                            {
+                              type: "toolCall",
+                              callId: "nested-read-saved",
+                              message: {
+                                type: "read",
+                                args: { path: `${workspace}/saved.json` },
+                                result: {
+                                  status: "success",
+                                  value: {
+                                    content: '{"saved":true}',
+                                    totalLines: 1,
+                                    fileSize: 13,
+                                  },
+                                },
+                              },
+                            },
+                          ],
+                          isBackground: false,
+                          backgroundReason: "unspecified",
+                        },
+                      },
+                    },
+                  });
+                  return {
+                    agentId: "native-cursor-task-partial-live",
+                    runId: "native-cursor-run",
+                    wait: Effect.succeed({
+                      id: "native-cursor-run",
+                      requestId: "native-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }).pipe(Effect.orDie),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-task-partial-live-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-task-partial-live-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-task-partial-live-attempt"),
+        rootNodeId: NodeId.make("cursor-task-partial-live-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-task-partial-live-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor subagent partial live",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-task-partial-live-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Spawn a subagent.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+      const childThreadId = events.findLast((event) => event.type === "subagent.updated")?.subagent
+        .childThreadId;
+      assert.isDefined(childThreadId);
+      const completedReads = new Map<string, string>();
+      for (const event of events) {
+        if (
+          event.type === "turn_item.updated" &&
+          event.turnItem.threadId === childThreadId &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.toolName === "Read" &&
+          event.turnItem.status === "completed"
+        ) {
+          completedReads.set(String(event.turnItem.title), event.turnItem.status);
+        }
+      }
+      assert.deepEqual(Object.fromEntries(completedReads), {
+        [`Read ${workspace}/live.json`]: "completed",
+        [`Read ${workspace}/saved.json`]: "completed",
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("still dumps Cursor task conversationSteps tools after live thinking and text", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
