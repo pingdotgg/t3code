@@ -86,7 +86,7 @@ describe("getLocalVoiceTranscriber", () => {
 
   it("transcribes in the device's first language", async () => {
     const options = { signal: new AbortController().signal };
-    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    const prepared = await (await getLocalVoiceTranscriber())!.prepare(options);
     await prepared.transcribe("file:///voice.m4a", options);
 
     expect(mocks.isAvailable).toHaveBeenCalledWith("sv-SE");
