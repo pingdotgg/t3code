@@ -576,12 +576,12 @@ function PullRequestCodeTab({
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
-  // A requested file stays visible so a jump to a hidden file still lands.
-  const isRevealTarget = (path: string) => path === revealRequest?.path;
+  // A filter never hides the file being jumped to or the one holding the open comment draft.
+  const isPinned = (path: string) => path === revealRequest?.path || path === draft?.path;
   const reviewFiles = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return isRevealTarget(path) || !isTestChangedFile(path);
+        return isPinned(path) || !isTestChangedFile(path);
       })
     : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - reviewFiles.length;
@@ -591,7 +591,7 @@ function PullRequestCodeTab({
   const files = hideViewedFiles
     ? reviewFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
-        return isRevealTarget(path) || !isFileViewed(path);
+        return isPinned(path) || !isFileViewed(path);
       })
     : reviewFiles;
   const omittedFileStats = new Map(
@@ -775,11 +775,12 @@ function PullRequestCodeTab({
     });
 
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
-    const range = getFileViewedRange(
-      annotatedFiles,
-      fileKey,
-      extendRange ? lastViewedFileKey : null,
-    );
+    // Include files hidden as viewed: the Shift-click anchor is usually one of them.
+    const rangeFiles = reviewFiles.map((file) => ({
+      fileKey: buildFileDiffRenderKey(file),
+      path: resolveFileDiffPath(file),
+    }));
+    const range = getFileViewedRange(rangeFiles, fileKey, extendRange ? lastViewedFileKey : null);
     setLastViewedFileKey(fileKey);
     for (const file of range) setViewed(file.path, viewed);
     setToggledFiles((current) =>

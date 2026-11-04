@@ -234,6 +234,28 @@ it("hides viewed files but keeps one pushed to since it was viewed", async () =>
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
 });
 
+it("marks a Shift-clicked range viewed after the first file of it was hidden", async () => {
+  setup({ paged: true });
+  const viewedDetail = {
+    ...detail,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+  };
+  const container = document.createElement("div");
+  container.className = "h-[500px] w-[400px]";
+  await using screen = await render(tab(0, null, viewedDetail), { container });
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
+  await expect.element(screen.getByText("early-10.ts", { exact: true }).first()).toBeVisible();
+
+  await screen.getByRole("checkbox", { name: "Viewed" }).first().click();
+  await expect.element(screen.getByText("early-10.ts", { exact: true })).not.toBeInTheDocument();
+  await screen
+    .getByRole("checkbox", { name: "Viewed" })
+    .nth(1)
+    .click({ modifiers: ["Shift"] });
+
+  await expect.element(screen.getByText("early-11.ts", { exact: true })).not.toBeInTheDocument();
+});
+
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
   setup({ paged: false });
   const container = document.createElement("div");
