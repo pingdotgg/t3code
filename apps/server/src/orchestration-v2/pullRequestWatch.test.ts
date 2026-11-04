@@ -273,15 +273,30 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [old]).changes, []);
     const edited = { ...old, editedAt: "2026-10-02T12:06:00Z" };
     const report = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.deepEqual(report.changes, [{ kind: "edits", remarks: [edited] }]);
     assert.equal(report.next.remarksThrough, edited.editedAt);
     assert.deepEqual(report.next.remarkIds, [old.id]);
     assert.isTrue(report.exhausted);
+    const { text, notification } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: null,
+      report,
+    });
+    assert.include(text, "- 1 edited comment:");
+    assert.notInclude(text, "new comment");
+    assert.equal(notification.summary, "#1: edited comments, stopped watching");
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited]).changes, []);
     const late = { ...edited, id: "late" };
-    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited, late]).changes, [
-      { kind: "remarks", remarks: [late] },
-    ]);
+    const added = { ...remark("bot", "2026-10-02T12:07:00Z"), editedAt: "2026-10-02T12:08:00Z" };
+    assert.deepEqual(
+      evaluatePullRequestWatch(report.next, detail(), [edited, late, added]).changes,
+      [
+        { kind: "remarks", remarks: [added] },
+        { kind: "edits", remarks: [late] },
+      ],
+    );
   });
 
   it("wakes once per edit of a remark seen at the watermark, never for the agent's own", () => {
@@ -295,12 +310,12 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
     const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
     const first = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.deepEqual(first.changes, [{ kind: "edits", remarks: [edited] }]);
     assert.strictEqual(first.next.remarksThrough, edited.editedAt);
     assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
     const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
     const second = evaluatePullRequestWatch(first.next, detail(), [again]);
-    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
+    assert.deepEqual(second.changes, [{ kind: "edits", remarks: [again] }]);
     assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
     const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);

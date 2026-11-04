@@ -18,6 +18,7 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
+  | { readonly kind: "edits"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" };
 
@@ -111,14 +112,18 @@ export function evaluatePullRequestWatch(
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
   // Hosts can stamp remarks to the second, so remarks at the boundary time are told apart by ID.
-  const fresh = (remarks ?? []).filter((remark) => {
-    const at = Date.parse(activeAt(remark));
-    return (
-      (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
-    );
-  });
-  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const past = (at: string, id: string) => {
+    const time = Date.parse(at);
+    return time < through || (time === through && watch.remarkIds.includes(id));
+  };
+  const fresh = (remarks ?? []).filter(
+    (remark) => !past(activeAt(remark), remark.id) && remark.author?.login.toLowerCase() !== own,
+  );
+  // A remark that already existed at the watermark is news only as an edit, not a new comment.
+  const edits = fresh.filter((remark) => past(remark.createdAt, remark.id));
+  const added = fresh.filter((remark) => !edits.includes(remark));
+  if (added.length > 0) changes.push({ kind: "remarks", remarks: added });
+  if (edits.length > 0) changes.push({ kind: "edits", remarks: edits });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
@@ -136,7 +141,9 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
-  const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
+  const commentsOnly =
+    changes.length > 0 &&
+    changes.every((change) => change.kind === "remarks" || change.kind === "edits");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
   return {
@@ -195,8 +202,9 @@ function changeLines(
         `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
       ];
     case "remarks":
+    case "edits":
       return [
-        `- ${change.remarks.length} new ${change.remarks.length === 1 ? "comment" : "comments"}:`,
+        `- ${change.remarks.length} ${change.kind === "remarks" ? "new" : "edited"} ${change.remarks.length === 1 ? "comment" : "comments"}:`,
         ...listed(change.remarks, (remark) => {
           const where = remark.path === null ? "" : ` on ${remark.path}`;
           const body = snippet(remark.body);
@@ -217,6 +225,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
   remarks: "new comments",
+  edits: "edited comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
 };
