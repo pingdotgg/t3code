@@ -262,6 +262,7 @@ it.each([
 
 it("hands the viewer the same parsed file when it expands after a refetch", async () => {
   using context = setup({ diff: valuesPatch });
+  state.diffFilesCollapsed = true;
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
       <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
@@ -313,6 +314,13 @@ it.each([false, true])(
     const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    const loadedFile = state.viewerFiles.at(-1)![0]!.fileDiff;
+    const loaded = context.registry.get(context.patch);
+    if (!AsyncResult.isSuccess(loaded)) throw new Error("Expected a loaded patch");
+    const renderCount = state.viewerFiles.length;
+    act(() => context.registry.set(context.patch, AsyncResult.success({ ...loaded.value })));
+    await vi.waitFor(() => expect(state.viewerFiles.length).toBeGreaterThan(renderCount));
+    await vi.waitFor(() => expect(state.viewerFiles.at(-1)![0]!.fileDiff).toBe(loadedFile));
     await userEvent.click(loadedToggle);
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
