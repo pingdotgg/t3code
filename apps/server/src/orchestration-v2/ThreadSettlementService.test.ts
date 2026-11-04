@@ -5,6 +5,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   EventId,
+  NodeId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -1277,6 +1279,101 @@ describe("ThreadSettlementServiceV2 worker", () => {
           }).pipe(Effect.provide(fixture.layer));
         }),
       ),
+  );
+
+  it.effect("restarts the wake grace for a subagent that starts and ends between sweeps", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        const waiting = makeThread("second-subagent", {
+          pullRequests: [
+            {
+              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+            },
+          ],
+          pendingBackgroundTasks: [
+            { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
+          ],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([waiting]),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+        const subagent = (status: "running" | "completed") =>
+          ({
+            type: "subagent.updated",
+            id: EventId.make(`event:second-subagent:${status}`),
+            threadId: waiting.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              id: NodeId.make("node:second-subagent"),
+              threadId: waiting.id,
+              runId: null,
+              parentNodeId: NodeId.make("node:root"),
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: ProviderDriverKind.make("claudeAgent"),
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: null,
+              prompt: "Review",
+              title: null,
+              model: null,
+              status,
+              result: null,
+              startedAt: null,
+              completedAt: null,
+              updatedAt: DateTime.makeUnsafe(NOW),
+            },
+          }) satisfies OrchestrationV2DomainEvent;
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+
+          // The awaited command ends: the first wake grace starts.
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...waiting, pendingBackgroundTasks: [] }]),
+          );
+          yield* fixture.publishEvent(subagent("completed"));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          // A second subagent starts and ends before any sweep sees it running.
+          yield* TestClock.adjust("30 seconds");
+          yield* fixture.publishEvent(subagent("running"));
+          yield* TestClock.adjust("20 seconds");
+          yield* fixture.publishEvent(subagent("completed"));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          // The first grace has passed, but the second subagent's wake is still due.
+          yield* TestClock.adjust("80 seconds");
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* TestClock.adjust("40 seconds");
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            [...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId))],
+            [waiting.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
 
   it.effect("settles at once when the agent's awaited work is stopped instead of ending", () =>

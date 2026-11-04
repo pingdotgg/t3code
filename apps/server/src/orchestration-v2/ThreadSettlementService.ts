@@ -693,9 +693,12 @@ export const make = Effect.gen(function* () {
         return enqueueThread(event.threadId);
       // Sweep only when the work can have ended: progress updates cannot settle anything.
       case "subagent.updated":
-        return isOrchestrationV2WorkActive(event.payload.status)
-          ? Effect.void
-          : enqueueThread(event.threadId);
+        if (isOrchestrationV2WorkActive(event.payload.status)) {
+          // A subagent can start and end between sweeps; mark it so its end restarts the wake grace.
+          threadsHoldingWork.add(event.threadId);
+          return Effect.void;
+        }
+        return enqueueThread(event.threadId);
       case "provider-thread.updated":
         if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
           threadsHoldingWork.add(event.threadId);
