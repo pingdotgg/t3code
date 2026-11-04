@@ -1076,7 +1076,7 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("a request whose frame is not available yet is not a main navigation", () =>
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
