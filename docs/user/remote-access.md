@@ -137,8 +137,11 @@ reporting that address.
 T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
 again, after the other routes, if none of them connect. While connected over a
-later route, T3 Code checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+later route, T3 Code checks earlier routes on a faster kind of network (LAN
+before Tailscale, Tailscale before T3 Connect) when your network changes, when
+you return to the app, and every minute, and moves as soon as one works. It
+does not drop a working connection for an earlier route of the same kind, such
+as two Tailscale addresses; the order decides which is tried first next time.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,

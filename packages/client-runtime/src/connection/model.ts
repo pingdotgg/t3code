@@ -175,6 +175,10 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  /** Set once attempts have failed past the grace period; retries continue quietly. */
+  readonly unreachable?: boolean;
+  /** Epoch ms when a session was last live in this app run. */
+  readonly lastConnectedAt?: number;
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";

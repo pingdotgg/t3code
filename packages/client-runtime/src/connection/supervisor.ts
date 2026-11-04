@@ -36,6 +36,7 @@ import {
   connectionRoutes,
   type ConnectionRouteKind,
   entryWithRoutes,
+  isBetterRouteKind,
   type ReportedEndpoint,
 } from "./routes.ts";
 
@@ -66,6 +67,9 @@ const SILENT_ROUTE_BACKOFF_MAX_MS = 1_800_000;
 // A better route that answered the check but then failed to connect is not
 // tried again for this long, so a flaky LAN cannot bounce the connection.
 const BETTER_ROUTE_COOLDOWN_MS = 300_000;
+// Failing longer than this means the host is down, not recovering: it shows as offline
+// and keeps retrying quietly instead of reporting each attempt.
+const UNREACHABLE_AFTER_MS = 10_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -367,12 +371,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const now = yield* Clock.monotonicTimeNanos;
     const cooldowns = yield* Ref.get(routeCooldowns);
     const silent = yield* Ref.get(silentRoutes);
-    const better = connectionRoutes(latest)
-      .slice(0, current)
-      .filter((route) => {
-        const id = connectionRouteId(route.target);
-        return (cooldowns.get(id) ?? 0n) <= now && (silent.routes.get(id)?.until ?? 0n) <= now;
-      });
+    const routes = connectionRoutes(latest);
+    // Replacing a live socket costs a reconnect and a resync. An earlier route of the same
+    // kind, such as MagicDNS beside the tailnet IP, would buy nothing for that.
+    const better = routes.slice(0, current).filter((route) => {
+      const id = connectionRouteId(route.target);
+      return (
+        isBetterRouteKind(route, routes[current]!) &&
+        (cooldowns.get(id) ?? 0n) <= now &&
+        (silent.routes.get(id)?.until ?? 0n) <= now
+      );
+    });
     const results = yield* Effect.forEach(
       better,
       (route: ConnectionRoute) => driver.preflight(latest, route),
@@ -411,10 +420,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     { discard: true },
   );
 
+  // When the current run of failed or pending attempts began; null while connected.
+  const troubleSince = yield* Ref.make<number | null>(null);
+  const lastConnectedAt = yield* Ref.make<number | null>(null);
+
   const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
     next: SupervisorConnectionState,
   ) {
-    yield* SubscriptionRef.set(state, next);
+    const now = yield* Clock.currentTimeMillis;
+    const since = yield* Ref.get(troubleSince);
+    const lastConnected = yield* Ref.get(lastConnectedAt);
+    const { unreachable: _unreachable, lastConnectedAt: _lastConnectedAt, ...base } = next;
+    yield* SubscriptionRef.set(state, {
+      ...base,
+      ...(base.phase !== "connected" && since !== null && now - since >= UNREACHABLE_AFTER_MS
+        ? { unreachable: true }
+        : {}),
+      ...(lastConnected === null ? {} : { lastConnectedAt: lastConnected }),
+    });
   });
 
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
@@ -939,6 +962,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
 
     const connectedAt = yield* Clock.currentTimeMillis;
+    yield* Ref.set(troubleSince, null);
+    yield* Ref.set(lastConnectedAt, connectedAt);
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
     if (options?.learnRoutes !== undefined) {
@@ -969,7 +994,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         })),
       ),
     ).pipe(exitUnlessInterrupted);
-    const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
+    const disconnectedAt = yield* Clock.currentTimeMillis;
+    yield* Ref.set(lastConnectedAt, disconnectedAt);
+    const connectedForMs = disconnectedAt - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {
         _tag: "Interrupted",
@@ -1048,11 +1075,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failureCount = 0;
         latestFailure = null;
         pendingRetry = Option.none();
+        // An explicit retry reports its progress again instead of staying quiet.
+        yield* Ref.set(troubleSince, null);
       }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
         resetRetryLadder();
         latestFailure = null;
+        yield* Ref.set(troubleSince, null);
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
         yield* waitForSignal;
@@ -1070,6 +1100,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
+      if ((yield* Ref.get(troubleSince)) === null) {
+        yield* Ref.set(troubleSince, yield* Clock.currentTimeMillis);
+      }
       const outcome: AttemptOutcome = yield* Effect.scoped(
         runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
       );

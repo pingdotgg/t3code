@@ -73,7 +73,7 @@ export function connectionFloatingStatus(input: {
         onPress: input.onReconnect,
       };
     case "offline":
-      return unavailable("You are offline");
+      return unavailable(`${environmentLabel} is offline`);
     case "unsupported":
       return unavailable("Client not supported");
     case "error":

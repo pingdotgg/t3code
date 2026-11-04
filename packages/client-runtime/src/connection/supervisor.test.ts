@@ -522,6 +522,53 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("retries a host that stays down quietly and recovers by itself", () =>
+    Effect.gen(function* () {
+      const hostUp = yield* Ref.make(true);
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) =>
+          Ref.get(hostUp).pipe(
+            Effect.flatMap((up) =>
+              up ? Effect.succeed(preparedFor(target)) : Effect.fail(transient("Tunnel is down.")),
+            ),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* Ref.set(hostUp, false);
+      yield* harness.closeLatestSession();
+      const lost = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      // A short outage is still reported as reconnecting.
+      expect(presentConnectionState(lost).phase).toBe("reconnecting");
+
+      // Retries land at most 16 seconds apart this early, so one falls past the grace period.
+      yield* TestClock.adjust("60 seconds");
+      const settled = yield* awaitState(supervisor.state, (state) => state.unreachable === true);
+      expect(settled.lastConnectedAt).toBeDefined();
+      const seen = yield* Ref.make<ReadonlyArray<SupervisorConnectionState>>([]);
+      yield* SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.runForEach((state) => Ref.update(seen, (states) => [...states, state])),
+        Effect.forkScoped,
+      );
+      const attemptsBefore = yield* Ref.get(harness.prepareCount);
+      for (let minute = 0; minute < 30; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+      expect(yield* Ref.get(harness.prepareCount)).toBeGreaterThan(attemptsBefore);
+      for (const state of yield* Ref.get(seen)) {
+        expect(presentConnectionState(state)).toMatchObject({ phase: "offline", error: null });
+      }
+
+      yield* Ref.set(hostUp, true);
+      yield* harness.wake("application-active");
+      const back = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(back.unreachable).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not report a session lost while suspended as a failed connection", () =>
     Effect.gen(function* () {
       const allowReconnect = yield* Deferred.make<void>();
@@ -1680,6 +1727,68 @@ describe("EnvironmentSupervisor routes", () => {
       );
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
+  );
+
+  it.effect("keeps a live socket on an earlier route of the same kind", () =>
+    Effect.gen(function* () {
+      const tailnetRoute = (connectionId: string, origin: string): ConnectionRoute => ({
+        target: new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId,
+        }),
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: `${origin}/`,
+            wsBaseUrl: `${origin.replace(/^http/, "ws")}/`,
+            network: "tailscale",
+          }),
+        ),
+      });
+      // MagicDNS over `tailscale serve` and the raw tailnet address reach the same host.
+      const entry = entryWithRoutes(TARGET_ENTRY, [
+        tailnetRoute("bearer:magicdns", "https://host.tailnet.ts.net"),
+        tailnetRoute("bearer:tailnet-ip", "http://100.100.1.2:3773"),
+      ]);
+      const magicDnsAnswers = yield* Ref.make(false);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          connectionRouteId(route.target) === "bearer:magicdns"
+            ? Ref.get(magicDnsAnswers).pipe(
+                Effect.map((answers) => (answers ? "answered" : "silent")),
+              )
+            : Effect.succeed("answered"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe("bearer:tailnet-ip");
+
+      yield* Ref.set(magicDnsAnswers, true);
+      yield* harness.wake("application-active");
+      for (let minute = 0; minute < 5; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("checks a dead LAN route less often until the network changes", () =>

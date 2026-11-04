@@ -1,7 +1,11 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { hasSavedBearerRoute, hostFreezeNotice } from "@t3tools/client-runtime/connection";
+import {
+  type EnvironmentConnectionPresentation,
+  hasSavedBearerRoute,
+  hostFreezeNotice,
+} from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -25,15 +29,20 @@ import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
 
-function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
+function connectionStatusLabel(
+  environment: ConnectedEnvironmentSummary,
+  connection: EnvironmentConnectionPresentation | undefined,
+): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
     return "Off";
   }
-  return environmentStatusText({
-    phase: environment.connectionState,
-    error: environment.connectionError,
-    traceId: environment.connectionErrorTraceId,
-  });
+  return environmentStatusText(
+    connection ?? {
+      phase: environment.connectionState,
+      error: environment.connectionError,
+      traceId: environment.connectionErrorTraceId,
+    },
+  );
 }
 
 export function ConnectionEnvironmentRow(props: {
@@ -64,7 +73,7 @@ export function ConnectionEnvironmentRow(props: {
     presentation,
   );
   const enabled = props.environment.isEnabled && !unsupported;
-  const statusLabel = connectionStatusLabel(props.environment);
+  const statusLabel = connectionStatusLabel(props.environment, presentation?.connection);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
   const freeze = enabled

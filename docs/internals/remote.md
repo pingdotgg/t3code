@@ -39,7 +39,12 @@ connect, including a blocked one such as a signed-out T3 Connect, moves on to
 the next; only an incompatible server stops the walk, because it is the same
 server on every route. While connected over a later route the
 [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
-preflights the earlier ones and replaces the session when one would connect.
+preflights earlier routes of a better kind (loopback, LAN, tailnet or VPN,
+public, SSH, relay, best first) and replaces the session when one would
+connect. An earlier route of the same kind is not worth a reconnect: MagicDNS
+through `tailscale serve` and the raw tailnet address reach the same host, and
+mobile reconnects over whichever answers first after every resume, so following
+list order would replace the socket on nearly every foreground.
 Preflight includes authorization so a route that answers but rejects this
 client never costs a working session; a route that still fails afterwards is
 held back for a cooldown so a flaky network cannot bounce the connection.

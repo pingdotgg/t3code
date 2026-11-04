@@ -112,6 +112,13 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   relay: 5,
 };
 
+/** Whether `candidate` is on a better kind of network than `current`, not merely earlier in the list. */
+export function isBetterRouteKind(candidate: ConnectionRoute, current: ConnectionRoute): boolean {
+  return (
+    ROUTE_KIND_RANK[connectionRouteKind(candidate)] < ROUTE_KIND_RANK[connectionRouteKind(current)]
+  );
+}
+
 export function insertRoute(
   routes: ReadonlyArray<ConnectionRoute>,
   route: ConnectionRoute,
