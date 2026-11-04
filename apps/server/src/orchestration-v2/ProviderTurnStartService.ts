@@ -1059,6 +1059,7 @@ export const layer: Layer.Layer<
                     },
                     strategy: "delta_since_target_last_seen",
                     items: missedItems,
+                    source: projection,
                     runs: projection.runs,
                     createdAt: yield* DateTime.now,
                   }),
@@ -1084,6 +1085,7 @@ export const layer: Layer.Layer<
             toProviderInstanceId: run.providerInstanceId,
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
+            source: projection,
             runs: projection.runs,
             items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
               (item) =>

@@ -4,6 +4,10 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  OrchestrationV2ContextHandoff,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -14,10 +18,14 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
+
+const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
+const encodeHandoff = Schema.encodeSync(OrchestrationV2ContextHandoff);
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
@@ -300,4 +308,132 @@ it.effect("inherited history stops at a missing fork ancestor", () =>
     );
     assert.deepEqual(items, []);
   }),
+);
+
+it.effect("preserves the native goal owner across switches and failed resume", () =>
+  Effect.gen(function* () {
+    const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+    const observedAt = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+    const owner: OrchestrationV2ProviderThread = {
+      id: ProviderThreadId.make("provider-thread:goal-owner"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerSessionId: null,
+      appThreadId: ThreadId.make("thread:goal"),
+      ownerNodeId: null,
+      nativeThreadRef: {
+        driver: ProviderDriverKind.make("codex"),
+        strength: "strong",
+        nativeId: "native:goal-owner",
+      },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      goal: {
+        objective: "Finish the migration",
+        status: "active",
+        tokensUsed: 1234,
+        tokenBudget: 5000,
+        timeUsedSeconds: 60,
+      },
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    };
+    const input = {
+      threadId: owner.appThreadId!,
+      targetRunId: RunId.make("run:switch"),
+      transferId: null,
+      fromProviderThreadIds: [owner.id],
+      toProviderThreadId: ProviderThreadId.make("provider-thread:next"),
+      fromProviderInstanceId: owner.providerInstanceId,
+      toProviderInstanceId: ProviderInstanceId.make("opencode"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      items: [],
+      createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+    };
+    const first = yield* service.prepareProviderHandoff({
+      ...input,
+      source: { providerThreads: [owner], contextHandoffs: [] },
+    });
+    const expected = [
+      {
+        providerThreadId: owner.id,
+        providerInstanceId: owner.providerInstanceId,
+        nativeThreadRef: owner.nativeThreadRef,
+        goal: owner.goal ?? null,
+        observedAt,
+      },
+    ];
+    assert.deepEqual(first.nativeGoals, expected);
+    const persisted = decodeHandoff(encodeHandoff(first));
+    const second = yield* service.prepareProviderHandoff({
+      ...input,
+      source: { providerThreads: [], contextHandoffs: [persisted] },
+    });
+    assert.deepEqual(second.nativeGoals, expected);
+    const recovered = yield* service.prepareProviderHandoff({
+      ...input,
+      source: {
+        providerThreads: [{ ...owner, nativeThreadRef: null, goal: null }],
+        contextHandoffs: [second],
+      },
+    });
+    assert.deepEqual(recovered.nativeGoals, expected);
+    const cleared = yield* service.prepareProviderHandoff({
+      ...input,
+      source: {
+        providerThreads: [{ ...owner, goal: null, updatedAt: input.createdAt }],
+        contextHandoffs: [first],
+      },
+    });
+    assert.isNull(cleared.nativeGoals?.[0]?.goal);
+    assert.deepEqual(cleared.nativeGoals?.[0]?.observedAt, input.createdAt);
+    const freshRun: OrchestrationV2Run = {
+      id: RunId.make("run:fresh"),
+      threadId: input.threadId,
+      ordinal: 3,
+      providerInstanceId: owner.providerInstanceId,
+      modelSelection: { instanceId: owner.providerInstanceId, model: "test-model" },
+      providerThreadId: input.toProviderThreadId,
+      userMessageId: MessageId.make("message:fresh"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: input.createdAt,
+      startedAt: input.createdAt,
+      completedAt: input.createdAt,
+      checkpointId: null,
+      contextHandoffId: null,
+      freshContext: true,
+    };
+    const freshOwner = {
+      ...owner,
+      id: input.toProviderThreadId,
+      firstRunOrdinal: freshRun.ordinal,
+      lastRunOrdinal: freshRun.ordinal,
+      nativeThreadRef: { ...owner.nativeThreadRef!, nativeId: "native:fresh-goal" },
+    };
+    const afterFreshContext = yield* service.prepareProviderHandoff({
+      ...input,
+      runs: [freshRun],
+      source: { providerThreads: [owner, freshOwner], contextHandoffs: [first] },
+    });
+    assert.deepEqual(
+      afterFreshContext.nativeGoals?.map((goal) => goal.providerThreadId),
+      [freshOwner.id],
+    );
+    const recoveredFreshContext = yield* service.prepareProviderHandoff({
+      ...input,
+      runs: [freshRun],
+      source: {
+        providerThreads: [owner, { ...freshOwner, nativeThreadRef: null, goal: null }],
+        contextHandoffs: [first, afterFreshContext],
+      },
+    });
+    assert.deepEqual(recoveredFreshContext.nativeGoals, afterFreshContext.nativeGoals);
+  }).pipe(Effect.provide(layerTest)),
 );

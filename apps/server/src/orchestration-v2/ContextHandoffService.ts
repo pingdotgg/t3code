@@ -26,6 +26,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -77,6 +78,7 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    readonly source?: NativeGoalSource;
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
@@ -103,6 +105,86 @@ export class ContextHandoffServiceV2 extends Context.Service<
   ContextHandoffServiceV2,
   ContextHandoffServiceV2Shape
 >()("t3/orchestration-v2/ContextHandoffService/ContextHandoffServiceV2") {}
+
+type NativeGoalSource = Pick<
+  OrchestrationV2ThreadProjection,
+  "providerThreads" | "contextHandoffs"
+>;
+
+/** Ordinal of the latest started fresh-context run. Runs before it never reach a provider again. */
+export function contextBoundaryOrdinal(
+  runs: ReadonlyArray<
+    Pick<
+      OrchestrationV2Run,
+      "ordinal" | "freshContext" | "status" | "startedAt" | "restartContinuationOfRunId"
+    >
+  >,
+): number {
+  let boundary = 0;
+  for (const run of runs) {
+    if (
+      run.freshContext === true &&
+      run.status !== "queued" &&
+      !cancelledBeforeStart(run) &&
+      run.ordinal > boundary
+    ) {
+      boundary = run.ordinal;
+    }
+  }
+  return boundary;
+}
+
+export function nativeGoalSnapshots(source: NativeGoalSource, boundary = 0) {
+  type Snapshot = NonNullable<OrchestrationV2ContextHandoff["nativeGoals"]>[number];
+  const snapshots = new Map<string, Snapshot>();
+  const keyFor = (
+    snapshot: Pick<Snapshot, "providerInstanceId" | "providerThreadId" | "nativeThreadRef">,
+  ) =>
+    JSON.stringify([
+      snapshot.providerInstanceId,
+      snapshot.providerThreadId,
+      snapshot.nativeThreadRef?.nativeId,
+    ]);
+  for (const handoff of source.contextHandoffs) {
+    for (const snapshot of handoff.nativeGoals ?? []) {
+      const key = keyFor(snapshot);
+      const previous = snapshots.get(key);
+      if (
+        previous === undefined ||
+        DateTime.toEpochMillis(snapshot.observedAt) >= DateTime.toEpochMillis(previous.observedAt)
+      ) {
+        snapshots.set(key, snapshot);
+      }
+    }
+  }
+  for (const thread of source.providerThreads) {
+    const snapshot = {
+      providerThreadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      nativeThreadRef: thread.nativeThreadRef,
+      goal: thread.goal ?? null,
+      observedAt: thread.updatedAt,
+    };
+    const key = keyFor(snapshot);
+    const previous = snapshots.get(key);
+    if (
+      (snapshot.goal !== null || previous !== undefined) &&
+      (previous === undefined ||
+        DateTime.toEpochMillis(snapshot.observedAt) >= DateTime.toEpochMillis(previous.observedAt))
+    ) {
+      snapshots.set(key, snapshot);
+    }
+  }
+  if (boundary === 0) return Array.from(snapshots.values());
+  const visibleOwners = new Set(
+    source.providerThreads
+      .filter((thread) => thread.firstRunOrdinal !== null && thread.firstRunOrdinal >= boundary)
+      .map((thread) => thread.id),
+  );
+  return Array.from(snapshots.values()).filter((snapshot) =>
+    visibleOwners.has(snapshot.providerThreadId),
+  );
+}
 
 function compactText(text: string, maxLength = 240): string {
   const compacted = text.replace(/\s+/g, " ").trim();
@@ -495,6 +577,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       readonly toProviderInstanceId: ProviderInstanceId;
       readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
       readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+      readonly source?: NativeGoalSource;
       readonly strategy: Extract<
         OrchestrationV2ContextHandoff["strategy"],
         "delta_since_target_last_seen" | "full_thread_summary"
@@ -520,6 +603,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               }),
           ),
         );
+      const nativeGoals =
+        input.source === undefined
+          ? []
+          : nativeGoalSnapshots(input.source, contextBoundaryOrdinal(input.runs ?? []));
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
       const coverage = handoffCoverage(input);
       const selected = selectHistory({
@@ -546,6 +633,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         toProviderThreadId: input.toProviderThreadId,
         coveredRunOrdinals: input.coveredRunOrdinals,
         strategy: input.strategy,
+        ...(nativeGoals.length === 0 ? {} : { nativeGoals }),
         status: "ready",
         summaryMessageId: null,
         summaryText: renderHistory(selected.messages, selected.context),
