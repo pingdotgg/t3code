@@ -3,6 +3,20 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+## Waking a Mac from your iPhone
+
+After connecting to a Mac with local network access enabled, the iPhone app remembers
+its wake details. Sending a message or retrying its connection attempts to wake the
+Mac when its saved address is on the iPhone’s Wi-Fi subnet. Messages stay queued
+until the connection returns.
+
+Enable **Wake for network access** in the Mac’s Battery or Energy settings and allow
+T3 Code’s Local Network permission on the iPhone. The Mac’s network hardware must
+support waking from sleep; Wi-Fi and closed-lid behavior depend on the Mac and network.
+T3 Code must still be running on the Mac. This cannot start a stopped server, wake a
+powered-off Mac, or send a wake request across T3 Connect or a VPN. Background retries
+do not repeatedly wake the Mac.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

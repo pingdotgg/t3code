@@ -93,3 +93,11 @@ export class SshEnvironmentGateway extends Context.Service<
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+
+export class NetworkWake extends Context.Reference<{
+  readonly send: (
+    targets: ReadonlyArray<{ readonly address: string; readonly macAddress: string }>,
+  ) => Effect.Effect<void>;
+}>("@t3tools/client-runtime/platform/capabilities/NetworkWake", {
+  defaultValue: () => ({ send: () => Effect.void }),
+}) {}

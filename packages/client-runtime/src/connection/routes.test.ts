@@ -119,17 +119,52 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
+  it("persists, updates and removes wake details without changing a saved route", () => {
+    const entry: ConnectionCatalogEntry = { ...LAN, enabled: true };
+    const merge = (current: ConnectionCatalogEntry, kind: string, wakeMacAddress?: string) =>
+      mergeLearnedRoutes({
+        entry: current,
+        activeRoute: LAN,
+        allowInsecure: true,
+        reported: [
+          {
+            kind,
+            httpBaseUrl: "http://192.168.1.10:3773/",
+            ...(wakeMacAddress ? { wakeMacAddress } : {}),
+          },
+        ],
+      });
+    const first = merge(entry, "lan", "aa:bb:cc:dd:ee:ff")!;
+    expect(profileOf(first[0]!)).toMatchObject({ wakeMacAddress: "aa:bb:cc:dd:ee:ff" });
+    const saved = entryWithRoutes(entry, first);
+    expect(merge(saved, "lan", "aa:bb:cc:dd:ee:ff")).toBeNull();
+    expect(profileOf(merge(saved, "lan", "aa:bb:cc:dd:ee:00")![0]!)).toMatchObject({
+      wakeMacAddress: "aa:bb:cc:dd:ee:00",
+    });
+    expect(profileOf(merge(saved, "lan")![0]!)).not.toHaveProperty("wakeMacAddress");
+    expect(profileOf(merge(saved, "tailnet", "aa:bb:cc:dd:ee:ff")![0]!)).not.toHaveProperty(
+      "wakeMacAddress",
+    );
+  });
+
   it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
-      reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
+      reported: [
+        {
+          kind: "lan",
+          httpBaseUrl: "http://192.168.1.10:3773/",
+          wakeMacAddress: "aa:bb:cc:dd:ee:ff",
+        },
+      ],
       allowInsecure: true,
     });
     expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`, "relay"]);
     expect(profileOf(routes![0]!)).toMatchObject({
       learned: true,
       authorization: "t3-connect",
+      wakeMacAddress: "aa:bb:cc:dd:ee:ff",
       wsBaseUrl: "ws://192.168.1.10:3773/",
     });
   });

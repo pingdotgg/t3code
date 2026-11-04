@@ -188,7 +188,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     concurrency: serial,
     execute: (environmentId: EnvironmentIdType) =>
       EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.flatMap((registry) => registry.retryNow(environmentId)),
+        Effect.flatMap((registry) => registry.retryNow(environmentId, { wake: true })),
       ),
   });
 

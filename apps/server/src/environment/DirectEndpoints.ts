@@ -83,10 +83,26 @@ export function resolveBoundEndpoints(input: {
     : [input.host!].filter(isAdvertisableAddress);
   return [...new Set(addresses)]
     .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
-    .map((address) => ({
-      kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
-      httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
-    }));
+    .map((address) => {
+      const wakeInterface =
+        input.platform === "darwin" && !tailscaleAddresses.has(address)
+          ? Object.entries(input.interfaces)
+              .flatMap(([name, entries]) => (/^en\d+$/.test(name) ? (entries ?? []) : []))
+              .find(
+                (entry) =>
+                  entry.address === address &&
+                  !entry.internal &&
+                  /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(entry.mac) &&
+                  entry.mac !== "00:00:00:00:00:00" &&
+                  (parseInt(entry.mac.slice(0, 2), 16) & 1) === 0,
+              )
+          : undefined;
+      return {
+        ...(wakeInterface === undefined ? {} : { wakeMacAddress: wakeInterface.mac }),
+        kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
+        httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
+      };
+    });
 }
 
 /**

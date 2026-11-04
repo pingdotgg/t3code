@@ -588,9 +588,14 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
 
+export const WakeMacAddress = Schema.String.check(
+  Schema.isPattern(/^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/),
+);
+
 export const ServerDirectEndpoint = Schema.Struct({
   kind: ServerDirectEndpointKind,
   httpBaseUrl: TrimmedNonEmptyString,
+  wakeMacAddress: Schema.optionalKey(WakeMacAddress),
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 

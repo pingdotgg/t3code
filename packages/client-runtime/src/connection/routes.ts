@@ -229,6 +229,7 @@ export function mergeLearnedRoutes(input: {
       : undefined;
   const reported = new Map<string, URL>();
   const tailscaleOrigins = new Set<string>();
+  const wakeAddresses = new Map<string, string>();
   for (const endpoint of input.reported) {
     let url: URL;
     try {
@@ -241,6 +242,8 @@ export function mergeLearnedRoutes(input: {
     // A loopback address names whichever device opens it, never the server.
     if (isLocalLoopbackHost(url.hostname)) continue;
     reported.set(url.origin, url);
+    if (endpoint.kind === "lan" && endpoint.wakeMacAddress !== undefined)
+      wakeAddresses.set(url.origin, endpoint.wakeMacAddress);
     if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
   }
   const normalized = (url: string) => url.replace(/\/+$/, "");
@@ -256,13 +259,19 @@ export function mergeLearnedRoutes(input: {
       return [
         url === null || !reported.has(normalized(url))
           ? route
-          : withNetwork(route, tailscaleOrigins.has(normalized(url))),
+          : withNetwork(
+              route,
+              tailscaleOrigins.has(normalized(url)),
+              wakeAddresses.get(normalized(url)),
+            ),
       ];
     }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
     if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
     known.add(normalized(url));
-    return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
+    return [
+      withNetwork(route, tailscaleOrigins.has(normalized(url)), wakeAddresses.get(normalized(url))),
+    ];
   });
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
@@ -295,6 +304,9 @@ export function mergeLearnedRoutes(input: {
           httpBaseUrl,
           wsBaseUrl: `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}/`,
           learned: true,
+          ...(wakeAddresses.has(url.origin)
+            ? { wakeMacAddress: wakeAddresses.get(url.origin)! }
+            : {}),
           ...(authorization === undefined ? {} : { authorization }),
           ...(tailscaleOrigins.has(url.origin) ? { network: "tailscale" as const } : {}),
         }),
@@ -303,10 +315,12 @@ export function mergeLearnedRoutes(input: {
   }
   const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
     routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
-      )
+      .map((route) => {
+        const profile = Option.getOrNull(route.profile);
+        const mac =
+          profile?._tag === "BearerConnectionProfile" ? (profile.wakeMacAddress ?? "") : "";
+        return `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${mac}`;
+      })
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
 }
@@ -359,16 +373,23 @@ export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<Conne
 export interface ReportedEndpoint {
   readonly httpBaseUrl: string;
   readonly kind?: string;
+  readonly wakeMacAddress?: string;
 }
 
-function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {
+function withNetwork(
+  route: ConnectionRoute,
+  tailscale: boolean,
+  wakeMacAddress?: string,
+): ConnectionRoute {
   const profile = Option.getOrNull(route.profile);
   if (profile?._tag !== "BearerConnectionProfile") return route;
-  if ((profile.network === "tailscale") === tailscale) return route;
+  if ((profile.network === "tailscale") === tailscale && profile.wakeMacAddress === wakeMacAddress)
+    return route;
   return {
     target: route.target,
     profile: Option.some(
       new BearerConnectionProfile({
+        ...(wakeMacAddress === undefined ? {} : { wakeMacAddress }),
         connectionId: profile.connectionId,
         environmentId: profile.environmentId,
         label: profile.label,

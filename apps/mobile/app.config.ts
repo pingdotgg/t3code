@@ -257,6 +257,7 @@ const config: ExpoConfig = {
       `applinks:${HOSTED_APP_HOST}`,
     ],
     entitlements: {
+      "com.apple.developer.networking.multicast": true,
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
     infoPlist: {

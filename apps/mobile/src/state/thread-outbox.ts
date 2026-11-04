@@ -16,8 +16,17 @@ export async function flushThreadOutbox(): Promise<void> {
   await flushThreadOutboxWrites();
 }
 
-export function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {
-  return threadOutboxManager.enqueue(message);
+export async function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {
+  await threadOutboxManager.enqueue(message);
+  // Load after persistence: connection platform construction also imports outbox cleanup.
+  void Promise.all([
+    import("../connection/catalog"),
+    import("@t3tools/client-runtime/state/runtime"),
+  ])
+    .then(([{ environmentCatalog }, { runAtomCommand }]) =>
+      runAtomCommand(appAtomRegistry, environmentCatalog.retryNow, message.environmentId),
+    )
+    .catch(() => undefined);
 }
 
 export function confirmThreadOutboxMessageQueued(message: QueuedThreadMessage): Promise<boolean> {

@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -45,6 +46,7 @@ import {
 import {
   RELAY_ROUTE_ID,
   connectionRouteId,
+  connectionRouteKind,
   connectionRoutes,
   credentialConnectionId,
   entryWithRoutes,
@@ -157,7 +159,10 @@ export class EnvironmentRegistry extends Context.Service<
       | ConnectionAttemptError
       | PlatformEnvironmentRemovalError
     >;
-    readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly retryNow: (
+      environmentId: EnvironmentId,
+      options?: { readonly wake?: boolean },
+    ) => Effect.Effect<void>;
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
@@ -209,6 +214,8 @@ interface EnvironmentServiceScope {
 /** @public */
 export const make = Effect.gen(function* () {
   const registryScope = yield* Scope.Scope;
+  const networkWake = yield* ClientCapabilities.NetworkWake;
+  const lastWake = new Map<EnvironmentId, number>();
   const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -1047,12 +1054,35 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const retryNow = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
-      Effect.flatMap((supervisor) => supervisor.retryNow),
-      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
-      Effect.withSpan("EnvironmentRegistry.retryNow"),
-    );
+  const retryNow = Effect.fn("EnvironmentRegistry.retryNow")(
+    function* (environmentId: EnvironmentId, options?: { readonly wake?: boolean }) {
+      const supervisor = yield* acquireSupervisor(environmentId);
+      const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+      // A sleeping host can leave a socket looking connected until the next probe.
+      if (options?.wake && entry?.enabled) {
+        const now = yield* Clock.currentTimeMillis;
+        if (now - (lastWake.get(environmentId) ?? -Infinity) >= 15_000) {
+          lastWake.set(environmentId, now);
+          const targets = connectionRoutes(entry).flatMap((route) => {
+            const profile = Option.getOrNull(route.profile);
+            return profile?._tag === "BearerConnectionProfile" &&
+              profile.wakeMacAddress !== undefined &&
+              connectionRouteKind(route) === "lan"
+              ? [
+                  {
+                    address: new URL(profile.httpBaseUrl).hostname,
+                    macAddress: profile.wakeMacAddress,
+                  },
+                ]
+              : [];
+          });
+          if (targets.length > 0) yield* networkWake.send(targets);
+        }
+      }
+      yield* supervisor.retryNow;
+    },
+    Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
+  );
   const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (
     environmentId: EnvironmentId,
     enabled: boolean,
