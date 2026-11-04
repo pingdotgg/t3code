@@ -1,9 +1,11 @@
 import type { SnapShotSource } from "@t3tools/contracts";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { MediaActions } from "../media/MediaActions";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 const PIXEL =
@@ -18,6 +20,29 @@ const snapShotSource: SnapShotSource = {
 
 const D2_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1174 920"><rect width="1174" height="920"/></svg>';
+
+function MediaOpener() {
+  const [open, setOpen] = useState(false);
+  const source = {
+    kind: "image" as const,
+    name: "shot.png",
+    src: PIXEL,
+    reference: { kind: "file" as const, path: "/work/shot.png" },
+  };
+  return (
+    <>
+      <MediaActions source={source}>
+        <img src={PIXEL} alt="repro shot" width={40} height={40} onClick={() => setOpen(true)} />
+      </MediaActions>
+      {open ? (
+        <ExpandedImageDialog
+          preview={{ images: [{ src: PIXEL, name: "shot.png", actionsSource: source }], index: 0 }}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
 
 describe("ExpandedImageDialog", () => {
   it.each(["/work/pipeline.svg", "/work/diagram#v2.svg", "/work/diagram?v2.svg"])(
@@ -78,5 +103,22 @@ describe("ExpandedImageDialog", () => {
     (screen.getByRole("button", { name: "Close image preview" }).element() as HTMLElement).focus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it("Escape returns focus to a mouse-opened image without opening its path tooltip", async () => {
+    // The dialog renders no links and reads no route.
+    await using screen = await render(<MediaOpener />, { router: false });
+
+    const opener = screen.getByRole("img", { name: "repro shot" });
+    await userEvent.click(opener);
+    await expect.element(screen.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(opener).toHaveFocus();
+    expect(
+      opener.element().matches(":focus-visible"),
+      "focus returned to a mouse-opened image is :focus-visible",
+    ).toBe(false);
+    await expect.element(screen.getByText("/work/shot.png")).not.toBeInTheDocument();
   });
 });
