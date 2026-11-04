@@ -8,6 +8,7 @@ export function PreviewImage(props: {
   readonly src: string;
   readonly name: string;
   readonly mimeType?: string;
+  readonly onLoad?: () => void;
   readonly onError?: () => void;
 }) {
   return (

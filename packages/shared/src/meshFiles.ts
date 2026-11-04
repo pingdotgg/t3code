@@ -8,6 +8,9 @@ import { parseThreeMf } from "./threeMfMesh.ts";
 
 export { triangleCount, type Mesh } from "./meshParsing.ts";
 
+/** The most triangles the 3D view draws. */
+export const MODEL_VIEWER_MAX_TRIANGLES = 2_000_000;
+
 /**
  * Reads any supported mesh file into indexed Z-up geometry. The server renders preview images from
  * it and clients draw it in the 3D view, so a new format needs only a parser here and an extension
