@@ -24,9 +24,7 @@ for (const method of Playwright.SERVER_METHODS) {
     it("routes unmatched paths to the worker API route", async ({ server }) => {
       // No static asset matches /api/hello, so the request falls through to
       // the user worker (src/server.ts wired via `main`).
-      const body = await server.fetchJson<{ message: string; source: string }>(
-        "/api/hello",
-      );
+      const body = await server.fetchJson<{ message: string; source: string }>("/api/hello");
       expect(body).toMatchObject({ message: "Hello World", source: "worker" });
     });
 
