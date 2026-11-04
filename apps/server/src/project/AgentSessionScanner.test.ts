@@ -1972,7 +1972,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
             Effect.map(ProcessRunner.make(), (runner) =>
               ProcessRunner.ProcessRunner.of({
                 run: (input) =>
-                  runner.run(input).pipe(Effect.tap(() => Queue.offer(finishedReads, undefined))),
+                  runner.run(input).pipe(Effect.ensuring(Queue.offer(finishedReads, undefined))),
               }),
             ),
           );
