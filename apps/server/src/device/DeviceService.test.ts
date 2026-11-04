@@ -641,10 +641,10 @@ it.effect("Test connection preserves the Windows explanation across the wire", (
         "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
     });
     const codec = Schema.fromJsonString(DeviceError);
-    const decoded = yield* Schema.decodeUnknownEffect(codec)(
-      yield* Schema.encodeEffect(codec)(error),
+    const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
+    expect(decoded.message).toBe(
+      "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
     );
-    expect(decoded.message).toBe(`Windows test is unavailable: ${error.reason}`);
     expect(decoded.message).not.toContain("private SSH diagnostics");
   }).pipe(
     Effect.provide(
