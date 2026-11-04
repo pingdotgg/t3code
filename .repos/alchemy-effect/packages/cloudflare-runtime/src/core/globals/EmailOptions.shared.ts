@@ -9,11 +9,17 @@
  *
  * The request body carries the raw MIME message.
  */
-export const PATH_EMAIL = "/cdn-cgi/handler/email";
+export const PATH_EMAIL = "/cdn-cgi/local/email";
 
 /**
- * Prefix shared by all trigger-handler paths (`CorePaths.HANDLER_PREFIX`).
- * Unknown paths under it get a 404 pointing at the valid handlers.
+ * Miniflare's former `CorePaths.EMAIL`. Kept for tooling that still sends
+ * inbound email there.
+ */
+export const PATH_EMAIL_HANDLER = "/cdn-cgi/handler/email";
+
+/**
+ * Prefix of Miniflare's former trigger-handler paths. Unknown paths under it
+ * get a 404 pointing at the valid handlers.
  */
 export const PATH_HANDLER_PREFIX = "/cdn-cgi/handler/";
 

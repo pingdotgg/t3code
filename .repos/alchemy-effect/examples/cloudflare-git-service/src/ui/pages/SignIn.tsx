@@ -55,12 +55,7 @@ export const SignInPage = ({
         )}
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">Email</span>
-          <Input
-            value={email}
-            onChange={setEmail}
-            type="email"
-            placeholder="dana@example.com"
-          />
+          <Input value={email} onChange={setEmail} type="email" placeholder="dana@example.com" />
         </label>
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">Password</span>
@@ -73,25 +68,15 @@ export const SignInPage = ({
         </label>
         {error != null && <ErrorBox error={error} />}
         <div className="flex items-center justify-between gap-2">
-          <Button
-            kind="primary"
-            type="submit"
-            disabled={busy || !email || password.length < 8}
-          >
-            {busy
-              ? "Working…"
-              : mode === "sign-up"
-                ? "Create account"
-                : "Sign in"}
+          <Button kind="primary" type="submit" disabled={busy || !email || password.length < 8}>
+            {busy ? "Working…" : mode === "sign-up" ? "Create account" : "Sign in"}
           </Button>
           <button
             type="button"
             className="cursor-pointer text-xs text-fg-muted hover:text-accent"
             onClick={() => setMode(mode === "sign-up" ? "sign-in" : "sign-up")}
           >
-            {mode === "sign-up"
-              ? "Have an account? Sign in"
-              : "New here? Create an account"}
+            {mode === "sign-up" ? "Have an account? Sign in" : "New here? Create an account"}
           </button>
         </div>
         <button

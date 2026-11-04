@@ -1,13 +1,7 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import {
-  Orders,
-  Reports,
-  summaryKey,
-  type DailySummary,
-  type RegionTotal,
-} from "./resources.ts";
+import { Orders, Reports, summaryKey, type DailySummary, type RegionTotal } from "./resources.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -44,9 +38,7 @@ export default class Summarize extends GCP.Run.Job<Summarize>()(
         const to = new Date(yield* Clock.currentTimeMillis);
         const from = new Date(to.getTime() - DAY_MS);
         // Cloud Run names each execution in the task's environment.
-        const execution = yield* Effect.sync(
-          () => process.env.CLOUD_RUN_EXECUTION ?? null,
-        );
+        const execution = yield* Effect.sync(() => process.env.CLOUD_RUN_EXECUTION ?? null);
 
         // Unqualified table names resolve against the table's dataset.
         const rows = yield* orders.query(
@@ -82,7 +74,5 @@ export default class Summarize extends GCP.Run.Job<Summarize>()(
         );
       }).pipe(Effect.orDie),
     };
-  }).pipe(
-    Effect.provide([GCP.BigQuery.ReadTableHttp, GCP.Storage.WriteBucketHttp]),
-  ),
+  }).pipe(Effect.provide([GCP.BigQuery.ReadTableHttp, GCP.Storage.WriteBucketHttp])),
 ) {}

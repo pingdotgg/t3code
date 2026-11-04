@@ -1,8 +1,8 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Stream from "effect/Stream";
 import {
   DeadOrderEvents,
   decodeOrderEvent,
@@ -31,9 +31,7 @@ interface SentEmail {
   sentAt: string;
 }
 
-const send = (
-  event: OrderEvent,
-): Effect.Effect<SentEmail, UndeliverableEmail> =>
+const send = (event: OrderEvent): Effect.Effect<SentEmail, UndeliverableEmail> =>
   event.email.endsWith(".invalid")
     ? Effect.fail(new UndeliverableEmail({ to: event.email }))
     : Effect.succeed({
@@ -85,14 +83,10 @@ export default class Email extends GCP.Function<Email>()(
               );
               // Keyed by event id, so a redelivery overwrites instead of
               // recording a second email.
-              yield* outbox.put(
-                emailObjectFor(event.eventId),
-                JSON.stringify(email),
-                {
-                  contentType: "application/json",
-                  metadata: { orderId: event.orderId, to: email.to },
-                },
-              );
+              yield* outbox.put(emailObjectFor(event.eventId), JSON.stringify(email), {
+                contentType: "application/json",
+                metadata: { orderId: event.orderId, to: email.to },
+              });
               yield* Effect.log(`email: confirmed ${event.orderId}`);
             }),
           ),
@@ -104,7 +98,5 @@ export default class Email extends GCP.Function<Email>()(
     return {
       fetch: Effect.succeed(HttpServerResponse.text("ok")),
     };
-  }).pipe(
-    Effect.provide([GCP.Run.TopicEventSource, GCP.Storage.WriteBucketHttp]),
-  ),
+  }).pipe(Effect.provide([GCP.Run.TopicEventSource, GCP.Storage.WriteBucketHttp])),
 ) {}
