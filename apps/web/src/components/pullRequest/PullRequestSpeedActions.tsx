@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestAction } from "@t3tools/contracts";
 import { createContext, use, type ReactNode } from "react";
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 
 import { useShortcutModifierState } from "~/shortcutModifierState";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -29,6 +30,7 @@ export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntr
 export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   hostActions,
+  terminology,
   onActed,
   closing = false,
   sweeping = false,
@@ -36,6 +38,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
 }: {
   entry: Entry;
   hostActions: ReadonlySet<PullRequestAction>;
+  terminology: ChangeRequestTerminology;
   onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;
   closing?: boolean;
   sweeping?: boolean;
@@ -57,6 +60,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId: entry.environmentId,
     reference,
+    terminology,
     onSuccess: (action) => onActed?.({ entry, action }),
     resolveMergeMethod: (detail) => {
       const allowed = detail.capabilities.mergeMethods.filter(
@@ -79,7 +83,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
     <SpeedModeGroup
       busy={busy}
       pending={actionPending || closing}
-      label={`Quick actions for pull request #${entry.number}`}
+      label={`Quick actions for ${terminology.singular} #${entry.number}`}
     >
       {actions.map((action) => {
         const label = ACTIONS[action].label;
@@ -107,7 +111,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
-                ? "Open this pull request to merge its stack"
+                ? `Open this ${terminology.singular} to merge its stack`
                 : action === "close" && onCloseSweepStart
                   ? "Close immediately, or drag across rows to close several"
                   : `${label} immediately`}

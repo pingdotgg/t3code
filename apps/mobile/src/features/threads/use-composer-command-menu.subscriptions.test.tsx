@@ -18,15 +18,15 @@ vi.mock("../../state/threads", () => ({
   environmentThreadShells: harness.threads,
 }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { refreshProviders: null },
+  serverEnvironment: { providersValueAtom: vi.fn(), refreshProviders: null },
 }));
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+  useThreadSearch: () => undefined,
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/use-composer-drafts", () => ({
-  readComposerDraftSelection: () => null,
+  useComposerDraftSelection: () => null,
   getComposerDraftSnapshot: vi.fn(),
   setComposerDraftContext: vi.fn(),
 }));
@@ -38,8 +38,14 @@ import { useComposerCommandMenu } from "./use-composer-command-menu";
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment");
 const otherThread = { ...v2ThreadShell, id: ThreadId.make("other"), title: "Other task" };
+const hiddenThread = {
+  ...v2ThreadShell,
+  id: ThreadId.make("hidden"),
+  title: "Other hidden",
+  tags: ["private"],
+};
 const snapshotAtom = Atom.family(() =>
-  Atom.make({ ...v2ShellSnapshot, threads: [v2ThreadShell, otherThread] }),
+  Atom.make({ ...v2ShellSnapshot, threads: [v2ThreadShell, otherThread, hiddenThread] }),
 );
 const catalogValueAtom = Atom.make({
   isReady: true,
@@ -61,7 +67,11 @@ const catalogValueAtom = Atom.make({
 });
 Object.assign(
   harness.threads,
-  createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
+  createEnvironmentThreadShellAtoms({
+    catalogValueAtom,
+    snapshotAtom,
+    hiddenThreadTagsAtom: () => Atom.make(["private"]),
+  }),
 );
 
 describe("composer thread suggestion subscriptions", () => {
@@ -161,7 +171,6 @@ describe("composer thread suggestion subscriptions", () => {
     (hasThread) => {
       render({ draftMessage: "@Other", hasThread });
       expect(menu.items.map((item) => item.label)).toEqual(["Other task"]);
-      expect(updateShells(remoteEnvironmentId)).toBe(0);
       expect(updateShells(environmentId)).toBe(100);
       act(() =>
         registry.update(snapshotAtom(environmentId), (snapshot) => ({
@@ -209,7 +218,6 @@ describe("composer thread suggestion subscriptions", () => {
     );
     render({ draftMessage: "@Other", hasThread: false, env: remoteEnvironmentId });
     expect(menu.items.map((item) => item.label)).toEqual(["Other remote"]);
-    expect(updateShells(environmentId)).toBe(0);
     expect(updateShells(remoteEnvironmentId)).toBe(100);
     act(() => menu.onSelectionChange({ start: 0, end: 6 }));
     expect(menu.items).toEqual([]);

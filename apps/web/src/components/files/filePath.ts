@@ -23,54 +23,39 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
       return {
         label: part,
         // A bare drive (`C:`) means the drive's current directory; its root is `C:\`.
-        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : path,
+        // A bare `~` is not a host path; the home folder is `~/`.
+        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : hostPath && path === "~" ? "~/" : path,
         kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
       };
     }),
   ];
 }
 
-/**
- * `relativePath` written the way its own crumb names it, so a link with a
- * trailing or repeated separator still finds its crumb.
- */
+/** Use the crumb's path spelling so trailing or repeated separators still match. */
 export function breadcrumbPathOf(relativePath: string): string {
   return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
 }
 
-/**
- * Whether a host folder crumb names a directory the server can list. A UNC
- * server (`\\server`) is not one; its shares (`\\server\share`) are.
- */
+/** UNC servers are not listable directories; their shares are. */
 export function isListableHostFolder(path: string): boolean {
   return isHostPath(path) && !/^\\\\[^\\/]+$/.test(path);
 }
 
-/** Index of `path`'s crumb among `trail`'s crumbs; -1 when the trail does not pass through it. */
 function trailCrumbIndex(trail: string, path: string): number {
   const crumbPath = breadcrumbPathOf(path);
   return fileBreadcrumbs("", trail).findIndex((crumb) => crumb.path === crumbPath);
 }
 
-/**
- * The deepest path the breadcrumbs keep showing after the browser moves to `path`.
- * Going up keeps the folders below visible so the way back down is one click;
- * moving anywhere else starts over at `path`.
- */
+/** Retain descendant crumbs when navigating up; other navigation resets the trail to path. */
 export function retainedBreadcrumbTrail(trail: string | undefined, path: string): string {
   return trail !== undefined && trailCrumbIndex(trail, path) >= 0 ? trail : path;
 }
 
-/** The entry of `folder` that leads toward `trail`; null when the trail ends at the folder. */
 export function trailChildOf(folder: string, trail: string): string | null {
   const index = trailCrumbIndex(trail, folder);
   return index < 0 ? null : (fileBreadcrumbs("", trail)[index + 1]?.label ?? null);
 }
 
-/**
- * A host path for `relativePath` (as a host folder's listing names it, with `/`)
- * inside host folder `folder`, using the folder's own separator.
- */
 export function joinHostPath(folder: string, relativePath: string): string {
   const separator = isWindowsAbsolutePath(folder) ? "\\" : "/";
   const base = folder.endsWith(separator) ? folder : `${folder}${separator}`;

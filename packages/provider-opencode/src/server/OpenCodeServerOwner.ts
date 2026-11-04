@@ -166,18 +166,19 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   );
 
   return OpenCodeServerOwner.of({
-    withServer: (use) =>
-      Effect.uninterruptibleMask((restore) =>
+    withServer: Effect.fn("OpenCodeServerOwner.withServer")(function (use) {
+      return Effect.uninterruptibleMask((restore) =>
         restore(acquireServer).pipe(
           Effect.flatMap((server) =>
             restore(use(server)).pipe(Effect.ensuring(releaseServer(server))),
           ),
         ),
-      ),
+      );
+    }),
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = (input: {
   readonly binaryPath: string;
   readonly directory: string;

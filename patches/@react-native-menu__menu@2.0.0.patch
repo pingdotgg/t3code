@@ -343,10 +343,21 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +    }
  }
 diff --git a/ios/Shared/RCTMenuItem.swift b/ios/Shared/RCTMenuItem.swift
-index bb6bb2b7ad56135089f267587c974b166760539d..949b3f7ec49af7ba26d966a8923a51f619443d5a 100644
+index bb6bb2b7ad56135089f267587c974b166760539d..5675067ecb2db0239b74c66ff2e095471a721699 100644
 --- a/ios/Shared/RCTMenuItem.swift
 +++ b/ios/Shared/RCTMenuItem.swift
-@@ -103,10 +103,18 @@ class RCTMenuAction {
+@@ -27,7 +27,9 @@ class RCTMenuAction {
+             self.identifier = UIAction.Identifier(rawValue: identifier as String);
+         }
+ 
+-        if let image = details["image"] as? NSString {
++        // Fabric sends an absent image as "", and every asset lookup for "" logs a
++        // CoreUI fault with a backtrace.
++        if let image = details["image"] as? NSString, image.length > 0 {
+             self.image = UIImage(systemName: image as String);
+             if self.image === nil {
+                 self.image = UIImage(named: image as String)
+@@ -103,10 +105,18 @@ class RCTMenuAction {
                  subMenuActions.append(subaction.createUIMenuElement(handler))
              }
              var menu: UIMenu;

@@ -14,10 +14,7 @@ function fileName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/**
- * Returns null when `value` does not contain the subsequence at all — the
- * entry still renders (the server matched it), just without highlights.
- */
+/** Return null for unmatched subsequences; server-matched entries still render without highlights. */
 function findMatchIndices(value: string, query: string): number[] | null {
   if (!query) return [];
 
@@ -35,11 +32,7 @@ function findMatchIndices(value: string, query: string): number[] | null {
   return null;
 }
 
-/**
- * Server ordering is preserved — ranking already happened there; this pass only
- * filters to files and computes highlight positions with the same query
- * normalization the server applied.
- */
+/** Preserve server ranking and query normalization while filtering files and computing highlights. */
 export function getProjectFilePickerMatches(
   entries: ReadonlyArray<ProjectEntry>,
   rawQuery: string,

@@ -1,10 +1,7 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
 export const GROK_AUTO_ROUTINE_MARKER = "grok-auto-routine-ok";
-/**
- * Never exists, so approving the removal is harmless; `rm` of a non-scratch
- * home path is one Grok's classifier always holds for the user.
- */
+/** The path never exists; removing a non-scratch home path reliably triggers Grok approval. */
 export const GROK_AUTO_BLOCKED_PATH = "grok-auto-probe-does-not-exist";
 export const GROK_AUTO_PENDING_SHELL_KEY = "grok-auto-blocked-pending";
 

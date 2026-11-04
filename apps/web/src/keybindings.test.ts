@@ -21,6 +21,7 @@ import {
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
+  terminalNavigationShortcutData,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -34,6 +35,31 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("terminal word navigation", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+Arrow to the terminal encoder on %s",
+    (platform) => {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
+      }
+    },
+  );
+
+  it.each(["Win32", "Linux x86_64", "MacIntel"])(
+    "preserves Alt+Arrow word navigation on %s",
+    (platform) => {
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
+        "\u001bb",
+      );
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
+        "\u001bf",
+      );
+    },
+  );
+});
 
 function modShortcut(
   key: string,
@@ -713,9 +739,11 @@ describe("resolveShortcutCommand", () => {
 });
 
 describe("isRichTextBoldShortcut", () => {
+  const selected = { isCollapsed: false };
+
   it("matches the B key on non-Latin layouts, like the sidebar toggle does", () => {
     const cyrillicB = event({ key: "и", code: "KeyB", ctrlKey: true });
-    assert.isTrue(isRichTextBoldShortcut(cyrillicB));
+    assert.isTrue(isRichTextBoldShortcut(cyrillicB, selected));
     assert.strictEqual(
       resolveShortcutCommand(cyrillicB, DEFAULT_BINDINGS, { platform: "Win32" }),
       "sidebar.toggle",
@@ -723,8 +751,18 @@ describe("isRichTextBoldShortcut", () => {
   });
 
   it("follows the letter a Latin layout types, not the physical key", () => {
-    assert.isFalse(isRichTextBoldShortcut(event({ key: "x", code: "KeyB", ctrlKey: true })));
-    assert.isTrue(isRichTextBoldShortcut(event({ key: "b", code: "KeyN", ctrlKey: true })));
+    assert.isFalse(
+      isRichTextBoldShortcut(event({ key: "x", code: "KeyB", ctrlKey: true }), selected),
+    );
+    assert.isTrue(
+      isRichTextBoldShortcut(event({ key: "b", code: "KeyN", ctrlKey: true }), selected),
+    );
+  });
+
+  it("leaves the chord to the sidebar toggle when no text is selected", () => {
+    const modB = event({ key: "b", metaKey: true });
+    assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
+    assert.isFalse(isRichTextBoldShortcut(modB, null));
   });
 });
 

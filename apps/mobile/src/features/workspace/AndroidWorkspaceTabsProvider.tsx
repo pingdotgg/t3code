@@ -1,29 +1,19 @@
 import type { NavigationState } from "@react-navigation/native";
-import {
-  createContext,
-  use,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { createContext, use, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { androidWorkspaceSettingsOpen } from "./android-workspace-tabs";
 import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
 
 interface AndroidWorkspaceRoot {
   /**
-   * The root stack's key and state. The rail renders in the root navigator's layout, where
-   * `useNavigation()` resolves to the container ref: its dispatch goes to the focused
-   * navigator and hands that navigator's state to a callback. A tab press from inside nested
-   * Settings must reset the root stack, so the rail reads the root state here and targets
-   * the root key.
+   * The rail's `useNavigation()` dispatches to the focused navigator, which may be nested Settings.
+   * Target the root stack's key (and read `rootNavigationRef`'s state) so a tab press resets the root.
    */
   readonly key: string;
-  readonly getState: () => NavigationState;
   /** Settings is derived from navigation rather than kept in the tab reducer. */
   readonly settingsOpen: boolean;
+  readonly settingsRoute: NavigationState["routes"][number] | undefined;
+  readonly settingsPage: string | null;
 }
 
 const AndroidWorkspaceRootContext = createContext<AndroidWorkspaceRoot | null>(null);
@@ -37,14 +27,13 @@ export function AndroidWorkspaceTabsProvider(props: {
   readonly state: NavigationState;
   readonly children: ReactNode;
 }) {
-  const stateRef = useRef(props.state);
-  useLayoutEffect(() => {
-    stateRef.current = props.state;
-  }, [props.state]);
-  const getState = useCallback(() => stateRef.current, []);
   const key = props.state.key;
   const settingsOpen = Platform.OS === "android" && androidWorkspaceSettingsOpen(props.state);
-  const root = useMemo(() => ({ key, getState, settingsOpen }), [key, getState, settingsOpen]);
+  const settingsIndex = props.state.routes.findIndex((route) => route.name === "Settings");
+  const settingsRoute = settingsIndex < 0 ? undefined : props.state.routes[settingsIndex];
+  const settingsPage =
+    settingsIndex < 0 ? null : (props.state.routes[settingsIndex + 1]?.name ?? null);
+  const root = { key, settingsOpen, settingsRoute, settingsPage };
   return Platform.OS === "android" ? (
     <WorkspaceTabsProvider>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>

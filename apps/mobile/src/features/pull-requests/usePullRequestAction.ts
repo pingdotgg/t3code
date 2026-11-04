@@ -2,6 +2,7 @@ import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   PullRequestAction,
   PullRequestDetail,
@@ -10,7 +11,7 @@ import type {
 import { useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { canPerformPullRequestAction } from "./pullRequestActions";
+import { canPerformPullRequestAction, pullRequestActionLabel } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
@@ -37,7 +38,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Couldn't update this pull request",
+        `Couldn't update this ${sourceControlClients.get(pr?.provider).changeRequest.singular}`,
         cause instanceof Error ? cause.message : "Try again.",
       );
       return;
@@ -54,5 +55,13 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
         onPress: () => void perform(action),
       },
     ]);
-  return { available, perform, confirm, busy };
+  const confirmClose = () => {
+    const terminology = sourceControlClients.get(pr?.provider).changeRequest;
+    confirm(
+      "close",
+      pullRequestActionLabel("close", terminology),
+      `Close this ${terminology.singular} without merging its changes?`,
+    );
+  };
+  return { available, perform, confirm, confirmClose, busy };
 }

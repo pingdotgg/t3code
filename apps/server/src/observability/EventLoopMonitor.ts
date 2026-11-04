@@ -18,10 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
 
-// Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
-// gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
-// reads between S and S + RESOLUTION_MS. We subtract the resolution, so a delay can
-// undercount a stall by up to RESOLUTION_MS.
+// Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
 const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
@@ -38,6 +35,7 @@ export class EventLoopMonitor extends Context.Reference<{
    */
   readonly latestNoticeableStall: Effect.Effect<ServerEventLoopStall | undefined>;
 }>("t3/observability/EventLoopMonitor", {
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   defaultValue: () => ({ latestNoticeableStall: Effect.succeed(undefined) }),
 }) {}
 
@@ -77,7 +75,6 @@ const makeNodeSampler = Effect.gen(function* () {
   let usage = process.resourceUsage();
   let sampledAt = NodePerfHooks.performance.now();
 
-  // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
@@ -113,8 +110,7 @@ const makeNodeSampler = Effect.gen(function* () {
 
 export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
   const delayMs = Math.round(delayMaxNs / 1e6) - RESOLUTION_MS;
-  // libuv's clock keeps running while the system sleeps on macOS and Windows, so a
-  // sleep also reads as delay, but the loop spent it idle in poll.
+  // libuv clocks run during macOS/Windows sleep; idle poll time distinguishes it from stalls.
   if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
   return delayMs;
 };
@@ -216,10 +212,7 @@ const layerWith = (
         }
       }).pipe(sampling.withPermits(1));
       const wait = Effect.sleep(SAMPLE_INTERVAL);
-      // The layer builds before the rest of the server, so the first sample covers
-      // startup work such as migrations and projection bootstrap. That can block the
-      // loop for seconds on a large database, so skip it rather than warn at every
-      // launch.
+      // The first sample includes migrations and bootstrap; skip expected startup stalls.
       yield* wait.pipe(
         Effect.andThen(sampling.withPermits(1)(sample)),
         Effect.andThen(Ref.set(warmedUp, true)),

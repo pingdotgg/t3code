@@ -1,8 +1,6 @@
-// Azure Trusted Signing from a non-Windows host. The Windows-only path is
-// electron-builder's azureSignOptions (PowerShell + signtool.exe); this one is
-// electron-builder's `win.signtoolOptions.sign` hook and the CLI archive's
-// signer. jsign reads AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET
-// itself when no --storepass is given.
+// Azure Trusted Signing from a non-Windows host, for electron-builder's
+// `win.signtoolOptions.sign` hook and the CLI archive. jsign reads AZURE_TENANT_ID,
+// AZURE_CLIENT_ID and AZURE_CLIENT_SECRET itself when no --storepass is given.
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";

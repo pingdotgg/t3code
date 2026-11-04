@@ -22,6 +22,7 @@ import {
   isSameComposerContextPayload,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
+  pullRequestContextKindLabel,
   resolveUserMessageContext,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
@@ -254,7 +255,7 @@ describe("composerContextRecords", () => {
     expect(removeInlineContextReference(prompt, reference.contextId).prompt).toBe("prose tail");
   });
 
-  it("clamps an oversized review selection so the record still encodes", () => {
+  it("clamps oversized review and terminal selections so the records still encode", () => {
     const build = (diffLength: number) =>
       reviewCommentContextRecord({
         id: "rc-big",
@@ -275,6 +276,21 @@ describe("composerContextRecords", () => {
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();
     expect(() => decodeMessageContext({ version: 1, records: [overLimit] })).not.toThrow();
+
+    const terminal = terminalContextRecord({
+      id: "term-big",
+      threadId: ThreadId.make("t"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2_000,
+      text: `${"t".repeat(63_985)}${"😀".repeat(8)}`,
+    });
+    expect(terminal.text).toBe(`${"t".repeat(63_985)}\n… truncated …`);
+    expect(decodeMessageContext({ version: 1, records: [terminal] }).records).toMatchObject([
+      { kind: "terminal", text: terminal.text },
+    ]);
   });
 
   it("finds the destination collision for different legacy terminal messages", () => {
@@ -342,6 +358,38 @@ describe("composerContextRecords", () => {
     });
     expect(legacy.text).toBe("hi\n\n[T line 1](t3-context://v1/terminal/legacy_terminal_1)");
     expect(legacy.recordsById.get("legacy_terminal_1")?.kind).toBe("terminal");
+  });
+});
+
+describe("pullRequestContextKindLabel", () => {
+  const comment = (url: string, isDraft: boolean) => ({
+    id: "pull-request-context:7",
+    sectionId: "pull-request:7",
+    sectionTitle: "PR #7",
+    filePath: "PR #7",
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "Title",
+    text: "",
+    diff: "",
+    pullRequest: {
+      number: 7,
+      title: "Title",
+      url,
+      headBranch: "feature",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft,
+    },
+  });
+
+  it("names the change request the way its host does", () => {
+    expect(pullRequestContextKindLabel(comment("https://github.com/acme/app/pull/7", false))).toBe(
+      "Open pull request",
+    );
+    expect(
+      pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
+    ).toBe("Draft merge request");
   });
 });
 

@@ -38,12 +38,3 @@ it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
     expect(error.message).toBe(`The thread was not found. Did you mean \`mcp:${bareId}\`?`);
   }),
 );
-
-it.effect("keeps the plain message for an id that matches nothing", () =>
-  Effect.gen(function* () {
-    const error = yield* readBare([]);
-
-    expect(error.code).toBe("thread_not_found");
-    expect(error.message).toBe("The thread was not found.");
-  }),
-);

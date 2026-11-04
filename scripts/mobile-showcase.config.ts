@@ -65,7 +65,7 @@ export interface ShowcaseConfig {
 
 const ANDROID_ABIS = ["arm64-v8a", "x86_64", "x86", "armeabi-v7a"] as const;
 
-export function resolveShowcaseAndroidAbi(
+function resolveShowcaseAndroidAbi(
   value: string | undefined,
 ): NonNullable<ShowcaseAndroidDevice["abi"]> {
   if (!value) return "arm64-v8a";
@@ -79,8 +79,7 @@ export function resolveShowcaseAndroidAbi(
 
 const config: ShowcaseConfig = {
   outputDirectory: "artifacts/app-store/screenshots",
-  // Dedicated port so the harness cannot attach to a normal mobile dev server
-  // (or a second worktree) and capture the wrong bundle.
+  // A dedicated port prevents captures from attaching to another dev server's bundle.
   metroPort: 8199,
   settleDelayMs: 2_500,
   devices: [
@@ -146,8 +145,7 @@ const config: ShowcaseConfig = {
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
       orientation: "landscape",
-      // The lock screen does not follow the app's self-rotation, so a
-      // headless landscape capture of it would come out sideways.
+      // Lock screens ignore app rotation; headless landscape captures would be sideways.
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
@@ -162,8 +160,7 @@ const config: ShowcaseConfig = {
       id: "pixel",
       platform: "android",
       avd: "Pixel_10_Pro",
-      // Apple Silicon uses ARM64 locally; CI overrides this with x86_64 so its
-      // Blacksmith Linux runner can use KVM acceleration.
+      // Apple Silicon defaults to ARM64; Blacksmith Linux CI overrides to x86_64 for KVM.
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
