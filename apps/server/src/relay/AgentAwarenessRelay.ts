@@ -28,6 +28,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -412,6 +413,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
+  const signature = yield* Signature.Signature;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
@@ -937,7 +939,11 @@ export const make = Effect.gen(function* () {
   });
   if (Option.isSome(agentAlerts)) {
     yield* agentAlerts.value.registerPhone({
-      publish: (alert) => publishPhone(alert).pipe(Effect.orElseSucceed(() => false)),
+      publish: (alert) =>
+        publishPhone(alert).pipe(
+          Effect.provideService(Signature.Signature, signature),
+          Effect.orElseSucceed(() => false),
+        ),
     });
   }
 
