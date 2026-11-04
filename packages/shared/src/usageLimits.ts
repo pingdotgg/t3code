@@ -512,20 +512,23 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
 }
 
 // A spent blocker window leaves no usable quota in the windows it blocks.
-const BLOCKS: Record<
+const BLOCKS = new Map<
   string,
   (blocker: ServerProviderUsageWindow, reported: ServerProviderUsageWindow) => boolean
-> = {
-  claudeAgent: (blocker, reported) => reported.kind === "session" && blocker.id === "seven_day",
-  codex: (blocker, reported) => reported.kind === "session" && blocker.kind === "weekly",
-  opencode: (blocker, reported) =>
-    blocker.id === "go_monthly"
-      ? reported.id === "go_rolling" || reported.id === "go_weekly"
-      : blocker.id === "go_weekly" && reported.id === "go_rolling",
-};
+>([
+  ["claudeAgent", (blocker, reported) => reported.kind === "session" && blocker.id === "seven_day"],
+  ["codex", (blocker, reported) => reported.kind === "session" && blocker.kind === "weekly"],
+  [
+    "opencode",
+    (blocker, reported) =>
+      blocker.id === "go_monthly"
+        ? reported.id === "go_rolling" || reported.id === "go_weekly"
+        : blocker.id === "go_weekly" && reported.id === "go_rolling",
+  ],
+]);
 
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
-  const blocks = BLOCKS[account.driver];
+  const blocks = BLOCKS.get(account.driver);
   // With several spent blockers, quota returns only when the last of them resets.
   const blocker = blocks
     ? account.limits.windows

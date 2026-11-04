@@ -997,10 +997,11 @@ describe("pooled account columns", () => {
 
   it("holds an OpenCode Go session spent until the last spent longer quota resets", () => {
     const monthlyReset = "2026-09-20T12:00:00.000Z";
-    const go = (key: string, monthlyUsed: number) => ({
+    const weeklyLater = "2026-09-25T12:00:00.000Z";
+    const go = (key: string, monthlyUsed: number, weeklyReset = "2026-09-05T12:00:00.000Z") => ({
       ...account(key, [
         { ...window, id: "go_rolling", usedPercent: 0 },
-        { ...weekly, id: "go_weekly", usedPercent: 100, resetsAt: "2026-09-05T12:00:00.000Z" },
+        { ...weekly, id: "go_weekly", usedPercent: 100, resetsAt: weeklyReset },
         {
           ...window,
           id: "go_monthly",
@@ -1012,11 +1013,14 @@ describe("pooled account columns", () => {
       ]),
       driver: ProviderDriverKind.make("opencode"),
     });
-    const sessions = [go("weekly", 40), go("both", 100)].map(
+    const sessions = [go("weekly", 40), go("both", 100), go("weekly-later", 100, weeklyLater)].map(
       (account) => collectLimitPools([account], now)[0]!.windows[0]!,
     );
-    expect.soft(sessions.map((session) => session.remainingPercent)).toEqual([0, 0]);
-    expect(sessions[1]!.resets[0]?.at).toBe(Date.parse(monthlyReset));
+    expect.soft(sessions.map((session) => session.remainingPercent)).toEqual([0, 0, 0]);
+    expect(sessions.slice(1).map((session) => session.resets[0]?.at)).toEqual([
+      Date.parse(monthlyReset),
+      Date.parse(weeklyLater),
+    ]);
   });
 
   it("keeps session columns across rows with opposite reset and usage orders", () => {
