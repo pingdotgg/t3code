@@ -23,7 +23,6 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
-import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
   CheckIcon,
@@ -70,6 +69,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -85,8 +85,6 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 const OFF = "off";
 const SYSTEM_DEFAULT = "system-default";
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
-const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
-const languageLabel = (code: string) => languageNames.of(code) ?? code;
 const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
   auto: "Auto: tap to toggle, hold to record",
   hold: "Hold: record while the keys are down",
@@ -101,12 +99,7 @@ const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
   min_15: "After 15 minutes",
   hour_1: "After 1 hour",
 };
-const normalizeTerm = (value: string) =>
-  value
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .normalize("NFC");
+const normalizeTerm = (value: string) => value.replace(/\s+/g, " ").trim().normalize("NFC");
 const spellingsOf = (words: SpeechCustomWords) =>
   new Set(
     words.flatMap(({ term, aliases }) =>
@@ -890,13 +883,6 @@ export function VoiceSettingsPanel() {
     chosenEnvironment?.serverConfig !== null &&
     chosenEnvironment?.serverConfig?.environment.capabilities.voiceTranscription !== true;
   const model = prepared && modelStatus?.supported ? modelStatus : null;
-  const languages = model?.languages ?? [];
-  const resolvedLanguage = model
-    ? effectiveSpeechLanguage(
-        { languages, supportsLanguageDetection: model.supportsLanguageDetection ?? false },
-        settings.speechLanguage,
-      )
-    : settings.speechLanguage;
 
   return (
     <SettingsPageContainer
@@ -1039,37 +1025,7 @@ export function VoiceSettingsPanel() {
               ? `${model.model} ${model.supportsLanguageDetection ? "can detect the language" : "uses a fixed language"}.`
               : "Choose an environment to see which languages its model supports."
           }
-          control={
-            <Select
-              value={settings.speechLanguage}
-              disabled={!model}
-              onValueChange={(value) => {
-                if (value) void updateClientSettings({ speechLanguage: value });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-64">
-                <SelectValue>
-                  {settings.speechLanguage === "auto"
-                    ? resolvedLanguage === "auto"
-                      ? "Auto-detect"
-                      : `Auto (${languageLabel(resolvedLanguage)})`
-                    : languageLabel(settings.speechLanguage)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto</SelectItem>
-                {languages
-                  .toSorted((left, right) =>
-                    languageLabel(left).localeCompare(languageLabel(right)),
-                  )
-                  .map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {languageLabel(code)}
-                    </SelectItem>
-                  ))}
-              </SelectPopup>
-            </Select>
-          }
+          control={<SpeechLanguageSelect model={model} />}
         />
         {model?.supportsTranslation ? (
           <SettingsRow
