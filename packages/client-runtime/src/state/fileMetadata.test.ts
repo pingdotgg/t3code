@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
@@ -118,6 +119,30 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
+  it.effect("rechecks expired missing paths while retaining known thread entries", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("new-directory-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const path = "/home/user/games/hl1";
+      h.values.set("/workspace/known", { kind: "file", byteLength: 5 });
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
+      yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId);
+      h.values.set(path, { kind: "directory" });
+      h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
+      yield* TestClock.adjust(60_001);
+      h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toEqual({ kind: "directory" });
+      h.registry.refresh(h.atom("/workspace/known", ENVIRONMENT_ID, threadId));
+      expect(yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 5,
+      });
+      expect(h.batches).toEqual([[path], ["/workspace/known"], [path]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not seed a different path from a literal name with a numeric suffix", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

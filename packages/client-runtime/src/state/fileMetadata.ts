@@ -200,8 +200,10 @@ export function createFileMetadataAtoms<R, E>(
         thread.sessions.set(session.value, retained);
       }
       const retainedEntry = retained?.get(input.path);
-      if (retainedEntry) return retainedEntry.value;
       const now = yield* Clock.currentTimeMillis;
+      // Agents mention paths before creating them, so misses must still expire within a thread.
+      if (retainedEntry && (retainedEntry.value !== null || retainedEntry.expires > now))
+        return retainedEntry.value;
       const cached = knownEntry(session.value, input.path, now);
       if (cached) {
         retained?.set(input.path, cached);
