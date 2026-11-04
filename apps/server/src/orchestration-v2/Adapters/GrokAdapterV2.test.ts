@@ -118,6 +118,22 @@ describe("GrokAdapterV2 capabilities", () => {
       flavor.promptFailure?.(new Error("Rate limit mentioned in an ordinary error")).class,
       "provider_error",
     );
+    assert.deepEqual(
+      flavor.promptFailure?.(
+        new EffectAcpErrors.AcpTransportError({
+          operation: "call-rpc",
+          method: "session/prompt",
+          detail: "private provider diagnostic",
+          cause: new Error("api_key=synthetic-private-key"),
+        }),
+      ),
+      {
+        class: "transport_error",
+        message: "Grok connection failed. Retry the turn.",
+        code: null,
+        retryable: null,
+      },
+    );
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
