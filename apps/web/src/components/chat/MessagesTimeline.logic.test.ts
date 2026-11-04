@@ -1994,6 +1994,13 @@ describe("deriveMessagesTimelineRows", () => {
           createdBy: "user" as const,
           creationSource: "web" as const,
         },
+        {
+          ...base("intro", 1, 1),
+          type: "assistant_message" as const,
+          messageId: MessageId.make("intro"),
+          text: "Let me look around",
+          streaming: false,
+        },
         command("before", 1, 1),
         {
           ...base("context", 1, 1),
@@ -2071,6 +2078,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(shape(rows(true, new Set([runId])))).toEqual([
       "user:prompt",
       "fold",
+      "assistant:intro",
       "work:before",
       "assistant:context",
       "work:question",
@@ -2080,6 +2088,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(shape(rows(false))).toEqual([
       "user:prompt",
       "working",
+      "assistant:intro",
       "work:before",
       "assistant:context",
       "work:question",

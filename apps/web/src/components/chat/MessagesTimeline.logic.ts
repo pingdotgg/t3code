@@ -1007,7 +1007,6 @@ function questionContextMessageIds(entries: ReadonlyArray<TimelineEntry>): Reado
       lastAssistantMessageId = entry.id;
     } else if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) {
       if (lastAssistantMessageId !== null) ids.add(lastAssistantMessageId);
-      lastAssistantMessageId = null;
     }
   }
   return ids;

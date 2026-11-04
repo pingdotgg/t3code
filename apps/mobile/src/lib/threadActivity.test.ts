@@ -421,6 +421,13 @@ describe("buildThreadFeed", () => {
             : {},
         },
       };
+      const intro = {
+        ...base("item-intro", "2026-06-20T00:00:01.500Z", 1),
+        type: "assistant_message" as const,
+        messageId: MessageId.make("message-intro"),
+        text: "Let me look around",
+        streaming: false,
+      };
       const context = {
         ...base("item-context", "2026-06-20T00:00:02.000Z", 2),
         type: "assistant_message" as const,
@@ -430,10 +437,11 @@ describe("buildThreadFeed", () => {
       };
       const feed = buildThreadFeed([
         projected(userMessage(), 0),
-        projected(command(), 1),
-        projected(context, 2),
-        projected(question, 3),
-        projected(assistantMessage(), 4),
+        projected(intro, 1),
+        projected(command(), 2),
+        projected(context, 3),
+        projected(question, 4),
+        projected(assistantMessage(), 5),
       ]);
       const presented = deriveThreadFeedPresentation(feed, null, new Set());
       expect(presented.map((entry) => entry.type)).toEqual([
@@ -449,7 +457,15 @@ describe("buildThreadFeed", () => {
       });
       expect(
         deriveThreadFeedPresentation(feed, null, new Set([runId])).map((entry) => entry.type),
-      ).toEqual(["message", "run-fold", "activity-group", "message", "activity-group", "message"]);
+      ).toEqual([
+        "message",
+        "run-fold",
+        "message",
+        "activity-group",
+        "message",
+        "activity-group",
+        "message",
+      ]);
     },
   );
 

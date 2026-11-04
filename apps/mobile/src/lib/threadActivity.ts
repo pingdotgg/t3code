@@ -1069,7 +1069,6 @@ function questionContextMessageIds(entries: ReadonlyArray<ThreadFeedEntry>): Rea
       lastAssistantMessageId = entry.id;
     } else if (entry.type === "activity-group" && isUserInputActivityGroup(entry)) {
       if (lastAssistantMessageId !== null) ids.add(lastAssistantMessageId);
-      lastAssistantMessageId = null;
     }
   }
   return ids;
