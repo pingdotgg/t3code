@@ -124,6 +124,7 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
+  enabledAtStartup = true,
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -145,7 +146,7 @@ const sendFor = (
       Layer.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
+            ...(enabledAtStartup ? { T3CODE_TELEMETRY_ENABLED: true } : {}),
             T3CODE_POSTHOG_KEY: "phc_test_key",
             T3CODE_POSTHOG_HOST: "http://localhost",
           }),
@@ -189,6 +190,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
           yield* analytics.record("test.allowed");
           yield* analytics.flush;
         }),
+        undefined,
+        false,
       ).pipe(Effect.provideService(HostProcess.Environment, env));
       assert.deepEqual(
         batches.flat().map((event) => event.event),
