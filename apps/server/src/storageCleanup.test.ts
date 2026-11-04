@@ -266,6 +266,7 @@ const cleanupFixture = (
     };
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let storedWorktreePaths: string[] = [worktree];
+    let repoWorktreeRows: Array<{ threadId: string; worktreePath: string }> = [];
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
@@ -344,12 +345,14 @@ const cleanupFixture = (
                   }),
                 },
               ]
-            : strings.join("").includes('AS "worktreePath"')
-              ? [
-                  ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                  ...storedWorktreePaths,
-                ].map((worktreePath) => ({ worktreePath }))
-              : [],
+            : strings.join("").includes("$.repoWorktrees")
+              ? repoWorktreeRows
+              : strings.join("").includes('AS "worktreePath"')
+                ? [
+                    ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                    ...storedWorktreePaths,
+                  ].map((worktreePath) => ({ worktreePath }))
+                : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -403,6 +406,9 @@ const cleanupFixture = (
       },
       setStoredWorktreePaths: (paths: string[]) => {
         storedWorktreePaths = paths;
+      },
+      setRepoWorktrees: (rows: Array<{ threadId: string; worktreePath: string }>) => {
+        repoWorktreeRows = rows;
       },
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
@@ -1293,6 +1299,54 @@ describe("storage cleanup reports and local file policies", () => {
         const { service, snapshotReads } = yield* cleanupFixture();
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(snapshotReads()).toBe(1);
+      }),
+    ),
+  );
+  it.live(
+    "keeps a thread's worktree while another thread works in it as a repository worktree",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture();
+          fixture.setRepoWorktrees([{ threadId: "thread-2", worktreePath: fixture.worktree }]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Another thread works in it as a repository worktree",
+          });
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+
+          fixture.setRepoWorktrees([]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        }),
+      ),
+  );
+  it.live("lists attached repository worktrees as kept, not as unused folders", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const folder = `${fixture.config.worktreesDir}/other/feature`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "repo-work", folder]);
+        yield* fixture.fs.utimes(folder, 1, 1);
+        fixture.setRepoWorktrees([{ threadId: "thread-9", worktreePath: folder }]);
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            reason:
+              "Repository worktree attached to a thread; cleanup keeps it until it is detached",
+          }),
+        ]);
+
+        fixture.setRepoWorktrees([]);
+        // Unused folders are reported under the canonical managed root.
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({
+            path: yield* fixture.fs.realPath(folder),
+            reason: "No thread uses this worktree",
+          }),
+        ]);
+        expect(yield* fixture.fs.exists(`${folder}/tracked.txt`)).toBe(true);
       }),
     ),
   );

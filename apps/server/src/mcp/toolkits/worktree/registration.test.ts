@@ -13,6 +13,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../../../git/RepoWorktreeService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -48,6 +49,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(RepoWorktreeService.RepoWorktreeService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -139,6 +141,9 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");
       expect(toolNames).toContain("t3_worktree_status");
+      expect(toolNames).toContain("t3_repo_worktree_ensure");
+      expect(toolNames).toContain("t3_repo_worktree_detach");
+      expect(toolNames).toContain("t3_repo_worktree_set_submodule");
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
 

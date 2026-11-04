@@ -1,5 +1,7 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -27,6 +29,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -46,6 +49,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { repoWorktreeNote } from "./RepoWorktreeNote.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -110,6 +114,9 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    // Optional so harnesses without settings or MCP start turns unchanged.
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    const mcpSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -1005,6 +1012,30 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
+      const nativeThreadHasTurns =
+        nativeInputRunIds.size > 0 ||
+        (legacyInputRunIds.size > 0 &&
+          sameNativeThread &&
+          !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
+      const hasT3Mcp =
+        Option.isSome(mcpSessions) &&
+        (yield* mcpSessions.value.read(projection.thread.id)) !== undefined;
+      const repoNote = repoWorktreeNote({
+        userText,
+        hasT3Mcp,
+        settings:
+          !hasT3Mcp || Option.isNone(serverSettings)
+            ? null
+            : yield* serverSettings.value.getSettings.pipe(
+                Effect.map(
+                  (current) =>
+                    resolveProjectSettings(current, projection.thread.projectId).settings,
+                ),
+                Effect.orElseSucceed(() => null),
+              ),
+        firstTurn: !nativeThreadHasTurns,
+        repoWorktrees: projection.thread.repoWorktrees ?? [],
+      });
       // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
       // attachments were not replayed into the replacement thread.
       const nativeContextEstimate = Effect.gen(function* () {
@@ -1097,7 +1128,9 @@ export const layer: Layer.Layer<
               return handoffBudget({
                 tokenCap,
                 modelContextWindow,
-                userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
+                userText: [restartNote, compact ? "" : repoNote, userText]
+                  .filter((part) => part !== "")
+                  .join("\n\n"),
                 attachments: message.attachments,
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
@@ -1138,7 +1171,7 @@ export const layer: Layer.Layer<
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
-          const context = [delivery.context, restartNote]
+          const context = [delivery.context, restartNote, compact ? "" : repoNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1190,6 +1223,7 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
+        repoNote === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
@@ -1218,11 +1252,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+        nativeThreadHasTurns,
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,

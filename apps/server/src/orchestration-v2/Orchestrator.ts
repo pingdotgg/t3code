@@ -29,6 +29,7 @@ import {
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
+  type ThreadRepoWorktree,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -449,6 +450,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
+    case "thread.repo-worktree.attach":
+    case "thread.repo-worktree.detach":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
@@ -2381,6 +2384,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         events,
         effects,
       );
+    },
+  );
+
+  // Reuses thread.metadata-updated, whose payload is the whole thread, so
+  // clients that predate repoWorktrees keep decoding the stream.
+  const dispatchRepoWorktreeMutation = Effect.fn("orchestrationV2.dispatch.repoWorktreeMutation")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.repo-worktree.attach" | "thread.repo-worktree.detach" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      const current = thread.repoWorktrees ?? [];
+      let repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
+      if (command.type === "thread.repo-worktree.attach") {
+        if (thread.archivedAt !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is archived.`,
+          });
+        }
+        if (current.some((entry) => entry.worktreePath === command.repoWorktree.worktreePath)) {
+          return;
+        }
+        repoWorktrees = [...current, command.repoWorktree];
+      } else {
+        repoWorktrees = current.filter((entry) => entry.worktreePath !== command.worktreePath);
+        if (repoWorktrees.length === current.length) return;
+      }
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, repoWorktrees, updatedAt: now },
+      });
     },
   );
 
@@ -10741,6 +10800,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
+        break;
+      case "thread.repo-worktree.attach":
+      case "thread.repo-worktree.detach":
+        yield* dispatchRepoWorktreeMutation(command, events);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);

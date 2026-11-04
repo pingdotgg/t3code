@@ -881,6 +881,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
   "worktreeSubmodules",
+  "repoWorktrees",
+  "repoWorktreeInstructions",
   "defaultAutoPull",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
@@ -924,6 +926,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
+  repoWorktrees: Schema.optionalKey(Schema.Boolean),
+  repoWorktreeInstructions: Schema.optionalKey(TrimmedString),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
@@ -1151,6 +1155,13 @@ export const ServerSettings = Schema.Struct({
   worktreeSubmodules: ForwardCompatibleNullable(WorktreeSubmodules).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Lets agents attach worktrees of Git repositories inside the project folder
+   * while the thread stays at the folder. Meant for a folder of several repos.
+   */
+  repoWorktrees: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Project guidance T3 gives agents with repository worktrees, such as base branches. */
+  repoWorktreeInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1426,6 +1437,8 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
+  repoWorktrees: Schema.optionalKey(Schema.Boolean),
+  repoWorktreeInstructions: Schema.optionalKey(TrimmedString),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

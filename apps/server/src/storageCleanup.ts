@@ -288,6 +288,29 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  // Repository worktrees of threads that still exist, archived ones included.
+  // Cleanup never removes them, and a thread's own worktree that another thread
+  // also works in counts as shared.
+  const readRepoWorktreePaths = Effect.fn("StorageCleanup.readRepoWorktreePaths")(function* () {
+    const rows = yield* sql<{ threadId: string; worktreePath: string | null }>`
+      SELECT t.thread_id AS "threadId", json_extract(r.value, '$.worktreePath') AS "worktreePath"
+      FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.repoWorktrees') r
+      WHERE t.deleted_at IS NULL
+    `.pipe(NodeSqliteClient.readOnly);
+    const paths = new Map<string, { readonly path: string; readonly threadIds: Set<string> }>();
+    for (const row of rows) {
+      if (row.worktreePath === null) continue;
+      const key = pathKey(row.worktreePath);
+      const entry = paths.get(key) ?? {
+        path: path.resolve(row.worktreePath),
+        threadIds: new Set(),
+      };
+      entry.threadIds.add(row.threadId);
+      paths.set(key, entry);
+    }
+    return paths;
+  });
+
   // The snapshot takes seconds on large databases, so it runs on the reader
   // worker instead of the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
@@ -318,6 +341,7 @@ const make = Effect.gen(function* () {
   const reportOrphanWorktrees = Effect.fn("StorageCleanup.reportOrphanWorktrees")(function* (
     roots: ReadonlyArray<string>,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    repoWorktreePaths: ReadonlyArray<string>,
     entries: StorageCleanupReportEntry[],
   ) {
     // Include deleted and archived threads, even those without a branch or project.
@@ -327,8 +351,8 @@ const make = Effect.gen(function* () {
       WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL
     `.pipe(NodeSqliteClient.readOnly);
     const referenced = new Set<string>();
-    for (const row of rows) {
-      const resolved = path.resolve(row.worktreePath);
+    for (const worktreePath of [...rows.map((row) => row.worktreePath), ...repoWorktreePaths]) {
+      const resolved = path.resolve(worktreePath);
       referenced.add(pathKey(resolved));
       referenced.add(
         pathKey(yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
@@ -587,6 +611,7 @@ const make = Effect.gen(function* () {
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
+    const repoWorktreePaths = yield* readRepoWorktreePaths();
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
@@ -622,6 +647,8 @@ const make = Effect.gen(function* () {
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (group.length > 1 && worktreeOwner(group) === undefined)
           return keep(`shared by ${group.length} threads`);
+        if (repoWorktreePaths.has(pathKey(worktreePath)))
+          return keep("another thread works in it as a repository worktree");
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
@@ -744,6 +771,8 @@ const make = Effect.gen(function* () {
             (entry) => path.resolve(entry.worktreePath) === worktreePath,
           );
           if (hasTerminal(worktreePath)) return "open terminal";
+          if ((yield* readRepoWorktreePaths()).has(pathKey(worktreePath)))
+            return "another thread works in it as a repository worktree";
           if (deleted) {
             if (
               latest.length > 0 ||
@@ -860,9 +889,31 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    const candidatePaths = new Set(
+      candidates.map((thread) => pathKey(path.resolve(thread.worktreePath!))),
+    );
+    for (const [key, attached] of repoWorktreePaths) {
+      if (
+        candidatePaths.has(key) ||
+        !(yield* fs.exists(attached.path).pipe(Effect.orElseSucceed(() => false)))
+      )
+        continue;
+      const owner = snapshot.threads.find((thread) => attached.threadIds.has(thread.id));
+      entries.push({
+        kind: "worktree",
+        outcome: "kept",
+        reason: "Repository worktree attached to a thread; cleanup keeps it until it is detached",
+        path: attached.path,
+        threadId: owner?.id ?? null,
+        threadTitle: owner?.title ?? null,
+        bytes: null,
+        files: null,
+      });
+    }
     yield* reportOrphanWorktrees(
       roots,
       yield* projectStore.list({ includeDeleted: true }),
+      [...repoWorktreePaths.values()].map((attached) => attached.path),
       entries,
     );
   });

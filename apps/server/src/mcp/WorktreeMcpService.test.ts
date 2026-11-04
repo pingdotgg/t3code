@@ -21,6 +21,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "../git/RepoWorktreeService.ts";
 import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
@@ -332,6 +333,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
         } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
+        Layer.mock(RepoWorktreeService.RepoWorktreeService)({}),
         NodeServices.layer,
       ),
     ),
@@ -963,6 +965,8 @@ describe("t3_worktree_status", () => {
         branch: null,
         projectWorkspaceRoot: workspaceRoot,
         defaultStartFromOrigin: true,
+        repoWorktreesEnabled: false,
+        repoWorktrees: [],
       });
     });
   });

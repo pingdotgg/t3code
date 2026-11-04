@@ -353,6 +353,25 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/**
+ * A worktree of a Git repository inside the project folder that the thread
+ * works in while its own workspace stays at the folder. Paths belong to the
+ * environment.
+ */
+export const ThreadRepoWorktree = Schema.Struct({
+  /** Repository path relative to the project folder, with `/` separators; `.` is the folder itself. */
+  repository: TrimmedNonEmptyString,
+  /** Top level of the source checkout the worktree was made from. */
+  repositoryPath: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  baseRef: Schema.NullOr(TrimmedNonEmptyString),
+  /** "reused" when the worktree already existed when this thread attached it. */
+  origin: Schema.Literals(["created", "reused"]),
+  attachedAt: IsoDateTime,
+});
+export type ThreadRepoWorktree = typeof ThreadRepoWorktree.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -364,6 +383,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  repoWorktrees: Schema.optional(Schema.Array(ThreadRepoWorktree)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2691,6 +2711,13 @@ export const OrchestrationV2Command = Schema.Union([
     snapshot: ThreadPullRequestSnapshot,
     stack: Schema.NullOr(ThreadPullRequestStack),
   }),
+  /** Forgets a repository worktree; its folder, branch, and edits stay. */
+  Schema.Struct({
+    type: Schema.Literal("thread.repo-worktree.detach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    worktreePath: TrimmedNonEmptyString,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.watch"),
     commandId: CommandId,
@@ -2975,6 +3002,13 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Internal so only the server, after it validated or created the checkout, attaches one. */
+  Schema.Struct({
+    type: Schema.Literal("thread.repo-worktree.attach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    repoWorktree: ThreadRepoWorktree,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
