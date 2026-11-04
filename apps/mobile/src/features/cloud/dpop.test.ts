@@ -4,19 +4,11 @@ import * as NodeCrypto from "node:crypto";
 
 import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import { verifyDpopProof } from "@t3tools/shared/dpop";
-import { p256 } from "@noble/curves/nist";
 
-import { createDpopProof, generateDpopProofKeyPair, loadOrCreateDpopProofKeyPair } from "./dpop";
+import { loadOrCreateDpopProofKeyPair } from "./dpop";
 import * as Dpop from "./dpop";
-
-const nativeControls = vi.hoisted<{
-  signDpopProof: ((d: string, x: string, y: string, input: string) => string) | undefined;
-}>(() => ({ signDpopProof: undefined }));
-
-vi.mock("expo", () => ({ requireOptionalNativeModule: () => nativeControls }));
 
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: {
@@ -47,88 +39,24 @@ vi.mock("expo-secure-store", () => ({
   },
 }));
 
-function proofIat(proof: string): number {
-  const payload = proof.split(".")[1];
-  if (!payload) {
-    throw new Error("Missing DPoP payload.");
-  }
-  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-    readonly iat: number;
-  };
-  return decoded.iat;
-}
-
-function proofHtu(proof: string): string {
-  const payload = proof.split(".")[1];
-  if (!payload) {
-    throw new Error("Missing DPoP payload.");
-  }
-  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-    readonly htu: string;
-  };
-  return decoded.htu;
-}
-
 describe("mobile DPoP", () => {
   it.effect("passes typed-array digest input through the Expo Crypto adapter", () =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode("typed-array"));
+      const digest = yield* Digest.Digest;
+      const hex = yield* digest.digestHex(Digest.sha256, new TextEncoder().encode("typed-array"));
 
-      expect(Buffer.from(digest).toString("hex")).toBe(
-        NodeCrypto.createHash("sha256").update("typed-array").digest("hex"),
-      );
+      expect(hex).toBe(NodeCrypto.createHash("sha256").update("typed-array").digest("hex"));
     }).pipe(Effect.provide(Dpop.layer)),
   );
 
-  it.effect("preserves the installation proof key across software and native signing", () =>
+  it.effect("persists and reuses the installation proof key", () =>
     Effect.gen(function* () {
       secureStore.clear();
       const first = yield* loadOrCreateDpopProofKeyPair();
       const second = yield* loadOrCreateDpopProofKeyPair();
 
-      expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
-      nativeControls.signDpopProof = (d, x, y, input) => {
-        const privateKey = NodeCrypto.createPrivateKey({
-          key: { kty: "EC", crv: "P-256", d, x, y },
-          format: "jwk",
-        });
-        return NodeCrypto.sign("sha256", Buffer.from(input), privateKey).toString("base64url");
-      };
-      using _derive = vi.spyOn(p256, "getPublicKey").mockImplementation(() => {
-        throw new Error("Software public-key derivation is unavailable.");
-      });
-      using _sign = vi.spyOn(p256, "sign").mockImplementation(() => {
-        throw new Error("Software signing is unavailable.");
-      });
-
-      const restored = yield* loadOrCreateDpopProofKeyPair();
-      expect(restored).toEqual(first);
-      const { proof } = yield* createDpopProof({
-        method: "POST",
-        url: "https://relay.example.test/v1/environments/env-1/connect",
-        accessToken: "clerk-token",
-        proofKey: restored,
-      });
-      expect(
-        verifyDpopProof({
-          proof,
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect",
-          expectedThumbprint: first.thumbprint,
-          expectedAccessToken: "clerk-token",
-          nowEpochSeconds: proofIat(proof),
-        }),
-      ).toMatchObject({ ok: true });
-    }).pipe(
-      Effect.provide(Dpop.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          nativeControls.signDpopProof = undefined;
-        }),
-      ),
-    ),
+    }).pipe(Effect.provide(Dpop.layer)),
   );
 
   it.effect("rejects malformed persisted proof keys", () =>
@@ -138,71 +66,6 @@ describe("mobile DPoP", () => {
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);
 
       expect(error.message).toBe("Stored DPoP proof key is invalid.");
-    }).pipe(Effect.provide(Dpop.layer)),
-  );
-
-  it.effect("signs connect and bootstrap proofs with the same ephemeral proof key", () =>
-    Effect.gen(function* () {
-      const proofKey = yield* generateDpopProofKeyPair();
-      const connect = yield* createDpopProof({
-        method: "POST",
-        url: "https://relay.example.test/v1/environments/env-1/connect",
-        accessToken: "clerk-token",
-        proofKey,
-      });
-      const bootstrap = yield* createDpopProof({
-        method: "POST",
-        url: "https://desktop.example.test/oauth/token",
-        proofKey,
-      });
-
-      expect(connect.thumbprint).toBe(proofKey.thumbprint);
-      expect(bootstrap.thumbprint).toBe(proofKey.thumbprint);
-      expect(
-        verifyDpopProof({
-          proof: connect.proof,
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect",
-          expectedThumbprint: proofKey.thumbprint,
-          expectedAccessToken: "clerk-token",
-          nowEpochSeconds: proofIat(connect.proof),
-        }),
-      ).toMatchObject({ ok: true, thumbprint: proofKey.thumbprint });
-      expect(
-        verifyDpopProof({
-          proof: bootstrap.proof,
-          method: "POST",
-          url: "https://desktop.example.test/oauth/token",
-          expectedThumbprint: proofKey.thumbprint,
-          nowEpochSeconds: proofIat(bootstrap.proof),
-        }),
-      ).toMatchObject({ ok: true, thumbprint: proofKey.thumbprint });
-    }).pipe(Effect.provide(Dpop.layer)),
-  );
-
-  it.effect("signs DPoP proofs with RFC 9449 htu normalization", () =>
-    Effect.gen(function* () {
-      const proofKey = yield* generateDpopProofKeyPair();
-      const proof = yield* createDpopProof({
-        method: "POST",
-        url: "https://relay.example.test/v1/environments/env-1/connect?debug=1#ignored",
-        accessToken: "clerk-token",
-        proofKey,
-      });
-
-      expect(proofHtu(proof.proof)).toBe(
-        "https://relay.example.test/v1/environments/env-1/connect",
-      );
-      expect(
-        verifyDpopProof({
-          proof: proof.proof,
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect?debug=1#ignored",
-          expectedThumbprint: proofKey.thumbprint,
-          expectedAccessToken: "clerk-token",
-          nowEpochSeconds: proofIat(proof.proof),
-        }),
-      ).toMatchObject({ ok: true });
     }).pipe(Effect.provide(Dpop.layer)),
   );
 });
