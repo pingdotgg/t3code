@@ -177,7 +177,7 @@ export const layer = Layer.effect(
         electronDialog
           .showErrorBox(
             "This T3 home is unavailable",
-            "Another T3 Learn server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3-learn update`. If the older launcher cannot update, run `t3-learn service uninstall` and optionally reinstall with `t3-learn service install` from a current CLI. Pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Learn. You can also set a separate T3LEARN_HOME and pair with the running server. If `t3-learn` is missing or outdated, install it from Settings → About once T3 Learn opens.",
+            "Another T3 Learn server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3-learn update`. If the older launcher cannot update, run `t3-learn service uninstall` and optionally reinstall with `t3-learn service install` from a current CLI. Pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Learn. You can also set a separate T3LEARN_HOME and pair with the running server. If `t3-learn` is missing or outdated, start T3 Learn with a separate T3LEARN_HOME, install it from Settings → About, then pass `--base-dir` with this T3 home.",
           )
           .pipe(Effect.andThen(electronApp.quit)),
     });

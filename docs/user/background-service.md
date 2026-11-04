@@ -39,7 +39,7 @@ installing one.
 
 `t3-learn uninstall` removes the background service, the `t3-learn` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
-threads, and settings under `~/.t3/userdata` are kept, along with `service.env`
+threads, and settings under `~/.t3-learn/userdata` are kept, along with `service.env`
 under T3 home. Pass `--yes` from a script.
 
 ## Local network access
@@ -60,7 +60,7 @@ network. `t3-learn status` says so, and `t3-learn up --no-lan` turns it off. Any
 ## Configure the service environment
 
 Put custom environment variables in `service.env` under the service's T3 home
-directory, normally `~/.t3/service.env`. This file survives service installation
+directory, normally `~/.t3-learn/service.env`. This file survives service installation
 and updates. For example:
 
 ```dotenv
@@ -79,7 +79,7 @@ For a service installed before env-file support, run `t3-learn service install` 
 with an up-to-date CLI.
 A missing file is ignored; other read failures stop service startup.
 If the file contains credentials, restrict access to that file with `chmod 600`
-(for the default T3 home, `chmod 600 ~/.t3/service.env`).
+(for the default T3 home, `chmod 600 ~/.t3-learn/service.env`).
 
 ## Platform support
 
@@ -147,14 +147,14 @@ that session open.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.                     |
+| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3learn.service`, then use the repair command printed by T3 Code.                    |
 | `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `t3-learn service restart`.                      |
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or
 Downloads, it may need Full Disk Access for the `t3-learn` executable listed in
 `ProgramArguments` in
-`~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
+`~/Library/LaunchAgents/io.github.aabdel0181.t3learn.service.plist`.
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./t3-connect-troubleshooting.md).

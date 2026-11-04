@@ -189,7 +189,7 @@ The mapping created by `pair --tailscale` persists across restarts. Remove its
 default-port mapping with:
 
 ```bash
-tailscale serve --https=443 --set-path=/ off
+tailscale serve --https=8443 --set-path=/ off
 ```
 
 If that port is already in use, choose another with
