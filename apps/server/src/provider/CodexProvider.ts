@@ -506,15 +506,13 @@ function mergeCachedCodexModels(
  */
 const requestRefreshedCodexModels = Effect.fn("requestRefreshedCodexModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly initialModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly codexHome: string;
   readonly spawnedAtMs: number;
   readonly deadlineMs: number;
   readonly fallback: "initial" | "catalog-cache";
 }) {
-  const models = yield* withCodexDiscoveryDeadline(
-    requestAllCodexModels(input.client),
-    input.deadlineMs,
-  );
+  const models = input.initialModels;
   if (models === undefined) return undefined;
   const fallbackModels = Effect.gen(function* () {
     if (input.fallback === "initial") return models;
@@ -645,13 +643,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
+  const initialModels = withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs);
   // The shared catalog must exclude config from the server's launch project.
-  const configResponse = yield* withCodexDiscoveryDeadline(
-    client.request("config/read", { includeLayers: false }),
-    deadlineMs,
-    CODEX_CONFIG_PROBE_TIMEOUT_MS,
-  ).pipe(
-    Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
+  // Start discovery alongside config/read so a slow config cannot shorten its budget.
+  const [configResponse, firstModels] = yield* Effect.all(
+    [
+      withCodexDiscoveryDeadline(
+        client.request("config/read", { includeLayers: false }),
+        deadlineMs,
+        CODEX_CONFIG_PROBE_TIMEOUT_MS,
+      ).pipe(
+        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
+      ),
+      initialModels,
+    ],
+    { concurrency: "unbounded" },
   );
   const configuredModelProvider = configResponse?.config.model_provider?.trim();
   const configUnknown = configResponse === undefined;
@@ -662,6 +668,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const modelsEffect = usesCustomModelProvider
     ? requestRefreshedCodexModels({
         client,
+        initialModels: firstModels,
         codexHome: initialize.codexHome,
         spawnedAtMs,
         deadlineMs,
@@ -670,6 +677,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     : accountResponse.account?.type === "chatgpt"
       ? requestRefreshedCodexModels({
           client,
+          initialModels: firstModels,
           codexHome: initialize.codexHome,
           spawnedAtMs,
           deadlineMs,
@@ -678,12 +686,13 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       : configUnknown
         ? requestRefreshedCodexModels({
             client,
+            initialModels: firstModels,
             codexHome: initialize.codexHome,
             spawnedAtMs,
             deadlineMs,
             fallback: "catalog-cache",
           })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs);
+        : Effect.succeed(firstModels);
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
