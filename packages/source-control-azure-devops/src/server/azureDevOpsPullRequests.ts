@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
+import { azureDevOpsPullRequestWebUrl } from "../shared/pullRequestUrls.ts";
+
 export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly number: number;
   readonly title: string;
@@ -73,72 +75,6 @@ function normalizeAzureDevOpsPullRequestState(status: string): "open" | "closed"
     default:
       return "open";
   }
-}
-
-function encodeAzureDevOpsPathSegment(segment: string): string {
-  return encodeURIComponent(segment);
-}
-
-function azureDevOpsOrganizationBaseFromRestApiUrl(
-  value: string | null | undefined,
-): string | null {
-  const rawUrl = trimOptionalString(value);
-  if (!rawUrl) {
-    return null;
-  }
-
-  try {
-    const url = new URL(rawUrl);
-    const hostname = url.hostname.toLowerCase();
-    const pathSegments = url.pathname.split("/").filter((segment) => segment.length > 0);
-    const isAzureRestUrl = pathSegments.some((segment) => segment.toLowerCase() === "_apis");
-    if (!isAzureRestUrl) {
-      return null;
-    }
-
-    if (hostname === "dev.azure.com") {
-      const organization = pathSegments[0];
-      return organization ? `${url.origin}/${organization}` : null;
-    }
-
-    if (hostname.endsWith(".visualstudio.com")) {
-      return url.origin;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function azureDevOpsPullRequestWebUrl(input: {
-  readonly pullRequestId: number;
-  readonly webLink?: string | null | undefined;
-  readonly repositoryWebUrl?: string | null | undefined;
-  readonly restApiUrl?: string | null | undefined;
-  readonly projectName?: string | null | undefined;
-  readonly repositoryName?: string | null | undefined;
-}): string {
-  const webLink = trimOptionalString(input.webLink);
-  if (webLink) {
-    return webLink;
-  }
-
-  const repositoryWebUrl = trimOptionalString(input.repositoryWebUrl);
-  if (repositoryWebUrl) {
-    return `${repositoryWebUrl.replace(/\/+$/, "")}/pullrequest/${input.pullRequestId}`;
-  }
-
-  const organizationBase = azureDevOpsOrganizationBaseFromRestApiUrl(input.restApiUrl);
-  const projectName = trimOptionalString(input.projectName);
-  const repositoryName = trimOptionalString(input.repositoryName);
-  if (organizationBase && projectName && repositoryName) {
-    const encodedProjectName = encodeAzureDevOpsPathSegment(projectName);
-    const encodedRepositoryName = encodeAzureDevOpsPathSegment(repositoryName);
-    return `${organizationBase}/${encodedProjectName}/_git/${encodedRepositoryName}/pullrequest/${input.pullRequestId}`;
-  }
-
-  return trimOptionalString(input.restApiUrl) ?? "";
 }
 
 function normalizeAzureDevOpsPullRequestUrl(

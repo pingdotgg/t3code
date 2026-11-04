@@ -9,6 +9,7 @@ import {
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
+import { azureDevOpsCreatedPullRequestUrls } from "./pullRequestUrls.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
 const CHANGE_REQUEST_PATH = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u;
@@ -116,6 +117,9 @@ export const definition = defineSourceControl({
   // Completing or abandoning is a status change, the same `update` this package runs.
   changeRequestCloseCommand:
     /\baz\s+repos\s+pr\s+update\b[^;&|]*--status[\s=]+["']?(?:completed|abandoned)\b/u,
+  changeRequestCreateCommand: /\baz\s+repos\s+pr\s+create\b/u,
+  // `az` prints the new pull request as JSON whose `url` is its REST API address.
+  changeRequestCreateOutputUrls: azureDevOpsCreatedPullRequestUrls,
   authorProfileUrl: () => null,
   hardLineBreaks: true,
   reviewSummaryRequired: () => false,

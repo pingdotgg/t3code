@@ -276,10 +276,15 @@ export interface SourceControlDefinition {
    */
   readonly changeRequestCloseCommand?: RegExp;
   /**
-   * Matches a shell command that opens a change request with this host's CLI and prints its URL
-   * on a line of its own. Absent for a host with no such CLI.
+   * Matches a shell command that opens a change request with this host's CLI. Absent for a host
+   * with no such CLI.
    */
   readonly changeRequestCreateCommand?: RegExp;
+  /**
+   * The change request URLs the create command's output names, for a CLI that does not print each
+   * on a line of its own. Absent means those lines.
+   */
+  readonly changeRequestCreateOutputUrls?: (output: string) => ReadonlyArray<string>;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
   /**
    * The references this host's own renderer links in plain text, such as `#12` or a commit SHA,
