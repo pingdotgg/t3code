@@ -138,6 +138,17 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.release-finished-delegate":
+            return providerSessions.releaseFinishedDelegate({ threadId: effect.threadId }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })

@@ -3950,3 +3950,177 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     assert.isTrue(child?.capabilities?.has("device"));
   }),
 );
+
+const finishedDelegateRunEvent = (input: {
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly threadId: ThreadId;
+  readonly ordinal: number;
+  readonly status: "completed" | "queued" | "running";
+  readonly now: DateTime.Utc;
+}) =>
+  Effect.gen(function* () {
+    const runId = input.idAllocator.derive.run({
+      threadId: input.threadId,
+      ordinal: input.ordinal,
+    });
+    return {
+      id: yield* input.idAllocator.allocate.event({ threadId: input.threadId }),
+      type: "run.updated" as const,
+      threadId: input.threadId,
+      runId,
+      occurredAt: input.now,
+      payload: {
+        id: runId,
+        threadId: input.threadId,
+        ordinal: input.ordinal,
+        providerInstanceId: modelSelection.instanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: yield* input.idAllocator.allocate.message({
+          threadId: input.threadId,
+          ordinal: input.ordinal,
+        }),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: input.status,
+        requestedAt: input.now,
+        startedAt: input.status === "queued" ? null : input.now,
+        completedAt: input.status === "completed" ? input.now : null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    };
+  });
+
+// Opens a one-process-per-thread session on a thread with the given runs, then asks to release
+// it as a finished delegate with no clock advance, far inside the idle timeout.
+const runFinishedDelegateScenario = (input: {
+  readonly delegated: boolean;
+  readonly runs: ReadonlyArray<"completed" | "queued" | "running">;
+  readonly hasPendingBackgroundWork?: boolean;
+}) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-finished-delegate",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-finished-delegate",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator,
+            threadId,
+            now,
+            projectId,
+            ...(input.delegated
+              ? { delegatedBy: ThreadId.make("thread-provider-session-manager-parent") }
+              : {}),
+          }),
+          ...(yield* Effect.forEach(input.runs, (status, index) =>
+            finishedDelegateRunEvent({
+              idAllocator,
+              threadId,
+              ordinal: index + 1,
+              status,
+              now,
+            }),
+          )),
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      yield* manager.releaseFinishedDelegate({ threadId });
+
+      const released = (yield* Ref.get(state)).closeCount === 1;
+      const live = yield* manager.isLive(providerSessionId);
+      const sessionStatus = (yield* projectionStore.getThreadProjection(threadId))
+        .providerSessions[0]?.status;
+      // A message to the child after the release opens a new session as usual.
+      const reopened = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      return {
+        released,
+        live,
+        sessionStatus,
+        openCount: (yield* Ref.get(state)).openCount,
+        reopenedLive: yield* manager.isLive(providerSessionId),
+        reopened,
+      };
+    });
+    return yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60 * 60_000,
+          capabilities: ExclusiveCapabilities,
+          ...(input.hasPendingBackgroundWork === undefined
+            ? {}
+            : { hasPendingBackgroundWork: Effect.succeed(input.hasPendingBackgroundWork) }),
+        }),
+      ),
+    );
+  });
+
+it.effect(
+  "ProviderSessionManagerV2 releases a finished delegated child's session at once and reopens it for a follow-up",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* runFinishedDelegateScenario({ delegated: true, runs: ["completed"] });
+      assert.isTrue(result.released);
+      assert.isFalse(result.live);
+      assert.equal(result.sessionStatus, "stopped");
+      assert.equal(result.openCount, 2);
+      assert.isTrue(result.reopenedLive);
+    }),
+);
+
+it.effect.each<{
+  readonly name: string;
+  readonly delegated: boolean;
+  readonly runs: ReadonlyArray<"completed" | "queued" | "running">;
+  readonly hasPendingBackgroundWork?: boolean;
+}>([
+  { name: "an ordinary thread", delegated: false, runs: ["completed"] },
+  { name: "a delegated child whose run is still running", delegated: true, runs: ["running"] },
+  {
+    name: "a delegated child with a queued follow-up",
+    delegated: true,
+    runs: ["completed", "queued"],
+  },
+  {
+    name: "a delegated child with pending background work",
+    delegated: true,
+    runs: ["completed"],
+    hasPendingBackgroundWork: true,
+  },
+])("ProviderSessionManagerV2 keeps the session of $name", (scenario) =>
+  Effect.gen(function* () {
+    const result = yield* runFinishedDelegateScenario({
+      delegated: scenario.delegated,
+      runs: scenario.runs,
+      ...(scenario.hasPendingBackgroundWork === undefined
+        ? {}
+        : { hasPendingBackgroundWork: scenario.hasPendingBackgroundWork }),
+    });
+    assert.isFalse(result.released);
+    assert.isTrue(result.live);
+    assert.equal(result.openCount, 1);
+  }),
+);
