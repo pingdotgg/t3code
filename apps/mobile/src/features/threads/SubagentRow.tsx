@@ -149,6 +149,8 @@ function SubagentMetadata(props: {
           size={12}
           displayName={resolveProviderInstanceDisplayName(provider)}
           accentColor={provider.accentColor}
+          icon={provider.icon}
+          badgeLabel={provider.badgeLabel}
           showBadge
         />
       ) : (

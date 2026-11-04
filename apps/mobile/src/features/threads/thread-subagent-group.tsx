@@ -87,6 +87,8 @@ function SubagentAvatar(props: {
           size={15}
           displayName={resolveProviderInstanceDisplayName(provider)}
           accentColor={provider.accentColor}
+          icon={provider.icon}
+          badgeLabel={provider.badgeLabel}
           showBadge
         />
       ) : driver === undefined ? (
