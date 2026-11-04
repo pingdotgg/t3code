@@ -351,6 +351,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "sidebar-provider-usage",
+    title: "Provider usage circles",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar footer quota allowance subscription limits rings providers"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",
