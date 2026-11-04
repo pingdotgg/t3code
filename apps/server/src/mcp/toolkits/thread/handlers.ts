@@ -350,7 +350,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               message: "snooze requires snoozedUntil.",
             });
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+          command = {
+            ...common,
+            type: "thread.snooze",
+            snoozedUntil: input.snoozedUntil,
+            ...(input.wakeOnPullRequest === true ? { wakeOnPullRequest: true } : {}),
+          };
           break;
         case "unsnooze":
         case "unsettle":

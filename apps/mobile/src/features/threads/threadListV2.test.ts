@@ -25,6 +25,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -93,6 +94,7 @@ describe("resolveThreadListV2SnoozePresets", () => {
       secondary: "snooze",
       now: laterMinute,
       presets: undefined,
+      pullRequestThread: null,
     });
 
     expect(presets.find((preset) => preset.id === "after:60")?.snoozedUntil).toBe(
@@ -100,6 +102,42 @@ describe("resolveThreadListV2SnoozePresets", () => {
     );
     // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
     expect(presets.map((preset) => preset.id)).not.toContain("at:today:18:00");
+  });
+
+  it("offers the pull request choice first, only for an open visible link on a capable server", () => {
+    const link = (
+      state: "open" | "merged",
+      source: ThreadPullRequestLink["source"] = "agent",
+    ): ThreadPullRequestLink => ({
+      host: "github.com",
+      repository: "acme/app",
+      number: 1,
+      url: "https://github.com/acme/app/pull/1",
+      source,
+      linkedAt: "2026-05-08T10:00:00.000Z",
+      stack: null,
+      snapshot: {
+        state,
+        title: "Change",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: "2026-05-08T10:00:00.000Z",
+      },
+    });
+    const firstId = (pullRequests: ReadonlyArray<ThreadPullRequestLink> | null) =>
+      resolveThreadListV2SnoozePresets({
+        secondary: "snooze",
+        now: "2026-05-08T10:00:00.000Z",
+        presets: undefined,
+        pullRequestThread: pullRequests === null ? null : { pullRequests },
+      })[0]?.id;
+
+    expect(firstId([link("open")])).toBe("pull-request");
+    expect(firstId([link("merged")])).not.toBe("pull-request");
+    expect(firstId([link("open", "stack-dismissed")])).not.toBe("pull-request");
+    expect(firstId(null)).not.toBe("pull-request");
   });
 });
 

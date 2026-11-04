@@ -197,6 +197,7 @@ export function threadWokeAt(
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
+const PULL_REQUEST_SNOOZE_DAYS = 7;
 
 const WEEKDAY_INDEX = {
   sunday: 0,
@@ -213,6 +214,7 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  readonly wakeOnPullRequest?: boolean;
 }
 
 export interface SnoozePresetOptions {
@@ -326,6 +328,30 @@ export function resolveSnoozePresets(
         return true;
       })
   );
+}
+
+type ThreadPullRequestShell = Pick<EnvironmentThreadShell, "pullRequests">;
+
+/** The menu choice that wakes on pull request news, with a timer so a quiet one is not lost. */
+export function resolvePullRequestSnoozePreset(
+  shell: ThreadPullRequestShell,
+  now: Date,
+): SnoozePreset | null {
+  const open = shell.pullRequests.some(
+    (link) => link.source !== "stack-dismissed" && link.snapshot?.state === "open",
+  );
+  if (!open) return null;
+  return {
+    id: "pull-request",
+    label: "Until PR needs attention",
+    whenLabel: `or in ${pluralize(PULL_REQUEST_SNOOZE_DAYS, "day")}`,
+    snoozedUntil: addSnoozeDays(now, PULL_REQUEST_SNOOZE_DAYS).toISOString(),
+    wakeOnPullRequest: true,
+  };
+}
+
+export function snoozeWaitsOnPullRequest(shell: ThreadPullRequestShell): boolean {
+  return shell.pullRequests.some((link) => link.snoozeWatch !== undefined);
 }
 
 /**

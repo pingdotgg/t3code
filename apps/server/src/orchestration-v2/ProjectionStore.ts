@@ -189,7 +189,7 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "snoozedUntil" | "pullRequests"
 >;
 
 export type ProjectionSettlementCandidate = Pick<
@@ -6692,6 +6692,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 lineage: thread.lineage,
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
+                snoozedUntil: thread.snoozedUntil ?? null,
                 pullRequests: thread.pullRequests ?? [],
               })),
             ),
