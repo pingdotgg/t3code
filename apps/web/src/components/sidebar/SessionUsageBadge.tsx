@@ -1,5 +1,6 @@
 import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
+import { useRef } from "react";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -20,6 +21,7 @@ export function SessionUsageBadge({
   environmentId: EnvironmentId;
   threadId: ThreadId;
 }) {
+  const rowAnchor = useRef<HTMLElement | null>(null);
   const canRead = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   const query = useEnvironmentQuery(
     canRead
@@ -34,11 +36,7 @@ export function SessionUsageBadge({
     ? ([
         ["Tokens in", usage.totals.uncachedInputTokens, usage.categoryCostUsd.input],
         ["Tokens out", usage.totals.outputTokens, usage.categoryCostUsd.output],
-        [
-          "Cached tokens in (reads)",
-          usage.totals.cachedInputTokens,
-          usage.categoryCostUsd.cacheRead,
-        ],
+        ["Cached tokens in", usage.totals.cachedInputTokens, usage.categoryCostUsd.cacheRead],
         ["Cache writes", usage.totals.cacheCreationTokens, usage.categoryCostUsd.cacheWrite],
       ] as const)
     : [];
@@ -47,6 +45,9 @@ export function SessionUsageBadge({
       <TooltipTrigger
         render={
           <span
+            ref={(element) => {
+              rowAnchor.current = element?.closest<HTMLElement>("[data-sidebar-row]") ?? element;
+            }}
             className="pointer-events-auto inline-flex shrink-0 items-center gap-1 tabular-nums"
             tabIndex={0}
             aria-label={
@@ -67,45 +68,43 @@ export function SessionUsageBadge({
         )}
         <span>{price}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">
+      <TooltipPopup side="right" align="start" sideOffset={4} anchor={rowAnchor} variant="glass">
         {usage ? (
-          <div className="grid grid-cols-[auto_auto_auto] gap-x-3 gap-y-1 text-xs tabular-nums">
-            <span className="col-span-3 font-medium">
-              Session usage · API-equivalent USD estimate
+          <div className="flex max-w-72 flex-col items-start gap-1 text-xs tabular-nums">
+            <span className="font-medium">Session usage · API-equivalent USD estimate</span>
+            <div className="grid grid-cols-[max-content_max-content_max-content] gap-x-2 gap-y-1">
+              <span>Category</span>
+              <span className="text-right">Tokens</span>
+              <span className="text-right">Cost</span>
+              {rows.map(([label, count, cost]) => (
+                <div key={label} className="contents">
+                  <span>{label}</span>
+                  <span className="text-right">{count.toLocaleString("en-US")}</span>
+                  <span className="text-right">
+                    {usage.unpricedRecords > 0 ? "Unavailable" : money.format(cost)}
+                  </span>
+                </div>
+              ))}
+              <span>Cached tokens out</span>
+              <span className="text-right">Not reported</span>
+              <span className="text-right">N/A</span>
+              {usage.unsplitCostUsd > 0 ? (
+                <>
+                  <span className="col-span-2">Provider-reported cost without breakdown</span>
+                  <span className="text-right">{money.format(usage.unsplitCostUsd)}</span>
+                </>
+              ) : null}
+              <span className="col-span-2 font-medium">Total</span>
+              <span className="text-right">
+                {usage.unpricedRecords > 0
+                  ? `At least ${money.format(usage.costUsd)}`
+                  : money.format(usage.costUsd)}
+              </span>
+            </div>
+            <span className="max-w-64 text-muted-foreground">
+              Cache writes save input for reuse. Usage totals refresh about once a minute.
             </span>
-            <span>Category</span>
-            <span>Tokens</span>
-            <span>Cost</span>
-            {rows.map(([label, count, cost]) => (
-              <div key={label} className="contents">
-                <span>{label}</span>
-                <span className="text-right">{count.toLocaleString("en-US")}</span>
-                <span className="text-right">
-                  {usage.unpricedRecords > 0 ? "Unavailable" : money.format(cost)}
-                </span>
-              </div>
-            ))}
-            <span>Cached tokens out</span>
-            <span>Not reported</span>
-            <span>N/A</span>
-            {usage.unsplitCostUsd > 0 ? (
-              <>
-                <span className="col-span-2">Provider-reported cost without breakdown</span>
-                <span>{money.format(usage.unsplitCostUsd)}</span>
-              </>
-            ) : null}
-            <span className="col-span-2 font-medium">Total</span>
-            <span>
-              {usage.unpricedRecords > 0
-                ? `At least ${money.format(usage.costUsd)}`
-                : money.format(usage.costUsd)}
-            </span>
-            <span className="col-span-3 text-muted-foreground">
-              Cache writes are input saved for reuse. Updates every minute.
-            </span>
-            {usage.unpricedRecords > 0 ? (
-              <span className="col-span-3">Some records have no known price.</span>
-            ) : null}
+            {usage.unpricedRecords > 0 ? <span>Some records have no known price.</span> : null}
           </div>
         ) : query.isPending ? (
           "Loading session usage…"
