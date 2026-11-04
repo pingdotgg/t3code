@@ -898,13 +898,20 @@ export const make = Effect.gen(function* () {
     const settings = yield* desktopSettings.get;
     const state = yield* Ref.get(updateStateRef);
     if (!settings.autoUpdate || state.status !== "available") return;
-    const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
-    yield* downloadAvailableUpdate;
-    if (reason === "startup") {
-      yield* PubSub.take(actionCompletions);
-      yield* installDownloadedUpdate();
+    const changes = yield* PubSub.subscribe(stateChanges);
+    const { completed } = yield* downloadAvailableUpdate;
+    if (reason !== "startup" || !completed) return;
+    // update-downloaded is handled asynchronously, so it can land after downloadUpdate resolves.
+    let current = yield* Ref.get(updateStateRef);
+    while (current.status === "downloading") {
+      const next = yield* PubSub.take(changes).pipe(
+        Effect.timeoutOption(PREPARED_INSTALL_CHECK_WAIT),
+      );
+      if (Option.isNone(next)) return;
+      current = next.value;
     }
-  });
+    if (current.status === "downloaded") yield* installDownloadedUpdate();
+  }, Effect.scoped);
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
