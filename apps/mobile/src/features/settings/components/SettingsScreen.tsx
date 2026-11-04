@@ -6,7 +6,6 @@ import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
 import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
-import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
 import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
@@ -27,7 +26,6 @@ export function SettingsScreen(
   const navigation = useNavigation();
   const route = useRoute();
   const workspace = useWorkspaceTabs();
-  const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -37,9 +35,7 @@ export function SettingsScreen(
     props.workspaceRoot ||
     (Platform.OS === "android" && workspace !== null && route.name === "Settings");
 
-  // Settings' grouped cards only lift off the screen surface, so the folded Duo doesn't take
-  // the workspace's drawer surface here.
-  const surfaceClassName = cover ? "bg-screen" : workspaceRoot ? surface.className : "bg-sheet";
+  const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
   return (
     <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>

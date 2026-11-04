@@ -45,6 +45,12 @@ describe("Android workspace navigation colors", () => {
       ] as const) {
         expectVisibleSelection(androidWorkspaceNavigationColors(variables, rail, floating));
       }
+      if (appearance === "dark") {
+        const pill = androidWorkspaceNavigationColors(variables, false, true).containerColor;
+        for (const surface of ["--color-screen", "--color-grouped-card"] as const) {
+          expect(contrast(pill, variables[surface]), surface).toBeGreaterThanOrEqual(1.25);
+        }
+      }
       expect(variables).toEqual(snapshot);
     }
   });
