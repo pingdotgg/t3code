@@ -2515,6 +2515,13 @@ export const layerWsRpc = (
             if (instanceId === undefined || cwd === undefined) {
               return { providers: withoutWorkspaceSnapshots(commandProviders) };
             }
+            // An instance that cannot scan keeps its machine catalog in the config stream.
+            const catalogOnDemand =
+              input.providerCatalogsOnDemand === true &&
+              (yield* providerInstances.listInstances).some(
+                (instance) =>
+                  instance.instanceId === instanceId && instance.snapshotForCwd !== undefined,
+              );
             return {
               providers: commandProviders
                 .filter((provider) => provider.instanceId === instanceId)
@@ -2524,11 +2531,7 @@ export const layerWsRpc = (
                   models: [],
                   slashCommands: [],
                   skills: [],
-                  workspaceSnapshots: workspaceSnapshotOrCatalog(
-                    provider,
-                    cwd,
-                    input.providerCatalogsOnDemand === true,
-                  ),
+                  workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
                 })),
             };
           }),

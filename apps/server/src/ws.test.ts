@@ -1203,23 +1203,29 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
-    // A failed scan still gives a client without the machine catalog its commands.
-    yield* server.write(0, {
-      _tag: "Request",
-      id: RpcMessage.RequestId("refresh-failed-scan"),
-      tag: WS_METHODS.serverRefreshProviders,
-      payload: {
-        instanceId,
-        cwd: "/c",
-        workspaceSnapshotsOnDemand: true,
-        providerCatalogsOnDemand: true,
-      },
-      headers: Headers.empty,
+    const refreshCatalogOnDemand = Effect.fn(function* (id: string) {
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(id),
+        tag: WS_METHODS.serverRefreshProviders,
+        payload: {
+          instanceId,
+          cwd: "/c",
+          workspaceSnapshotsOnDemand: true,
+          providerCatalogsOnDemand: true,
+        },
+        headers: Headers.empty,
+      });
+      const response = (yield* Queue.take(responses)) as {
+        readonly providers: ReadonlyArray<ServerProvider>;
+      };
+      return response.providers[0]?.workspaceSnapshots;
     });
-    const fallback = (yield* Queue.take(responses)) as {
-      readonly providers: ReadonlyArray<ServerProvider>;
-    };
-    assert.deepEqual(fallback.providers[0]?.workspaceSnapshots, [
+    // A provider that cannot scan already sent its machine catalog, so nothing stays pending.
+    assert.deepEqual(yield* refreshCatalogOnDemand("refresh-no-scan"), []);
+    // A failed scan still gives a client without the machine catalog its commands.
+    scansCwd = true;
+    assert.deepEqual(yield* refreshCatalogOnDemand("refresh-failed-scan"), [
       {
         cwd: "/c",
         checkedAt: provider.checkedAt,
