@@ -43,7 +43,7 @@ describe("resolveTriageCommand", () => {
     ).resolves.toBe("& 'C:\\Users\\Jo O''Neil\\.t3\\bin\\t3.cmd' triage");
   });
 
-  it("falls back to npx without a usable desktop launcher", async () => {
+  it("falls back to t3-learn without a usable desktop launcher", async () => {
     using _warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(resolveTriageCommand(undefined)).resolves.toBe("t3-learn triage");
     await expect(resolveTriageCommand({} as DesktopBridge)).resolves.toBe("t3-learn triage");

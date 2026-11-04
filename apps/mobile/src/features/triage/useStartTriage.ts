@@ -24,7 +24,7 @@ import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail"
 const CLI_COMMAND = `${T3_LEARN_COMMAND} triage`;
 
 /**
- * In-app `t3 triage`, as on web: the server writes the session files and
+ * In-app `t3-learn triage`, as on web: the server writes the session files and
  * clones the matching source, then a No project draft opens with the prompt.
  */
 export function useStartTriage() {

@@ -31,7 +31,7 @@ const copyTriageCliCommand = () =>
 export const isTriagePrompt = (prompt: string) => prompt.includes(`[${TRIAGE_PROMPT_FILE_NAME}](`);
 
 /**
- * In-app `t3 triage`: the server writes the session files and starts cloning
+ * In-app `t3-learn triage`: the server writes the session files and starts cloning
  * the matching source, then a No project draft opens with the playbook linked.
  * The draft hero explains the rest; the user picks a provider and describes
  * the problem.
