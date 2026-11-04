@@ -419,6 +419,30 @@ describe("pools", () => {
       },
     });
     expect(collectLimitAccounts(input)).toHaveLength(2);
+
+    for (const order of [
+      ["2026-11-15T15:30:00.000Z", "2026-11-15T15:55:00.000Z"],
+      ["2026-11-15T15:55:00.000Z", "2026-11-15T15:30:00.000Z"],
+    ]) {
+      const rollover = new Map(
+        order.map((readAt, index) => [
+          EnvironmentId.make(`env-${index}`),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                readAt === "2026-11-15T15:30:00.000Z"
+                  ? go("key-A", readAt, [5, 40, 90])
+                  : go("key-A", readAt, [0, 40, 0], "2026-12-15T15:39:18.000Z"),
+              ],
+            },
+          },
+        ]),
+      );
+      const [only, ...rest] = collectLimitAccounts(rollover);
+      expect(rest).toHaveLength(0);
+      expect(only?.limits.windows.map((entry) => entry.usedPercent)).toEqual([0, 40, 0]);
+    }
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
