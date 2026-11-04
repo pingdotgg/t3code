@@ -424,8 +424,9 @@ describe("v2 thread shell lists", () => {
         AsyncResult.success({ ...emptyArchive, snapshotSequence, threads: archived }),
       );
     // A task whose parent is gone there is listed on its own, as is one whose
-    // parent's environment is switched off. An archive answer cached before the parent went
-    // missing is read again first.
+    // parent's environment is switched off. An archive request made before the parent went
+    // missing may predate its archive, so the archive is read again first.
+    registry.set(archivedSnapshotAtom(environmentId), AsyncResult.initial(true));
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
     expect(listed()).toEqual([]);
     expect(archiveRefreshes).toEqual([environmentId]);
