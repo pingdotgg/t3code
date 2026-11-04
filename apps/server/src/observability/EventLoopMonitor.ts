@@ -16,7 +16,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
-import { readCpu } from "../resourceTelemetry/HostResources.ts";
+import { cpuBusyBetween, readCpu } from "../resourceTelemetry/HostResources.ts";
 import * as Metrics from "./Metrics.ts";
 
 // Subtract the histogram's timer resolution; this can undercount stalls by up to RESOLUTION_MS.
@@ -59,7 +59,7 @@ export interface EventLoopReadings {
   readonly elapsedMs: number;
   /** One-minute load average, undefined on Windows. */
   readonly loadAverage: number | undefined;
-  /** Share of all cores' time spent running work, undefined if the core count changed. */
+  /** Share of core time spent running work, undefined unless every core is available to this process. */
   readonly cpuBusy: number | undefined;
   readonly cpuCount: number;
 }
@@ -81,7 +81,7 @@ const makeNodeSampler = Effect.gen(function* () {
 
   return Effect.sync(() => {
     const nextCpu = readCpu();
-    const cpuTotal = nextCpu.total - cpu.total;
+    const cpuCount = NodeOS.availableParallelism();
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
     const nextSampledAt = NodePerfHooks.performance.now();
@@ -104,11 +104,9 @@ const makeNodeSampler = Effect.gen(function* () {
       elapsedMs: nextSampledAt - sampledAt,
       // Windows has no load average and reports 0, which a running process never sees elsewhere.
       loadAverage: NodeOS.loadavg()[0] || undefined,
-      cpuBusy:
-        nextCpu.count === cpu.count && cpuTotal > 0
-          ? 1 - (nextCpu.idle - cpu.idle) / cpuTotal
-          : undefined,
-      cpuCount: NodeOS.availableParallelism(),
+      // Host-wide busy time says nothing about the cores an affinity mask or quota leaves us.
+      cpuBusy: nextCpu.count === cpuCount ? (cpuBusyBetween(cpu, nextCpu) ?? undefined) : undefined,
+      cpuCount,
     };
     histogram.reset();
     cpu = nextCpu;

@@ -26,6 +26,17 @@ export function readCpu() {
   return { ...cpu, count: cpus.length };
 }
 
+type CpuTimes = ReturnType<typeof readCpu>;
+
+/** Share of core time spent running work between two readings, null if they are not comparable. */
+export function cpuBusyBetween(previous: CpuTimes, next: CpuTimes): number | null {
+  const totalDelta = next.total - previous.total;
+  const idleDelta = next.idle - previous.idle;
+  return previous.count === next.count && totalDelta > 0 && idleDelta >= 0
+    ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+    : null;
+}
+
 function darwinAvailableMemory(output: string): number | null {
   const pageSize = /page size of (\d+) bytes/.exec(output)?.[1];
   const free = /^Pages free:\s+(\d+)\./m.exec(output)?.[1];
@@ -46,12 +57,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     const previousCpu = readCpu();
     yield* Effect.sleep("200 millis");
     const cpu = readCpu();
-    const totalDelta = cpu.total - previousCpu.total;
-    const idleDelta = cpu.idle - previousCpu.idle;
-    const cpuUtilization =
-      previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
-        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
-        : null;
+    const cpuUtilization = cpuBusyBetween(previousCpu, cpu);
     const totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();
