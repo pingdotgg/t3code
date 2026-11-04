@@ -498,16 +498,9 @@ function mergeCachedCodexModels(
 }
 
 /**
- * Every Codex client on the machine shares that file, and the backend tailors
- * the catalog to each client's originator: the plain CLI does not get Sol
- * Ultrafast. App-server refreshes the catalog online at startup, so wait until
- * a write newer than this process's spawn lands, then list again.
- *
- * A custom model provider (OpenRouter, a local gateway) gets its catalog from
- * that provider. When its refresh fails, Codex answers with its bundled OpenAI
- * models instead of the user's models. Keep the last catalog Codex wrote in
- * that case rather than replacing the picker with models the provider cannot
- * serve.
+ * Wait for app-server to rewrite the shared catalog before listing again.
+ * Custom-provider refresh failures fall back to bundled OpenAI models, so keep
+ * the catalog Codex last wrote and merge it with the live list.
  */
 const requestRefreshedCodexModels = Effect.fn("requestRefreshedCodexModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
