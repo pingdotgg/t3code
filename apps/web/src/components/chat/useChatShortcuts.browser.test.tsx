@@ -1,12 +1,17 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import {
+  compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
 import { userEvent } from "vite-plus/test/browser";
 
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
+import { isPreviewFocused } from "~/lib/previewFocus";
 
 const shortcutContext = {
   terminalFocus: false,
@@ -187,3 +192,80 @@ it("runs a side chat's composer chords only from its composer, and never thread 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
 });
+
+function PreviewShortcuts(props: { keybindings: ResolvedKeybindingsConfig; received: string[] }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: props.keybindings,
+    scriptKeybindings: [],
+    getShortcutContext: () => ({ ...shortcutContext, previewFocus: isPreviewFocused() }),
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {
+      "chat.find": () => {
+        props.received.push("find");
+      },
+      "preview.refresh": () => {
+        props.received.push("refresh");
+      },
+      "thread.stop": () => {
+        props.received.push("stop");
+      },
+    },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-preview-panel-mode="inline">
+      <div data-markdown-preview tabIndex={0}>
+        Markdown
+      </div>
+      <div data-testid="browser" tabIndex={0}>
+        Browser
+      </div>
+    </div>
+  );
+}
+
+it.each([
+  { platform: "MacIntel", metaKey: true, ctrlKey: false, findKey: "f" },
+  { platform: "Linux x86_64", metaKey: false, ctrlKey: true, findKey: "f" },
+  { platform: "MacIntel", metaKey: true, ctrlKey: false, findKey: "g" },
+])(
+  "routes $findKey in $platform Markdown without changing other preview shortcuts",
+  async ({ platform, metaKey, ctrlKey, findKey }) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    const received: string[] = [];
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: `mod+${findKey}`, command: "chat.find", when: "!terminalFocus && !previewFocus" },
+        { key: "mod+x", command: "thread.stop", when: "!previewFocus" },
+      ]),
+    );
+    await using screen = await render(
+      <PreviewShortcuts keybindings={keybindings} received={received} />,
+      options,
+    );
+    const markdown = screen.container.querySelector<HTMLElement>("[data-markdown-preview]")!;
+    const browser = screen.container.querySelector<HTMLElement>('[data-testid="browser"]')!;
+    const press = (target: HTMLElement, key: string) => {
+      target.focus();
+      const event = new KeyboardEvent("keydown", {
+        key,
+        metaKey,
+        ctrlKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(press(markdown, findKey)).toBe(true);
+    expect(press(markdown, "r")).toBe(true);
+    expect(press(markdown, "x")).toBe(false);
+    expect(press(browser, findKey)).toBe(false);
+    if (findKey !== "f") expect(press(markdown, "f")).toBe(false);
+    expect(received).toEqual(["find", "refresh"]);
+  },
+);

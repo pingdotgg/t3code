@@ -7,6 +7,7 @@ import { formatThreadFindCount } from "./threadFind";
 import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 interface ThreadFindBarProps {
+  readonly label?: string;
   readonly open: boolean;
   readonly query: string;
   readonly matchCount: number;
@@ -69,7 +70,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
         size="lg"
         onContextMenu={(event) => event.stopPropagation()}
         role="search"
-        aria-label="Find in thread"
+        aria-label={props.label ?? "Find in thread"}
         aria-busy={props.status === "loading" || props.counting === true}
         className="w-full"
       >
@@ -78,8 +79,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           type="search"
           size="sm"
           value={props.query}
-          aria-label="Find in thread"
-          placeholder="Find in thread"
+          aria-label={props.label ?? "Find in thread"}
+          placeholder={props.label ?? "Find in thread"}
           maxLength={200}
           spellCheck={false}
           autoComplete="off"

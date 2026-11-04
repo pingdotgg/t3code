@@ -13,6 +13,7 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
+import { getMarkdownFindTarget } from "../files/markdownFindActionBus";
 
 /** Returning false lets the key event through untouched. */
 type ChatShortcutHandler = (context: {
@@ -80,9 +81,15 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+    let command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
       context: shortcutContext,
     });
+    if (command === null && shortcutContext.previewFocus && getMarkdownFindTarget(event.target)) {
+      const fileCommand = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+        context: { ...shortcutContext, previewFocus: false },
+      });
+      if (fileCommand === "chat.find") command = fileCommand;
+    }
     if (!command) return;
     const run =
       input.commands[command] ??
