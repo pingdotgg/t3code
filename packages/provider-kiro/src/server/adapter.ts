@@ -526,9 +526,9 @@ function kiroPromptFailure(cause: unknown) {
 
 function makeKiroAcpAdapterFlavor(
   options: KiroAdapterV2Options,
-  registerExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensions"]>,
+  secretStorage: Effect.Success<ReturnType<typeof makeKiroSecretStorage>>,
 ): AcpAdapterV2Flavor {
-  const makeRuntime =
+  const makeNativeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
       const { runtimePolicy: _runtimePolicy, processEnvironment, ...runtimeInput } = input;
@@ -538,6 +538,9 @@ function makeKiroAcpAdapterFlavor(
         environment: { ...options.environment, ...processEnvironment },
       });
     });
+  // Not `registerExtensions`: a replacement runtime (rollback, failed resume) wires that after `start()`.
+  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
+    makeNativeRuntime(input).pipe(Effect.tap(secretStorage.installHandlers));
   const stripSteeringNote = makeKiroSteeringNoteFilter();
   return {
     driver: KIRO_PROVIDER,
@@ -548,7 +551,6 @@ function makeKiroAcpAdapterFlavor(
     // `_kiro/hooks/*` requests, which T3 does not answer. Kiro keeps MCP OAuth
     // credentials only through `secretStorage` (see makeKiroSecretStorage).
     clientCapabilitiesMeta: { kiro: { hooks: { enabled: true, v2: true }, secretStorage: true } },
-    registerExtensions,
     makeRuntime,
     promptFailure: kiroPromptFailure,
     ignoreSessionUpdate: makeKiroCloudConfigFilter(),
@@ -588,7 +590,7 @@ export const makeKiroAdapterV2 = Effect.fn("makeKiroAdapterV2")(function* (
   const secretStorage = yield* makeKiroSecretStorage(options.environment);
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeKiroAcpAdapterFlavor(options, secretStorage.registerExtensions),
+    flavor: makeKiroAcpAdapterFlavor(options, secretStorage),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),

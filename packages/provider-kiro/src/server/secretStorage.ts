@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const SecretKey = Schema.Struct({ key: Schema.String });
 const SecretEntry = Schema.Struct({ key: Schema.String, value: Schema.String });
@@ -76,7 +76,8 @@ export const makeKiroSecretStorage = Effect.fn("makeKiroSecretStorage")(function
   const store = (key: string, value: string) => update((secrets) => ({ ...secrets, [key]: value }));
   const remove = (key: string) => update(({ [key]: _removed, ...rest }) => rest);
 
-  const registerExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensions"]> = ({ runtime }) =>
+  // Installed before the runtime starts: Kiro reads secrets while `session/new` connects MCP servers.
+  const installHandlers = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) =>
     Effect.all(
       [
         runtime.handleExtRequest("_kiro/secret/get", SecretKey, ({ key }) => get(key)),
@@ -88,5 +89,5 @@ export const makeKiroSecretStorage = Effect.fn("makeKiroSecretStorage")(function
       { discard: true },
     );
 
-  return { get, store, remove, registerExtensions };
+  return { get, store, remove, installHandlers };
 });
