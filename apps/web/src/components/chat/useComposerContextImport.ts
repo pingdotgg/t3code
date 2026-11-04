@@ -302,7 +302,7 @@ export function useComposerContextImport(input: {
           : 0,
     );
     for (const candidate of orderedRecords) {
-      // Producer ids fold into context ids, so two different excerpts can collide. Only skip
+      // Producer ids fold into context ids, so two different excerpts can collide. For non-thread records, only skip
       // when the draft already holds the same payload; a colliding but different record is
       // re-minted under a fresh id so both survive the paste.
       const record = asKnownContextRecord(candidate);
@@ -398,6 +398,7 @@ export function useComposerContextImport(input: {
             !linkedEnvironments.has(record.environmentId)
           )
             break;
+          // Threads reuse their destination record by identity, reminting only on an ID collision.
           const threads = getComposerDraft(threadDraftTarget)?.threadContexts ?? [];
           const attached = threads.find(
             (thread) =>
@@ -405,7 +406,7 @@ export function useComposerContextImport(input: {
           );
           const imported =
             attached ??
-            (conflicts || threads.some((thread) => thread.contextId === record.contextId)
+            (threads.some((thread) => thread.contextId === record.contextId)
               ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
               : record);
           addComposerDraftThreadContexts(threadDraftTarget, [imported], {

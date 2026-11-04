@@ -193,11 +193,13 @@ it.each([
   );
 });
 
-it.each(["same", "renamed", "other-environment"] as const)(
+it.each(["same", "renamed", "other-environment", "different-draft"] as const)(
   "preserves thread identity across repeated pastes: %s",
   async (variant) => {
     const otherEnvironment = variant === "other-environment";
     const target = DraftId.make(`thread-collision-${variant}`);
+    const attachmentTarget =
+      variant === "different-draft" ? DraftId.make("question-draft") : target;
     const store = useComposerDraftStore.getState();
     using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
     const environmentId = EnvironmentId.make("thread-source");
@@ -224,10 +226,10 @@ it.each(["same", "renamed", "other-environment"] as const)(
           activeThread: undefined,
           activeThreadId: null,
           composerDraftTarget: target,
-          attachmentDraftTarget: target,
-          attachmentTargetKey: target,
-          attachmentTargetKeyRef: { current: target },
-          questionAttachmentTarget: null,
+          attachmentDraftTarget: attachmentTarget,
+          attachmentTargetKey: attachmentTarget,
+          attachmentTargetKeyRef: { current: attachmentTarget },
+          questionAttachmentTarget: attachmentTarget === target ? null : attachmentTarget,
           pendingUserInputs: [],
           composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
           composerImages: [],
@@ -244,7 +246,7 @@ it.each(["same", "renamed", "other-environment"] as const)(
     let importedId: string | undefined;
     await act(() => {
       importedId = importer
-        .importContextRecords([pasted], pasted.environmentId)
+        .importContextRecords([pasted], pasted.environmentId, target)
         .get(pasted.contextId);
     });
     const records = store.getComposerDraft(target)!.threadContexts;
@@ -255,7 +257,7 @@ it.each(["same", "renamed", "other-environment"] as const)(
     expect(records).toHaveLength(otherEnvironment ? 2 : 1);
     expect(records[0]).toEqual(first);
     await act(() => {
-      const repeated = importer.importContextRecords([pasted], pasted.environmentId);
+      const repeated = importer.importContextRecords([pasted], pasted.environmentId, target);
       expect(repeated.get(pasted.contextId)).toBe(importedId);
     });
     expect(store.getComposerDraft(target)!.threadContexts).toEqual(records);
