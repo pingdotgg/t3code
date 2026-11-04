@@ -54,9 +54,10 @@ function client(sessions: readonly FakeSession[]): FakeClient {
   return self;
 }
 
-function setup(refreshed: FakeClient | Promise<FakeClient>) {
+function setup(...refreshes: readonly (FakeClient | Promise<FakeClient>)[]) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const refresh = async () => refreshed;
+  let calls = 0;
+  const refresh = async () => refreshes[Math.min(calls++, refreshes.length - 1)]!;
   const stale = { ...client([]), fetch: refresh, reload: refresh };
   harness.clerk = {
     client: stale,
@@ -66,6 +67,10 @@ function setup(refreshed: FakeClient | Promise<FakeClient>) {
     },
     setActive: vi.fn(async () => {}),
   };
+  return mount();
+}
+
+function mount() {
   const container = document.createElement("div");
   const root = createRoot(container);
   act(() => root.render(<SettingsAuthRouteScreen />));
@@ -106,4 +111,18 @@ it("does not offer the sign-in form until the client refresh settles", async () 
   await act(async () => resolve(client([])));
   expect(screen.container.textContent).toContain("sign-in form");
   expect(harness.clerk.setActive).not.toHaveBeenCalled();
+});
+
+it("a reopened screen waits for the refresh a dismissed screen left in flight", async () => {
+  // The older reload mutates Clerk's shared client when it lands, so it must settle before sign-in.
+  const { promise, resolve } = Promise.withResolvers<FakeClient>();
+  const dismissed = setup(promise, client([]));
+  dismissed[Symbol.dispose]();
+  using reopened = mount();
+
+  await act(async () => {});
+  expect(reopened.container.textContent).not.toContain("sign-in form");
+
+  await act(async () => resolve(client([])));
+  expect(reopened.container.textContent).toContain("sign-in form");
 });
