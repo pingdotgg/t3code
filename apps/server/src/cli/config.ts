@@ -551,8 +551,7 @@ export const resolveCliAuthConfig = (
     },
     cliLogLevel,
   );
-  // Logs go to stdout, where --json and --token-only print, and resolving can
-  // log, for example when it sweeps abandoned attachment uploads.
+  // Machine-readable commands keep stderr to errors, including logs from attachment upload sweeps during config resolution.
   return options?.quietLogs === true
     ? resolved.pipe(Effect.provideService(References.MinimumLogLevel, "Error"))
     : resolved;
