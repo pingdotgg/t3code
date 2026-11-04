@@ -36,10 +36,10 @@ function ThreadNowLine({
   return (
     <div
       role={announce ? "alert" : undefined}
-      className={lineClassName}
+      className={cn(lineClassName, "items-baseline")}
       data-thread-now-line="true"
     >
-      <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
+      <span aria-hidden className="flex size-3.5 shrink-0 self-center items-center justify-center">
         {item.icon}
       </span>
       {/* Title and detail read as one line that gives way before the actions, so Stop stays
@@ -61,7 +61,7 @@ function ThreadNowLine({
         ) : null}
       </NoticeText>
       {item.actions ? (
-        <span className="ms-1.5 flex shrink-0 items-center gap-2.5">{item.actions}</span>
+        <span className="ms-1.5 flex shrink-0 items-baseline gap-2.5">{item.actions}</span>
       ) : null}
     </div>
   );
