@@ -320,7 +320,9 @@ import type { OrchestratorMcpCreateThreadsInput as CreateThreadsInput } from "@t
 Each entry independently resolves provider, model, and modes. The new threads
 inherit the parent's project, branch, and worktree path, but they have no
 sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
-without a prompt remain idle.
+without a prompt remain idle. `create_threads` is local-only: `target.environmentId` and
+`target.projectId` are ignored even though the shared target contract accepts them. Use
+`t3_thread_launch` with `environmentId` and `projectId` to select another environment or project.
 
 ### `t3_thread_launch`
 
