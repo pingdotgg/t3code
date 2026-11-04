@@ -17,16 +17,17 @@ in `~/.local/bin`.
 ## Models
 
 The model picker lists the models Vibe offers once it is signed in. **Default** keeps the model
-Vibe itself would start with. Models that support it show a **Thinking** setting with the levels
-Vibe offers.
+Vibe itself would start with. That model shows a **Thinking** setting with the levels Vibe offers
+for it; other models run at Vibe's own thinking setting.
 
 ## Permission Modes
 
 The permission mode picks the Vibe agent a thread runs as:
 
-- **Supervised** runs Vibe's `ask` agent, which asks you before every tool call.
-- **Auto-accept edits** runs `accept-edits`: Vibe applies file edits itself and asks before other
-  tools.
+- **Supervised** runs Vibe's `ask` agent. Commands and file changes wait for your approval; reads
+  and searches run without asking.
+- **Auto-accept edits** runs `accept-edits`: Vibe applies file edits itself and asks before
+  commands.
 - **Full access** runs `auto-approve`, which runs every tool without asking.
 
 Vibe offers no **Auto** mode in T3 Code.

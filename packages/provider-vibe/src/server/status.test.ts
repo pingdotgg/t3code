@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { vibeAuthFromStatusReport, vibeModelsFromConfigOptions } from "./status.ts";
+import {
+  vibeAuthFromStatusReport,
+  vibeModelsFromConfigOptions,
+  vibeProbeStatus,
+  vibeRuntimeModes,
+} from "./status.ts";
 
 // Shaped like vibe-acp 3.0.3's `session/new` config options.
 const VIBE_CONFIG_OPTIONS = [
@@ -63,7 +68,7 @@ describe("vibeAuthFromStatusReport", () => {
 });
 
 describe("vibeModelsFromConfigOptions", () => {
-  it("lists Default and Vibe's models, with thinking but not the agent mode", () => {
+  it("lists Default and Vibe's models, with thinking only where Vibe listed it", () => {
     const models = vibeModelsFromConfigOptions(VIBE_CONFIG_OPTIONS);
     assert.deepEqual(
       models.map((model) => [model.slug, model.name, model.isDefault ?? false]),
@@ -75,8 +80,10 @@ describe("vibeModelsFromConfigOptions", () => {
     );
     assert.deepEqual(models[0]?.aliases, ["mistral-medium-3.5"]);
     assert.deepEqual(
-      models[0]?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
-      ["thinking"],
+      models.map((model) =>
+        model.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+      ),
+      [["thinking"], ["thinking"], []],
     );
   });
 
@@ -85,5 +92,34 @@ describe("vibeModelsFromConfigOptions", () => {
       vibeModelsFromConfigOptions([]).map((model) => model.name),
       ["Default"],
     );
+  });
+});
+
+describe("vibeProbeStatus", () => {
+  it("keeps a confirmed sign-in when the model list fails", () => {
+    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, true), { status: "ready" });
+    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, false), {
+      status: "warning",
+      message: "Mistral Vibe is signed in but its models could not be listed.",
+    });
+    assert.equal(vibeProbeStatus({ status: "unauthenticated" }, false).status, "error");
+    assert.equal(vibeProbeStatus({ status: "unknown" }, false).status, "warning");
+  });
+});
+
+describe("vibeRuntimeModes", () => {
+  it("offers only the modes whose Vibe agent the session lists", () => {
+    const allModes = ["approval-required", "auto-accept-edits", "full-access"] as const;
+    assert.deepEqual(vibeRuntimeModes(VIBE_CONFIG_OPTIONS), allModes);
+    assert.deepEqual(vibeRuntimeModes(undefined), allModes);
+    const withoutAutoApprove = VIBE_CONFIG_OPTIONS.map((option) =>
+      option.id === "mode"
+        ? { ...option, options: option.options.filter((choice) => choice.value !== "auto-approve") }
+        : option,
+    );
+    assert.deepEqual(vibeRuntimeModes(withoutAutoApprove), [
+      "approval-required",
+      "auto-accept-edits",
+    ]);
   });
 });
