@@ -1866,6 +1866,7 @@ export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 const CLAUDE_MCP_APP_LOOKUP_TIMEOUT = "5 seconds";
 const CLAUDE_MCP_APP_LOOKUP_RETRY_MS = 60_000;
 const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+const CLAUDE_MCP_APP_REQUEST_TIMEOUT = "90 seconds";
 
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
@@ -11798,6 +11799,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           listTools: Effect.fn("ClaudeAdapterV2.listTools")(function* (toolsInput) {
             const queryMcpApps = yield* liveQueryMcpApps(toolsInput.providerThread);
             const statuses = yield* queryMcpApps.serverStatus.pipe(
+              Effect.timeout(CLAUDE_MCP_APP_REQUEST_TIMEOUT),
               Effect.mapError(mcpAppsError("Failed to list Claude MCP tools.")),
             );
             const catalog = mcpAppCatalogs.get(queryMcpApps);
@@ -11813,6 +11815,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           callTool: Effect.fn("ClaudeAdapterV2.callTool")(function* (callInput) {
             const queryMcpApps = yield* liveQueryMcpApps(callInput.providerThread);
             const statuses = yield* queryMcpApps.serverStatus.pipe(
+              Effect.timeout(CLAUDE_MCP_APP_REQUEST_TIMEOUT),
               Effect.mapError(mcpAppsError("Failed to list Claude MCP tools.")),
             );
             const nativeToolName = uniqueClaudeMcpToolName(
@@ -11841,7 +11844,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const queryMcpApps = yield* liveQueryMcpApps(readInput.providerThread);
             const response = yield* queryMcpApps
               .readResource(readInput.server, readInput.uri)
-              .pipe(Effect.mapError(mcpAppsError("Claude MCP resource read failed.")));
+              .pipe(
+                Effect.timeout(CLAUDE_MCP_APP_REQUEST_TIMEOUT),
+                Effect.mapError(mcpAppsError("Claude MCP resource read failed.")),
+              );
             return { contents: response.contents };
           }),
         };

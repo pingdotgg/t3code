@@ -5480,9 +5480,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [weatherServer(undefined, "weather!"), weatherServer(undefined, "weather?")]
             : []),
         ];
+        const started = yield* Queue.unbounded<void>();
+        let stalled = false;
+        const apps = weatherMcpApps();
+        const stall = Queue.offer(started, undefined).pipe(Effect.andThen(Effect.never));
         const harness = yield* makeWakeHarnessWithOptions({
           mcpApps: weatherMcpApps({
-            serverStatus: Effect.succeed(statuses),
+            serverStatus: Effect.suspend(() => (stalled ? stall : Effect.succeed(statuses))),
+            readResource: (server, uri) =>
+              Effect.suspend(() => (stalled ? stall : apps.readResource(server, uri))),
             callTool: (tool, args) =>
               Effect.sync(() => calls.push({ tool, args })).pipe(
                 // A CLI without result_not_for_model answers with the model-facing content.
@@ -5529,6 +5535,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         assert.deepEqual(calls, [{ tool: "mcp__weather__get_weather", args: { city: "Bergen" } }]);
+        stalled = true;
+        for (const request of [
+          mcpApps.listTools({ providerThread, server }).pipe(Effect.asVoid),
+          mcpApps
+            .callTool({ providerThread, server, tool: "get_weather", arguments: {} })
+            .pipe(Effect.asVoid),
+          mcpApps
+            .readResource({ providerThread, server, uri: MCP_APP_RESOURCE })
+            .pipe(Effect.asVoid),
+        ]) {
+          const finished = yield* Deferred.make<void>();
+          const pending = yield* request.pipe(
+            Effect.exit,
+            Effect.ensuring(Deferred.succeed(finished, undefined)),
+            Effect.forkScoped,
+          );
+          yield* Queue.take(started);
+          yield* TestClock.adjust("90 seconds");
+          assert.isTrue(yield* Deferred.isDone(finished));
+          const result = yield* Fiber.join(pending);
+          assert.isTrue(Exit.isFailure(result));
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
