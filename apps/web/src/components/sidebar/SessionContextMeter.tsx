@@ -69,18 +69,17 @@ export function SessionContextMeter({
   const providerThread = projection?.providerThreads.find(
     (entry) => entry.id === projection.thread.activeProviderThreadId,
   );
-  const live = projection
-    ? deriveLatestContextWindowSnapshot(
-        projection.visibleTurnItems,
-        latestProviderTurnTokenUsage(
-          projection.providerTurns.filter((entry) => entry.providerThreadId === providerThread?.id),
-          projection,
-          providerThread,
-        ),
+  const contextKey = `${thread.environmentId}:${thread.id}:${thread.activeProviderThreadId}`;
+  const nativeUsage = projection
+    ? latestProviderTurnTokenUsage(
+        projection.providerTurns.filter((entry) => entry.providerThreadId === providerThread?.id),
+        projection,
         providerThread,
       )
     : null;
-  const retainedLive = useRetainedValue(`${thread.environmentId}:${thread.id}`, live);
+  const retainedNativeUsage = useRetainedValue(contextKey, nativeUsage);
+  const retainedProvider = useRetainedValue(contextKey, providerThread ?? null);
+  const retainedLive = deriveLatestContextWindowSnapshot([], retainedNativeUsage, retainedProvider);
   const reported = context
     ? deriveLatestContextWindowSnapshot([], null, {
         contextUsage: context.usage,
