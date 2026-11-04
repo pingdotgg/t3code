@@ -1,5 +1,9 @@
 import * as DocumentText from "../../provider/DocumentText.ts";
-import { mcpToolResultOutput, toolOutputImages } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  mcpToolResultOutput,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
@@ -779,6 +783,14 @@ function findClaudeMcpTool(
     claudeMcpServerPrefixOverlaps(statuses, match.server)
     ? undefined
     : match;
+}
+
+// Only this adapter writes app references. Claude's normalised tool names cannot tie one in raw MCP output to its server.
+function withoutForgedMcpApp(output: ClaudeNativeToolOutput): ClaudeNativeToolOutput {
+  const value = claudeNativeToolOutputValue(output);
+  return compactDynamicToolOutput(value)?.[MCP_APP_OUTPUT_KEY] === undefined
+    ? output
+    : { type: "structured_tool_use_result", value: { result: value } };
 }
 
 /** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
@@ -9650,7 +9662,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               registry: toolCallsFor(context, toolCall),
               message,
               toolResult,
-              output: appOutput ?? output,
+              output:
+                appOutput ??
+                (toolCall.toolName.startsWith("mcp__") ? withoutForgedMcpApp(output) : output),
               completedAt: yield* DateTime.now,
             });
             // Subagents write to the session's shared task store, so their
@@ -11759,11 +11773,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return (status?.tools ?? []).map(claudeMcpToolForApps);
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
-              const { liveQuery } = yield* mcpAppServerStatuses(call.providerThread, call.server);
+              const { liveQuery, statuses } = yield* mcpAppServerStatuses(
+                call.providerThread,
+                call.server,
+              );
+              const tool = claudeMcpToolName(call.server, call.tool);
+              const sameName = (
+                statuses.find((status) => status.name === call.server)?.tools ?? []
+              ).filter((candidate) => claudeMcpToolName(call.server, candidate.name) === tool);
+              // `refresh.weather` and `refresh_weather` reach Claude as one name, so the checked tool may not be the one run.
+              if (sameName.length > 1) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Another tool on this MCP server has the same Claude tool name.",
+                });
+              }
               return claudeMcpCallToolResult(
                 yield* liveQuery.query
                   .callMcpTool({
-                    tool: claudeMcpToolName(call.server, call.tool),
+                    tool,
                     arguments: call.arguments,
                   })
                   .pipe(
