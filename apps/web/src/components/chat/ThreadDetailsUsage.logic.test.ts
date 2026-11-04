@@ -98,11 +98,14 @@ function shown(own: ServerProviderUsageLimits, sources: readonly UsageLimitSourc
 }
 
 describe("resolveThreadDetailsLimits", () => {
-  it("shows nothing without a selected, known instance", () => {
+  it("shows nothing without a selected, known instance, or before its first reading", () => {
     expect(resolveThreadDetailsLimits(null, [claudeInstance(unsupported)], [], now)).toBeNull();
     expect(
       resolveThreadDetailsLimits(ProviderInstanceId.make("gone"), [], [hub("Hub", [])], now),
     ).toBeNull();
+    const { usageLimits: _unread, ...unread } = claudeInstance(unsupported);
+    const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
+    expect(resolveThreadDetailsLimits(instanceId, [unread], [readableHub], now)).toBeNull();
   });
 
   it("keeps an instance's own readable limits over any hub", () => {
