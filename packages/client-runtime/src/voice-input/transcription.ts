@@ -3,9 +3,15 @@ export type VoiceTranscriptionOptions = {
   readonly signal: AbortSignal;
 };
 
+export type VoiceStreamingSession = {
+  readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
+};
+
 export type PreparedVoiceTranscription = {
   readonly locale: string;
   readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
+  /** Present when audio streams during capture; `finish` then replaces `transcribe`. */
+  readonly streaming?: VoiceStreamingSession;
 };
 
 export type VoiceTranscriber = {
