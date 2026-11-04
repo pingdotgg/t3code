@@ -1,5 +1,6 @@
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -495,6 +496,38 @@ function gitLabReviewPositionLines(
     case "context":
       return { old_line: position.oldLine, new_line: position.newLine };
   }
+}
+
+/**
+ * One end of a ranged comment. Only `line_code`'s own side is read back: GitLab shows a range
+ * as "lines +3 to +6" from it. The other side of an added or removed line is a counter only the
+ * diff knows, so it is sent as 0.
+ */
+function gitLabLineRangeEnd(fileHash: string, position: PullRequestReviewPosition) {
+  const lines = gitLabReviewPositionLines(position);
+  const oldLine = "old_line" in lines ? lines.old_line : 0;
+  const newLine = "new_line" in lines ? lines.new_line : 0;
+  return {
+    line_code: `${fileHash}_${oldLine}_${newLine}`,
+    type: position.kind === "added" ? "new" : position.kind === "deleted" ? "old" : null,
+    ...lines,
+  };
+}
+
+const gitLabFileHash = Effect.fnUntraced(function* (path: string) {
+  const digest = yield* Digest.Digest;
+  return yield* digest.digestHex(Digest.sha1, new TextEncoder().encode(path));
+}, Effect.provide(Digest.layerWebCrypto));
+
+function gitLabLineRange(
+  fileHash: string,
+  start: PullRequestReviewPosition | undefined,
+  end: PullRequestReviewPosition,
+) {
+  if (start === undefined) return {};
+  const first = gitLabLineRangeEnd(fileHash, start);
+  const last = gitLabLineRangeEnd(fileHash, end);
+  return first.line_code === last.line_code ? {} : { line_range: { start: first, end: last } };
 }
 
 function stateParam(state: PullRequestListState): string {
@@ -1732,27 +1765,35 @@ export const make = Effect.gen(function* () {
         yield* Effect.forEach(
           input.comments,
           (comment) =>
-            api({
-              cwd: input.cwd,
-              host: input.host,
-              path: `${mergeRequest}/discussions`,
-              method: "POST",
-              stdin: JSON.stringify({
-                body: comment.body,
-                position: {
-                  base_sha: refs.baseSha,
-                  head_sha: refs.headSha,
-                  start_sha: refs.startSha,
-                  position_type: "text",
-                  // Both paths are sent because GitLab resolves a position against both
-                  // sides of the diff. They differ only for a renamed file, which is why the
-                  // draft carries the name the file had before the change.
-                  old_path: comment.oldPath ?? comment.path,
-                  new_path: comment.path,
-                  ...gitLabReviewPositionLines(comment.position),
-                },
-              }),
-            }),
+            (comment.startPosition === undefined
+              ? Effect.succeed("")
+              : gitLabFileHash(comment.path)
+            ).pipe(
+              Effect.flatMap((fileHash) =>
+                api({
+                  cwd: input.cwd,
+                  host: input.host,
+                  path: `${mergeRequest}/discussions`,
+                  method: "POST",
+                  stdin: JSON.stringify({
+                    body: comment.body,
+                    position: {
+                      base_sha: refs.baseSha,
+                      head_sha: refs.headSha,
+                      start_sha: refs.startSha,
+                      position_type: "text",
+                      // Both paths are sent because GitLab resolves a position against both
+                      // sides of the diff. They differ only for a renamed file, which is why the
+                      // draft carries the name the file had before the change.
+                      old_path: comment.oldPath ?? comment.path,
+                      new_path: comment.path,
+                      ...gitLabReviewPositionLines(comment.position),
+                      ...gitLabLineRange(fileHash, comment.startPosition, comment.position),
+                    },
+                  }),
+                }),
+              ),
+            ),
           { discard: true },
         );
       }

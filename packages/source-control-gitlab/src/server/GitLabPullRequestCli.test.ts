@@ -922,6 +922,18 @@ layer("GitLabPullRequestCli.layer", (it) => {
             position: { kind: "deleted", oldLine: 4 },
             body: "why remove?",
           },
+          {
+            path: "src/b.ts",
+            startPosition: { kind: "context", oldLine: 9, newLine: 10, side: "right" },
+            position: { kind: "added", newLine: 12 },
+            body: "this block",
+          },
+          {
+            path: "src/b.ts",
+            startPosition: { kind: "added", newLine: 12 },
+            position: { kind: "added", newLine: 12 },
+            body: "one line",
+          },
         ],
       });
 
@@ -939,8 +951,18 @@ layer("GitLabPullRequestCli.layer", (it) => {
           old_line: 4,
         },
       });
-      expect(argsOfCall(2)[1]).toContain("/notes");
-      expect(argsOfCall(3)[1]).toContain("/approve");
+      // sha1("src/b.ts")
+      const fileHash = "e55a8d6c5dd26e72538fd71fb7695dd829c8dab5";
+      expect(JSON.parse(callAt(2).stdin ?? "").position).toMatchObject({
+        new_line: 12,
+        line_range: {
+          start: { line_code: `${fileHash}_9_10`, type: null, old_line: 9, new_line: 10 },
+          end: { line_code: `${fileHash}_0_12`, type: "new", new_line: 12 },
+        },
+      });
+      expect(JSON.parse(callAt(3).stdin ?? "").position).not.toHaveProperty("line_range");
+      expect(argsOfCall(4)[1]).toContain("/notes");
+      expect(argsOfCall(5)[1]).toContain("/approve");
     }),
   );
 

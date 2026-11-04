@@ -33,6 +33,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
   review: {
     inlineComment: true,
+    rangeComment: true,
     reply: true,
     resolve: true,
     // GitLab has no requested-changes verdict.
