@@ -329,20 +329,23 @@ export const make = Effect.gen(function* () {
       const queuedMessages =
         queuedRuns.length === 0
           ? []
-          : (yield* projections
-              .getThreadRecords(projection.thread.id, ["messages"], {
-                messageIds: queuedRuns.map((run) => run.userMessageId),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderRuntimeRecoveryError({
-                      operation: "read-projections",
-                      threadId: projection.thread.id,
-                      cause,
-                    }),
-                ),
-              )).messages;
+          : [
+              ...(yield* projections
+                .getMessagesById(
+                  projection.thread.id,
+                  queuedRuns.map((run) => run.userMessageId),
+                )
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderRuntimeRecoveryError({
+                        operation: "read-projections",
+                        threadId: projection.thread.id,
+                        cause,
+                      }),
+                  ),
+                )).values(),
+            ];
       const bufferedMessageIds = new Set(
         queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
       );

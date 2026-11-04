@@ -557,7 +557,7 @@ it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-          getThreadRecords: () => Effect.succeed(projection),
+          getMessagesById: () => Effect.succeed(new Map()),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
