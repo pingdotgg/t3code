@@ -1,7 +1,11 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { BotIcon, type LucideIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import {
+  hasInstanceBadge,
+  shouldShowInstanceBadge,
+  type ProviderInstanceEntry,
+} from "../../providerInstances";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 
 export function threadRelationshipStatusLabel(status: string | null): string {
@@ -47,12 +51,15 @@ export function ThreadRelationshipIcon({
   driver,
   provider,
   providerEntries = [],
+  anyInstanceBadge = hasInstanceBadge(providerEntries),
   status,
   fallbackIcon: FallbackIcon = BotIcon,
 }: {
   driver?: ProviderDriverKind | undefined;
   provider?: ServerProvider | undefined;
   providerEntries?: ReadonlyArray<ProviderInstanceEntry>;
+  /** For rows that can't take `providerEntries` but sit in the same list as rows that do. */
+  anyInstanceBadge?: boolean;
   status: string | null;
   fallbackIcon?: LucideIcon;
 }) {
@@ -80,8 +87,8 @@ export function ThreadRelationshipIcon({
       )}
       <span
         className={cn(
-          "absolute size-2 rounded-full border-2 border-card",
-          showInstanceBadge ? "-left-1 -top-1" : "-bottom-1 -right-1",
+          "absolute -right-1 size-2 rounded-full border-2 border-card",
+          anyInstanceBadge ? "-top-1" : "-bottom-1",
           status === "running" ||
             status === "in_progress" ||
             status === "pending" ||

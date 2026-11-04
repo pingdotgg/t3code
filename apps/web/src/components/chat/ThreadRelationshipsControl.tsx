@@ -73,6 +73,7 @@ import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  hasInstanceBadge,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -250,6 +251,7 @@ function RemoteSubagentRow(props: {
     readonly remoteChild: OrchestrationV2RemoteTaskChild;
   };
   readonly provider: ServerProvider | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
@@ -287,6 +289,7 @@ function RemoteSubagentRow(props: {
             // The task's own driver here is only a "remote" label.
             driver={props.provider?.driver}
             provider={props.provider}
+            anyInstanceBadge={props.anyInstanceBadge}
             fallbackIcon={BotIcon}
             status={status}
           />
@@ -323,6 +326,7 @@ function RemoteSubagentRow(props: {
 function DelegatedFromRow(props: {
   readonly delegatedFrom: OrchestrationV2DelegatedFrom;
   readonly fallbackLabel: string | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
   const navigate = useNavigate();
   const { delegatedFrom } = props;
@@ -353,7 +357,11 @@ function DelegatedFromRow(props: {
             />
           }
         >
-          <ThreadRelationshipIcon fallbackIcon={CornerLeftUpIcon} status={null} />
+          <ThreadRelationshipIcon
+            anyInstanceBadge={props.anyInstanceBadge}
+            fallbackIcon={CornerLeftUpIcon}
+            status={null}
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
               {title}
@@ -930,6 +938,7 @@ export function ThreadRelationshipsPanel(props: {
               <DelegatedFromRow
                 delegatedFrom={delegatedFrom}
                 fallbackLabel={currentThread?.linkOrigin?.label}
+                anyInstanceBadge={hasInstanceBadge(providerEntries)}
               />
             </ThreadLineageRowList>
           )}
@@ -948,6 +957,7 @@ export function ThreadRelationshipsPanel(props: {
                   provider={providersByEnvironment
                     .get(agent.remoteChild.environmentId)
                     ?.find((entry) => entry.instanceId === agent.providerInstanceId)}
+                  anyInstanceBadge={hasInstanceBadge(providerEntries)}
                 />
               ))}
             </ThreadLineageRowList>
