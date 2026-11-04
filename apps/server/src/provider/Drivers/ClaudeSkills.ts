@@ -143,7 +143,8 @@ function claudeSettingsPaths(
   ];
 }
 
-const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+// Untraced: skill discovery resolves every distinct plugin project path, too often for spans.
+const findRepositoryRoot = Effect.fnUntraced(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -164,7 +165,7 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   }
 });
 
-const findPluginRepositoryRoot = Effect.fn("findPluginRepositoryRoot")(function* (cwd: string) {
+const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* findRepositoryRoot(cwd);
@@ -336,6 +337,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     cwd === undefined
       ? undefined
       : yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+  // Install records repeat project paths, often hundreds of times per discovery.
+  const projectRepositoryRoots = new Map<string, string | undefined>();
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
@@ -347,11 +350,13 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
         Effect.gen(function* () {
           if (record.scope === "user" || record.scope === "managed") return true;
           if (record.projectPath === undefined || workspace === undefined) return false;
-          if (path.resolve(record.projectPath) === workspace) return true;
-          return (
-            repositoryRoot !== undefined &&
-            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
-          );
+          const projectPath = path.resolve(record.projectPath);
+          if (projectPath === workspace) return true;
+          if (repositoryRoot === undefined) return false;
+          if (!projectRepositoryRoots.has(projectPath)) {
+            projectRepositoryRoots.set(projectPath, yield* findPluginRepositoryRoot(projectPath));
+          }
+          return projectRepositoryRoots.get(projectPath) === repositoryRoot;
         }),
     );
     // The native loader keeps registry order, preferring the first install that exists.
@@ -434,6 +439,16 @@ const ConnectionSettings = fromLenientJson(
     apiKeyHelper: Schema.optional(Schema.Unknown),
   }),
 );
+const SettingsEnv = Schema.Struct({
+  ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
+  CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+  // Unquoted JSON values must not fail the decode and drop ANTHROPIC_BASE_URL with them.
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.Unknown),
+  CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.Unknown),
+});
+const decodeSettingsEnv = Schema.decodeUnknownEffect(
+  fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
+);
 const decodeConnectionSettings = Schema.decodeUnknownEffect(ConnectionSettings);
 
 /** Claude Code applies settings `env` over its inherited process environment. */
@@ -447,6 +462,7 @@ export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSetti
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
   const env: Record<string, string> = {};
+  const settingsEnv: typeof SettingsEnv.Type = {};
   let apiKeyHelper: string | undefined;
   for (const settingsPath of claudeSettingsPaths(
     path,
@@ -462,12 +478,18 @@ export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSetti
     const parsed = yield* decodeConnectionSettings(contents).pipe(
       Effect.orElseSucceed(() => undefined),
     );
+    Object.assign(
+      settingsEnv,
+      yield* decodeSettingsEnv(contents)
+        .pipe(Effect.orElseSucceed(() => undefined))
+        .pipe(Effect.map((settings) => settings?.env)),
+    );
     for (const [name, value] of Object.entries(parsed?.env ?? {})) {
       if (typeof value === "string") env[name] = value;
     }
     if (typeof parsed?.apiKeyHelper === "string") apiKeyHelper = parsed.apiKeyHelper;
   }
-  return { env, apiKeyHelper };
+  return { env, apiKeyHelper, settingsEnv };
 });
 
 export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
@@ -475,7 +497,7 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
 ) {
-  return (yield* readClaudeConnectionSettings(config, cwd, environment)).env;
+  return (yield* readClaudeConnectionSettings(config, cwd, environment)).settingsEnv;
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
