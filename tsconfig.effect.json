@@ -114,8 +114,13 @@
               "**/*.spec.tsx",
               "**/*.testkit.ts",
               "**/*.testkit.tsx",
-              "**/{test,tests,testkit,testing,fixtures,integration}/**",
-              "packages/provider-testing/**"
+              "**/test/**/*",
+              "**/tests/**/*",
+              "**/testkit/**/*",
+              "**/testing/**/*",
+              "**/fixtures/**/*",
+              "**/integration/**/*",
+              "packages/provider-testing/**/*"
             ],
             "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
           }
