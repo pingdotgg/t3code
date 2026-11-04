@@ -24,6 +24,7 @@ final class EventDispatcher {
   func callAsFunction(_ payload: [String: Any] = [:]) { payloads.append(payload) }
 }
 enum T3ComposerClipboard {
+  static func hasThreadLink(_ text: String) -> Bool { false }
   static func read() -> [String: String] { [:] }
   static func write(text: String, fragment: String) {}
 }
