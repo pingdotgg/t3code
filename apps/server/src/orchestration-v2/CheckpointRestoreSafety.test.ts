@@ -87,6 +87,7 @@ it.effect.each([
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      staleCheckpointScopes: [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },
       runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
@@ -190,9 +191,10 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     const worktreePath = path.join(parent, "worktree");
     const isolated = yield* isCheckpointRestoreIsolated(
       { id: ThreadId.make("restore-removed"), worktreePath },
-      { cwd: worktreePath },
+      { id: CheckpointScopeId.make("restore-removed-scope"), cwd: worktreePath },
       {
         fileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
@@ -201,7 +203,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       },
     );
     assert.isTrue(isolated);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
 );
 
 it.effect.each([
@@ -233,9 +235,10 @@ it.effect.each([
       };
       const result = yield* isCheckpointRestoreIsolated(
         { id: parentId, worktreePath },
-        { cwd: worktreePath },
+        { id: CheckpointScopeId.make("restore-side-chat-scope"), cwd: worktreePath },
         {
           fileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
           path,
           projections: {
             getShellSnapshot: () => Effect.succeed({ threads: [sideChat], archivedThreads: [] }),
@@ -250,5 +253,5 @@ it.effect.each([
         },
       );
       assert.equal(result, isolated);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
 );

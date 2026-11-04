@@ -29,6 +29,7 @@ import type {
   OrchestratorV2ScenarioStep,
 } from "../OrchestratorScenario.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { rootScopeId } from "../../CheckpointService.ts";
 import type { RuntimePolicyV2Override } from "../../RuntimePolicy.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
@@ -262,7 +263,6 @@ export type OrchestratorFixtureInputStep =
     }
   | {
       readonly type: "rollback";
-      readonly checkpointScopeSuffix: string;
       readonly checkpointSuffix: string;
     }
   | {
@@ -484,6 +484,8 @@ function dispatchMessageCommand(input: {
 export function materializeFixtureInput(input: {
   readonly scenario: string;
   readonly fixtureInput: OrchestratorFixtureInput;
+  /** The workspace runs check out, which names their root checkpoint scope. */
+  readonly workspace?: string;
   readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
 }): Effect.Effect<
@@ -937,10 +939,11 @@ export function materializeFixtureInput(input: {
           break;
         case "rollback":
           {
-            const scopeId = yield* idAllocator.allocate.checkpointScope({
-              threadId: ids.threadId,
-              name: step.checkpointScopeSuffix,
-            });
+            const scopeId = yield* rootScopeId(
+              idAllocator,
+              ids.threadId,
+              input.workspace ?? process.cwd(),
+            );
             pushDispatch({
               type: "checkpoint.rollback",
               restoreFiles: false,

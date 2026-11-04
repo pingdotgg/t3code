@@ -283,6 +283,7 @@ export interface ProjectionCheckpointRollbackContext {
   readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  readonly staleCheckpointScopes: ReadonlyArray<OrchestrationV2CheckpointScope>;
 }
 
 export interface ProjectionProviderControlContext {
@@ -5350,6 +5351,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               runsToRollback: [],
               rootNodes: [],
               staleCheckpoints: [],
+              staleCheckpointScopes: [],
             };
             if (
               providerThread === undefined ||
@@ -5387,14 +5389,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
             WHERE run.thread_id = ${threadId} AND run.status = 'rolled_back'
               AND attempt.thread_id = ${threadId}`,
+                // A thread that changed workspaces has later runs in other root scopes too.
                 sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId} AND scope_id = ${scope.id} AND status = 'ready'
+            WHERE thread_id = ${threadId} AND status = 'ready'
               AND app_run_ordinal > ${targetOrdinal}
+              AND (scope_id = ${scope.id} OR scope_id IN (
+                SELECT scope_id FROM orchestration_v2_projection_checkpoint_scopes
+                WHERE thread_id = ${threadId} AND kind = 'root_run'))
             ORDER BY ordinal_within_scope ASC`,
               ]);
             const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
-            const [nodeRows, turnRows] = yield* Effect.all([
+            const staleCheckpoints = yield* decodeRows(
+              decodeCheckpointPayload,
+              threadId,
+            )(staleRows);
+            const [nodeRows, turnRows, staleScopeRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
               "node_id",
@@ -5407,6 +5417,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               OR provider_turn_id = ${targetAttempt?.providerTurnId ?? null}
               OR run_attempt_id = ${targetAttempt?.id ?? null})
             ORDER BY provider_thread_id ASC, ordinal ASC`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+            WHERE thread_id = ${threadId} AND ${sql.in(
+              "scope_id",
+              Array.from(new Set(staleCheckpoints.map((stale) => stale.scopeId))),
+            )}
+            ORDER BY scope_id ASC`,
             ]);
             return {
               ...context,
@@ -5419,7 +5435,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rolledBackAttemptIds: rolledBackAttempts.map(({ id }) => id),
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
-              staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
+              staleCheckpoints,
+              staleCheckpointScopes: yield* decodeRows(
+                decodeCheckpointScopePayload,
+                threadId,
+              )(staleScopeRows),
             };
           }),
         )

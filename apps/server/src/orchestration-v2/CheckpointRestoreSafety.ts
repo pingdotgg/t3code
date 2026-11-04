@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { legacyRootScopeId } from "./CheckpointService.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
@@ -13,15 +15,16 @@ export const SHARED_WORKSPACE_RESTORE_MESSAGE =
 export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
-    scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
+    scope: Pick<OrchestrationV2CheckpointScope, "id" | "cwd">,
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
+      readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
       readonly projections: ProjectionStoreV2["Service"];
       readonly projects: ProjectStore.ProjectStoreV2["Service"];
       readonly path: Path.Path;
     },
   ) {
-    const { fileSystem, projections, projects, path } = dependencies;
+    const { fileSystem, idAllocator, projections, projects, path } = dependencies;
     const contains = (parent: string, child: string) => {
       const relative = path.relative(parent, child);
       return (
@@ -42,7 +45,9 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         );
       const cwd = yield* resolve(scope.cwd);
       const worktreeCwd = yield* resolve(worktreePath);
-      shared = cwd !== worktreeCwd;
+      // The legacy scope's projected cwd is only its latest; older checkpoints may hold another workspace.
+      shared =
+        cwd !== worktreeCwd || scope.id === (yield* legacyRootScopeId(idAllocator, thread.id));
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();

@@ -238,6 +238,7 @@ export const layer: Layer.Layer<
         input.restoreFiles !== false &&
         !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
           fileSystem,
+          idAllocator: ids,
           projections,
           projects,
           path,
@@ -290,8 +291,23 @@ export const layer: Layer.Layer<
               providerThreadTurns,
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      for (const staleScope of context.staleCheckpointScopes) {
+        // A workspace the thread left may be gone; its checkpoints are still marked stale below.
+        if (!(yield* fileSystem.exists(staleScope.cwd))) {
+          yield* Effect.logWarning(
+            "orchestration V2 rollback skipped stale refs of a removed workspace",
+            {
+              threadId: input.threadId,
+              scopeId: staleScope.id,
+              cwd: staleScope.cwd,
+            },
+          );
+          continue;
+        }
+        yield* checkpoints.deleteStaleRefs({
+          scope: staleScope,
+          checkpoints: staleCheckpoints.filter((stale) => stale.scopeId === staleScope.id),
+        });
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

@@ -171,6 +171,20 @@ function checkpointIdForScopeOrdinal(
   });
 }
 
+// Worktrees of one repository share checkpoint refs, so a thread gets a root scope per workspace.
+export const rootScopeId = (
+  idAllocator: IdAllocator.IdAllocatorV2["Service"],
+  threadId: ThreadId,
+  cwd: string,
+) =>
+  idAllocator.allocate.checkpointScope({ threadId, name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${cwd}` });
+
+/** Before root scopes were per workspace, every workspace a thread used shared this one scope. */
+export const legacyRootScopeId = (
+  idAllocator: IdAllocator.IdAllocatorV2["Service"],
+  threadId: ThreadId,
+) => idAllocator.allocate.checkpointScope({ threadId, name: ROOT_CHECKPOINT_SCOPE_NAME });
+
 const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
@@ -180,11 +194,7 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
   readonly cwd: string;
   readonly createdAt: DateTime.Utc;
 }) {
-  // Worktrees of one repository share checkpoint refs, so a thread gets a root scope per workspace.
-  const scopeId = yield* input.idAllocator.allocate.checkpointScope({
-    threadId: input.threadId,
-    name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${input.cwd}`,
-  });
+  const scopeId = yield* rootScopeId(input.idAllocator, input.threadId, input.cwd);
   return {
     id: scopeId,
     threadId: input.threadId,

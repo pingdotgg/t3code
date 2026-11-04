@@ -24,8 +24,6 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { ProjectStoreV2 } from "./ProjectStore.ts";
 
 it.effect(
   "skips unsupported baseline and turn checkpoints without swallowing capture failures",
@@ -108,7 +106,7 @@ const layerVcsProcess = VcsProcess.layer.pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerGitCheckpoints = CheckpointService.layer.pipe(
-  Layer.provide(IdAllocator.layer),
+  Layer.provideMerge(IdAllocator.layer),
   Layer.provide(CheckpointStore.layer),
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcess))),
   Layer.provideMerge(layerVcsProcess),
@@ -119,12 +117,16 @@ const layerGitCheckpoints = CheckpointService.layer.pipe(
 );
 
 // Turn 1 runs in worktree A, then the thread moves to worktree B (a branch with its own
-// committed file) of the same repository, and turn 2 adds one file there.
-const runTurnsAcrossWorktrees = Effect.gen(function* () {
+// committed file) of the same repository, and turn 2 adds one file there. A legacy thread
+// kept its one root scope across both, as threads did before root scopes were per workspace.
+const runTurnsAcrossWorktrees = Effect.fn("runTurnsAcrossWorktrees")(function* (
+  scopes: "per-workspace" | "legacy",
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const git = (cwd: string, ...args: ReadonlyArray<string>) =>
     vcsProcess.run({ operation: "CheckpointService.test.git", command: "git", cwd, args });
   const root = yield* fileSystem.realPath(
@@ -154,7 +156,7 @@ const runTurnsAcrossWorktrees = Effect.gen(function* () {
   const runTurn = Effect.fn("runTurn")(function* (ordinal: number, cwd: string, file: string) {
     const runId = RunId.make(`run:worktree-move:${ordinal}`);
     const nodeId = NodeId.make(`node:worktree-move:${ordinal}`);
-    const scope = yield* checkpoints.prepareRootRunScope({
+    const prepared = yield* checkpoints.prepareRootRunScope({
       threadId,
       runId,
       rootNodeId: nodeId,
@@ -162,6 +164,10 @@ const runTurnsAcrossWorktrees = Effect.gen(function* () {
       cwd,
       createdAt,
     });
+    const scope =
+      scopes === "legacy"
+        ? { ...prepared, id: yield* CheckpointService.legacyRootScopeId(idAllocator, threadId) }
+        : prepared;
     projectedScopes.set(scope.id, scope);
     yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: ordinal - 1 });
     yield* fileSystem.writeFileString(path.join(cwd, file), `${file}\n`);
@@ -182,7 +188,7 @@ const runTurnsAcrossWorktrees = Effect.gen(function* () {
 
 it.live("lists only turn 2's edit after the thread moves to another worktree of the repo", () =>
   Effect.gen(function* () {
-    const { turn2 } = yield* runTurnsAcrossWorktrees;
+    const { turn2 } = yield* runTurnsAcrossWorktrees("per-workspace");
 
     assert.deepEqual(
       turn2.files.map((file) => file.path),
@@ -192,44 +198,37 @@ it.live("lists only turn 2's edit after the thread moves to another worktree of 
   }).pipe(Effect.provide(layerGitCheckpoints)),
 );
 
-it.live("does not restore a checkpoint taken in another worktree into the thread's worktree", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
-    const { threadId, worktreeB, turn1, projectedScopes } = yield* runTurnsAcrossWorktrees;
-    const scope = projectedScopes.get(turn1.scopeId)!;
+it.live.each(["per-workspace", "legacy"] as const)(
+  "does not restore a checkpoint taken in another worktree into the thread's worktree, %s scopes",
+  (scopes) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const { threadId, worktreeB, turn1, projectedScopes } =
+        yield* runTurnsAcrossWorktrees(scopes);
+      const scope = projectedScopes.get(turn1.scopeId)!;
 
-    // "Edit from here?" on turn 1 with "Revert files too", as CheckpointRollbackService runs it.
-    const isolated = yield* isCheckpointRestoreIsolated(
-      { id: threadId, worktreePath: worktreeB },
-      scope,
-      {
-        fileSystem,
-        path,
-        projections: ProjectionStoreV2.of({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
-        } as unknown as ProjectionStoreV2["Service"]),
-        projects: ProjectStoreV2.of({} as ProjectStoreV2["Service"]),
-      },
-    );
-    const restored = isolated
-      ? (yield* Effect.result(checkpoints.restore({ scope, checkpoint: turn1 })))._tag === "Success"
-      : false;
+      // "Edit from here?" on turn 1 with "Revert files too", as CheckpointRollbackService runs it.
+      const isolated = yield* isCheckpointRestoreIsolated(
+        { id: threadId, worktreePath: worktreeB },
+        scope,
+        {
+          fileSystem,
+          path,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      if (isolated) yield* checkpoints.restore({ scope, checkpoint: turn1 });
 
-    const worktreeBFiles = (yield* fileSystem.readDirectory(worktreeB))
-      .filter((entry) => entry !== ".git")
-      .toSorted();
-    assert.deepEqual(
-      { restored, worktreeBFiles },
-      { restored, worktreeBFiles: ["b-only.txt", "shared.txt", "turn-2.txt"] },
-      "restoring turn 1 wrote worktree A's tree into worktree B",
-    );
-  }).pipe(Effect.provide(layerGitCheckpoints)),
+      assert.deepEqual(
+        (yield* fileSystem.readDirectory(worktreeB)).filter((entry) => entry !== ".git").toSorted(),
+        ["b-only.txt", "shared.txt", "turn-2.txt"],
+      );
+      assert.isFalse(isolated);
+    }).pipe(Effect.provide(layerGitCheckpoints)),
 );

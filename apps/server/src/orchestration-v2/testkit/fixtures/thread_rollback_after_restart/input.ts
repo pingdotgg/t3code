@@ -14,7 +14,6 @@ export function threadRollbackAfterRestartInput(): OrchestratorFixtureInput {
       { type: "advance_clock", duration: "31 minutes" },
       {
         type: "rollback",
-        checkpointScopeSuffix: "root",
         checkpointSuffix: "1",
       },
       { type: "message", text: THREAD_ROLLBACK_AFTER_PROMPT },

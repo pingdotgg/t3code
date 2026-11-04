@@ -216,6 +216,7 @@ it.effect.each([
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      staleCheckpointScopes: [],
       rootNodes: [],
       providerTurns: [],
     } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
@@ -571,10 +572,12 @@ const seedRollbackHistory = Effect.gen(function* () {
             Effect.sync(() => {
               restored.push(checkpoint.id);
             }),
-          deleteStaleRefs: ({ checkpoints }) =>
-            Effect.sync(() => {
-              deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
-            }),
+          deleteStaleRefs: ({ scope, checkpoints }) =>
+            checkpoints.every((checkpoint) => checkpoint.scopeId === scope.id)
+              ? Effect.sync(() => {
+                  deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
+                })
+              : Effect.die("stale refs deleted through another scope's workspace"),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           write: ({ events }) =>
@@ -728,6 +731,68 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             [history.checkpointId(0), history.checkpointId(8)],
           );
         }),
+    );
+  },
+);
+
+it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
+  "rollback across workspaces",
+  (it) => {
+    it.effect("discards later checkpoints taken in the thread's other workspace", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const otherScopeId = CheckpointScopeId.make("rollback-history-other-workspace");
+        const otherCheckpointId = CheckpointId.make("rollback-history-other-workspace-6");
+        const event = { threadId: history.threadId, occurredAt: history.now };
+        yield* history.store.apply({
+          ...event,
+          id: EventId.make("rollback-history-other-workspace-scope"),
+          type: "checkpoint-scope.created",
+          payload: {
+            id: otherScopeId,
+            threadId: history.threadId,
+            runId: history.runId(6),
+            nodeId: history.nodeId(6),
+            parentScopeId: null,
+            providerThreadId: null,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: import.meta.dirname,
+            createdAt: history.now,
+          },
+        });
+        yield* history.store.apply({
+          ...event,
+          id: EventId.make("rollback-history-other-workspace-checkpoint"),
+          type: "checkpoint.captured",
+          payload: {
+            id: otherCheckpointId,
+            threadId: history.threadId,
+            scopeId: otherScopeId,
+            runId: history.runId(6),
+            nodeId: history.nodeId(6),
+            parentCheckpointId: null,
+            ordinalWithinScope: 6,
+            appRunOrdinal: 6,
+            ref: CheckpointRef.make("refs/t3/rollback-history/other-workspace/6"),
+            status: "ready",
+            files: [],
+            capturedAt: history.now,
+          },
+        });
+
+        yield* history.rollback(2);
+
+        assert.include(history.deletedRefs, otherCheckpointId);
+        const { checkpoints } = yield* history.store.getThreadRecords(history.threadId, [
+          "checkpoints",
+        ]);
+        assert.equal(
+          checkpoints.find((checkpoint) => checkpoint.id === otherCheckpointId)?.status,
+          "stale",
+        );
+      }),
     );
   },
 );
