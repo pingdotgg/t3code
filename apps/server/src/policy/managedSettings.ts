@@ -29,8 +29,9 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Startup reads OTLP endpoints from the settings file before the policy loads, and the user's
- * OTLP environment variables outrank them, so a managed value would look enforced without being.
+ * Startup resolves OTLP endpoints from the settings file and desktop bootstrap input before the policy
+ * loads, and the user's OTLP environment variables outrank them, so a managed value would look
+ * enforced without being.
  */
 const ENVIRONMENT_OVERRIDDEN_KEYS: ReadonlySet<string> = new Set(["observability"]);
 
@@ -262,7 +263,7 @@ export function makeManagedSettings(
     if (ENVIRONMENT_OVERRIDDEN_KEYS.has(head)) {
       return {
         _tag: "Invalid",
-        reason: `"${path}" comes from each user's environment and settings file at startup, which a policy cannot override`,
+        reason: `"${path}" is resolved at startup from each user's environment, settings file and desktop bootstrap input, which a policy cannot override`,
       };
     }
     const source = DERIVED_FROM.get(head);
