@@ -63,6 +63,11 @@ const packExecutableTargets = packExecutableTarget
     ]
   : undefined;
 
+// tsc keeps its incremental state here, so a typecheck after an edit re-checks only the files the
+// edit can reach. The task below keeps the file out of its own inputs and outputs: tsc reads and
+// rewrites it on every run, which would otherwise make Vite+ refuse to cache the task.
+const TYPECHECK_BUILD_INFO = "node_modules/.cache/tsc/typecheck.tsbuildinfo";
+
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
 const { projects: _rootTestProjects, ...baseTestConfig } = baseConfig.test ?? {};
@@ -78,6 +83,13 @@ export default mergeConfig(
           command: "node scripts/cli.ts build",
           dependsOn: ["@t3tools/web#build"],
           cache: false,
+        },
+        typecheck: {
+          command: `tsc --noEmit --incremental --tsBuildInfoFile ${TYPECHECK_BUILD_INFO}`,
+          cache: {
+            input: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
+            output: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
+          },
         },
       },
     },
