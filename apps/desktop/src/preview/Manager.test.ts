@@ -1210,11 +1210,11 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_devtools", 49);
         yield* changes.until(() => guest.attach.mock.calls.length === 1);
 
-        yield* manager.openDevTools("tab_devtools");
+        yield* manager.toggleDevTools("tab_devtools");
         expect(guest.openDevTools).toHaveBeenCalledTimes(1);
         expect(guest.detach).toHaveBeenCalledTimes(1);
 
-        yield* manager.openDevTools("tab_devtools");
+        yield* manager.toggleDevTools("tab_devtools");
         expect(
           guest.closeDevTools,
           "a second request should close the open DevTools",
