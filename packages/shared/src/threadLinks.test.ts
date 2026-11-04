@@ -208,16 +208,23 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs(markdown, local)).toEqual([]);
   });
 
-  it.each(['"title"', "'title'", "(title)", '"see [notes]"', "'see [notes]'", "(see [notes])"])(
-    "leaves a link with Markdown title %s intact",
-    (title) => {
-      for (const label of ["label", "label `code`"]) {
-        const markdown = `[${label}](https://app.t3.codes/threads/one/same ${title})`;
-        expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
-        expect(threadLinkRefs(markdown, local)).toEqual([]);
-      }
-    },
-  );
+  it.each([
+    '"title"',
+    "'title'",
+    "(title)",
+    '"see [notes]"',
+    "'see [notes]'",
+    "(see [notes])",
+    String.raw`"say \"hi\""`,
+    String.raw`'say \'hi\''`,
+    String.raw`(say \(hi\))`,
+  ])("leaves a link with Markdown title %s intact", (title) => {
+    for (const label of ["label", "label `code`"]) {
+      const markdown = `[${label}](https://app.t3.codes/threads/one/same ${title})`;
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+      expect(threadLinkRefs(markdown, local)).toEqual([]);
+    }
+  });
 
   it("escapes every id character a sentence or path could claim, and reads it back", () => {
     const thread = ref("env.1", "thread:delegated/mcp%3A1.");
