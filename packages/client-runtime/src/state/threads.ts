@@ -1147,17 +1147,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }),
           );
         },
-        onDefect: (cause) =>
-          resumeFailed
-            ? Effect.void
-            : setStreamError(
-                cause.reasons.some(
-                  (reason) =>
-                    reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
-                )
-                  ? "Message synchronization timed out. Reconnect or return to the app to try again."
-                  : "Could not synchronize the thread.",
-              ),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
@@ -1168,15 +1157,30 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         if (resumeFailed) return subscribeThread(true);
         // Running threads stay mounted. Keep the error until a new session or
         // foreground wakeup can start another catch-up attempt.
-        return Stream.merge(
-          SubscriptionRef.changes(supervisor.session).pipe(
-            Stream.filter((session) => Option.isSome(session) && session.value !== failedSession),
+        return Stream.fromEffect(
+          setStreamError(
+            cause.reasons.some(
+              (reason) => reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
+            )
+              ? "Message synchronization timed out. Reconnect or return to the app to try again."
+              : "Could not synchronize the thread.",
           ),
-          foregroundResubscriptions,
         ).pipe(
-          Stream.take(1),
           Stream.drain,
-          Stream.concat(Stream.suspend(() => subscribeThread())),
+          Stream.concat(
+            Stream.merge(
+              SubscriptionRef.changes(supervisor.session).pipe(
+                Stream.filter(
+                  (session) => Option.isSome(session) && session.value !== failedSession,
+                ),
+              ),
+              foregroundResubscriptions,
+            ).pipe(
+              Stream.take(1),
+              Stream.drain,
+              Stream.concat(Stream.suspend(() => subscribeThread())),
+            ),
+          ),
         );
       }),
     );
