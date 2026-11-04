@@ -3525,6 +3525,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         const host = Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
             watchFingerprint: () =>
               Effect.succeed(fingerprinted ? { status: "unchanged", remarks: "unchanged" } : null),
