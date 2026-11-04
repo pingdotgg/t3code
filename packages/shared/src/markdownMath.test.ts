@@ -76,6 +76,16 @@ describe("chat math parsing", () => {
     expect(markdownMathRanges("```math\nx^2\n```")[0]?.tex).toBe("x^2");
     expect(markdownMathRanges("> ```math\n> x^2\n> ```")[0]?.tex).toBe("x^2");
   });
+
+  it.each([
+    ["$skill prompt", []],
+    ["$x$ prompt", ["x"]],
+    ["$$x$$", ["x"]],
+    ["\\(x\\)", ["x"]],
+    ["\\[x\\]", ["x"]],
+  ])("finds editor formulas in %j", (source, tex) => {
+    expect(markdownMathRanges(source).map((formula) => formula.tex)).toEqual(tex);
+  });
   it("reads the four delimiters models emit", () => {
     expect(formulas("Inline $x^2$ and \\(y_1\\), display $$a+b$$ and \\[c\\].")).toEqual([
       ["inline", "x^2"],
