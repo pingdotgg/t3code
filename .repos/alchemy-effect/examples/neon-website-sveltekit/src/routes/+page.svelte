@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Card from "$lib/Card.svelte";
+  import Card from "#lib/Card.svelte";
 
   let { data } = $props();
   let count = $state(0);

@@ -1,3 +1,4 @@
+import * as AWS from "@alchemy.run/aws";
 /**
  * A minimal SageMaker HyperPod training cluster:
  *
@@ -13,7 +14,6 @@
  * groups.
  */
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 import { HyperPodInfra } from "./src/infra.ts";
 import { UploadLifecycleScript } from "./src/lifecycle.ts";
