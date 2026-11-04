@@ -274,7 +274,10 @@ function escapeLength(input: string, index: number): number {
   ) {
     cursor += 1;
   }
-  return cursor < input.length ? cursor - index + 1 : -1;
+  if (cursor >= input.length) return -1;
+  // An ESC after intermediates cancels them and starts the next sequence.
+  if (cursor > index + 1 && input[cursor] === ESC) return cursor - index;
+  return cursor - index + 1;
 }
 
 const penTransitions = new Map<string, string>();
