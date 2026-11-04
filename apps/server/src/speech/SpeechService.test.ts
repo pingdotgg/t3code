@@ -172,7 +172,7 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("honors an exact alias before a similar preferred term in batch and streamed text", () =>
+it.effect("honors exact aliases and phrase boundaries in batch and streamed text", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     const options = {
@@ -181,10 +181,11 @@ it.effect("honors an exact alias before a similar preferred term in batch and st
         { term: "Bob", aliases: ["Robert"] },
         { term: "Roberts", aliases: [] },
         { term: "O'Reilly", aliases: ['"the publisher"'] },
+        { term: "GitHub", aliases: [] },
       ],
     };
-    const spoken = 'Robert, Roberts. "the publisher" and the publisher.';
-    const expected = "Bob, Roberts. O'Reilly and the publisher.";
+    const spoken = 'Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub).';
+    const expected = "Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub).";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
