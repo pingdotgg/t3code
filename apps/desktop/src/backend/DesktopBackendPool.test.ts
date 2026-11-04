@@ -257,6 +257,32 @@ describe("DesktopBackendPool", () => {
     );
   });
 
+  it.effect("stops the primary backend while the unavailable T3 home error is still open", () => {
+    const shown = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+      yield* primary.start;
+      yield* Deferred.await(shown);
+      yield* primary.stop();
+      assert.equal((yield* primary.snapshot).desiredRunning, false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerPool(Ref.makeUnsafe("Windows"), {
+          primaryExitCode: SERVER_EXIT_CODE_STATE_DIR_OWNED,
+          electronDialog: {
+            pickFolder: () => Effect.die("unexpected folder picker"),
+            pickFiles: () => Effect.die("unexpected file picker"),
+            showMessageBox: () =>
+              Deferred.succeed(shown, undefined).pipe(Effect.andThen(Effect.never)),
+            showErrorBox: () => Effect.die("unexpected error box"),
+          },
+          electronApp: { quit: Effect.die("quit before the error was dismissed") },
+        }),
+      ),
+    );
+  });
+
   it.effect("still quits when the unavailable T3 home error cannot be shown", () => {
     const quit = Deferred.makeUnsafe<void>();
     return Effect.gen(function* () {

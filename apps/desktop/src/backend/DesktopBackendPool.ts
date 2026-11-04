@@ -175,7 +175,8 @@ export const layer = Layer.effect(
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
-      // A parentless box on Linux stacks beneath the focused splash window and blocks quitting.
+      // A parentless box on Linux stacks beneath the focused main window and blocks quitting.
+      // Forked so the open box does not hold the instance lock that shutdown's stop() needs.
       onStateDirOwned: () =>
         electronWindow.main.pipe(
           Effect.flatMap((main) =>
@@ -196,6 +197,8 @@ export const layer = Layer.effect(
             }),
           ),
           Effect.andThen(electronApp.quit),
+          Effect.forkIn(layerScope),
+          Effect.asVoid,
         ),
     });
 
