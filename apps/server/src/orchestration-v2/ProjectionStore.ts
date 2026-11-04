@@ -1,3 +1,4 @@
+import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -491,6 +492,12 @@ export interface ProjectionStoreV2Shape {
     },
     ProjectionStoreV2Error
   >;
+  readonly getAgentAwarenessSnapshot: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<
+    { readonly snapshotSequence: number; readonly threads: ReadonlyArray<AgentAwarenessThread> },
+    ProjectionStoreV2Error
+  >;
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
@@ -979,6 +986,17 @@ type ShellPendingTurnItemRow = PayloadRow & {
   readonly thread_id: string;
   readonly owning_provider_instance_id: string | null;
 };
+
+export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
+  Pick<
+    OrchestrationV2ThreadShell,
+    | "projectId"
+    | "latestRunCompletedAt"
+    | "archivedAt"
+    | "activeRunId"
+    | "latestRunId"
+    | "hasActionableProposedPlan"
+  >;
 
 type ShellThreadRow = {
   readonly thread_id: string;
@@ -6077,7 +6095,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         familyOf,
         worktreePath,
         threadIds,
-      }: ShellSnapshotOptions = {},
+        listedOnly = false,
+      }: ShellSnapshotOptions & { readonly listedOnly?: boolean } = {},
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -6259,7 +6278,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
             ) AND blocked.status = 'failed'
-            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
+            WHERE t.deleted_at IS NULL${
+              listedOnly
+                ? sql` AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+                    AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1`
+                : sql``
+            }${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`
             }${
               location === "active"
@@ -6990,6 +7014,74 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getAgentAwarenessSnapshot = Effect.fn("ProjectionStore.getAgentAwarenessSnapshot")(
+      function* (threadId?: ThreadId) {
+        const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const threadRows = yield* selectShellThreadRows(
+                threadId,
+                threadId === undefined ? { location: "active", listedOnly: true } : {},
+              );
+              const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
+              const providerThreadRows =
+                ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
+              const pendingTurnItemRows =
+                ids.length === 0
+                  ? []
+                  : yield* selectShellPendingTurnItemRows(
+                      ids,
+                      threadRows.flatMap((row) =>
+                        row.active_run_id !== null && row.active_run_status === "running"
+                          ? [row.active_run_id]
+                          : [],
+                      ),
+                    );
+              const sequenceRows = yield* sql<{ readonly snapshot_sequence: number | null }>`
+              SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
+              WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+            `;
+              return { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows };
+            }),
+          );
+        const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
+          yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
+        const threads = yield* Effect.forEach(threadRows, (row) =>
+          shellThreadStateFromRow({
+            row,
+            // Awareness never consumes timeline counts or inherited fork history.
+            runOrdinalsByThreadId: new Map(),
+            itemCountsByThreadId: new Map(),
+            shellItemCountsByThreadId: new Map(),
+            providerThreadsByThreadId,
+            pendingTurnItemsByThreadId,
+          }).pipe(
+            Effect.map((state): AgentAwarenessThread => ({
+              id: state.thread.id,
+              projectId: state.thread.projectId,
+              archivedAt: state.thread.archivedAt,
+              activeRunId: state.activeRunId,
+              latestRunId: state.latestRunId,
+              hasActionableProposedPlan: state.hasActionableProposedPlan,
+              title: state.thread.title,
+              lineage: state.thread.lineage,
+              modelSelection: state.thread.modelSelection,
+              settledOverride: state.thread.settledOverride,
+              updatedAt: state.updatedAt,
+              status: state.latestRunStatus,
+              activityRunStatus: state.activityRunStatus,
+              latestRunCompletedAt: state.latestRunCompletedAt,
+              latestRunStopRequested: state.latestRunStopRequested,
+              pendingRuntimeRequest: state.pendingRuntimeRequest,
+              pendingBackgroundTasks: state.pendingBackgroundTasks,
+            })),
+          ),
+        );
+        return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(readShellSnapshotRows(options))
@@ -7257,6 +7349,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     return {
       apply,
+      getAgentAwarenessSnapshot: readOnReader(getAgentAwarenessSnapshot),
       getShellSnapshot: readOnReader(getShellSnapshot),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),

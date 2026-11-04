@@ -28,6 +28,7 @@ import {
   TurnItemId,
   type ThreadPullRequestLink,
   isLiveSubagentShell,
+  isListedThreadLineage,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -96,8 +97,40 @@ const traceSqlStatements = () => {
 /** The shell index flags every live shell and matches its shells on the fields subscriber trims read. */
 const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
-  const shells = (yield* store.getShellSnapshot({ location: "active" })).threads;
+  const snapshot = yield* store.getShellSnapshot();
+  const shells = snapshot.threads;
   const index = yield* store.listActiveShellIndex();
+  const { tracer, statements, queryTransactions } = traceSqlStatements();
+  const activity = yield* store.getAgentAwarenessSnapshot().pipe(Effect.withTracer(tracer));
+  assert.equal(activity.snapshotSequence, snapshot.snapshotSequence);
+  const awareness = (thread: Parameters<typeof projectThreadAwarenessV2>[0]["thread"]) =>
+    projectThreadAwarenessV2({
+      environmentId: EnvironmentId.make("test"),
+      project: { title: "Test" },
+      thread,
+    });
+  assert.deepEqual(
+    activity.threads.map(awareness),
+    shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(awareness),
+  );
+  assert.deepEqual(
+    activity.threads.map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+    shells
+      .filter((thread) => isListedThreadLineage(thread.lineage))
+      .map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+  );
+  assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
+  assert.isTrue(queryTransactions.every((transaction) => transaction !== null));
+  assert.equal(new Set(queryTransactions).size, 1);
+  for (const shell of [...shells, ...snapshot.archivedThreads]) {
+    const targeted = yield* store
+      .getAgentAwarenessSnapshot(shell.id)
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(targeted.threads.map(awareness), [awareness(shell)]);
+    assert.deepEqual(targeted.threads[0]?.archivedAt, shell.archivedAt);
+  }
+  assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
+
   const iso = (value: DateTime.Utc | null | undefined) =>
     value == null ? null : DateTime.formatIso(value);
   const trimmed = (
@@ -250,6 +283,7 @@ it.effect("routes full projection reads to readers and retains uncommitted write
       },
     });
     const { queries, trace } = traceSqlRouting();
+    yield* store.getAgentAwarenessSnapshot().pipe(trace);
     const projection = yield* store.getThreadProjection(threadId).pipe(trace);
     assert.equal(projection.thread.id, threadId);
     assert.deepEqual(
@@ -309,6 +343,12 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         SET payload_json = json_set(payload_json, '$.title', 'Uncommitted title')
         WHERE thread_id = ${threadId}
       `;
+        assert.equal(
+          (yield* store.getAgentAwarenessSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          )?.title,
+          "Uncommitted title",
+        );
         assert.equal(
           (yield* store.getThreadProjection(threadId)).thread.title,
           "Uncommitted title",
@@ -8013,6 +8053,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const project = { title: "Project" };
       const environmentId = EnvironmentId.make("environment:held-completion");
+      yield* assertShellIndexCoversShells();
       const held = yield* store.getThreadShell(threadId);
       assert.equal(
         held && projectThreadAwarenessV2({ environmentId, project, thread: held })?.phase,
@@ -8028,6 +8069,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         occurredAt: releasedAt,
         payload: { ...providerThread, pendingBackgroundTasks: [], updatedAt: releasedAt },
       });
+      yield* assertShellIndexCoversShells();
       const released = yield* store.getThreadShell(threadId);
       const state =
         released && projectThreadAwarenessV2({ environmentId, project, thread: released });
