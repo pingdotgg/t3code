@@ -69,7 +69,13 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
+    // A backtick fence's info string cannot hold a backtick, so ```` ```npm test``` ```` is
+    // inline code; read as an opener, it would flip every fence after it inside out.
+    const opensInlineCode =
+      openFence === null &&
+      fenceMatch?.[1]!.startsWith("`") === true &&
+      fenceMatch[2]!.includes("`");
+    if (fenceMatch !== null && !opensInlineCode) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
