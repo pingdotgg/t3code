@@ -1,8 +1,6 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
-import {
-  Hyperlink as SigilHyperlink,
-  Text as SigilText,
-} from "@alchemy.run/sigil";
+import { Hyperlink as SigilHyperlink, Text as SigilText } from "@alchemy.run/sigil";
 import type { ComponentProps } from "react";
 import { theme } from "../../../Util/Theme.ts";
 import { useCliEnvironment } from "./Environment.tsx";
@@ -18,15 +16,12 @@ export type TextTone =
   | "warning"
   | "danger";
 
-export interface TextProps extends Omit<
-  ComponentProps<typeof SigilText>,
-  "color"
-> {
+export interface TextProps extends Omit<ComponentProps<typeof SigilText>, "color"> {
   readonly tone?: TextTone;
   readonly color?: ComponentProps<typeof SigilText>["color"];
 }
 
-/** CliKit typography primitive. Consumers never import Sigil directly. */
+/** CLI typography primitive. Consumers never import Sigil directly. */
 export function Text({
   tone = "default",
   color,
@@ -45,10 +40,7 @@ export function Text({
       {...props}
       color={
         colors
-          ? (color ??
-            (tone === "default" || tone === "muted"
-              ? undefined
-              : theme.color[tone]))
+          ? (color ?? (tone === "default" || tone === "muted" ? undefined : theme.color[tone]))
           : undefined
       }
       backgroundColor={colors ? backgroundColor : undefined}
