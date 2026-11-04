@@ -19,7 +19,12 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderClosedIcon,
+  SquareArrowOutUpRightIcon,
+  TerminalIcon,
+} from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
 import {
@@ -191,6 +196,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
           : FolderClosedIcon,
       value: "file-manager",
       kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
+    },
+    {
+      Icon: TerminalIcon,
+      value: "terminal",
+      kind: "generic",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
