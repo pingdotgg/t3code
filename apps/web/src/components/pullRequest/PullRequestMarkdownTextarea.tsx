@@ -227,16 +227,12 @@ export function PullRequestMarkdownTextarea({
         role={completionScope === null ? undefined : "combobox"}
         aria-autocomplete={completionScope === null ? undefined : "list"}
         aria-expanded={completionScope === null ? undefined : open}
-        aria-controls={open ? listId : undefined}
+        aria-controls={open && candidates.length > 0 ? listId : undefined}
         aria-activedescendant={active ? optionId(active.token) : undefined}
         onChange={(event) => {
           onValueChange(event.target.value);
           syncCaret(event.target);
-          if (
-            detectPullRequestComposerTrigger(event.target.value, event.target.selectionStart) ===
-            null
-          )
-            setDismissedAt(null);
+          setDismissedAt(null);
         }}
         onSelect={(event) => {
           syncCaret(event.currentTarget);
