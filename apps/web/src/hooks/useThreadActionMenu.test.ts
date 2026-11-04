@@ -39,6 +39,11 @@ vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
 }));
+// The hook reads plugin actions for the menu; these tests cover the built-in items only.
+vi.mock("../pluginActions", () => ({
+  threadMenuPluginActions: () => [],
+  runPluginAction: async () => undefined,
+}));
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: async () => recordEffect("project-settings") }),
 }));
