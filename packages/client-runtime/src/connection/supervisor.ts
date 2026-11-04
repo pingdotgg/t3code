@@ -36,6 +36,7 @@ import {
   connectionRoutes,
   type ConnectionRouteKind,
   entryWithRoutes,
+  isBetterRouteKind,
   type ReportedEndpoint,
 } from "./routes.ts";
 
@@ -367,12 +368,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const now = yield* Clock.monotonicTimeNanos;
     const cooldowns = yield* Ref.get(routeCooldowns);
     const silent = yield* Ref.get(silentRoutes);
-    const better = connectionRoutes(latest)
-      .slice(0, current)
-      .filter((route) => {
-        const id = connectionRouteId(route.target);
-        return (cooldowns.get(id) ?? 0n) <= now && (silent.routes.get(id)?.until ?? 0n) <= now;
-      });
+    const routes = connectionRoutes(latest);
+    // Replacing a live socket costs a reconnect and a resync. An earlier route of the same
+    // kind, such as MagicDNS beside the tailnet IP, would buy nothing for that.
+    const better = routes.slice(0, current).filter((route) => {
+      const id = connectionRouteId(route.target);
+      return (
+        isBetterRouteKind(route, routes[current]!) &&
+        (cooldowns.get(id) ?? 0n) <= now &&
+        (silent.routes.get(id)?.until ?? 0n) <= now
+      );
+    });
     const results = yield* Effect.forEach(
       better,
       (route: ConnectionRoute) => driver.preflight(latest, route),
