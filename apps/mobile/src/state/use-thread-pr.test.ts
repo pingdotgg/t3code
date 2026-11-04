@@ -67,6 +67,48 @@ describe("presentThreadLinkedPullRequests", () => {
       ])?.accessibilityLabel,
     ).toBe("#7 merge request open");
   });
+
+  it("marks a conflicting open link and recovers when mergeable again", () => {
+    const conflicting = presentThreadLinkedPullRequests([
+      linkedPr(7, {
+        snapshot: {
+          state: "open",
+          title: "Change 7",
+          headBranch: "change-7",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-09-08T00:00:00.000Z",
+          mergeability: "conflicting",
+        },
+      }),
+    ]);
+    expect(conflicting).toMatchObject({
+      conflicting: true,
+      accessibilityLabel: "#7 pull request has conflicts",
+      textClassName: "text-danger-foreground",
+    });
+
+    const mergeable = presentThreadLinkedPullRequests([
+      linkedPr(7, {
+        snapshot: {
+          state: "open",
+          title: "Change 7",
+          headBranch: "change-7",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-09-08T00:00:00.000Z",
+          mergeability: "mergeable",
+        },
+      }),
+    ]);
+    expect(mergeable).toMatchObject({
+      conflicting: false,
+      accessibilityLabel: "#7 pull request open",
+      textClassName: "text-adaptive-emerald-600-400",
+    });
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {

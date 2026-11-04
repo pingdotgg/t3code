@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
+  PullRequestMergeability,
   PullRequestSummary,
   ThreadPullRequestKey,
   ThreadPullRequestLink,
@@ -17,7 +18,9 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
-export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
+export type ThreadPr = NonNullable<VcsStatusResult["pr"]> & {
+  readonly mergeability?: PullRequestMergeability;
+};
 
 export interface ThreadPrPresentation {
   readonly number: number;
@@ -25,6 +28,7 @@ export interface ThreadPrPresentation {
   readonly kind: "pull-request" | "stack";
   readonly others: number;
   readonly isDraft: boolean;
+  readonly conflicting: boolean;
   readonly updatedAt: string | null;
   readonly url: string;
   readonly changeRequest: ChangeRequestTerminology;
@@ -39,24 +43,45 @@ const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   closed: "text-foreground-muted",
 };
 
+const CONFLICT_TEXT_CLASS = "text-danger-foreground";
+
+function isConflictingOpenPr(input: {
+  readonly state: ThreadPr["state"] | null;
+  readonly isDraft: boolean;
+  readonly mergeability?: PullRequestMergeability | undefined;
+}) {
+  return input.state === "open" && !input.isDraft && input.mergeability === "conflicting";
+}
+
 export function presentThreadPr(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): ThreadPrPresentation {
   const { changeRequest } = sourceControlClients.get(provider?.kind);
   const isDraft = pr.state === "open" && pr.isDraft === true;
+  const conflicting = isConflictingOpenPr({
+    state: pr.state,
+    isDraft,
+    mergeability: pr.mergeability,
+  });
+  const statusLabel = conflicting ? "has conflicts" : isDraft ? "draft" : pr.state;
   return {
     kind: "pull-request",
     others: 0,
     number: pr.number,
     state: pr.state,
     isDraft,
+    conflicting,
     updatedAt: pr.updatedAt ?? null,
     url: pr.url,
     changeRequest,
     label: String(pr.number),
-    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${isDraft ? "draft" : pr.state}`,
-    textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
+    accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${statusLabel}`,
+    textClassName: isDraft
+      ? "text-foreground-muted"
+      : conflicting
+        ? CONFLICT_TEXT_CLASS
+        : PR_STATE_TEXT_CLASS[pr.state],
   };
 }
 
@@ -79,18 +104,33 @@ export function presentThreadLinkedPullRequests(
   const isDraft = isMultiple
     ? badge.state === "draft"
     : snapshot?.isDraft === true && state === "open";
+  const conflicting =
+    !isMultiple &&
+    isConflictingOpenPr({
+      state,
+      isDraft,
+      mergeability: snapshot?.mergeability,
+    });
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
       : linkedCount !== null
         ? `+${linkedCount}`
         : String(link.number);
+  const statusLabel = conflicting
+    ? "has conflicts"
+    : state === null
+      ? "status pending"
+      : isDraft
+        ? "draft"
+        : state;
   return {
     kind: badge.kind,
     others: badge.kind === "pull-request" ? badge.others : 0,
     number: link.number,
     state,
     isDraft,
+    conflicting,
     updatedAt: snapshot?.updatedAt ?? null,
     url: link.url,
     changeRequest,
@@ -100,13 +140,15 @@ export function presentThreadLinkedPullRequests(
         ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
           ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
-          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
+          : `#${link.number} ${changeRequest.singular} ${statusLabel}`,
     textClassName:
       state === null || isDraft
         ? "text-foreground-muted"
-        : isMultiple && state === "closed"
-          ? "text-adaptive-rose-600-400"
-          : PR_STATE_TEXT_CLASS[state],
+        : conflicting
+          ? CONFLICT_TEXT_CLASS
+          : isMultiple && state === "closed"
+            ? "text-adaptive-rose-600-400"
+            : PR_STATE_TEXT_CLASS[state],
   };
 }
 
