@@ -1,4 +1,11 @@
-import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type MouseEventHandler,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
@@ -23,6 +30,8 @@ interface PreviewPanelShellProps {
   widthStorageKey?: string;
   defaultWidth?: number;
   children: ReactNode;
+  onMouseUpCapture?: MouseEventHandler<HTMLDivElement>;
+  onAuxClickCapture?: MouseEventHandler<HTMLDivElement>;
 }
 
 export function PreviewPanelShell(props: PreviewPanelShellProps) {
@@ -117,6 +126,8 @@ function PreviewPanelShellFrame(
   return (
     <div
       ref={attachHost}
+      onMouseUpCapture={props.onMouseUpCapture}
+      onAuxClickCapture={props.onAuxClickCapture}
       {...(props.workspaceArea ? panelArea : {})}
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}

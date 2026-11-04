@@ -157,6 +157,9 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { previewBridge } from "./previewBridge";
+import { RightPanelTabs } from "../RightPanelTabs";
+import type { RightPanelSurface } from "~/rightPanelStore";
 import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
@@ -215,6 +218,100 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  it("keeps thumb-button navigation inside the active right panel", async () => {
+    setup();
+    const browser: RightPanelSurface = {
+      id: "browser:tab-1",
+      kind: "preview",
+      resourceId: "tab-1",
+    };
+    const diff: RightPanelSurface = { id: "diff", kind: "diff" };
+    const noop = () => {};
+    const panel = (activeSurfaceId: string) => (
+      <>
+        <button>Main chat</button>
+        <RightPanelTabs
+          mode="embedded"
+          keybindings={[]}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: true,
+            isWeb: true,
+            isDesktop: false,
+          })}
+          surfaces={[browser, diff]}
+          environmentId={TEST_THREAD_REF.environmentId}
+          activeSurfaceId={activeSurfaceId}
+          pendingSurfaceIds={new Set()}
+          previewSessions={{}}
+          desktopByTabId={{}}
+          terminalLabelsById={new Map()}
+          onActivate={noop}
+          onCloseSurface={noop}
+          onCloseOtherSurfaces={noop}
+          onCloseSurfacesToRight={noop}
+          onCloseAllSurfaces={noop}
+          onCopyFilePath={noop}
+          onAddBrowser={noop}
+          onAddBrowserInProfile={noop}
+          onAddTerminal={noop}
+          onAddDiff={noop}
+          onAddFiles={noop}
+          onAddPullRequest={noop}
+          onAddPullRequests={noop}
+          onAddDevice={noop}
+          browserAvailable
+          terminalAvailable={false}
+          diffAvailable
+          filesAvailable={false}
+          pullRequestAvailable={false}
+          pullRequestsAvailable={false}
+          deviceAvailable={false}
+        >
+          <PreviewView
+            threadRef={TEST_THREAD_REF}
+            tabId="tab-1"
+            visible={activeSurfaceId === browser.id}
+          />
+          <PreviewView
+            threadRef={{ ...TEST_THREAD_REF, environmentId: EnvironmentId.make("other") }}
+            tabId="tab-1"
+            visible
+          />
+        </RightPanelTabs>
+      </>
+    );
+    await using screen = await render(panel(browser.id));
+    const press = (target: Element, type: string, button: number) => {
+      const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const tabbar = screen.container.querySelector("[data-right-panel-tabbar]")!;
+    const address = screen.getByRole("textbox").elements()[0]!;
+    for (const target of [tabbar, address]) {
+      for (const button of [3, 4]) {
+        expect(press(target, "mouseup", button)).toBe(true);
+        expect(press(target, "auxclick", button)).toBe(true);
+      }
+    }
+    expect(previewBridge!.goBack).toHaveBeenCalledTimes(2);
+    expect(previewBridge!.goForward).toHaveBeenCalledTimes(2);
+    expect(previewBridge!.goBack).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+    expect(previewBridge!.goForward).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+    for (const button of [0, 1, 2]) expect(press(tabbar, "mouseup", button)).toBe(false);
+    expect(press(screen.getByRole("button", { name: "Main chat" }).element(), "mouseup", 3)).toBe(
+      false,
+    );
+
+    await screen.rerender(panel(diff.id));
+    for (const button of [3, 4]) expect(press(tabbar, "mouseup", button)).toBe(true);
+    expect(previewBridge!.goBack).toHaveBeenCalledTimes(2);
+    expect(previewBridge!.goForward).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {

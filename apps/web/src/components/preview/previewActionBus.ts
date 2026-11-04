@@ -1,10 +1,13 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+
 export type PreviewAction =
   | "toggle-panel"
   | "refresh"
   | "focus-url"
   | "zoom-in"
   | "zoom-out"
-  | "reset-zoom";
+  | "reset-zoom"
+  | { type: "history"; environmentId: EnvironmentId; tabId: string; delta: -1 | 1 };
 
 const EVENT_NAME = "t3code:preview-action";
 
@@ -17,7 +20,7 @@ export function subscribePreviewAction(listener: (action: PreviewAction) => void
   if (typeof window === "undefined") return () => {};
   const handler = (event: Event) => {
     const detail = (event as CustomEvent<PreviewAction>).detail;
-    if (typeof detail === "string") listener(detail);
+    if (typeof detail === "string" || detail?.type === "history") listener(detail);
   };
   window.addEventListener(EVENT_NAME, handler);
   return () => window.removeEventListener(EVENT_NAME, handler);

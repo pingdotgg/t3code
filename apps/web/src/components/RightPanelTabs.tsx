@@ -99,6 +99,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -1024,6 +1025,25 @@ function RightPanelTab(
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const handleHistoryMouseButton = (event: ReactMouseEvent) => {
+    if (event.button !== 3 && event.button !== 4) return;
+    // Chromium navigates the host document on mouseup unless the panel cancels it.
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+      event.type === "mouseup" &&
+      props.environmentId &&
+      focusedSurface?.kind === "preview" &&
+      focusedSurface.resourceId
+    ) {
+      dispatchPreviewAction({
+        type: "history",
+        environmentId: props.environmentId,
+        tabId: focusedSurface.resourceId,
+        delta: event.button === 3 ? -1 : 1,
+      });
+    }
+  };
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -1317,6 +1337,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   return (
     <PreviewPanelShell
+      onMouseUpCapture={handleHistoryMouseButton}
+      onAuxClickCapture={handleHistoryMouseButton}
       workspaceArea
       workspaceFocusKey={`panel:${props.environmentId}:${props.activeSurfaceId ?? "empty"}`}
       workspaceLabel={

@@ -836,6 +836,13 @@ export function PreviewView({
   // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
+      if (typeof action !== "string") {
+        if (action.environmentId !== threadRef.environmentId || action.tabId !== tabId) return;
+        if (serverInputDisabled) return;
+        if (action.delta === -1) handleBack();
+        else handleForward();
+        return;
+      }
       switch (action) {
         case "refresh":
           handleRefresh();
