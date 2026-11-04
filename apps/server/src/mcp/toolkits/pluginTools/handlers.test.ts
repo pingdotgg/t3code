@@ -177,7 +177,7 @@ it.effect(
       Effect.scoped,
       Effect.provide(
         McpHttpServer.layerPluginToolsToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(tools),
           Layer.provide(threads),
         ),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -452,7 +453,7 @@ const answerInFlight = (release: Deferred.Deferred<Schema.Json>): InvokeResult =
 const withOrchestration = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(orchestration));
 
-it.layer(NodeServices.layer)("PluginApprovals", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginApprovals", (it) => {
   describe("answers", () => {
     it.effect("records an approve or deny once, attributed to the plugin, before the user", () =>
       withOrchestration(

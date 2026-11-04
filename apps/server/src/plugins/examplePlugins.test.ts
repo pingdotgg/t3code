@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -149,7 +151,7 @@ const statuses = (store: ContributionStatusStore.ContributionStatusStoreShape) =
 const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistence.layerMemory), Effect.scoped);
 
-it.layer(NodeServices.layer)("example plugins", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("example plugins", (it) => {
   describe("turn-notifier", () => {
     it.effect("preserves each turn outcome when long thread names are truncated", () =>
       withDatabase(
