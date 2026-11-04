@@ -40,6 +40,54 @@ export function parseLinuxCpu(stat: string): { idle: number; total: number } | n
  */
 export const loadAverageCountsDiskWait = (platform: NodeJS.Platform) => platform === "linux";
 
+/** Cores a cgroup CPU quota allows, or null when it sets none. */
+export function cpuQuotaCores(quota: number, period: number): number | null {
+  return quota > 0 && period > 0 ? quota / period : null;
+}
+
+const readIfPresent = (path: string) => {
+  try {
+    return NodeFS.readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+/** A controller file from this process's own cgroup, which is not the mount root under systemd. */
+function selfCgroupFile(controller: string, file: string): string | undefined {
+  for (const line of (readIfPresent("/proc/self/cgroup") ?? "").split("\n")) {
+    const [, controllers = "", path = ""] = line.split(":");
+    // A cgroup v2 line names no controllers; a v1 line lists them in no fixed order.
+    const hierarchy = controllers === "" ? ["unified"] : controllers.split(",");
+    if (!hierarchy.includes(controller)) continue;
+    const found = readIfPresent(`/sys/fs/cgroup${path}/${file}`);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+// availableParallelism() rounds a fractional quota up, so a container held to half a core on a
+// single-core host still reports one, and host-wide busy time looks idle while it is throttled.
+function cgroupCpuQuotaCores(): number | null {
+  const v2 = selfCgroupFile("unified", "cpu.max") ?? readIfPresent("/sys/fs/cgroup/cpu.max");
+  if (v2 !== undefined) {
+    const [quota, period] = v2.trim().split(/\s+/);
+    return quota === undefined || quota === "max"
+      ? null
+      : cpuQuotaCores(Number(quota), Number(period));
+  }
+  const cpu = (file: string) => selfCgroupFile("cpu", file);
+  const quota = cpu("cpu.cfs_quota_us");
+  if (quota === undefined) return null;
+  return cpuQuotaCores(Number(quota), Number(cpu("cpu.cfs_period_us") ?? "100000"));
+}
+
+/** Whether host-wide core time describes what this process can use. */
+export const cpuLimitCoversHost = (cores: number) => {
+  const quota = cgroupCpuQuotaCores();
+  return quota === null || quota >= cores;
+};
+
 export interface CpuTimes {
   readonly idle: number;
   readonly total: number;

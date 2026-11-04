@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { cpuBusyBetween, parseLinuxCpu } from "./HostResources.ts";
+import { cpuBusyBetween, cpuQuotaCores, parseLinuxCpu } from "./HostResources.ts";
 
 const reading = (idle: number, total: number, count = 8) => ({ idle, total, count });
 
@@ -21,6 +21,18 @@ describe("parseLinuxCpu", () => {
 
   it("returns nothing for a line it cannot read", () => {
     assert.isNull(parseLinuxCpu("cpu 100 0 nonsense\n"));
+  });
+});
+
+describe("cpuQuotaCores", () => {
+  it("is the fraction of a core a quota allows", () => {
+    assert.strictEqual(cpuQuotaCores(50_000, 100_000), 0.5);
+    assert.strictEqual(cpuQuotaCores(400_000, 100_000), 4);
+  });
+
+  it("is nothing when no quota applies", () => {
+    assert.isNull(cpuQuotaCores(-1, 100_000));
+    assert.isNull(cpuQuotaCores(50_000, 0));
   });
 });
 
