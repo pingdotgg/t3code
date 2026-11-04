@@ -7,6 +7,11 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  GitStartCommitWorkflowInput,
+  GitStartCommitWorkflowResult,
+  GitCancelCommitWorkflowInput,
+} from "./gitCommitWorkflow.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -469,6 +474,8 @@ export const WS_METHODS = {
   vcsInit: "vcs.init",
 
   gitRunStackedAction: "git.runStackedAction",
+  gitStartCommitWorkflow: "git.startCommitWorkflow",
+  gitCancelCommitWorkflow: "git.cancelCommitWorkflow",
   gitListRewriteableCommits: "git.listRewriteableCommits",
   gitRewriteCommitMessages: "git.rewriteCommitMessages",
   gitRegeneratePullRequestDescription: "git.regeneratePullRequestDescription",
@@ -1506,6 +1513,17 @@ const WsGitListRewriteableCommitsRpc = Rpc.make(WS_METHODS.gitListRewriteableCom
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+const WsGitStartCommitWorkflowRpc = Rpc.make(WS_METHODS.gitStartCommitWorkflow, {
+  payload: GitStartCommitWorkflowInput,
+  success: GitStartCommitWorkflowResult,
+  error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+const WsGitCancelCommitWorkflowRpc = Rpc.make(WS_METHODS.gitCancelCommitWorkflow, {
+  payload: GitCancelCommitWorkflowInput,
+  success: Schema.Boolean,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsGitRewriteCommitMessagesRpc = Rpc.make(WS_METHODS.gitRewriteCommitMessages, {
   payload: GitRewriteCommitMessagesInput,
   success: GitRewriteCommitMessagesResult,
@@ -2191,6 +2209,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitListRewriteableCommitsRpc,
   WsGitRewriteCommitMessagesRpc,
+  WsGitStartCommitWorkflowRpc,
+  WsGitCancelCommitWorkflowRpc,
   WsGitRegeneratePullRequestDescriptionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,

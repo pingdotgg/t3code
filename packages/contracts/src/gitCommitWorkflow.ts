@@ -1,0 +1,37 @@
+import * as Schema from "effect/Schema";
+import { CommandId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+
+export const GitCommitWorkflowScope = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("working_tree"),
+    filePaths: Schema.optional(
+      Schema.Array(Schema.String.check(Schema.isNonEmpty())).check(Schema.isMinLength(1)),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("branch"),
+    baseRef: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  }),
+]);
+export type GitCommitWorkflowScope = typeof GitCommitWorkflowScope.Type;
+
+export const GitStartCommitWorkflowInput = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  cwd: TrimmedNonEmptyString,
+  expectedBranch: TrimmedNonEmptyString,
+  scope: GitCommitWorkflowScope,
+  instructions: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(10_000))),
+});
+export type GitStartCommitWorkflowInput = typeof GitStartCommitWorkflowInput.Type;
+
+export const GitStartCommitWorkflowResult = Schema.Struct({
+  summary: Schema.String,
+});
+export type GitStartCommitWorkflowResult = typeof GitStartCommitWorkflowResult.Type;
+
+export const GitCancelCommitWorkflowInput = Schema.Struct({
+  commandId: CommandId,
+  cwd: TrimmedNonEmptyString,
+});
+export type GitCancelCommitWorkflowInput = typeof GitCancelCommitWorkflowInput.Type;

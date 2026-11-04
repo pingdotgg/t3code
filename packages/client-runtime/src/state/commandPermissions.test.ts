@@ -69,6 +69,8 @@ const setup = Effect.gen(function* () {
 describe("command permissions", () => {
   it.effect.each([
     WS_METHODS.gitRewriteCommitMessages,
+    WS_METHODS.gitStartCommitWorkflow,
+    WS_METHODS.gitCancelCommitWorkflow,
     WS_METHODS.gitRegeneratePullRequestDescription,
   ])("requires the destination source-control grant for %s", (method) =>
     Effect.scoped(
