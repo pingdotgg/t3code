@@ -1,7 +1,11 @@
 import type { DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deviceHubReadiness, platformSetupStatus } from "./DeviceSetup";
+import {
+  deviceHubReadiness,
+  isAndroidDiscoveryUncertain,
+  platformSetupStatus,
+} from "./DeviceSetup";
 
 const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({
   hosts: [
@@ -47,6 +51,12 @@ describe("device setup guidance", () => {
         "ios",
       ).message,
     ).toContain("discovery reported a problem");
+    expect(
+      isAndroidDiscoveryUncertain({
+        ...state,
+        hostStatuses: { remote: { status: "ready", incompletePlatforms: ["ios", "android"] } },
+      }),
+    ).toBe(true);
   });
 
   it("counts a remote device host when this machine has no simulator tooling", () => {

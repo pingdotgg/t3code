@@ -754,6 +754,29 @@ it.effect("keeps every device when the hub does not answer the listing within 40
   }).pipe(Effect.scoped),
 );
 
+it.effect("does not open the pre-boot AVD when the post-boot listing times out", () =>
+  Effect.gen(function* () {
+    const hang = { listing: () => {} };
+    const { service, listing } = yield* fixture(Effect.sync(() => hang.listing()));
+    hang.listing = () => {
+      listing.hangs = true;
+    };
+    yield* service.configure({ enabled: true });
+    const opening = yield* service
+      .open({
+        threadId: ThreadId.make("boot-timeout"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip, Effect.forkScoped);
+    yield* Deferred.await(listing.requested);
+    yield* TestClock.adjust("40 seconds");
+    const error = yield* Fiber.join(opening);
+    expect(error._tag).toBe("DeviceNotFoundError");
+    expect((yield* service.state).sessions).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",

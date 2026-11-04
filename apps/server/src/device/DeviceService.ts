@@ -795,7 +795,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
         );
         state = yield* refresh(ready);
-        device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
+        // Retained entries predate the boot, so fall back to the pre-boot id only after a complete listing.
+        device =
+          findDevice(state, host.id, bootedId) ??
+          (state.hostStatuses[host.id]?.incompletePlatforms?.includes(device.platform)
+            ? undefined
+            : findDevice(state, host.id, device.id));
         if (!device) {
           return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
         }

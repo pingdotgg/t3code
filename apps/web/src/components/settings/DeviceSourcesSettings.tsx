@@ -115,10 +115,13 @@ function hostStatus(
   if (!state) return { tone: "pending", label: "Loading" };
   const status = state.hostStatuses[hostId];
   switch (status?.status) {
-    case "ready":
-      return status.androidDiscoveryIncomplete
-        ? { tone: "warning", label: "Android list may be incomplete", detail: status.detail }
-        : undefined;
+    case "ready": {
+      const incomplete = new Set(status.incompletePlatforms);
+      if (status.androidDiscoveryIncomplete) incomplete.add("android");
+      if (incomplete.size === 0) return undefined;
+      const list = incomplete.size > 1 ? "Device" : incomplete.has("ios") ? "iOS" : "Android";
+      return { tone: "warning", label: `${list} list may be incomplete`, detail: status.detail };
+    }
     case "installing":
     case "starting":
       return { tone: "pending", label: "Starting", detail: status.detail };

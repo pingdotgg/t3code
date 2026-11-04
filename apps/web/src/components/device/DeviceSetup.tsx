@@ -26,7 +26,9 @@ const agentDeviceDescription =
 
 export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
   Object.values(state.hostStatuses).some(
-    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+    (status) =>
+      status.status === "ready" &&
+      (status.androidDiscoveryIncomplete || status.incompletePlatforms?.includes("android")),
   );
 
 /**
