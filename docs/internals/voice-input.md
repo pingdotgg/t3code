@@ -46,6 +46,10 @@ at a time. Batch uploads carry their options in the body framing defined in
 the socket's first command. Model files and the selected model, hardware
 placement, and unload timeout are environment state in server settings.
 
+The Silero silence detector is optional. If its download fails, recordings use
+raw audio during the retry cooldown so a detector outage cannot block dictation.
+Explicitly installing a speech model also retries the detector without waiting.
+
 ## Cancellation and resource ownership
 
 Cancellation invalidates a result immediately, but resources stay owned until the

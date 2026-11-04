@@ -502,30 +502,33 @@ function EnvironmentModelsSection(props: {
   }
   const epoch = useRef(0);
   const refreshRevision = useRef(0);
-  const refresh = useStableCallback(async (connection: PreparedConnection) => {
-    const current = epoch.current;
-    const revision = ++refreshRevision.current;
-    try {
-      const [nextStatus, nextModels] = await Promise.all([
-        runtime.runPromise(getEnvironmentSpeechStatus(connection)),
-        runtime.runPromise(getEnvironmentSpeechModels(connection)),
-      ]);
-      if (current !== epoch.current || revision !== refreshRevision.current) return;
-      onStatus(connection, nextStatus);
-      setModels(nextModels.models);
-    } catch (error) {
-      if (current !== epoch.current || revision !== refreshRevision.current) return;
-      toastManager.add({
-        type: "error",
-        title: "Could not load transcription models",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
+  const refresh = useStableCallback(
+    async (connection: PreparedConnection, mode: "foreground" | "progress") => {
+      const current = epoch.current;
+      const revision = ++refreshRevision.current;
+      try {
+        const [nextStatus, nextModels] = await Promise.all([
+          runtime.runPromise(getEnvironmentSpeechStatus(connection)),
+          runtime.runPromise(getEnvironmentSpeechModels(connection)),
+        ]);
+        if (current !== epoch.current || revision !== refreshRevision.current) return;
+        onStatus(connection, nextStatus);
+        setModels(nextModels.models);
+      } catch (error) {
+        if (mode === "progress") return;
+        if (current !== epoch.current || revision !== refreshRevision.current) return;
+        toastManager.add({
+          type: "error",
+          title: "Could not load transcription models",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's model catalog when its connection becomes available
   useEffect(() => {
     epoch.current += 1;
-    void refresh(prepared);
+    void refresh(prepared, "foreground");
     return () => {
       epoch.current += 1;
     };
@@ -539,7 +542,7 @@ function EnvironmentModelsSection(props: {
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
-      await refresh(prepared);
+      await refresh(prepared, "progress");
       if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000);
     };
     void poll();
@@ -567,7 +570,7 @@ function EnvironmentModelsSection(props: {
     if (current === epoch.current) {
       if (downloadId) setRequestedDownload(null);
       else setBusy(false);
-      await refresh(prepared);
+      await refresh(prepared, "foreground");
     }
   };
   const controlsDisabled = busy || downloading || !canManage;
