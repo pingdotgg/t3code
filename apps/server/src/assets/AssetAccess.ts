@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import {
   hostPreviewMimeTypeFromExtension,
+  modelPreviewFormat,
   isWorkspaceAudioPreviewPath,
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
@@ -57,6 +58,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ModelPreviews from "./ModelPreviews.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -268,6 +270,18 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
     : null;
 });
 
+// Browsers cannot draw 3D files; serve a PNG preview of them instead.
+const modelPreviewAsset = Effect.fn("AssetAccess.modelPreviewAsset")(function* (
+  filePath: string,
+  identity?: { readonly device: string; readonly inode: string },
+) {
+  const modelPreviews = yield* ModelPreviews.ModelPreviews;
+  const png = yield* modelPreviews.png(filePath, identity);
+  return png
+    ? ({ kind: "bytes", bytes: png, mimeType: "image/png" } satisfies ResolvedAsset)
+    : null;
+});
+
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
 ) {
@@ -388,8 +402,13 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       });
     }
     const download =
-      input.resource._tag === "media-file" && input.resource.disposition === "attachment";
-    if (!download && hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+      (input.resource._tag === "media-file" || input.resource._tag === "draft-workspace-file") &&
+      input.resource.disposition === "attachment";
+    if (
+      !download &&
+      hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null &&
+      modelPreviewFormat(canonicalFile) === null
+    ) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
     const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
@@ -459,10 +478,12 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             }),
         ),
       );
+    // 3D files are served as a preview image, which needs the file's exact identity.
     const isDraftMedia =
-      input.resource._tag === "draft-workspace-file" &&
-      (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
-        isWorkspaceVideoPreviewPath(resolved.relativePath));
+      (input.resource._tag === "draft-workspace-file" &&
+        (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
+          isWorkspaceVideoPreviewPath(resolved.relativePath))) ||
+      modelPreviewFormat(resolved.relativePath) !== null;
     if (!isDraftMedia && !isWorkspacePreviewEntryPath(resolved.relativePath)) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
@@ -657,7 +678,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
       const inlinePreviewMimeType =
         input.resource.disposition === "inline" && extension !== null
-          ? inlinePreviewMimeTypeForExtension(extension)
+          ? modelPreviewFormat(`.${extension}`) !== null
+            ? "image/png"
+            : inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       if (!isGenericFile) {
         imageDimensions = yield* fileSystem.realPath(attachmentPath).pipe(
@@ -912,16 +935,18 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
-    return Option.isSome(info) && info.value.type === "File"
-      ? ({
-          kind: "file",
-          path: attachmentPath,
-          ...(claims.download ? { download: true } : {}),
-          ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
-          ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
-          ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
-        } satisfies ResolvedAsset)
-      : null;
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    if (!claims.download && modelPreviewFormat(attachmentPath) !== null) {
+      return yield* modelPreviewAsset(attachmentPath);
+    }
+    return {
+      kind: "file",
+      path: attachmentPath,
+      ...(claims.download ? { download: true } : {}),
+      ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
+      ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+      ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
+    } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "project-favicon") {
@@ -986,6 +1011,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     if (canonicalFile !== claims.filePath) return null;
+    if (!claims.download && modelPreviewFormat(canonicalFile) !== null) {
+      return yield* modelPreviewAsset(canonicalFile, claims);
+    }
     const mimeType = claims.download
       ? "application/octet-stream"
       : hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
