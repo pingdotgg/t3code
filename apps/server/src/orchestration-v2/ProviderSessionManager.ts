@@ -497,7 +497,34 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
-                yield* mcpSessions.set(credential.config);
+                yield* mcpSessions.set({
+                  ...credential.config,
+                  // Matches planDelegatedCompletionDelivery: only tasks whose result still wakes this thread.
+                  hasPendingWake: projectionStore
+                    .getThreadRecords(threadId, ["runs", "subagents"])
+                    .pipe(
+                      Effect.map(
+                        ({ thread, runs, subagents }) =>
+                          thread.archivedAt === null &&
+                          thread.deletedAt === null &&
+                          subagents.some((task) => {
+                            const run = runs.find((candidate) => candidate.id === task.runId);
+                            const delivery = task.completionDelivery?.state;
+                            return (
+                              task.origin === "app_owned" &&
+                              isOrchestrationV2WorkActive(task.status) &&
+                              run !== undefined &&
+                              (run.delegatedCompletion === undefined ||
+                                run.delegatedCompletion.disposition === "open") &&
+                              delivery !== "acknowledged" &&
+                              delivery !== "delivered" &&
+                              delivery !== "disposed"
+                            );
+                          }),
+                      ),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

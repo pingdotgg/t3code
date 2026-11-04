@@ -67,6 +67,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -17889,6 +17890,83 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
           { objective: condition, status: "complete", checks: 1 },
         ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("ends a goal check without re-prompting while T3 work will wake the thread", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const pendingWake = yield* Ref.make(true);
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-goal-wake"),
+          threadId: harness.threadId,
+          providerSessionId: "mcp-session-goal-wake",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-claude-token",
+          browserToolsAvailable: true,
+          hasPendingWake: Ref.get(pendingWake),
+        });
+        const stop = Effect.promise(() =>
+          Promise.all(
+            (harness.getOpenedOptions()?.hooks?.Stop ?? []).flatMap((matcher) =>
+              matcher.hooks.map((hook) =>
+                hook(
+                  {
+                    hook_event_name: "Stop",
+                    stop_hook_active: true,
+                    session_id: WAKE_NATIVE_SESSION,
+                    transcript_path: "/transcript.jsonl",
+                    cwd: "/workspace",
+                  },
+                  undefined,
+                  { signal: new AbortController().signal },
+                ),
+              ),
+            ),
+          ),
+        );
+        const condition = "the delegated review is addressed";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-wake-attempt"),
+            text: `/goal ${condition}`,
+            attachments: [],
+          }),
+        );
+        // Without a goal, Stop keeps Claude Code's own behavior.
+        assert.deepEqual(yield* stop, [{}]);
+        yield* harness.offerAndWait(syntheticFrame("goal-wake-set", `Goal set: ${condition}`));
+        assert.deepEqual(yield* stop, [{ continue: false }]);
+        // The turn ends without an error and the goal waits for the wake.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "goal-wake-result",
+            result: "Waiting for the review.",
+            terminalReason: "stop_hook_prevented",
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.equal(goalStatuses(harness.events).at(-1)?.status, "active");
+        // Once nothing will wake the thread, the goal check runs as before.
+        yield* Ref.set(pendingWake, false);
+        assert.deepEqual(yield* stop, [{}]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
