@@ -5,8 +5,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 
-import { mcpToolSession, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+import { mcpToolSession, runAcpMcpCliFastPath, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
 
 function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
   const input = new NodeStream.PassThrough();
@@ -38,6 +39,54 @@ function pendingFetch(started: Deferred.Deferred<AbortSignal | undefined>) {
 }
 
 describe("AcpMcpStdioBridge", () => {
+  it("prints structured results once in the terminal while retaining other content and errors", async () => {
+    const originalEnvironment = process.env;
+    using _environment = {
+      [Symbol.dispose]: () => {
+        process.env = originalEnvironment;
+      },
+    };
+    process.env = {
+      ...originalEnvironment,
+      T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+      T3_ACP_MCP_AUTHORIZATION: "Bearer bridge-test",
+    };
+    const structuredContent = { taskId: "task-1", status: "failed" };
+    const explanation = { type: "text", text: "The command failed." };
+    const image = { type: "image", data: "image-data", mimeType: "image/png" };
+    const result = {
+      structuredContent,
+      content: [{ type: "text", text: JSON.stringify(structuredContent) }, explanation, image],
+      isError: true,
+    };
+    using fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const message = JSON.parse(String(init?.body)) as { id?: string; method: string };
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return Response.json(
+        {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: message.method === "initialize" ? { protocolVersion: "2025-06-18" } : result,
+        },
+        { headers: { "mcp-session-id": "session-42" } },
+      );
+    });
+    using output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runAcpMcpCliFastPath("acp-mcp-call", ["task_status", '{"taskId":"task-1"}']);
+
+    expect(output).toHaveBeenCalledExactlyOnceWith(
+      `${JSON.stringify({ ...result, content: [explanation, image] })}\n`,
+    );
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:1/mcp",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it.effect("forwards requests and replays the session id and protocol version", () =>
     Effect.gen(function* () {
       const { input, written, requests, bridge } = makeHarness((request) => {

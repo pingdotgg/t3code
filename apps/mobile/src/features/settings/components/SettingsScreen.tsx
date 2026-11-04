@@ -6,7 +6,6 @@ import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
 import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
-import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
 import { useAdaptiveWorkspaceLayout } from "../../layout/adaptive-workspace-context";
@@ -18,7 +17,7 @@ import {
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search" | "menus" | "options"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
@@ -27,7 +26,6 @@ export function SettingsScreen(
   const navigation = useNavigation();
   const route = useRoute();
   const workspace = useWorkspaceTabs();
-  const surface = useWorkspaceSurface();
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -37,9 +35,7 @@ export function SettingsScreen(
     props.workspaceRoot ||
     (Platform.OS === "android" && workspace !== null && route.name === "Settings");
 
-  // Settings' grouped cards only lift off the screen surface, so the folded Duo doesn't take
-  // the workspace's drawer surface here.
-  const surfaceClassName = cover ? "bg-screen" : workspaceRoot ? surface.className : "bg-sheet";
+  const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
   return (
     <View collapsable={false} className={`flex-1 ${surfaceClassName}`}>
@@ -48,13 +44,16 @@ export function SettingsScreen(
         actions={props.actions}
         search={props.search}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
-        sidebar={false}
+        // iOS screens put their filter menus in native header items themselves.
+        menus={Platform.OS === "android" ? props.menus : undefined}
+        sheet={Platform.OS === "android" && props.formSheet}
         onBack={workspaceRoot ? undefined : () => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
+        hideBottomBorder={!props.formSheet || Platform.OS === "android"}
+        options={props.options}
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
-          {props.formSheet ? (
+          {props.formSheet && Platform.OS !== "android" ? (
             props.children
           ) : (
             <SettingsScreenContent
