@@ -79,6 +79,10 @@ describe("chat math parsing", () => {
 
   it.each([
     ["$skill prompt", []],
+    ["$skill $another prompt", []],
+    ["$skill budget $20", []],
+    ["$skill formula $x$", ["x"]],
+    ["$skill display $$ x $$", ["x"]],
     ["$x$ prompt", ["x"]],
     ["$$x$$", ["x"]],
     ["\\(x\\)", ["x"]],
