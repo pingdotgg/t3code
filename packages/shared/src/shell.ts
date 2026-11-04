@@ -760,21 +760,62 @@ export function npmShimExecutable(
   return isFile(executable) ? executable : undefined;
 }
 
-export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
+export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => Promise<string | undefined>;
+
+const XCRUN_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 // xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
-function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
-  try {
-    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return NodePath.isAbsolute(located) ? located : undefined;
-  } catch {
-    return undefined;
-  }
+// It takes ~15 ms and reruns when the cached answer expires, so it must not block the event loop.
+// The deadline also covers a descendant that keeps stdout open after xcrun exits.
+export function locateXcodeGitWithXcrun(
+  env: NodeJS.ProcessEnv,
+  options: { readonly xcrun?: string; readonly timeoutMs?: number } = {},
+): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = NodeChildProcess.spawn(options.xcrun ?? "/usr/bin/xcrun", ["--find", "git"], {
+        env,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resolve(undefined);
+      return;
+    }
+    const settle = (located: string | undefined) => {
+      clearTimeout(deadline);
+      resolve(located);
+    };
+    // An xcrun that ignores SIGTERM must neither outlive the lookup nor hold the server open.
+    const giveUp = () => {
+      child.kill("SIGKILL");
+      child.unref();
+      child.stdout?.destroy();
+      settle(undefined);
+    };
+    // @effect-diagnostics-next-line globalTimers:off - a Promise-based lookup outside any fiber.
+    const deadline = setTimeout(giveUp, options.timeoutMs ?? 5_000);
+    deadline.unref();
+    const chunks: Array<Buffer> = [];
+    let bytes = 0;
+    child.stdout?.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > XCRUN_MAX_OUTPUT_BYTES) {
+        giveUp();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.once("error", () => settle(undefined));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        settle(undefined);
+        return;
+      }
+      const located = Buffer.concat(chunks).toString("utf8").trim();
+      settle(NodePath.isAbsolute(located) ? located : undefined);
+    });
+  });
 }
 
 export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
@@ -783,6 +824,26 @@ export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
 );
 
 const MACOS_GIT_SHIM = "/usr/bin/git";
+
+// Callers that miss the cache together wait for one xcrun run instead of starting their own.
+const xcodeGitLookups = new WeakMap<
+  Map<string, CommandResolutionCacheEntry>,
+  Map<string, Promise<string | null>>
+>();
+
+async function lookupXcodeGit(
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver,
+  locateXcodeGit: XcodeGitLocator,
+): Promise<string | null> {
+  const located =
+    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM
+      ? await locateXcodeGit(env).catch(() => undefined)
+      : undefined;
+  return located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+    ? located
+    : null;
+}
 
 /**
  * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
@@ -812,13 +873,24 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   ) {
     return cached.resolvedPath ?? "git";
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
-  const realGit =
-    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
-      ? located
-      : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  let lookups = xcodeGitLookups.get(cache);
+  if (lookups === undefined) {
+    lookups = new Map();
+    xcodeGitLookups.set(cache, lookups);
+  }
+  let lookup = lookups.get(cacheKey);
+  if (lookup === undefined) {
+    const pending = lookups;
+    lookup = lookupXcodeGit(env, resolveExecutable, locateXcodeGit)
+      .then((realGit) => {
+        cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+        return realGit;
+      })
+      .finally(() => pending.delete(cacheKey));
+    pending.set(cacheKey, lookup);
+  }
+  const shared = lookup;
+  const realGit = yield* Effect.promise(() => shared);
   return realGit ?? "git";
 });
 
