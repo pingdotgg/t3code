@@ -46,6 +46,9 @@ export type ProjectCloneSubscribeInput = typeof ProjectCloneSubscribeInput.Type;
 export const ProjectCloneListEvent = Schema.Array(ProjectCloneSnapshot);
 export type ProjectCloneListEvent = typeof ProjectCloneListEvent.Type;
 
+export const ProjectCloneExistingDestination = Schema.Literals(["replace", "combine"]);
+export type ProjectCloneExistingDestination = typeof ProjectCloneExistingDestination.Type;
+
 export const ProjectCloneStartInput = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -55,6 +58,7 @@ export const ProjectCloneStartInput = Schema.Struct({
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
   protocol: Schema.optional(SourceControlCloneProtocol),
+  existingDestination: Schema.optional(ProjectCloneExistingDestination),
 });
 export type ProjectCloneStartInput = typeof ProjectCloneStartInput.Type;
 

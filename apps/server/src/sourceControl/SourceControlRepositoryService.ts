@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
@@ -11,6 +12,7 @@ import {
   SourceControlProviderError,
   SourceControlRepositoryError,
   type GitCommandFailureReason,
+  type ProjectCloneExistingDestination,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
@@ -46,6 +48,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly prepareClone: (
       input: SourceControlCloneRepositoryInput,
+      options?: SourceControlCloneOptions,
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
@@ -68,6 +71,7 @@ export interface SourceControlPreparedClone {
 }
 
 export interface SourceControlCloneOptions {
+  readonly existingDestination?: ProjectCloneExistingDestination | undefined;
   readonly onProgress?: (line: GitCloneProgressLine) => Effect.Effect<void>;
   /** Overrides the default clone budget; `null` disables the deadline. */
   readonly timeoutMs?: number | null;
@@ -253,7 +257,7 @@ export const make = Effect.gen(function* () {
   );
 
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
-    function* (destinationPath: string) {
+    function* (destinationPath: string, existingDestination?: ProjectCloneExistingDestination) {
       const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
       if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
@@ -269,11 +273,39 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
-        if (entries.length > 0) {
+        if (existingDestination) {
+          const info = yield* fileSystem.lstat(normalizedDestination);
+          const realDestination = yield* fileSystem.realPath(normalizedDestination);
+          const home = yield* HostProcess.HomeDirectory;
+          const protectedPaths = [home, config.cwd, config.baseDir];
+          const containsProtectedPath = protectedPaths.some((protectedPath) => {
+            const relative = path.relative(realDestination, path.resolve(protectedPath));
+            return (
+              relative === "" ||
+              (!relative.startsWith(`..${path.sep}`) &&
+                relative !== ".." &&
+                !path.isAbsolute(relative))
+            );
+          });
+          if (
+            info.type !== "Directory" ||
+            containsProtectedPath ||
+            realDestination.split(path.sep).some((segment) => segment.toLowerCase() === ".git")
+          ) {
+            return yield* new SourceControlRepositoryError({
+              operation: "cloneRepository",
+              provider: SourceControlProviderKind.make("unknown"),
+              detail:
+                "Choose a project folder, outside the home folder and running server directories.",
+            });
+          }
+        }
+        if (entries.length > 0 && !existingDestination) {
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
             provider: SourceControlProviderKind.make("unknown"),
             detail: "Destination path already exists and is not empty.",
+            reason: "destination_exists",
           });
         }
       } else {
@@ -294,8 +326,12 @@ export const make = Effect.gen(function* () {
 
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
+    options?: SourceControlCloneOptions,
   ) {
-    const preparedDestination = yield* prepareDestination(input.destinationPath);
+    const preparedDestination = yield* prepareDestination(
+      input.destinationPath,
+      options?.existingDestination,
+    );
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
     let provider: SourceControlProviderKind =
@@ -317,6 +353,43 @@ export const make = Effect.gen(function* () {
         provider,
         detail: "Enter a repository path or clone URL before cloning.",
       });
+    }
+
+    if (options?.existingDestination && !/^(?:[a-z][a-z0-9+.-]*:\/\/|[^/\\]+:)/i.test(remoteUrl)) {
+      remoteUrl = path.resolve(
+        preparedDestination.parentPath,
+        expandHomePath(remoteUrl, yield* HostProcess.HomeDirectory),
+      );
+    }
+
+    if (
+      options?.existingDestination === "combine" &&
+      (yield* fileSystem.exists(path.join(preparedDestination.destinationPath, ".git")))
+    ) {
+      const remote = yield* git.execute({
+        operation: "SourceControlRepositoryService.combineRepository",
+        cwd: preparedDestination.destinationPath,
+        args: ["remote", "get-url", "origin"],
+      });
+      const protocol = cloneUrlProtocol(remoteUrl);
+      const existingRemote = redactRemoteUrl(
+        protocol
+          ? (cloneUrlForProtocol(remote.stdout.trim(), protocol) ?? remote.stdout.trim())
+          : remote.stdout.trim(),
+      );
+      const expectedRemote = redactRemoteUrl(remoteUrl);
+      const matches = protocol
+        ? existingRemote.replace(/(?:\.git)?\/$|\.git$/, "") ===
+          expectedRemote.replace(/(?:\.git)?\/$|\.git$/, "")
+        : existingRemote === expectedRemote;
+      if (!matches) {
+        return yield* new SourceControlRepositoryError({
+          operation: "cloneRepository",
+          provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+          detail:
+            "This folder belongs to a different repository. Choose another folder or Replace.",
+        });
+      }
     }
 
     return {
@@ -378,11 +451,120 @@ export const make = Effect.gen(function* () {
       );
   });
 
+  const overlayDestination = Effect.fn("SourceControlRepositoryService.overlayDestination")(
+    function* (
+      source: string,
+      target: string,
+    ): Effect.fn.Return<void, PlatformError.PlatformError> {
+      const sourceInfo = yield* fileSystem.lstat(source);
+      const targetInfo = yield* fileSystem.lstat(target).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(null),
+        ),
+      );
+      if (sourceInfo.type === "Directory" && targetInfo?.type === "Directory") {
+        for (const entry of yield* fileSystem.readDirectory(source)) {
+          yield* overlayDestination(path.join(source, entry), path.join(target, entry));
+        }
+        yield* fileSystem.chmod(target, sourceInfo.mode);
+      } else {
+        yield* fileSystem.remove(target, { recursive: true, force: true });
+        yield* fileSystem
+          .copy(source, target, { preserveTimestamps: true })
+          .pipe(Effect.uninterruptible);
+      }
+    },
+  );
+
+  const cloneIntoExistingDestination = Effect.fn(
+    "SourceControlRepositoryService.cloneIntoExistingDestination",
+  )(function* (
+    input: SourceControlCloneRepositoryInput,
+    prepared: SourceControlPreparedClone,
+    options: SourceControlCloneOptions,
+  ): Effect.fn.Return<
+    SourceControlCloneRepositoryResult,
+    | SourceControlRepositoryError
+    | SourceControlProviderError
+    | GitCommandError
+    | PlatformError.PlatformError
+  > {
+    const destination = prepared.destinationPath;
+    if (
+      options.existingDestination === "combine" &&
+      (yield* fileSystem.exists(path.join(destination, ".git")))
+    ) {
+      return { cwd: destination, remoteUrl: prepared.remoteUrl, repository: prepared.repository };
+    }
+    const temporary = yield* fileSystem.makeTempDirectory({
+      directory: path.dirname(destination),
+      prefix: ".t3-clone-",
+    });
+    const staging = path.join(temporary, "checkout");
+    const backup = path.join(temporary, "previous");
+    return yield* Effect.gen(function* () {
+      const result = yield* cloneRepository(
+        { ...input, remoteUrl: prepared.cloneUrl, destinationPath: staging },
+        {
+          ...options,
+          existingDestination: undefined,
+        },
+      );
+      if (options.existingDestination === "combine" && (yield* fileSystem.exists(destination))) {
+        yield* overlayDestination(destination, staging);
+      }
+      // Keep the original until the completed checkout is installed, including on cancellation.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const exists = yield* fileSystem.exists(destination);
+          if (exists) yield* fileSystem.rename(destination, backup);
+          yield* fileSystem.rename(staging, destination).pipe(
+            Effect.tapError(() =>
+              exists
+                ? fileSystem.rename(backup, destination).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new SourceControlRepositoryError({
+                          operation: "cloneRepository",
+                          provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+                          detail: `Could not restore the destination. The original folder is saved at ${backup}.`,
+                          cause,
+                        }),
+                    ),
+                  )
+                : Effect.void,
+            ),
+          );
+        }),
+      );
+      yield* fileSystem.remove(backup, { recursive: true, force: true }).pipe(Effect.ignore);
+      return { ...result, cwd: destination };
+    }).pipe(
+      Effect.ensuring(
+        // A failed rollback leaves `previous` available for recovery.
+        fileSystem.remove(staging, { recursive: true, force: true }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              if (!(yield* fileSystem.exists(backup))) {
+                yield* fileSystem.remove(temporary, { recursive: true });
+              }
+            }),
+          ),
+          Effect.ignore,
+        ),
+      ),
+    );
+  });
+
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
     input: SourceControlCloneRepositoryInput,
     options?: SourceControlCloneOptions,
   ) {
-    const prepared = yield* prepareClone(input);
+    const prepared = yield* prepareClone(input, options);
+    if (options?.existingDestination) {
+      return yield* cloneIntoExistingDestination(input, prepared, options);
+    }
     const httpsUrl = httpsFallbackUrl(input, prepared);
     const remoteUrl = yield* runClone(
       input,
@@ -558,8 +740,8 @@ export const make = Effect.gen(function* () {
         mapRepositoryError("lookupRepository", input.provider),
       );
     }),
-    prepareClone: Effect.fnUntraced(function* (input) {
-      return yield* prepareClone(input).pipe(
+    prepareClone: Effect.fnUntraced(function* (input, options) {
+      return yield* prepareClone(input, options).pipe(
         mapRepositoryError(
           "cloneRepository",
           input.provider ?? SourceControlProviderKind.make("unknown"),

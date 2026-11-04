@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type {
   ProjectCloneSnapshot,
+  ProjectCloneExistingDestination,
   ProjectCloneStage,
   ProjectCloneStartInput,
   ProjectCloneStartResult,
@@ -87,6 +88,7 @@ interface TrackedClone {
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
     readonly protocol: SourceControlCloneProtocol;
+    readonly existingDestination?: ProjectCloneExistingDestination | undefined;
   };
 }
 
@@ -227,6 +229,7 @@ export const make = Effect.gen(function* () {
         onProgress: (update) =>
           Queue.offer(pulses, undefined).pipe(Effect.andThen(progress(projectId, update))),
         timeoutMs: null,
+        existingDestination: tracked.input.existingDestination,
       },
     );
   }, Effect.scoped);
@@ -268,7 +271,9 @@ export const make = Effect.gen(function* () {
 
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
-      const prepared = yield* repositories.prepareClone(input);
+      const prepared = yield* repositories.prepareClone(input, {
+        existingDestination: input.existingDestination,
+      });
       const startedAt = yield* nowIso;
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
@@ -302,6 +307,7 @@ export const make = Effect.gen(function* () {
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
             protocol: input.protocol ?? "auto",
+            existingDestination: input.existingDestination,
           },
         });
         return [true, next] as const;
@@ -352,7 +358,9 @@ export const make = Effect.gen(function* () {
           const after = yield* get(projectId);
           if (after?.phase === "done") return;
           if (after?.phase === "running") yield* finish(projectId, "cancelled", null);
-          yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
+          if (!tracked.input.existingDestination) {
+            yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
+          }
         }),
       );
       return true;
@@ -369,7 +377,9 @@ export const make = Effect.gen(function* () {
       ) {
         return false;
       }
-      yield* repositories.discardClone(tracked.input.destinationPath);
+      if (!tracked.input.existingDestination) {
+        yield* repositories.discardClone(tracked.input.destinationPath);
+      }
       const startedAt = yield* nowIso;
       yield* modify(projectId, (entry) => ({
         ...entry,
@@ -400,7 +410,7 @@ export const make = Effect.gen(function* () {
     // Git may have finished while the interrupt was landing; the project
     // is going away either way, but a complete checkout is the user's.
     const after = yield* get(projectId);
-    if (after?.phase !== "done") {
+    if (after?.phase !== "done" && !tracked.input.existingDestination) {
       yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
     }
     yield* clearRetention(projectId);

@@ -9,6 +9,8 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
   type ProjectIgnoredFile,
+  type ProjectCloneExistingDestination,
+  SourceControlRepositoryError,
   type ScopedProjectRef,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -17,6 +19,7 @@ import {
   cloneUrlForProtocol,
   cloneUrlProtocol,
 } from "@t3tools/shared/cloneUrl";
+import * as Schema from "effect/Schema";
 import { ArrowRightIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { create } from "zustand";
@@ -53,6 +56,8 @@ import { Label } from "./ui/label";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
+
+const isRepositoryError = Schema.is(SourceControlRepositoryError);
 
 interface AddProjectToMachineRequest {
   readonly projectRef: ScopedProjectRef;
@@ -137,6 +142,14 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{ path: string; environmentId: EnvironmentId } | null>(
+    null,
+  );
+  const hasConflict =
+    conflict?.path === destinationPath.trim() && conflict.environmentId === target?.environmentId;
+  const canResolveConflict =
+    targetEnvironment?.serverConfig?.environment.capabilities.projectCloneExistingDestination ===
+    true;
 
   // The project or every target can vanish while the dialog is open. Submitting
   // before the file list loads would silently skip the default .env copies.
@@ -175,7 +188,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     void handleNewThread(targetRef);
   };
 
-  const submit = async () => {
+  const submit = async (existingDestination?: ProjectCloneExistingDestination) => {
     if (!project || !target || submitting) return;
     if (destinationPath.trim().length === 0) {
       setError("Choose a folder on the other machine.");
@@ -196,11 +209,17 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         title: project.title,
         remoteUrl,
         destinationPath: destinationPath.trim(),
+        existingDestination,
         files: files.filter((file) => selectedFiles.has(file.path)).map((file) => file.path),
       });
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
     } catch (cause) {
+      if (canResolveConflict && isRepositoryError(cause) && cause.reason === "destination_exists") {
+        setConflict({ path: destinationPath.trim(), environmentId: target.environmentId });
+        setSubmitting(false);
+        return;
+      }
       setError(cause instanceof Error ? cause.message : "Could not start the clone.");
       setSubmitting(false);
     }
@@ -210,7 +229,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) close();
+        if (!open && !submitting) close();
       }}
     >
       <DialogPopup className="sm:max-w-xl">
@@ -218,7 +237,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            void submit();
+            if (!hasConflict) void submit();
           }}
         >
           <DialogHeader>
@@ -384,15 +403,46 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
             ) : null}
 
+            {hasConflict ? (
+              <div className="flex flex-col gap-2 text-sm" role="status">
+                <p>This folder already contains files.</p>
+                <p className="text-muted-foreground">
+                  Replace removes its contents after the new clone succeeds. Combine keeps existing
+                  files, including conflicts, and adds missing files. An existing checkout keeps its
+                  branch and local changes.
+                </p>
+              </div>
+            ) : null}
             {error ? <p className="text-destructive-foreground text-sm">{error}</p> : null}
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={close}>
+            <Button type="button" variant="outline" disabled={submitting} onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" disabled={unavailable || submitting}>
-              {submitting ? "Starting…" : `Clone to ${target?.label ?? "machine"}`}
-            </Button>
+            {hasConflict ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={unavailable || submitting}
+                  onClick={() => void submit("combine")}
+                >
+                  Combine
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={unavailable || submitting}
+                  onClick={() => void submit("replace")}
+                >
+                  Replace
+                </Button>
+              </>
+            ) : (
+              <Button type="submit" disabled={unavailable || submitting}>
+                {submitting ? "Starting…" : `Clone to ${target?.label ?? "machine"}`}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogPopup>

@@ -254,6 +254,7 @@ export class SourceControlRepositoryError extends Schema.TaggedError<SourceContr
     provider: SourceControlProviderKind,
     operation: Schema.String,
     detail: Schema.String,
+    reason: Schema.optionalKey(Schema.Literal("destination_exists")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
