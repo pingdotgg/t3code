@@ -342,7 +342,7 @@ function PreviewStreamDocumentView({
             <Button
               label={accessible ? "Hide accessible view" : "Accessible view"}
               tone="secondary"
-              disabled={pdfUri != null}
+              disabled={pdfUri != null && !accessible}
               onPress={() => {
                 onAccessibleChange(!accessible);
                 showAccessible(!accessible);
