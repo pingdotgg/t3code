@@ -165,12 +165,15 @@ interface AntigravityProviderOptions {
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   readonly auth?: { readonly type: string; readonly label: string };
-  readonly probeAuth?: Effect.Effect<{
-    readonly authenticated: boolean;
-    readonly type?: string;
-    readonly label?: string;
-    readonly email?: string;
-  }>;
+  readonly probeAuth?: Effect.Effect<
+    | {
+        readonly authenticated: boolean;
+        readonly type?: string;
+        readonly label?: string;
+        readonly email?: string;
+      }
+    | undefined
+  >;
 }
 
 export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(function* (
