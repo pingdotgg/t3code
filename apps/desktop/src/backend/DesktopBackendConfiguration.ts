@@ -4,7 +4,8 @@ import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serve
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -723,14 +724,15 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
-  const crypto = yield* Crypto.Crypto;
+  const mac = yield* Mac.Mac;
+  const random = yield* SecureRandom.SecureRandom;
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
   const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
       onSome: (secret) => Effect.succeed([secret, current] as const),
       onNone: () =>
-        crypto.randomBytes(32).pipe(
+        random.randomBytes(32).pipe(
           Effect.map((bytes) => {
             const secret = Hex.encode(bytes);
             return [secret, Option.some(secret)] as const;
@@ -741,10 +743,10 @@ export const make = Effect.gen(function* () {
 
   const sharedInputs = Effect.gen(function* () {
     const bootstrapSecret = yield* getOrCreateBootstrapSecret;
-    const bootstrapToken = currentDesktopBootstrapToken(
+    const bootstrapToken = yield* currentDesktopBootstrapToken(
       bootstrapSecret,
       yield* Clock.currentTimeMillis,
-    );
+    ).pipe(Effect.provideService(Mac.Mac, mac));
     const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -806,7 +808,9 @@ export const make = Effect.gen(function* () {
 
   const currentBootstrapToken = Effect.gen(function* () {
     const secret = yield* getOrCreateBootstrapSecret;
-    return currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+    return yield* currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis).pipe(
+      Effect.provideService(Mac.Mac, mac),
+    );
   });
 
   return DesktopBackendConfiguration.of({

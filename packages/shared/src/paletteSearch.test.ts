@@ -661,6 +661,26 @@ describe("scoreMessageMatch", () => {
     expect(scoreMessageMatch("We trust the build", "rust")).toEqual({ quality: 0.3, offset: 4 });
     expect(scoreMessageMatch("Rust and trust", "rust")).toEqual({ quality: 1, offset: 0 });
     expect(scoreMessageMatch("Use the sidebar", '"sidebar"')).toEqual({ quality: 1, offset: 8 });
+    for (const [text, query, expected] of [
+      ["model mode mode", "mode", { quality: 1, offset: 6 }],
+      ["xmode model models", "mode", { quality: 0.8, offset: 6 }],
+      ["model models", "mode", { quality: 0.8, offset: 0 }],
+      ["xmode ymode", "mode", { quality: 0.3, offset: 1 }],
+      ["mode mode", "mode", { quality: 1, offset: 0 }],
+      ["fts fts", "fts", { quality: 1, offset: 0 }],
+      ["the theme", "he", null],
+      ["he theme", "he", { quality: 1, offset: 0 }],
+      ["notes", "", { quality: 1, offset: 0 }],
+      ["", "notes", null],
+      ["same same same", "same same", { quality: 1.25, offset: 0 }],
+      ["7cafe52bb8 cafe cafe", "cafe", { quality: 1, offset: 11 }],
+      ["7cafe52bb8 7cafe52bb8", "7cafe52", { quality: 1, offset: 0 }],
+      ["明天部署部署到生产环境", "部署", { quality: 1, offset: 2 }],
+      ["gannet’s gannet's", "gannet's", { quality: 1, offset: 9 }],
+      ["gannet's gannet’s", "gannet’s", { quality: 1, offset: 0 }],
+    ] as const) {
+      expect(scoreMessageMatch(text, query), `${query} in ${text}`).toEqual(expected);
+    }
     // Words written together as typed rank above the same words apart, and
     // the snippet starts where they are together.
     const together = "Run the tests, then vp run dev to check";
@@ -736,5 +756,14 @@ describe("scoreMessageMatch", () => {
     expect(scoreMessageMatch("İ Enable fts and model", "fts")).toMatchObject({ offset: 9 });
     expect(scoreMessageMatch("İ Enable fts and model", "model")?.quality).toBe(1);
     expect(scoreMessageMatch("Trip to İstanbul", "İstanbul")).toEqual({ quality: 1, offset: 8 });
+    for (const [text, query, expected] of [
+      ["İ cafeteria Café CAFÉ", "cafe", { quality: 1, offset: 12 }],
+      ["Café cafe", "cafe", { quality: 1, offset: 5 }],
+      ["İ Café Café", "café", { quality: 1, offset: 2 }],
+      ["İ Résumé Résumé", "resume", { quality: 1, offset: 2 }],
+      ["İ résuméprefix résumé", "resume", { quality: 1, offset: 15 }],
+    ] as const) {
+      expect(scoreMessageMatch(text, query), `${query} in ${text}`).toEqual(expected);
+    }
   });
 });

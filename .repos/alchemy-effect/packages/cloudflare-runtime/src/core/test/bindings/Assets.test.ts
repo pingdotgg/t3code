@@ -17,28 +17,24 @@ export default {
 const ASSETS_DIRECTORY = getFixture("assets");
 
 layer(localRuntimeLayer)("Assets binding", (it) => {
-  it.effect(
-    "registers an assets:worker service when worker.assets is configured",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "assets-bound",
-          compatibilityDate: "2026-03-10",
-          compatibilityFlags: [],
-          modules: [
-            { name: "main.js", type: "ESModule", content: ASSETS_SCRIPT },
-          ],
-          assets: {
-            directory: ASSETS_DIRECTORY,
-            runWorkerFirst: ["/api/hello"],
-          },
-          bindings: [Assets.local("ASSETS")],
-        });
-        const text = yield* worker.fetchText("/");
-        expect(text).toBe("<h1>home</h1>\n");
-        const api = yield* worker.fetchText("/api/hello");
-        expect(api).toBe("hello from API");
-      }),
+  it.effect("registers an assets:worker service when worker.assets is configured", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "assets-bound",
+        compatibilityDate: "2026-03-10",
+        compatibilityFlags: [],
+        modules: [{ name: "main.js", type: "ESModule", content: ASSETS_SCRIPT }],
+        assets: {
+          directory: ASSETS_DIRECTORY,
+          runWorkerFirst: ["/api/hello"],
+        },
+        bindings: [Assets.local("ASSETS")],
+      });
+      const text = yield* worker.fetchText("/");
+      expect(text).toBe("<h1>home</h1>\n");
+      const api = yield* worker.fetchText("/api/hello");
+      expect(api).toBe("hello from API");
+    }),
   );
 
   it.effect("applies _headers and _redirects rules when serving assets", () =>
@@ -47,9 +43,7 @@ layer(localRuntimeLayer)("Assets binding", (it) => {
         name: "assets-headers-redirects",
         compatibilityDate: "2026-03-10",
         compatibilityFlags: [],
-        modules: [
-          { name: "main.js", type: "ESModule", content: ASSETS_SCRIPT },
-        ],
+        modules: [{ name: "main.js", type: "ESModule", content: ASSETS_SCRIPT }],
         assets: {
           directory: ASSETS_DIRECTORY,
           headers: `/*
@@ -74,21 +68,83 @@ layer(localRuntimeLayer)("Assets binding", (it) => {
     }),
   );
 
-  it.effect(
-    "Assets.binding fails with ConfigError when no assets are configured",
-    () =>
+  it.effect("serves assets inside dot-directories", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "assets-dotfiles",
+        compatibilityDate: "2026-03-10",
+        compatibilityFlags: [],
+        modules: [{ name: "main.js", type: "ESModule", content: ASSETS_SCRIPT }],
+        assets: { directory: ASSETS_DIRECTORY },
+        bindings: [Assets.local("ASSETS")],
+      });
+      const response = yield* worker.fetch("/.well-known/security.txt");
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.text())).toBe(
+        "Contact: mailto:security@example.com\n",
+      );
+      // Dotfiles left out of the upload stay unreachable, as on deploy.
+      expect((yield* worker.fetch("/.private.txt")).status).toBe(404);
+      expect((yield* worker.fetch("/.assetsignore")).status).toBe(404);
+    }),
+  );
+
+  // Adapted from Miniflare's `test/plugins/assets/index.spec.ts` (#15998).
+  for (const { name, basePath, path, status } of [
+    {
+      name: "serves an in-prefix asset under a non-root basePath",
+      basePath: "/subpath",
+      path: "/subpath/.well-known/security.txt",
+      status: 200,
+    },
+    {
+      name: "returns 404 for an off-prefix request under a non-root basePath",
+      basePath: "/subpath",
+      path: "/.well-known/security.txt",
+      status: 404,
+    },
+    {
+      name: "normalizes a relative basePath in the Asset Worker",
+      basePath: "relative/path",
+      path: "/relative/path/.well-known/security.txt",
+      status: 200,
+    },
+  ]) {
+    it.effect(name, () =>
       Effect.gen(function* () {
-        const error = yield* startTestWorker({
-          name: "assets-missing",
-          compatibilityDate: "2026-03-10",
+        const worker = yield* startTestWorker({
+          name: "assets-base-path",
+          compatibilityDate: "2026-04-29",
           compatibilityFlags: [],
           modules: [
-            { name: "main.js", type: "ESModule", content: ASSETS_SCRIPT },
+            {
+              name: "main.js",
+              type: "ESModule",
+              content: `export default { fetch() { return new Response("worker", { status: 404 }); } };`,
+            },
           ],
-          bindings: [Assets.local("ASSETS")],
-        }).pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "ConfigError", subtag: "Assets" });
+          assets: { directory: ASSETS_DIRECTORY, basePath },
+          bindings: [],
+        });
+        const res = yield* worker.fetch(path, { redirect: "manual" });
+        const text = yield* Effect.promise(() => res.text());
+        expect(res.status).toBe(status);
+        if (status === 200) expect(text).toBe("Contact: mailto:security@example.com\n");
       }),
+    );
+  }
+
+  it.effect("Assets.binding fails with ConfigError when no assets are configured", () =>
+    Effect.gen(function* () {
+      const error = yield* startTestWorker({
+        name: "assets-missing",
+        compatibilityDate: "2026-03-10",
+        compatibilityFlags: [],
+        modules: [{ name: "main.js", type: "ESModule", content: ASSETS_SCRIPT }],
+        bindings: [Assets.local("ASSETS")],
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "ConfigError", subtag: "Assets" });
+    }),
   );
 });
 
@@ -203,9 +259,7 @@ describe("Assets / buildAssetConfigs", () => {
         Effect.provide(
           Logger.layer([
             Logger.make((options) => {
-              const parts = Array.isArray(options.message)
-                ? options.message
-                : [options.message];
+              const parts = Array.isArray(options.message) ? options.message : [options.message];
               messages.push(parts.map(String).join(" "));
             }),
           ]),
