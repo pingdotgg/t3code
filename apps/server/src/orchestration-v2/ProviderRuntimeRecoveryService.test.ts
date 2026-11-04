@@ -674,6 +674,14 @@ it.effect(
           nodeId: rootNodeId,
           status: "running",
         },
+        ...(["assistant_message", "reasoning", "proposed_plan"] as const).map((type) => ({
+          id: TurnItemId.make(`turn_item_recovery_cancel_${type}`),
+          runId,
+          nodeId: rootNodeId,
+          type,
+          status: "running",
+          streaming: true,
+        })),
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -727,12 +735,27 @@ it.effect(
           ["provider-turn.updated", "cancelled"],
           ["message.updated", null],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
       );
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "turn-item.updated" && "streaming" in event.payload
+            ? [[event.payload.type, event.payload.streaming]]
+            : [],
+        ),
+        [
+          ["assistant_message", false],
+          ["reasoning", false],
+          ["proposed_plan", false],
+        ],
+      );
     }).pipe(Effect.provide(layer));
   },
 );

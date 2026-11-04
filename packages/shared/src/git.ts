@@ -170,6 +170,29 @@ export function normalizeGitRemoteUrl(value: string): string {
   return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
 }
 
+function* gitConfigLines(configText: string) {
+  let pending = "";
+  let quoted = false;
+  for (const line of configText.split(/\r?\n/)) {
+    let continued = false;
+    if (line.endsWith("\\")) {
+      for (const [token] of line.matchAll(/\\[\s\S]?|["#;]/g)) {
+        if (token === '"') quoted = !quoted;
+        else if (!quoted && (token === "#" || token === ";")) break;
+        else if (token === "\\") continued = true;
+      }
+    }
+    if (continued) {
+      pending += line.slice(0, -1);
+      continue;
+    }
+    yield pending + line;
+    pending = "";
+    quoted = false;
+  }
+  if (pending.length > 0) yield pending;
+}
+
 function parseGitConfigValue(raw: string): string {
   let out = "";
   let quoted = false;
@@ -193,7 +216,7 @@ function parseGitConfigValue(raw: string): string {
 export function isBareGitConfig(configText: string): boolean {
   let inCore = false;
   let bare = false;
-  for (const rawLine of configText.split(/\r?\n/)) {
+  for (const rawLine of gitConfigLines(configText)) {
     let line = rawLine.trim();
     // Git accepts the first setting on the section header's own line.
     const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
