@@ -3,6 +3,7 @@
 import NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import type * as NodeStream from "node:stream";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -20,7 +21,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SpawnHost from "./SpawnHost.ts";
 
 const layer = SpawnHost.layerHost(process.execPath, [
-  new URL("../bin.ts", import.meta.url).pathname,
+  NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
   "__spawn-host",
 ]).pipe(Layer.provide(NodeServices.layer));
 const text = <E>(stream: Stream.Stream<Uint8Array, E>) =>
@@ -80,7 +81,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("SpawnHost", ()
       };
       NodeModule.syncBuiltinESMExports();
       const fixtureLayer = SpawnHost.layerHost(process.execPath, [
-        new URL("./spawnHost.test-fixture.ts", import.meta.url).pathname,
+        NodeURL.fileURLToPath(new URL("./spawnHost.test-fixture.ts", import.meta.url)),
       ]).pipe(Layer.provide(NodeServices.layer));
       yield* Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -296,7 +297,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("SpawnHost", ()
           'ulimit -n 64; exec "$@"',
           "sh",
           process.execPath,
-          new URL("./spawnHost.test-fixture.ts", import.meta.url).pathname,
+          NodeURL.fileURLToPath(new URL("./spawnHost.test-fixture.ts", import.meta.url)),
         ]).pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
