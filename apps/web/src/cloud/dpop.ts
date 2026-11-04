@@ -1,17 +1,11 @@
-import {
-  computeDpopAccessTokenHash,
-  computeDpopJwkThumbprint,
-  DpopPublicJwk,
-} from "@t3tools/shared/dpop";
+import { DpopProof } from "@t3tools/client-runtime/relay";
+import { computeDpopJwkThumbprint, DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
-import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Jwt from "effect/jose/Jwt";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 export interface BrowserDpopKey {
@@ -56,7 +50,7 @@ function openDpopDatabase(): Effect.Effect<IDBDatabase, BrowserDpopError> {
   });
 }
 
-export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
+function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.succeed(null);
   }
@@ -79,9 +73,7 @@ export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null,
   );
 }
 
-export function writeStoredBrowserDpopKey(
-  key: BrowserDpopKey,
-): Effect.Effect<void, BrowserDpopError> {
+function writeStoredBrowserDpopKey(key: BrowserDpopKey): Effect.Effect<void, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.void;
   }
@@ -102,7 +94,7 @@ export function writeStoredBrowserDpopKey(
   );
 }
 
-export const generateBrowserDpopKey = Effect.gen(function* () {
+const generateBrowserDpopKey = Effect.gen(function* () {
   const generated = yield* Effect.tryPromise({
     try: () =>
       crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
@@ -140,41 +132,26 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
   };
 });
 
-export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(function* (input: {
-  readonly method: string;
-  readonly url: string;
-  readonly accessToken?: string;
-  readonly proofKey: BrowserDpopKey;
-}): Effect.fn.Return<
-  { readonly proof: string; readonly thumbprint: string },
-  BrowserDpopError,
-  SecureRandom.SecureRandom | Signature.Signature
-> {
-  const normalizedUrl = yield* Effect.try({
-    try: () => new URL(input.url),
-    catch: (cause) => dpopError("Could not normalize DPoP proof URL.", cause),
-  });
-  normalizedUrl.search = "";
-  normalizedUrl.hash = "";
-  const jti = yield* SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4()));
-  const key = yield* Signature.privateKeyFromCryptoKey(
+/** The stored key, or a new one persisted on first use, as a DPoP proof key. */
+export const loadOrCreateProofKey = Effect.fn("dpop.loadOrCreateProofKey")(function* () {
+  const signature = yield* Signature.Signature;
+  const stored = yield* readStoredBrowserDpopKey();
+  const browserKey = stored ?? (yield* generateBrowserDpopKey);
+  if (stored === null) yield* writeStoredBrowserDpopKey(browserKey);
+  const privateKey = yield* Signature.privateKeyFromCryptoKey(
     Signature.ecdsaP256,
-    input.proofKey.privateKey,
+    browserKey.privateKey,
   ).pipe(Effect.mapError((cause) => dpopError("Could not load DPoP proof key.", cause)));
-  const proof = yield* Jwt.sign(
-    Schema.Json,
-    {
-      htm: input.method.toUpperCase(),
-      htu: normalizedUrl.toString(),
-      jti,
-      iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
-      ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
-    },
-    { _tag: "PrivateKey", algorithm: "ES256", kid: undefined, key },
-    { typ: "dpop+jwt", jwk: input.proofKey.publicJwk },
-  ).pipe(
-    Effect.map(Redacted.value),
-    Effect.mapError((cause) => dpopError("Could not sign DPoP proof.", cause)),
-  );
-  return { proof, thumbprint: input.proofKey.thumbprint };
+  return {
+    publicJwk: browserKey.publicJwk,
+    sign: (signingInput) =>
+      signature
+        .sign(privateKey, signingInput)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DpopProof.DpopProofError({ message: "Could not sign DPoP proof.", cause }),
+          ),
+        ),
+  } satisfies DpopProof.DpopProofKey;
 });
