@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import Summarize from "./Summarize.ts";
