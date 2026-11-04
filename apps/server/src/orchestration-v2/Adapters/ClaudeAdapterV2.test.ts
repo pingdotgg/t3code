@@ -26,6 +26,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   ChatAttachmentId,
   type ChatAttachment,
@@ -738,7 +739,7 @@ describe("ClaudeAdapterV2 context usage", () => {
         output_tokens: 1,
         cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 300 },
       },
-      CLAUDE_TEST_MODEL_SELECTION,
+      null,
       "2026-08-29T00:03:00.000Z",
       "",
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
@@ -2990,6 +2991,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_creation_input_tokens: number;
       readonly cache_read_input_tokens: number;
     };
+    readonly modelUsage?: SDKResultMessage["modelUsage"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -3007,7 +3009,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       },
-      modelUsage: {},
+      modelUsage: input.modelUsage ?? {},
       permission_denials: [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
@@ -4843,11 +4845,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               {
                 type: "tool_result",
                 tool_use_id: id,
-                content: "Weather result",
+                content: [
+                  { type: "text", text: "Weather result" },
+                  {
+                    type: "image",
+                    source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+                  },
+                ],
                 is_error: isError,
               },
             ],
           },
+          tool_use_result:
+            title === undefined ? { screenshot: { mimeType: "image/png" } } : undefined,
         }),
       );
       yield* Queue.offer(
@@ -4880,6 +4890,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(item.input, { city: "Berlin" });
       }
       assert.equal(new Set(items.map((item) => item.id)).size, 1);
+      assert.deepEqual(toolOutputImages(items.at(-1)?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -6350,9 +6363,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("never records a subagent uuid for a turn with no main-thread assistant message", () =>
     Effect.gen(function* () {
+      const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
       const harness = yield* makeWakeHarnessWithOptions({
         close: (sdkMessages) => Queue.shutdown(sdkMessages),
         freshQueueOnReopen: true,
+        forkSession: (input) =>
+          Effect.sync(() => {
+            forkCalls.push(input);
+            return { sessionId: "forked-after-compact-rollback" };
+          }),
       });
       const now = yield* DateTime.now;
       const subagentUuid = "00000000-0000-4000-8000-000000000644";
@@ -6433,6 +6452,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
         earlierCursor,
       );
+      // Forks omit rolled-back turns, which Claude's transcript still holds past the pinned head.
+      yield* harness.runtime.forkThread({
+        sourceProviderThread: pastSilentTurn.providerThread,
+        sourceProviderTurns: turnsAcrossSilent.slice(0, 2),
+        providerTurnId: providerTurn.id,
+        targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
+      });
+      assert.equal(forkCalls[0]?.options.upToMessageId, earlierCursor);
       const interruptedBeforeCompact = yield* rollbackTo(
         [
           {
@@ -7117,6 +7144,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("measures a model outside the catalog against the window Claude reports", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+        model: "gateway-model",
+      } satisfies ModelSelection;
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), undefined);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-reported-context-window"),
+          text: "Continue.",
+          attachments: [],
+          modelSelection,
+        }),
+      );
+      const usage = { ...zeroUsage, input_tokens: 9_667, output_tokens: 2 };
+      const frames = [
+        usageStreamFrame({ type: "message_start", message: { id: "msg_gateway", usage } }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000680",
+          result: "OK",
+          modelUsage: {
+            "gateway-model": {
+              inputTokens: 9_667,
+              outputTokens: 2,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0,
+              contextWindow: 1_048_576,
+              maxOutputTokens: 32_000,
+            },
+          },
+        }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      const windows = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [event.providerTurn.tokenUsage.maxTokens]
+          : [],
+      );
+      assert.deepEqual(windows, [null, 1_048_576]);
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), 1_048_576);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("merges cumulative stream usage into the message_start counts", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
@@ -7358,6 +7446,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: harness.providerThread,
             now,
             attemptId: RunAttemptId.make("claude-native-compact-attempt"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+              model: "gateway-model",
+            },
             text: " /COMPACT ",
             attachments: [],
           }),
@@ -7377,6 +7469,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000202",
             result: "Compacted conversation.",
+            modelUsage: {
+              "gateway-model": {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                webSearchRequests: 0,
+                costUSD: 0,
+                contextWindow: 200_000,
+                maxOutputTokens: 32_000,
+              },
+            },
           }),
         );
         yield* Queue.take(harness.terminalReceipts);
@@ -7397,6 +7501,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.providerTurn.tokenUsage?.usedTokens === 400,
         );
         assert.isDefined(watermark);
+        const windows = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.maxTokens]
+            : [],
+        );
+        assert.deepEqual(windows, [null, 200_000]);
         const completed = harness.events.findLast(
           (event) => event.type === "provider_turn.updated",
         );
@@ -7410,6 +7520,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             outputTokens: 1,
             cachedInputTokens: 0,
             cacheCreationTokens: 0,
+            otherUsage: { inputTokens: 0, outputTokens: 0 },
           });
         }
       }).pipe(
