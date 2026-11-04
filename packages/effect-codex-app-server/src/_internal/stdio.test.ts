@@ -62,6 +62,28 @@ describe("Codex App Server child process termination", () => {
     }),
   );
 
+  it.effect("waits for stderr to drain when the exit status arrives first", () =>
+    Effect.gen(function* () {
+      const exitObserved = yield* Deferred.make<void>();
+      const stderr = Stream.fromEffect(Deferred.await(exitObserved)).pipe(
+        Stream.as(new TextEncoder().encode("Error: invalid config\n")),
+      );
+      const tail = yield* makeStderrTail(stderr);
+      const error = yield* makeTerminationError(
+        {
+          pid: ChildProcessSpawner.ProcessId(56),
+          exitCode: Deferred.succeed(exitObserved, undefined).pipe(
+            Effect.as(ChildProcessSpawner.ExitCode(1)),
+          ),
+        },
+        tail.read,
+      );
+
+      assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
+      assert.equal(error.stderr, "Error: invalid config");
+    }),
+  );
+
   it.effect("retains the process identifier and exact exit-status cause", () =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");
