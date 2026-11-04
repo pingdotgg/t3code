@@ -65,9 +65,11 @@ function makeThread(input: {
 
 const grokInstanceId = ProviderInstanceId.make("grok");
 const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+const piInstanceId = ProviderInstanceId.make("pi");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
   [antigravityInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
+  [piInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -135,6 +137,18 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(acpPermissionDisposition(auto, request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
+    }),
+  );
+
+  it.effect("runs a stored Auto Pi thread in Auto-accept edits, not Supervised", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null, runtimeMode: "auto" }),
+        modelSelection: { instanceId: piInstanceId, model: "default" },
+      });
+      assert.equal(resolved.runtimeMode, "auto-accept-edits");
     }),
   );
 
