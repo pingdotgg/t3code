@@ -110,7 +110,7 @@ export function idleCompactionWindow(
 }
 
 /**
- * What to do with an idle compaction window. A nearly spent usage window that
+ * What to do with an idle compaction window. A nearly spent session window that
  * resets after the cache expires compacts at once: a stop on that limit would
  * resume against an expired cache. "Never" always wins.
  */
@@ -135,6 +135,9 @@ export function usageLimitOutlastsCache(
 ): boolean {
   return usageWindows.some(
     (usage) =>
+      // A weekly window can sit near its limit for days; compacting after every turn
+      // meanwhile would throw away context the user is still working with.
+      usage.kind === "session" &&
       usage.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
       usage.resetsAt !== undefined &&
       Date.parse(usage.resetsAt) > cacheExpiresAt,

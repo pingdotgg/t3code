@@ -186,10 +186,14 @@ describe("idleCompactionWindow", () => {
 describe("idleCompactionAction", () => {
   it("compacts near a usage limit that outlasts the cache, unless set to never", () => {
     const window = { startMs: NOW_MS + 58 * MINUTE_MS, endMs: NOW_MS + 60 * MINUTE_MS };
-    const usage = (usedPercent: number, resetsInMs?: number) => ({
-      id: "five_hour",
-      kind: "session" as const,
-      label: "Session",
+    const usage = (
+      usedPercent: number,
+      resetsInMs?: number,
+      kind: "session" | "weekly" = "session",
+    ) => ({
+      id: kind === "session" ? "five_hour" : "seven_day",
+      kind,
+      label: kind === "session" ? "Session" : "Weekly",
       usedPercent,
       ...(resetsInMs === undefined ? {} : { resetsAt: DateTime.formatIso(at(resetsInMs)) }),
     });
@@ -208,6 +212,7 @@ describe("idleCompactionAction", () => {
     expect(action("onReturn", [usage(94, 90 * MINUTE_MS)])).toBe("skip");
     expect(action("onReturn", [usage(95, 30 * MINUTE_MS)])).toBe("skip");
     expect(action("onReturn", [usage(95)])).toBe("skip");
+    expect(action("onReturn", [usage(99, 3 * 24 * 60 * MINUTE_MS, "weekly")])).toBe("skip");
     // Inside the cache window, only the cache-expiry mode compacts without a usage reason.
     expect(action("onReturn", [], window.startMs)).toBe("skip");
     expect(action("beforeCacheExpires", [])).toBe("wait");

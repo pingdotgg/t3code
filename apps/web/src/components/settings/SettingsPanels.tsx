@@ -1635,7 +1635,7 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("compact-before-usage-limit")}
-          description="Compact Claude threads near a usage limit that resets after the prompt cache expires, so resuming does not re-read the full context."
+          description="Compact Claude threads near their session usage limit when it resets after the prompt cache expires, so resuming does not re-read the full context."
           settingKeys={["compactBeforeUsageLimit"]}
           control={
             <ScopedSwitch
