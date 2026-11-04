@@ -19,6 +19,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -34,6 +35,7 @@ export interface ThreadDetailsUsageInput {
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
+  readonly onOpenUsageLimits: () => void;
 }
 
 type UsageTone = "error" | "warning" | null;
@@ -43,6 +45,7 @@ export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
   sources,
+  onOpenUsageLimits,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
@@ -52,11 +55,19 @@ export function ThreadDetailsUsage({
       : null;
   // Only this instance's data: the report keeps one instance per login, and any other entry may be
   // a different login or workspace, so fall back to the instance's own snapshot.
+  const selected = providers.find((provider) => provider.instanceId === providerInstanceId);
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
+    selected?.usageLimits;
+  const hasHubLimits = sources.some((source) =>
+    source.accounts.some(
+      (account) =>
+        account.driver === selected?.driver && limitsNotice(account.usageLimits) === null,
+    ),
+  );
+  if (!limits && !hasHubLimits) return null;
+  const notice = limits ? limitsNotice(limits) : null;
+  const showHubLimits = hasHubLimits && (!limits || notice !== null);
 
   return (
     <ThreadDetailsSection
@@ -65,7 +76,14 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
+        {showHubLimits ? (
+          <div className="col-span-3 flex items-center justify-between gap-2 px-2.5">
+            <span className="text-muted-foreground">Limits</span>
+            <Button variant="link" size="micro" onClick={onOpenUsageLimits}>
+              View hub limits
+            </Button>
+          </div>
+        ) : notice ? (
           <UsageRow
             label="Limits"
             fill={null}
@@ -74,7 +92,7 @@ export function ThreadDetailsUsage({
             tooltip={<span className="text-foreground">{notice}</span>}
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          limits?.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
         )}
       </div>
     </ThreadDetailsSection>

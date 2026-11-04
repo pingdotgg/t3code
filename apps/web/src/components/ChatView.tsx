@@ -3907,6 +3907,7 @@ export default function ChatView(props: ChatViewProps) {
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
+                    onOpenUsageLimits: openUsageLimits,
                   }}
                 />
 
