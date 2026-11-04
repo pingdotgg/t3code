@@ -8,7 +8,11 @@ import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import {
+  EnvironmentSigningKey,
+  getOrCreateEnvironmentKeyPairFromSecretStore,
+  layer,
+} from "./environmentKeys.ts";
 
 const layerServerSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -48,6 +52,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           publicKey: "public",
         });
         assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
+
+        // Unparseable key material must fail signing, not the layer every server starts.
+        const signingKey = yield* EnvironmentSigningKey.pipe(Effect.provide(layer));
+        assert.strictEqual(signingKey.publicKey, "public");
+        const error = yield* Effect.flip(signingKey.sign({ typ: "test+jwt", payload: {} }));
+        assert.strictEqual(error._tag, "RelayJwtError");
       }).pipe(Effect.provide(layerServerSecretStore())),
     );
 
