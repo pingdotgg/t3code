@@ -21,8 +21,9 @@ HTML embeds support asking about selected text, asking about the whole embed fro
 Preconditions: an HTML embed with readable text, made after PR #32 (QA has the `APP-16 QA embed lesson` lesson).
 
 - **Highlight.** `preview_click` with `locator` `role=region[name='Conversation'] >> iframe[title='<title>'] >> internal:control=enter-frame >> p >> nth=0` and `clickCount: 3`. A text button `Ask in side chat` appears over the selection; `preview_click` `role=button[name='Ask in side chat'] >> text=Ask in side chat`. The path reads `Lesson > <selected text…>`.
-- **Corner and full screen.** Hover an embed or card, `preview_click` `role=button[name='Open full screen']`, then the dialog's `role=dialog >> role=button[name='Ask in side chat']`. The dialog closes and a side chat opens quoting the embed title and its visible text.
-- **Nested.** Do **Corner and full screen** on a card inside a side chat (feature 10's card). The path gains a third crumb.
+- **Corner** (unverified, not yet driven live). `preview_hover` the embed, then `preview_click` the icon-only `role=button[name='Ask in side chat']` in the embed's top corner (not the `text=` one). The path gains the embed title.
+- **Full screen.** Hover an embed or card, `preview_click` `role=button[name='Open full screen']`, then the dialog's `role=dialog >> role=button[name='Ask in side chat']`. The dialog closes and a side chat opens quoting the embed title and its visible text.
+- **Nested.** Do **Full screen** on a card inside a side chat (feature 10's card). The path gains a third crumb.
 
 ## Gotchas
 

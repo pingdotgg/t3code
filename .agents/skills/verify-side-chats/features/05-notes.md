@@ -1,12 +1,12 @@
 # Notes
 
-A completed side chat writes a concise note that the next lesson message receives and exposes in the side-chat status/context UI.
+A finished side chat writes a short note that goes with the next lesson message; the side chat's status line shows whether it was sent.
 
 ## Sub-features
 
 - `note-ready` shows a ready note after Done.
 - `note-delivery` sends it with the next lesson message.
-- `note-marker` makes the handoff observable in the lesson timeline.
+- `note-reopen` reopens a finished chat when you ask in it.
 
 ## How to get to it (user POV)
 
@@ -19,7 +19,8 @@ A completed side chat writes a concise note that the next lesson message receive
 Preconditions: feature 4 left a finished chat whose status reads `Goes with your next lesson message: <note>`.
 
 - **Deliver.** `preview_type` `Continue` into `role=textbox[name='Message <lesson title>']` (for example `Message Replay: showcase`), then `preview_press` `Enter`.
-- **Confirm.** `preview_wait_for` text `Sent to lesson` (30 s). Reopen the chat from the map after a reload and check that the status still reads `Sent to lesson: <note>`.
+- **Confirm.** Reload, open the chat from the map, then `preview_wait_for` `[aria-label="Side chat"] >> text=Sent to lesson` (30 s).
+- **Reopen.** Send a message in that chat. The status line goes away and the reply arrives.
 
 ## Gotchas
 

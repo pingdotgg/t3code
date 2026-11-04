@@ -17,13 +17,13 @@ Opening a side chat from a lesson highlight keeps the selected excerpt and its s
 
 Preconditions: a lesson with a finished assistant reply (the QA lesson `Replay: showcase` works).
 
-- **Selection.** Select a fresh phrase with the SKILL.md `select` snippet, then `preview_click` `role=button[name='Ask in side chat']`. The `Side chat` region opens; `[aria-label="Side chat path"]` reads `Lesson > <phrase>` and the panel asks `What do you want to know about “<phrase>”?`.
+- **Selection.** Select a fresh phrase with the SKILL.md `select` snippet (`SCOPE = '[aria-label="Conversation"]'`), then `preview_click` `role=button[name='Ask in side chat']`. The `Side chat` region opens; `[aria-label="Side chat path"]` reads `Lesson > <phrase>` and the panel asks `What do you want to know about “<phrase>”?`.
 - **Shortcut.** Select another fresh phrase, blur the composer (`document.activeElement.blur()` in the same snippet), then `preview_press` `s` with modifiers `["Control","Alt"]` (`Meta` on macOS). The path reads `Lesson > <new phrase>`.
 - **Proof.** `preview_snapshot` with `save: true`; copy the PNG into the evidence directory.
 
 ## Gotchas
 
-- Selecting a whole element (`selectAllChildren`, triple-click) or list-item text shows no toolbar. Select part of one paragraph text node.
+- Use the `select` snippet. Whole-element and list-item selections didn't raise the toolbar in the 2026-11-04 run.
 - A phrase inside an existing side chat's highlight reopens that chat instead of opening a new one. Pick text nobody has asked about yet.
 - Upstream's `/side` and `/btw` are hidden in T3 Learn (APP-3), so they are not entry points.
 - With Replay the context divider reads `Side chat context (summary unavailable)`. That is expected, not a failure.

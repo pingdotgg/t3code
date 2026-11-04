@@ -6,14 +6,13 @@ This directory is the maintained source for proving T3 Learn side chats in the w
 
 - The parent thread has loaded the requested SHA in `/home/quokka/.t3/projects/t3-sidechat-qa` and paired the QA dev server.
 - `preview_snapshot` shows the signed-in T3 Learn web app and a lesson with an assistant reply; use `Replay (dev)` for ordinary turns.
-- Haiku 4.5 is needed only for steer, busy auto-finish and HTML cards (see `../SKILL.md` Drive).
 - Evidence is `~/side-chat-e2e/verify/<date>-<sha>/`; retain it during cleanup.
 
 ## Driving conventions
 
 - Start each recipe from the state left by the previous feature, or reset to the same seeded lesson and document the reset.
 - Pair every user action with the literal Browser-panel call and an observable result.
-- Capture one screenshot and one ARIA snapshot per feature. Do not claim an entry point verified through another entry point.
+- Capture evidence the way `../SKILL.md` Evidence says. Don't count an entry point as verified because a different one worked.
 
 ## Features
 
