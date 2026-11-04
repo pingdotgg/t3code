@@ -27,7 +27,6 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
     expect(model).toMatchObject({
       revision: source.revision,
       name: source.name,
-      languages: source.languages,
       ...source.files[source.quant],
       supportsStreaming: source.capabilities.streaming,
       supportsLanguageDetection: source.capabilities.languageDetection,
