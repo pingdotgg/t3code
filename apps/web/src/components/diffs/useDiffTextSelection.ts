@@ -135,6 +135,26 @@ function domToRowPoint({ node, offset }: DomPoint): RowPoint | null {
   return rowPoint(row, Math.min(prefix.toString().length, text.length));
 }
 
+// A point outside the rows, such as in the file header, selects up to the
+// nearest row boundary on the anchor's side. Virtualization only removes
+// elements inside the `pre`, so a point it relocated lands on one of those.
+function betweenRowsPoint(root: ShadowRoot, point: DomPoint, anchor: RowPoint): RowPoint | null {
+  if (point.node instanceof Element && point.node.closest("pre")) return null;
+  const at = document.createRange();
+  at.setStart(point.node, point.offset);
+  let before: Element | undefined;
+  for (const row of root.querySelectorAll("[data-line]")) {
+    if (at.comparePoint(row, 0) > 0) {
+      const after = rowPoint(row, 0);
+      const forward = before && after && compareRows(anchor, after) < 0;
+      if (!forward) return after;
+      break;
+    }
+    before = row;
+  }
+  return before ? domToRowPoint(rowToDomPoint(before, Infinity)) : null;
+}
+
 function rowToDomPoint(row: Element, offset: number): DomPoint {
   const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
   let remaining = offset;
@@ -335,6 +355,8 @@ class DiffTextSelectionTracker {
   }
 
   selectFile(instance: DiffInstance): boolean {
+    // A collapsed or unmounted file shows nothing to select.
+    if (!this.hostOf(instance)?.shadowRoot?.querySelector("[data-line]")) return false;
     const selection = this.begin(instance);
     if (!selection) return false;
     selection.anchor = FILE_START;
@@ -379,10 +401,13 @@ class DiffTextSelectionTracker {
       // The anchor stays where the gesture began; the browser's drifts once
       // its row is virtualized away.
       selection.anchor ??= seenAnchor;
+      const { anchor } = selection;
+      if (anchor) {
+        seenFocus ??= betweenRowsPoint(root, current.focus, anchor);
+        if (!current.directed) seenAnchor ??= betweenRowsPoint(root, current.anchor, anchor);
+      }
       const focus =
-        current.directed || !selection.anchor
-          ? seenFocus
-          : undirectedFocus(selection.anchor, seenAnchor, seenFocus);
+        current.directed || !anchor ? seenFocus : undirectedFocus(anchor, seenAnchor, seenFocus);
       selection.focus = focus ?? selection.focus;
     } else {
       if (
@@ -428,8 +453,23 @@ class DiffTextSelectionTracker {
       // Shift-click extends from the existing anchor, even an offscreen one.
       if (!(this.engaged && event.shiftKey)) this.selection = null;
     };
+    // An undirected drag's first selectionchange can be coalesced away, so the
+    // press records where it began. A multi-click's later presses select words.
+    const onMouseDown = (event: MouseEvent) => {
+      const { engaged } = this;
+      if (!engaged || !this.dragging || event.shiftKey || event.detail !== 1) return;
+      const root = this.hostOf(engaged)?.shadowRoot;
+      const caret =
+        root &&
+        document.caretPositionFromPoint?.(event.clientX, event.clientY, { shadowRoots: [root] });
+      const anchor = caret ? domToRowPoint({ node: caret.offsetNode, offset: caret.offset }) : null;
+      const selection = anchor ? this.begin(engaged) : null;
+      if (selection) this.selection = { ...selection, anchor };
+    };
     const onPointerEnd = () => {
       if (!this.dragging) return;
+      // The gesture's last selectionchange may still be queued.
+      this.onSelectionChange();
       this.dragging = false;
       this.redraw();
     };
@@ -476,6 +516,7 @@ class DiffTextSelectionTracker {
     };
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("pointerup", onPointerEnd, true);
     document.addEventListener("pointercancel", onPointerEnd, true);
     document.addEventListener("focusin", onFocusIn, true);
@@ -484,6 +525,7 @@ class DiffTextSelectionTracker {
     return () => {
       document.removeEventListener("selectionchange", this.onSelectionChange);
       document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("pointerup", onPointerEnd, true);
       document.removeEventListener("pointercancel", onPointerEnd, true);
       document.removeEventListener("focusin", onFocusIn, true);

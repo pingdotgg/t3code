@@ -454,6 +454,53 @@ it("copies a backward drag whose selection reports no direction", async () => {
   );
 });
 
+it("copies through the first row of a backward drag into the file header", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "header-drag.sql");
+  await using _screen = diff.screen;
+  await pressRow(diff.row(12)!);
+  const fourth = diff.row(4)!;
+  await userEvent.hover(fourth, { position: charEdge(fourth, PRESS_OFFSET, "left") });
+  const host = (fourth.getRootNode() as ShadowRoot).host as HTMLElement;
+  const title = host.shadowRoot!.querySelector("[data-diffs-header] [data-title]")!;
+  const [titleBox, hostBox] = [title.getBoundingClientRect(), host.getBoundingClientRect()];
+  await userEvent.hover(host, {
+    position: { x: titleBox.left + 4 - hostBox.left, y: titleBox.top + 4 - hostBox.top },
+  });
+  await commands.mouseUp();
+  const text = longFileLines.slice(0, 12).join("\n");
+  expect(await diff.copied()).toBe(
+    text.slice(0, text.length - longFileLines[11]!.length + PRESS_OFFSET),
+  );
+});
+
+it("copies a drag whose last extension is still unreported when the pointer lifts", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "late-selection.sql");
+  await using _screen = diff.screen;
+  await pressRow(diff.row(1)!);
+  await dragToRowEnd(diff.row(6)!);
+  const last = diff.row(11)!;
+  document.getSelection()!.setBaseAndExtent(diff.row(1)!, 0, last, last.childNodes.length);
+  // Before the selectionchange for the extension runs.
+  document.dispatchEvent(new PointerEvent("pointerup"));
+  await commands.mouseUp();
+  expect(await diff.copied()).toBe(longFileLines.slice(0, 11).join("\n").slice(PRESS_OFFSET));
+});
+
+it("leaves select all to the browser once the engaged file is collapsed", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "collapsed-select-all.sql");
+  await using _screen = diff.screen;
+  await userEvent.click(diff.row(2)!);
+  await userEvent.click(
+    page.getByRole("button", { name: "Collapse collapsed-select-all.sql", exact: true }),
+  );
+  await vi.waitFor(() => expect(diff.row(2)).toBeNull());
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+  expect(await diff.copied()).not.toContain(longFileLines[0]);
+});
+
 it("copies the browser's selection of a drag that continues into another file", async () => {
   using context = setup("origin/orphan");
   const lines = longFileLines.slice(0, 3);
