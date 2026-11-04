@@ -329,22 +329,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
     Effect.provide(ProcessRunner.layer),
   );
-  // Git lists a `--separate-git-dir` main checkout as its git dir; only the
-  // checkout's own `.git` file says where it is.
-  const separateMainCheckouts = yield* Effect.forEach(roots, ({ root }) =>
-    fileSystem.readFileString(path.join(root, ".git")).pipe(
-      Effect.flatMap((gitFile) =>
-        gitFile.startsWith("gitdir: ")
-          ? realPath(path.resolve(root, gitFile.slice("gitdir: ".length).trim()))
-          : Effect.succeed(""),
-      ),
-      Effect.map((gitDir) => (gitDir === listed[0] ? [root] : [])),
-      Effect.orElseSucceed(() => []),
-    ),
-  );
-  const separateMain = separateMainCheckouts.flat();
-  const checkouts = separateMain.length > 0 ? [...separateMain, ...listed.slice(1)] : listed;
-  const ownCheckout = checkouts
+  const ownCheckout = listed
     .filter((checkout) => contains(checkout, target))
     .toSorted((left, right) => right.length - left.length)[0];
   if (ownCheckout === undefined) {
@@ -352,7 +337,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   }
   const relative = path.relative(ownCheckout, target);
   const matches = new Map<ProjectId, (typeof projects)[number]>();
-  for (const checkout of checkouts) {
+  for (const checkout of listed) {
     if (checkout === ownCheckout) continue;
     const project = deepestContaining(path.join(checkout, relative));
     if (project !== undefined) matches.set(project.id, project);

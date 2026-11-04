@@ -207,8 +207,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     const worktree = path.join(root, "worktrees", "sample", "t3-8ff64c24");
     const feature = path.join(root, "wt", "feature");
     const featureWorktree = path.join(root, "worktrees", "feature", "t3-1a2b3c4d");
-    const separate = path.join(root, "separate");
-    const separateWorktree = path.join(root, "worktrees", "separate", "t3-5e6f7a8b");
     yield* fileSystem.makeDirectory(path.join(repo, "pkg"), { recursive: true });
     yield* fileSystem.writeFileString(path.join(repo, "pkg", "index.ts"), "export {};\n");
     yield* git(repo, ["init", "--quiet", "-b", "main"]);
@@ -216,17 +214,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     yield* git(repo, ["worktree", "add", "--quiet", "-b", "t3/8ff64c24", worktree]);
     yield* git(repo, ["worktree", "add", "--quiet", "-b", "feature", feature]);
     yield* git(feature, ["worktree", "add", "--quiet", "-b", "t3/1a2b3c4d", featureWorktree]);
-    yield* fileSystem.makeDirectory(separate);
-    yield* fileSystem.writeFileString(path.join(separate, "README.md"), "separate\n");
-    yield* git(separate, [
-      "init",
-      "--quiet",
-      "-b",
-      "main",
-      `--separate-git-dir=${path.join(root, "separate.git")}`,
-    ]);
-    yield* commitAll(separate);
-    yield* git(separate, ["worktree", "add", "--quiet", "-b", "t3/5e6f7a8b", separateWorktree]);
 
     const project = (id: string, workspaceRoot: string) => ({
       id: ProjectId.make(id),
@@ -235,7 +222,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     });
     const sample = project("project-sample", repo);
     const featureProject = project("project-feature", feature);
-    const separateProject = project("project-separate", separate);
     const resolveFrom = (
       projects: ReadonlyArray<ReturnType<typeof project>>,
       workingDirectory: string,
@@ -248,10 +234,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
     assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
-    assert.deepStrictEqual(
-      yield* resolveFrom([separateProject], separateWorktree),
-      separateProject,
-    );
     const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
     assert.include(ambiguous.message, "sample (project-sample)");
