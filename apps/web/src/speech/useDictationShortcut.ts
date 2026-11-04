@@ -108,17 +108,21 @@ export function useDictationShortcut(input: ShortcutInput) {
         },
       });
       if (command !== "composer.dictation") return;
+      const canStart = speech.state.phase === "idle" || speech.state.phase === "error";
+      if (canStart && (!speech.available || disabled)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.repeat || pressed.current) return;
+      if (event.repeat) return;
+      // macOS may omit the previous non-modifier keyup while Command is held.
+      pressed.current = null;
+      generation.current += 1;
       if (speech.state.phase === "recording") {
         void speech.stop();
         return;
       }
-      if (speech.state.phase !== "idle" && speech.state.phase !== "error") return;
-      if (!speech.available || disabled) return;
+      if (!canStart) return;
       pressed.current = {
-        generation: ++generation.current,
+        generation: generation.current,
         code: event.code || event.key,
         startedAt: performance.now(),
         mode,

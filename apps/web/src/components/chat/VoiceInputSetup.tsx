@@ -1,4 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -34,15 +35,14 @@ export function VoiceInputSetup(props: {
   const environment = useEnvironment(props.environmentId);
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
-  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+      setMicrophones(await listBrowserMicrophones());
       setMicrophoneError(null);
     } catch {
       setMicrophoneError("Could not list microphones. You can still use the system default.");
@@ -163,9 +163,9 @@ export function VoiceInputSetup(props: {
                           Selected microphone (Unavailable)
                         </SelectItem>
                       ) : null}
-                      {microphones.map((device, index) => (
+                      {microphones.map((device) => (
                         <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                          {device.label || `Microphone ${index + 1}`}
+                          {device.label}
                         </SelectItem>
                       ))}
                     </SelectPopup>

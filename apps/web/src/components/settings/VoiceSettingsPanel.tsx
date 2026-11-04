@@ -37,6 +37,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import {
   chooseAudioDestination,
   chooseTranscriptCleanup,
@@ -506,18 +507,20 @@ function EnvironmentModelsSection(props: {
     setModels([]);
   }
   const epoch = useRef(0);
+  const refreshRevision = useRef(0);
   const refresh = useStableCallback(async (connection: PreparedConnection) => {
     const current = epoch.current;
+    const revision = ++refreshRevision.current;
     try {
       const [nextStatus, nextModels] = await Promise.all([
         runtime.runPromise(getEnvironmentSpeechStatus(connection)),
         runtime.runPromise(getEnvironmentSpeechModels(connection)),
       ]);
-      if (current !== epoch.current) return;
+      if (current !== epoch.current || revision !== refreshRevision.current) return;
       onStatus(connection, nextStatus);
       setModels(nextModels.models);
     } catch (error) {
-      if (current !== epoch.current) return;
+      if (current !== epoch.current || revision !== refreshRevision.current) return;
       toastManager.add({
         type: "error",
         title: "Could not load transcription models",
@@ -566,12 +569,11 @@ function EnvironmentModelsSection(props: {
           title: label,
           description: error instanceof Error ? error.message : String(error),
         });
-    } finally {
-      if (current === epoch.current) {
-        if (downloadId) setRequestedDownload(null);
-        else setBusy(false);
-        await refresh(prepared);
-      }
+    }
+    if (current === epoch.current) {
+      if (downloadId) setRequestedDownload(null);
+      else setBusy(false);
+      await refresh(prepared);
     }
   };
   const controlsDisabled = busy || downloading || !canManage;
@@ -838,7 +840,7 @@ export function VoiceSettingsPanel() {
   const settingsScope = useOptionalSettingsScope();
   const destination = useVoiceTranscriptionDestination();
   const { environments } = useEnvironments();
-  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [catalog, setCatalog] = useState<{
     connection: PreparedConnection;
     status: EnvironmentSpeechStatus;
@@ -847,8 +849,7 @@ export function VoiceSettingsPanel() {
   const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+      setMicrophones(await listBrowserMicrophones());
     } catch {
       setMicrophones([]);
     }
@@ -962,9 +963,9 @@ export function VoiceSettingsPanel() {
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
-                  {microphones.map((device, index) => (
+                  {microphones.map((device) => (
                     <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                      {device.label || `Microphone ${index + 1}`}
+                      {device.label}
                     </SelectItem>
                   ))}
                 </SelectPopup>

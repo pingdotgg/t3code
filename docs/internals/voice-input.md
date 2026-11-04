@@ -25,9 +25,9 @@ nothing else. When the destination changes, disconnects, or stops advertising th
 `voiceTranscription` capability, the controller is disposed: a recording in
 progress is discarded, a failed recording kept for retry is deleted, and nothing
 falls back to another environment. Every sender in the web app, including the
-settings page's transcription test, goes through that hook; there is no second
-capture path. The transport refuses redirects so credentials and audio cannot
-follow one to another host.
+settings page's transcription test, goes through that hook. The microphone loopback
+test captures separately for local playback and sends nothing. The transport
+refuses redirects so credentials and audio cannot follow one to another host.
 
 Transcript cleanup requires its own grant, off by default.
 It sends text, never audio, to the text generation provider of the draft's
