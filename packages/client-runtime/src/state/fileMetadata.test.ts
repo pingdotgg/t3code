@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   ThreadId,
@@ -17,9 +17,10 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -56,13 +57,21 @@ const makeHarness = Effect.fnUntraced(function* () {
     phase: "connected" as const,
   });
   const supervisor = {
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session,
     state,
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   const otherSupervisor = {
     ...supervisor,
-    target: { environmentId: OTHER_ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: OTHER_ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(Option.some(makeSession())),
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   const getSupervisor = (environmentId: EnvironmentId) =>
@@ -118,6 +127,42 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
+  it.effect("refreshes expired mounted misses while retaining known thread entries", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("new-directory-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const path = "/home/user/games/hl1";
+      h.registry.mount(h.atom(path, ENVIRONMENT_ID, threadId));
+      h.values.set("/workspace/known", { kind: "file", byteLength: 5 });
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
+      yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId);
+      h.values.set(path, { kind: "directory" });
+      h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toBeNull();
+      h.failure.denied = true;
+      yield* TestClock.adjust(60_001);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId).pipe(Effect.flip)).toBeInstanceOf(
+        EnvironmentAuthorizationError,
+      );
+      h.failure.denied = false;
+      yield* TestClock.adjust(60_001);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(yield* h.read(path, ENVIRONMENT_ID, threadId)).toEqual({ kind: "directory" });
+      h.registry.refresh(h.atom("/workspace/known", ENVIRONMENT_ID, threadId));
+      expect(yield* h.read("/workspace/known", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 5,
+      });
+      yield* TestClock.adjust(60_001);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(h.batches).toEqual([[path], ["/workspace/known"], [path], [path]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not seed a different path from a literal name with a numeric suffix", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
