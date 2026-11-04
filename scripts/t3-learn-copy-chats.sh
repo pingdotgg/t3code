@@ -8,17 +8,21 @@
 # swapped in. A failure before the swap leaves T3 Learn as it was.
 #
 # Run it from a checkout of this repository at the tag of the installed T3 Learn server
-# (git checkout v<version>), after `vp i`. See docs/user/t3-learn-agent-setup.md.
+# (git checkout v<version>), after `vp i`, or point T3_LEARN_CHECKOUT at such a checkout.
+# See docs/user/t3-learn-agent-setup.md.
 #
 #   T3_LEARN_COPY_FROM   T3 Code's home folder (default ~/.t3)
-#   T3_LEARN_PORT        port of t3learn.service (default 3780)
+#   T3_LEARN_CHECKOUT    checkout at the installed tag (default: the one holding this script)
+#   T3_LEARN_COPY_TO     T3 Learn's home folder (default ~/.t3-learn)
+#   T3_LEARN_UNIT        T3 Learn's systemd user unit (default t3learn.service)
+#   T3_LEARN_PORT        port of that unit (default 3780)
 set -euo pipefail
 
-CHECKOUT=$(cd "$(dirname "$0")/.." && pwd)
+CHECKOUT=${T3_LEARN_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
 SOURCE=${T3_LEARN_COPY_FROM:-$HOME/.t3}
-LEARN=$HOME/.t3-learn
-STAGE=$HOME/.t3-learn-staging
-UNIT=t3learn.service
+LEARN=${T3_LEARN_COPY_TO:-$HOME/.t3-learn}
+STAGE=$LEARN-staging
+UNIT=${T3_LEARN_UNIT:-t3learn.service}
 PORT=${T3_LEARN_PORT:-3780}
 SANDBOX_PORT=3781
 LOG=$STAGE-boot.log
