@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
+  type OrchestrationV2DomainEvent,
   CheckpointScopeId,
   ProjectId,
   ProviderInstanceId,
@@ -19,7 +20,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { CheckpointDeleteStaleRefsError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./ProjectionStore.ts";
@@ -34,6 +35,8 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
+  "moved",
+  "moved-conversation",
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -55,6 +58,7 @@ it.effect.each([
     const checkpointId = CheckpointId.make("restore-checkpoint");
     const scopeId = CheckpointScopeId.make("restore-scope");
     const calls: string[] = [];
+    const committedEvents: OrchestrationV2DomainEvent[] = [];
     const providerThread = {
       id: providerThreadId,
       providerSessionId,
@@ -86,11 +90,24 @@ it.effect.each([
       rootNodes: [],
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
-      staleCheckpoints: [],
+      staleCheckpoints:
+        owner === "moved-conversation"
+          ? [
+              {
+                id: CheckpointId.make("restore-stale"),
+                scopeId,
+                nodeId: null,
+                runId: null,
+                appRunOrdinal: 1,
+                status: "ready",
+              },
+            ]
+          : [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
-      scope: { id: scopeId, cwd },
+      scope: { id: scopeId, cwd: owner.startsWith("moved") ? sibling : cwd },
       runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
     } as unknown as ProjectionCheckpointRollbackContext;
+    if (owner === "moved-conversation") yield* fs.remove(sibling, { recursive: true });
     const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -141,13 +158,31 @@ it.effect.each([
               }),
           }),
           Layer.mock(CheckpointServiceV2)({
+            deleteStaleRefs: (input) =>
+              fs.readDirectory(input.scope.cwd).pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new CheckpointDeleteStaleRefsError({
+                      scopeId: input.scope.id,
+                      checkpointIds: input.checkpoints.map((checkpoint) => checkpoint.id),
+                      cause,
+                    }),
+                ),
+              ),
             restore: () =>
               Effect.gen(function* () {
                 calls.push("files");
                 yield* fs.remove(otherFile).pipe(Effect.orDie);
               }),
           }),
-          Layer.mock(EventSinkV2)({ write: () => Effect.succeed([]) }),
+          Layer.mock(EventSinkV2)({
+            write: ({ events }) =>
+              Effect.sync(() => {
+                committedEvents.push(...events);
+                return [];
+              }),
+          }),
           Layer.mock(ProviderSessionManagerV2)({
             open: () =>
               Effect.succeed({
@@ -165,8 +200,10 @@ it.effect.each([
     const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
       Effect.provide(layerTest),
     );
-    const restoreFiles = owner !== "conversation";
-    const rejected = !["sibling", "shared-provider", "conversation"].includes(owner);
+    const restoreFiles = owner !== "conversation" && owner !== "moved-conversation";
+    const rejected = !["sibling", "shared-provider", "conversation", "moved-conversation"].includes(
+      owner,
+    );
     if (rejected) {
       const error = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
@@ -178,6 +215,21 @@ it.effect.each([
       yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
       assert.deepEqual(calls, restoreFiles ? ["provider", "files"] : ["provider"]);
       assert.equal(yield* fs.exists(otherFile), !restoreFiles);
+      if (owner === "moved-conversation") {
+        assert.isTrue(
+          committedEvents.some(
+            (event) =>
+              event.type === "checkpoint.captured" &&
+              event.payload.id === "restore-stale" &&
+              event.payload.status === "stale",
+          ),
+        );
+        assert.isTrue(
+          committedEvents.some(
+            (event) => event.type === "run.updated" && event.payload.status === "rolled_back",
+          ),
+        );
+      }
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

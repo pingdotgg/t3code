@@ -177,8 +177,19 @@ export const make = Effect.gen(function* () {
 
       const firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? (projection.checkpointScopes.find(
+              (scope) =>
+                scope.id ===
+                readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === 1)?.scopeId,
+            ) ?? projection.checkpointScopes.find((scope) => scope.kind === "root_run"))
           : undefined;
+      const fromCheckpoint =
+        parentCheckpoint ??
+        readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
+      const fromScope =
+        input.fromTurnCount === 0
+          ? firstScope
+          : projection.checkpointScopes.find((scope) => scope.id === fromCheckpoint?.scopeId);
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,13 +198,8 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      if (fromCheckpointRef === undefined || fromScope?.cwd !== toScope.cwd) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,

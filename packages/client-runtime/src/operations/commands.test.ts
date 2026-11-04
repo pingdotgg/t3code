@@ -192,8 +192,24 @@ describe("V2 environment commands", () => {
           },
         ],
       };
+      const movedProjection = {
+        ...projection,
+        checkpoints: [
+          ...projection.checkpoints,
+          {
+            ...projection.checkpoints[0]!,
+            id: CheckpointId.make("checkpoint-moved-workspace-start"),
+            scopeId: CheckpointScopeId.make("checkpoint-scope-moved-workspace"),
+            status: "missing" as const,
+          },
+        ],
+      };
       const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projection: movedProjection,
+      });
 
       yield* revertThreadCheckpoint({
         commandId: CommandId.make("rollback-thread-start"),

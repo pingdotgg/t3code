@@ -106,6 +106,39 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect.each([0, 1])(
+  "refuses a diff range starting in another workspace at turn %s",
+  (fromTurnCount) => {
+    const projection = makeProjection();
+    const layer = layerFor({
+      projection: Effect.succeed({
+        ...projection,
+        checkpointScopes: projection.checkpointScopes.map((scope) =>
+          scope.id === secondScopeId ? { ...scope, cwd: "/other-worktree" } : scope,
+        ),
+        checkpoints: [
+          {
+            ...projection.checkpoints[0]!,
+            scopeId: firstScopeId,
+            runId: firstRunId,
+            appRunOrdinal: 1,
+            ref: CheckpointRef.make("refs/t3/test/first"),
+          },
+          { ...projection.checkpoints[0]!, ordinalWithinScope: 2 },
+        ],
+      }),
+    });
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const error = yield* query
+        .getTurnDiff({ threadId, fromTurnCount, toTurnCount: 2 })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, CheckpointRefUnavailableError);
+      assert.equal(error.checkpoint, "from");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
   const thirdRunId = RunId.make("run:checkpoint-diff-v2:3");
   const checkpoint = (

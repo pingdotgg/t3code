@@ -291,7 +291,18 @@ export const layer: Layer.Layer<
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+        const deleteRefs = checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+        yield* input.restoreFiles === false
+          ? deleteRefs.pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration V2 conversation rollback ref cleanup failed", {
+                  threadId: input.threadId,
+                  scopeId: scope.id,
+                  cause: String(cause),
+                }),
+              ),
+            )
+          : deleteRefs;
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

@@ -492,7 +492,7 @@ describe("orchestration V2 thread fork", () => {
         const secondRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 2 });
         const checkpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: sourceThreadId,
-          name: "root",
+          name: `root:${cwd}`,
         });
         const firstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId,
@@ -698,7 +698,7 @@ describe("orchestration V2 thread fork", () => {
         const targetSecondRunId = ids.derive.run({ threadId: targetThreadId, ordinal: 2 });
         const targetCheckpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: targetThreadId,
-          name: "root",
+          name: `root:${cwd}`,
         });
         const targetFirstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId: targetCheckpointScopeId,

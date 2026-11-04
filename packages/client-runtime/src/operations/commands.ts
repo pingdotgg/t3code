@@ -934,7 +934,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       ) ??
       projection.checkpoints.findLast((candidate) =>
         input.turnCount === 0
-          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+          ? candidate.status === "ready" &&
+            candidate.ordinalWithinScope === 0 &&
+            candidate.appRunOrdinal === null
           : candidate.appRunOrdinal === input.turnCount,
       );
     if (checkpoint === undefined || checkpoint.status !== "ready") {
