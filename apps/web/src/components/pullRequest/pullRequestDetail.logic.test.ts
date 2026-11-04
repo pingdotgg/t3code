@@ -982,6 +982,15 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toBe("octocat: This leaks the token.\n\n```html\n<!-- kept -->\n```");
   });
 
+  it("keeps comments inside a quoted fence as code", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", "> ```html\n> <!-- open\n> ```\n> Quoted. <!-- bot -->\nMine."),
+    });
+
+    expect(context?.text).toBe("octocat: > ```html\n> <!-- open\n> ```\n> Quoted. \nMine.");
+  });
+
   it("keeps a fence written inside a hidden comment hidden", () => {
     const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",

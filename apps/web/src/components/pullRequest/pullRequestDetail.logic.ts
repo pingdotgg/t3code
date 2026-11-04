@@ -659,6 +659,8 @@ const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
 // as a fence rather than as inline code.
 const FENCE_OPEN = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/u;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u;
+// Fences can sit inside a blockquote, as review bots quote code.
+const BLOCKQUOTE_PREFIX = /^(?: {0,3}>[ \t]?)+/u;
 
 /**
  * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
@@ -674,9 +676,10 @@ function readableBody(body: string): string | null {
   // Hosts pass bodies on with whatever line endings they were written with, and a `\r` left on a
   // closing fence would hold the fence open over everything after it.
   for (const line of body.split(/\r\n|\r|\n/u)) {
+    const unquoted = line.replace(BLOCKQUOTE_PREFIX, "");
     if (fence !== null) {
       kept.push(line);
-      const closing = FENCE_CLOSE.exec(line)?.[1];
+      const closing = FENCE_CLOSE.exec(unquoted)?.[1];
       if (closing !== undefined && closing[0] === fence[0] && closing.length >= fence.length) {
         fence = null;
       }
@@ -689,7 +692,7 @@ function readableBody(body: string): string | null {
       rest = rest.slice(end + 3);
       inComment = false;
     } else {
-      const opening = FENCE_OPEN.exec(line);
+      const opening = FENCE_OPEN.exec(unquoted);
       if (opening !== null) {
         fence = opening[1] ?? opening[2] ?? null;
         kept.push(line);
