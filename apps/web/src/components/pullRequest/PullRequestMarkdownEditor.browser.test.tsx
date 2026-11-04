@@ -116,12 +116,12 @@ it("completes an @mention on Enter and closes the list on Escape without leaving
 
   await userEvent.keyboard("{Enter}");
   expect(textarea.value).toBe("Thanks @julius ");
-  expect(screen.container.ownerDocument.querySelector('[role="listbox"]')).toBeNull();
+  await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
 
   await userEvent.type(textarea, "and @");
   await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
   await userEvent.keyboard("{Escape}");
-  expect(screen.container.ownerDocument.querySelector('[role="listbox"]')).toBeNull();
+  await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
   expect(onCancel).not.toHaveBeenCalled();
   expect(onSave).not.toHaveBeenCalled();
 });
