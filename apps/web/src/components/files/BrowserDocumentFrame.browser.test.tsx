@@ -190,7 +190,7 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   const onAskInSideChat = vi.fn();
   const onContentHeight = vi.fn();
   await using screen = await render(
-    <>
+    <div data-testid="embed-scroll-container" style={{ height: 260, overflow: "auto" }}>
       <div style={{ paddingLeft: 400 }}>
         <button type="button">Outside embed</button>
       </div>
@@ -200,7 +200,8 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
         onAskInSideChat={onAskInSideChat}
         onContentHeight={onContentHeight}
       />
-    </>,
+      <div style={{ height: 400 }} />
+    </div>,
   );
   await vi.waitFor(() => expect(onContentHeight).toHaveBeenCalled());
   const frame = screen.getByTitle("Selection diagram").element() as HTMLIFrameElement;
@@ -226,6 +227,14 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   await expect
     .element(page.getByRole("button", { name: "Cite selection in composer" }))
     .not.toBeInTheDocument();
+  const scroller = screen.getByTestId("embed-scroll-container").element();
+  const frameTop = frame.getBoundingClientRect().top;
+  scroller.scrollTop = 50;
+  await vi.waitFor(() => expect(frame.getBoundingClientRect().top).toBe(frameTop - 50));
+  expect(document.activeElement).toBe(frame);
+  await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
   await userEvent.keyboard("{Escape}");
   await expect.element(ask).not.toBeInTheDocument();
   await userEvent.keyboard("{Control>}a{/Control}");

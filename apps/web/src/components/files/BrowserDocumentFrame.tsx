@@ -248,7 +248,6 @@ export function HtmlRenderDocument({
   const textRequestId = useRef<string | null>(null);
   useImperativeHandle(ref, () => ({
     askInSideChat: () => {
-      if (!props.onAskInSideChat || props.askPending) return;
       textRequestId.current = randomUUID();
       frameRef.current?.contentWindow?.postMessage(
         htmlRenderTextRequest(textRequestId.current),
@@ -425,10 +424,12 @@ export function HtmlRenderDocument({
     const dismiss = () => setSelection(undefined);
     window.addEventListener("message", onMessage);
     window.addEventListener("focus", dismiss);
+    window.addEventListener("scroll", dismiss, true);
     window.addEventListener("resize", dismiss);
     return () => {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
       window.removeEventListener("resize", dismiss);
     };
   }, []);
