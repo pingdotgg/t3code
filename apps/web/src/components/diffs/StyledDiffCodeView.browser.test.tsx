@@ -52,6 +52,17 @@ describe("StyledDiffCodeView", () => {
     renderedItem()!.dispatchEvent(
       new PointerEvent("pointerdown", { bubbles: true, composed: true }),
     );
+    const azertyQuit = new KeyboardEvent("keydown", {
+      key: "q",
+      code: "KeyA",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(azertyQuit);
+    expect(azertyQuit.defaultPrevented).toBe(false);
+    expect(copy()).toBe("");
+
     const selectAll = new KeyboardEvent("keydown", {
       key: "ф",
       code: "KeyA",

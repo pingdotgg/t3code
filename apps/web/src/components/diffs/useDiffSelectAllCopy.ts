@@ -4,9 +4,14 @@ import { type Ref, useEffect, useState } from "react";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { buildDiffFileText } from "~/reviewCommentContext";
 
+function matchesShortcutKey(event: KeyboardEvent, key: string, code: string): boolean {
+  const pressedKey = event.key.toLowerCase();
+  return /^[a-z]$/.test(pressedKey) ? pressedKey === key : event.code === code;
+}
+
 function isSelectAll(event: KeyboardEvent): boolean {
   return (
-    (event.key.toLowerCase() === "a" || event.code === "KeyA") &&
+    matchesShortcutKey(event, "a", "KeyA") &&
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
     !event.shiftKey
@@ -14,9 +19,7 @@ function isSelectAll(event: KeyboardEvent): boolean {
 }
 
 function isCopy(event: KeyboardEvent): boolean {
-  return (
-    (event.key.toLowerCase() === "c" || event.code === "KeyC") && (event.metaKey || event.ctrlKey)
-  );
+  return matchesShortcutKey(event, "c", "KeyC") && (event.metaKey || event.ctrlKey);
 }
 
 const MODIFIER_KEYS = new Set(["Meta", "Control", "Shift", "Alt"]);
