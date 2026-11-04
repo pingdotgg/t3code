@@ -315,6 +315,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   it.effect.each([
     {
+      name: "an IPv6 startup failure",
+      stderr:
+        "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)",
+      exit: "process.exit(1)",
+      message:
+        "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.",
+    },
+    {
       name: "a SIGKILL exit",
       stderr: "",
       exit: "process.kill(process.pid, 'SIGKILL')",
