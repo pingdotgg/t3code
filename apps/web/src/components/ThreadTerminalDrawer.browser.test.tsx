@@ -18,6 +18,7 @@ const fixture = vi.hoisted(() => ({
   openFilesInApp: false,
   scopes: null as ReadonlySet<string> | null,
   metadata: { entries: [{ kind: "file" }] } as FilesystemGetMetadataResult,
+  metadataByEnvironment: new Map<EnvironmentId, FilesystemGetMetadataResult>(),
   pendingMetadata: new Map<string, Promise<FilesystemGetMetadataResult>>(),
   openEditor: vi.fn(async (_target: string) => ({ _tag: "Success" as const })),
 }));
@@ -77,9 +78,17 @@ vi.mock("../state/filesystem", () => ({ filesystemEnvironment: { getMetadata: {}
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
     () =>
-    async ({ input }: { input: { paths: readonly string[] } }) => ({
+    async ({
+      environmentId,
+      input,
+    }: {
+      environmentId: EnvironmentId;
+      input: { paths: readonly string[] };
+    }) => ({
       _tag: "Success",
-      value: await (fixture.pendingMetadata.get(input.paths[0]!) ?? fixture.metadata),
+      value: await (fixture.pendingMetadata.get(input.paths[0]!) ??
+        fixture.metadataByEnvironment.get(environmentId) ??
+        fixture.metadata),
     }),
 }));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
@@ -94,17 +103,19 @@ vi.mock("../hooks/useSettings", async () => {
 
 function Drawer(props: {
   threadRef: ScopedThreadRef;
+  terminalIds?: string[];
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
 }) {
+  const terminalIds = props.terminalIds ?? ["term-1"];
   return (
     <ThreadTerminalDrawer
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
       cwd="/repo"
       height={240}
-      terminalIds={["term-1"]}
-      activeTerminalId="term-1"
-      terminalGroups={[{ id: "group-1", terminalIds: ["term-1"] }]}
+      terminalIds={terminalIds}
+      activeTerminalId={terminalIds[0]!}
+      terminalGroups={[{ id: "group-1", terminalIds }]}
       activeTerminalGroupId="group-1"
       onSplitTerminal={() => {}}
       onSplitTerminalVertical={() => {}}
@@ -136,6 +147,7 @@ function setup() {
   fixture.openFilesInApp = false;
   fixture.scopes = null;
   fixture.metadata = { entries: [{ kind: "file" }] };
+  fixture.metadataByEnvironment = new Map();
   fixture.pendingMetadata = new Map();
   fixture.openEditor.mockClear();
   useRightPanelStore.setState({ byThreadKey: {} });
@@ -211,29 +223,41 @@ function deferredMetadata() {
 }
 
 it.each([
-  ["file", "file"],
-  ["file", "directory"],
-  ["directory", "file"],
-  ["file", "modifier"],
-  ["file", "url"],
+  ["file", "file", false],
+  ["file", "directory", false],
+  ["directory", "file", false],
+  ["file", "modifier", false],
+  ["file", "url", false],
+  ["file", "file", true],
+  ["file", "directory", true],
+  ["directory", "file", true],
+  ["file", "modifier", true],
+  ["file", "url", true],
 ] as const)(
-  "ignores stale %s metadata after a newer %s activation",
-  async (olderKind, latestKind) => {
+  "ignores stale %s metadata after a newer %s activation (split panes: %s)",
+  async (olderKind, latestKind, splitPanes) => {
     const { original } = setup();
     fixture.openFilesInApp = true;
     const older = deferredMetadata();
     const latest = deferredMetadata();
     fixture.pendingMetadata.set("/repo/src/older.ts", older.promise);
     fixture.pendingMetadata.set("/repo/src/latest.ts", latest.promise);
-    await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+    await using _screen = await render(
+      <Drawer
+        threadRef={original}
+        terminalIds={splitPanes ? ["term-1", "term-2"] : ["term-1"]}
+        onCloseTerminal={() => {}}
+      />,
+    );
     await act(async () => {
-      fixture.pendingSurfaces.shift()?.();
+      for (const complete of fixture.pendingSurfaces.splice(0)) complete();
     });
-    const options = fixture.surfaceOptions[0]!;
+    const olderOptions = fixture.surfaceOptions[0]!;
+    const latestOptions = fixture.surfaceOptions[splitPanes ? 1 : 0]!;
     const mac = /mac/i.test(navigator.platform);
     await act(() => {
-      options.onLinkActivate("src/older.ts", new MouseEvent("click"));
-      options.onLinkActivate(
+      olderOptions.onLinkActivate("src/older.ts", new MouseEvent("click"));
+      latestOptions.onLinkActivate(
         latestKind === "url" ? "https://example.com" : "src/latest.ts:42",
         new MouseEvent("click", {
           metaKey: latestKind === "modifier" && mac,
@@ -269,10 +293,125 @@ it.each([
   },
 );
 
+it.each(["file", "directory"] as const)(
+  "does not open a %s destination after its terminal closes",
+  async (kind) => {
+    const { original } = setup();
+    fixture.openFilesInApp = true;
+    const pending = deferredMetadata();
+    fixture.pendingMetadata.set("/repo/src/example.ts", pending.promise);
+    await using screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate("src/example.ts", new MouseEvent("click"));
+    });
+    await screen.unmount();
+    await act(async () => {
+      pending.resolve({ entries: [{ kind }] });
+      await pending.promise;
+    });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+    ).toBeNull();
+    expect(fixture.openEditor).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["term-1", "term-2"])(
+  "preserves link ordering when split pane %s closes during a lookup",
+  async (closedTerminalId) => {
+    const { original } = setup();
+    fixture.openFilesInApp = true;
+    const older = deferredMetadata();
+    const latest = deferredMetadata();
+    fixture.pendingMetadata.set("/repo/src/older.ts", older.promise);
+    fixture.pendingMetadata.set("/repo/src/latest.ts", latest.promise);
+    await using screen = await render(
+      <Drawer threadRef={original} terminalIds={["term-1", "term-2"]} onCloseTerminal={() => {}} />,
+    );
+    await act(async () => {
+      for (const complete of fixture.pendingSurfaces.splice(0)) complete();
+    });
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate("src/older.ts", new MouseEvent("click"));
+      fixture.surfaceOptions[1]!.onLinkActivate("src/latest.ts", new MouseEvent("click"));
+    });
+    await screen.rerender(
+      <Drawer
+        threadRef={original}
+        terminalIds={[closedTerminalId === "term-1" ? "term-2" : "term-1"]}
+        onCloseTerminal={() => {}}
+      />,
+    );
+    const closed = closedTerminalId === "term-1" ? older : latest;
+    const surviving = closedTerminalId === "term-1" ? latest : older;
+    await act(async () => {
+      closed.resolve({ entries: [{ kind: "file" }] });
+      await closed.promise;
+    });
+    await act(async () => {
+      surviving.resolve({ entries: [{ kind: "file" }] });
+      await surviving.promise;
+    });
+    const panel = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      original,
+    );
+    if (closedTerminalId === "term-1") {
+      expect(panel).toMatchObject({ relativePath: "/repo/src/latest.ts" });
+    } else {
+      expect(panel).toBeNull();
+    }
+    expect(fixture.openEditor).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["thread", "environment"])(
+  "keeps pending link activations independent across %s scopes",
+  async (scope) => {
+    const { original, other } = setup();
+    const independent =
+      scope === "thread"
+        ? { ...original, threadId: other.threadId }
+        : { ...original, environmentId: other.environmentId };
+    fixture.openFilesInApp = true;
+    const older = deferredMetadata();
+    fixture.pendingMetadata.set("/repo/src/older.ts", older.promise);
+    await using _screen = await render(
+      <>
+        <Drawer threadRef={original} onCloseTerminal={() => {}} />
+        <Drawer threadRef={independent} onCloseTerminal={() => {}} />
+      </>,
+    );
+    await act(async () => {
+      for (const complete of fixture.pendingSurfaces.splice(0)) complete();
+    });
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate("src/older.ts", new MouseEvent("click"));
+      fixture.surfaceOptions[1]!.onLinkActivate("src/latest.ts", new MouseEvent("click"));
+    });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, independent),
+    ).toMatchObject({ relativePath: "/repo/src/latest.ts" });
+    await act(async () => {
+      older.resolve({ entries: [{ kind: "file" }] });
+      await older.promise;
+    });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+    ).toMatchObject({ relativePath: "/repo/src/older.ts" });
+    expect(fixture.openEditor).not.toHaveBeenCalled();
+  },
+);
+
 it("opens files on their owning environment with filesystem access and no editor-launch grant", async () => {
   const { original, other } = setup();
   fixture.openFilesInApp = true;
   fixture.scopes = new Set(["filesystem:read", "terminal:operate"]);
+  fixture.metadata = { entries: [null] };
+  fixture.metadataByEnvironment.set(other.environmentId, { entries: [{ kind: "file" }] });
   await using _screen = await render(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
