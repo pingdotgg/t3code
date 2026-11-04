@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
+import type { makeUsageHttpClient } from "./usageHttpClient.ts";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderCredentialError } from "./errors.ts";
@@ -32,6 +33,7 @@ export interface ProviderCredentials {
 export class ProviderHost extends Context.Service<
   ProviderHost,
   {
+    readonly usageHttpClient?: Effect.Success<ReturnType<typeof makeUsageHttpClient>>;
     readonly paths: ProviderHostPaths;
     readonly settings: {
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;

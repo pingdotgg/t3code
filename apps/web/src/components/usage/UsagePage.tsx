@@ -1,3 +1,4 @@
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -254,12 +255,39 @@ export function UsagePage() {
     // Settled so the timestamp still advances when a refresh throws.
     settlePromise(() =>
       Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
+        Array.from(presentationsWithProviders, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              () => {
+                const providers = (presentation.serverConfig?.providers ?? []).filter(
+                  (provider) =>
+                    ![...hiddenProviders].some(
+                      (hidden) =>
+                        hidden === (provider.driver === "claudeAgent" ? "claude" : provider.driver),
+                    ),
+                );
+                return Promise.all([
+                  refreshProviders({
+                    environmentId,
+                    input: {
+                      usageSources: true,
+                      usageProviders: PROVIDER_ORDER.filter(
+                        (provider) => !hiddenProviders.has(provider),
+                      ).map((provider) =>
+                        ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
+                      ),
+                    },
+                  }),
+                  ...providers.map((provider) =>
+                    refreshProviders({
+                      environmentId,
+                      input: { instanceId: provider.instanceId, usage: true },
+                    }),
+                  ),
+                ]);
+              },
               automatic,
               afterPending,
             );
@@ -338,10 +366,12 @@ export function UsagePage() {
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
-  useEffect(() => {
-    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
-  }, [showingLimits, connectedLimitsEnvironments]);
+  useLiveRefresh(() => autoRefreshLimits(), {
+    enabled: showingLimits && connectedLimitsEnvironments !== "",
+    key: `usage-page:${connectedLimitsEnvironments}:${[...hiddenProviders].sort().join(",")}`,
+    refreshOnShow: true,
+    refreshWhileIdle: true,
+  });
 
   const days = enumerateDays(shownWindow.sinceDay, shownWindow.untilDay);
   const hours =

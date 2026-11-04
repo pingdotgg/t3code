@@ -1,3 +1,4 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -233,7 +234,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
   const scope = yield* Effect.scope;
   const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
-    if (!options.probeUsage || (yield* PublishingUsage)) return;
+    if (!options.probeUsage || (yield* PublishingUsage) || !(yield* UsagePolling)) return;
     yield* FiberHandle.run(
       usageRead,
       options.probeUsage.pipe(

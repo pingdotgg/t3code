@@ -7,6 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { UsagePolling } from "./usageLimits.ts";
 import * as Cache from "effect/Cache";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -140,6 +141,38 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect(
+    "keeps health probes independent and shares usage refreshes across visible surfaces",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reads = yield* Ref.make(0);
+          const provider = yield* makeManagedServerProvider({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: () => false,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.gen(function* () {
+              if (yield* UsagePolling) yield* Ref.update(reads, (n) => n + 1);
+              return refreshedSnapshot;
+            }),
+          });
+          yield* provider.refresh;
+          assert.strictEqual(yield* Ref.get(reads), 0);
+          yield* Effect.all([provider.refresh, provider.refresh], {
+            concurrency: "unbounded",
+          }).pipe(Effect.provideService(UsagePolling, true));
+          assert.strictEqual(yield* Ref.get(reads), 1);
+          yield* TestClock.adjust("5 minutes");
+          yield* provider.refresh;
+          assert.strictEqual(yield* Ref.get(reads), 1);
+          yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true));
+          assert.strictEqual(yield* Ref.get(reads), 2);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("invalidates cached usage and queues one refresh behind an in-flight refresh", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -756,7 +789,10 @@ describe("makeManagedServerProvider", () => {
           windows: [{ ...weekly }],
         });
         assert.strictEqual(yield* provider.getSnapshot, partial);
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
+        assert.deepStrictEqual(
+          (yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true))).usageLimits,
+          failedLimits,
+        );
 
         const completeLimits = {
           checkedAt: "2026-04-10T00:00:04.000Z",
@@ -766,7 +802,11 @@ describe("makeManagedServerProvider", () => {
           ],
         } as const;
         yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: completeLimits });
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
+        yield* TestClock.adjust("5 minutes");
+        assert.deepStrictEqual(
+          (yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true))).usageLimits,
+          completeLimits,
+        );
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

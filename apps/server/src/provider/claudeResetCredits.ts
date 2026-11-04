@@ -134,7 +134,7 @@ const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends S
   );
 });
 
-const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
+export const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
   configDir: string,
 ) {
   if ((yield* HostProcess.Platform) === "darwin") return undefined;

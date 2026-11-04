@@ -1,3 +1,4 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
@@ -538,7 +539,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         auth: { status: "authenticated", email: "account-a@example.com", workspaceId: "org-a" },
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
       });
-      expect(first.usageLimits?.unavailable).toBeUndefined();
+      expect(first.usageLimits?.unavailable?.reason).toBe("probeFailed");
       expect(probeCount).toBe(1);
 
       yield* TestClock.adjust("1 second");
@@ -564,13 +565,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(failedProbeCount).toBeGreaterThan(1);
 
       failProbe = false;
+      yield* claude!.invalidateCaches ?? Effect.void;
       const recovered = yield* claude!.snapshot.refresh;
       expect(recovered).toMatchObject({
         status: "ready",
         auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
         slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       });
-      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      expect(recovered.usageLimits?.unavailable?.reason).toBe("probeFailed");
       const recoveredProbeCount = probeCount;
       expect(recoveredProbeCount).toBeGreaterThan(failedProbeCount);
 
@@ -589,15 +591,9 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
 
       const repeatedFailure = yield* claude!.snapshot.refresh;
-      expect(repeatedFailure).toMatchObject({
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Claude Agent CLI failed while checking account status.",
-      });
-      expect(repeatedFailure.slashCommands).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
-      );
-      expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+      expect(repeatedFailure.auth).toEqual(sameAccountFailure.auth);
+      expect(repeatedFailure.slashCommands).toEqual(sameAccountFailure.slashCommands);
+      expect(probeCount).toBe(sameAccountFailureProbeCount);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -659,7 +655,9 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
       const instance = yield* registry.getInstance(instanceId);
       expect(instance).toBeDefined();
-      const before = yield* instance!.snapshot.refresh;
+      const before = yield* instance!.snapshot.refresh.pipe(
+        Effect.provideService(UsagePolling, true),
+      );
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
       expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
       const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
@@ -734,7 +732,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     const instance = yield* registry.getInstance(instanceId);
     expect(instance).toBeDefined();
     return {
-      refresh: instance!.snapshot.refresh,
+      refresh: instance!.snapshot.refresh.pipe(Effect.provideService(UsagePolling, true)),
       recover: fs.writeFileString(recovered, ""),
       probeLog: fs.readFileString(probeLog),
     };
@@ -743,8 +741,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   for (const state of ["signed-out", "usage-failed"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
-        ? "shows Claude usage on the first refresh after signing back in"
-        : "retries Claude usage on the first refresh after a failed usage read",
+        ? "refreshes Claude usage after signing back in and the cache expires"
+        : "caches a failed Claude usage probe until its normal refresh interval",
       () =>
         Effect.gen(function* () {
           const fixture = yield* makeClaudeCacheFixture(state);
@@ -757,7 +755,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             expect(before.usageLimits?.unavailable?.reason).toBe("probeFailed");
           }
 
+          if (state === "usage-failed") {
+            const log = yield* fixture.probeLog;
+            yield* fixture.refresh;
+            expect(yield* fixture.probeLog).toBe(log);
+          }
           yield* fixture.recover;
+          yield* TestClock.adjust("5 minutes");
           const after = yield* fixture.refresh;
           expect(after.auth.status).toBe("authenticated");
           expect(after.usageLimits?.unavailable).toBeUndefined();

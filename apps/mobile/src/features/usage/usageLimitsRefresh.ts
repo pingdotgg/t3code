@@ -1,3 +1,4 @@
+import { isAppActive, subscribeAppState } from "../../lib/appState";
 import { EnvironmentId } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
@@ -18,6 +19,7 @@ export async function refreshEnvironmentLimits(
   environmentId: EnvironmentId,
   options: { readonly automatic?: boolean; readonly afterPending?: boolean } = {},
 ): Promise<void> {
+  if (!isAppActive()) return;
   // One refresh runs per environment at a time, so results land in the order
   // they were started and the newest outcome always wins.
   const result = await refreshUsageLimits(
@@ -26,7 +28,7 @@ export async function refreshEnvironmentLimits(
       runAtomCommand(
         registry,
         serverEnvironment.refreshProviders,
-        { environmentId, input: {} },
+        { environmentId, input: { usage: true } },
         { reportFailure: false },
       ),
     options.automatic,
@@ -40,7 +42,16 @@ export async function refreshEnvironmentLimits(
 // one every few minutes per environment.
 const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
-    void refreshEnvironmentLimits(get.registry, environmentId, { automatic: true });
+    const refresh = () => {
+      void refreshEnvironmentLimits(get.registry, environmentId, { automatic: true });
+    };
+    refresh();
+    const unsubscribe = subscribeAppState(refresh);
+    const timer = setInterval(refresh, 5 * 60_000);
+    get.addFinalizer(() => {
+      unsubscribe();
+      clearInterval(timer);
+    });
   }).pipe(Atom.withLabel(`mobile:limits-auto-refresh:${environmentId}`)),
 );
 

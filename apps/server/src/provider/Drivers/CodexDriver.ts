@@ -1,3 +1,4 @@
+import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -349,7 +350,10 @@ export const CodexDriver: ProviderDriver<
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              const refreshed = yield* snapshot.refresh;
+              const refreshed = yield* snapshot.refresh.pipe(
+                Effect.provideService(UsagePolling, true),
+                Effect.provideService(UsageAfterReset, true),
+              );
               const after = refreshed.usageLimits?.checkedAt;
               if (
                 outcome === "reset" &&

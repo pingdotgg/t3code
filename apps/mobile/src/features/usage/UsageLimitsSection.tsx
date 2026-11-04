@@ -14,6 +14,7 @@ import {
   formatDuration,
   formatResetsIn,
   limitsNotice,
+  STALE_USAGE_NOTICE,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
@@ -197,6 +198,9 @@ export function AccountLimits(props: {
         </View>
         {props.trailing}
       </View>
+      {limits.stale ? (
+        <Text className="text-sm text-foreground-muted">{STALE_USAGE_NOTICE}</Text>
+      ) : null}
       {notice ? (
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (

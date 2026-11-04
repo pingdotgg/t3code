@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -16,7 +17,12 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  resolveUsageLimitsAfterProbe,
+  UsagePolling,
+  UsageAfterReset,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
@@ -61,6 +67,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   Scope.Scope | ProviderHost.ProviderHost
 > {
   const host = yield* ProviderHost.ProviderHost;
+  let usageRefreshAfter = 0;
   const refreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
   const changesPubSub = yield* Effect.acquireRelease(
@@ -150,7 +157,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider;
+    const now = yield* Clock.currentTimeMillis;
+    const pollingUsage =
+      (yield* UsagePolling) && ((yield* UsageAfterReset) || now >= usageRefreshAfter);
+    const probedSnapshot = yield* input.checkProvider.pipe(
+      Effect.provideService(UsagePolling, pollingUsage),
+    );
+    if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -165,11 +178,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        if (switchedAccount && !pollingUsage) usageRefreshAfter = 0;
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
           : resolveUsageLimitsAfterProbe({
               published: state.snapshot.usageLimits,
-              probed: probedSnapshot.usageLimits,
+              probed:
+                !pollingUsage &&
+                probedSnapshot.auth.status === "authenticated" &&
+                state.snapshot.usageLimits
+                  ? state.snapshot.usageLimits
+                  : probedSnapshot.usageLimits,
             });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
@@ -241,7 +260,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                     Effect.andThen(input.invalidateUsageCache ?? Effect.void),
                     Effect.andThen(input.getSettings),
                     Effect.flatMap((settings) =>
-                      applySnapshotBase(settings, { forceRefresh: true }),
+                      applySnapshotBase(settings, { forceRefresh: true }).pipe(
+                        Effect.provideService(UsagePolling, true),
+                      ),
                     ),
                   ),
                 ),
@@ -265,7 +286,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    if (!(yield* UsagePolling) || !needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
       if (needsProviderRefresh(snapshot)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
       }

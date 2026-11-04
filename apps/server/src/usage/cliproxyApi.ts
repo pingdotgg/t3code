@@ -1,9 +1,14 @@
+import { usageRetryDelay } from "@t3tools/provider-core/server/usageLimits";
+import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import {
   ProviderDriverKind,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
@@ -16,7 +21,10 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  makeUnavailableUsageLimits,
+  resolveUsageLimitsAfterProbe,
+} from "@t3tools/provider-core/server/usageLimits";
 
 /** A hub with its management key already read from wherever the setting keeps it. */
 export interface CliproxyHub {
@@ -39,7 +47,19 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
-const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+const ApiResponse = Schema.Struct({
+  status_code: Schema.Number,
+  body: Schema.String,
+  header: Schema.optional(
+    Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  ),
+});
+const ApiCallInput = Schema.Struct({
+  hub: Schema.Struct({ url: Schema.String, managementKey: Schema.String }),
+  account: AuthFile,
+  url: Schema.String,
+});
+const decodeApiCallInput = Schema.decodeEffect(Schema.fromJsonString(ApiCallInput));
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -212,12 +232,24 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return (yield* decodeAuthFiles(response)).files;
   });
 
-  const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
+  const cooldowns = new Map<string, number>();
+  const apiCallUncached = Effect.fn("CliproxyApi.apiCall")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
     url: string,
     data?: unknown,
   ) {
+    const accountKey = yield* encodeJson([
+      hub.url,
+      hub.managementKey,
+      account.auth_index,
+      account.id,
+    ]);
+    const now = yield* Clock.currentTimeMillis;
+    if (data === undefined && now < (cooldowns.get(accountKey) ?? 0))
+      return yield* new UsageLimitSourceError({
+        detail: "The provider is cooling down after a rate limit.",
+      });
     const header =
       account.provider === "codex"
         ? {
@@ -243,6 +275,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
     const response = yield* decodeApiResponse(raw);
+    if (response.status_code === 429) {
+      const value = Object.entries(response.header ?? {}).find(
+        ([name]) => name.toLowerCase() === "retry-after",
+      )?.[1];
+      cooldowns.set(
+        accountKey,
+        (yield* Clock.currentTimeMillis) +
+          usageRetryDelay(
+            typeof value === "string" ? value : value?.[0],
+            yield* Clock.currentTimeMillis,
+          ),
+      );
+    }
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
@@ -268,11 +313,33 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
+  const usageCache = yield* Cache.makeWith(
+    (key: string) =>
+      decodeApiCallInput(key).pipe(
+        Effect.mapError(
+          () => new UsageLimitSourceError({ detail: "Could not read the usage request." }),
+        ),
+        Effect.flatMap(({ hub, account, url }) => apiCallUncached(hub, account, url)),
+      ),
+    { capacity: 128, timeToLive: () => Duration.minutes(5) },
+  );
+  const apiCall = Effect.fn("CliproxyApi.cachedApiCall")(function* (
+    hub: CliproxyHub,
+    account: typeof AuthFile.Type,
+    url: string,
+    data?: unknown,
+  ) {
+    if (data !== undefined) return yield* apiCallUncached(hub, account, url, data);
+    return yield* Cache.get(usageCache, yield* encodeJson({ hub, account, url }));
+  });
+
+  const lastGoodLimits = new Map<string, ServerProviderUsageLimits>();
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const accountKey = `${hub.url}\0${hub.managementKey}\0${account.auth_index}\0${account.id}\0${account.email ?? ""}\0${account.id_token?.chatgpt_account_id ?? ""}`;
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
@@ -368,11 +435,21 @@ export const makeCliproxyApi = Effect.gen(function* () {
           message: "The hub could not read this account's usage.",
         }),
       })),
+      Effect.map((result) => {
+        const usageLimits =
+          resolveUsageLimitsAfterProbe({
+            published: lastGoodLimits.get(accountKey),
+            probed: result.usageLimits,
+          }) ?? result.usageLimits;
+        if (!usageLimits.unavailable) lastGoodLimits.set(accountKey, usageLimits);
+        return { ...result, usageLimits };
+      }),
     );
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     hub: CliproxyHub,
+    providers?: readonly string[],
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
     const accounts = yield* authFiles(hub).pipe(
       Effect.mapError((error) =>
@@ -384,7 +461,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* Effect.forEach(
       accounts.filter(
         (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+          !account.disabled &&
+          (account.provider === "codex" || account.provider === "claude") &&
+          (providers === undefined ||
+            providers.includes(account.provider === "claude" ? "claudeAgent" : account.provider)),
       ),
       (account) => readAccount(hub, account),
       { concurrency: 4 },
@@ -420,6 +500,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         } as const
       )[response.code];
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
+      yield* Cache.invalidateAll(usageCache);
       const cleared = yield* management(hub, "reset-quota", {
         auth_index: account.auth_index,
       }).pipe(Effect.result);

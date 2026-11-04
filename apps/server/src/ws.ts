@@ -1,3 +1,4 @@
+import { UsagePolling, UsageProviderFilter } from "@t3tools/provider-core/server/usageLimits";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -2427,21 +2428,29 @@ export const layerWsRpc = (
             if (input.reloadSecrets === true && input.instanceId === undefined) {
               yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
             }
+            if (input.usageSources === true) {
+              yield* usageLimitSources.refresh.pipe(
+                Effect.provideService(UsageProviderFilter, input.usageProviders),
+              );
+              return { providers: yield* providerRegistry.getProviders };
+            }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
-            if (input.instanceId === undefined) {
+            if (input.usage === true && input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
-            let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
-              ? providerRegistry.refreshWorkspaceSnapshot({
-                  instanceId: input.instanceId,
-                  cwd: input.cwd,
-                  fresh: input.fresh === true,
-                })
-              : input.reloadSecrets === true
-                ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+            let providers = yield* (
+              input.cwd !== undefined && input.instanceId !== undefined
+                ? providerRegistry.refreshWorkspaceSnapshot({
+                    instanceId: input.instanceId,
+                    cwd: input.cwd,
+                    fresh: input.fresh === true,
+                  })
+                : input.reloadSecrets === true
+                  ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
+                  : input.instanceId !== undefined
+                    ? providerRegistry.refreshInstance(input.instanceId)
+                    : providerRegistry.refresh()
+            ).pipe(Effect.provideService(UsagePolling, input.usage === true));
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {

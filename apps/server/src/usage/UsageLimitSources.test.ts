@@ -98,6 +98,7 @@ it.effect("reads a management key from its secret provider", () => {
   });
   return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
     const snapshots = yield* sources.streamChanges.pipe(
       Stream.filter((next) => next.length > 0),
       Stream.runHead,

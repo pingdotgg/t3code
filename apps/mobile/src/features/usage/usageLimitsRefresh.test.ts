@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
     throw new Error("refresh not set up");
   },
 }));
+vi.mock("../../lib/appState", () => ({
+  isAppActive: () => true,
+  subscribeAppState: () => () => {},
+}));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     refreshProviders: {

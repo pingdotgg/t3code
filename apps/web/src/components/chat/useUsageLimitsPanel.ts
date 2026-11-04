@@ -1,3 +1,4 @@
+import { useUsageLimitsRefresh } from "../../hooks/useUsageLimitsRefresh";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -41,6 +42,7 @@ export function useUsageLimitsPanel(input: {
     panel !== null && panelKey !== null && panel.key === panelKey && providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, panel.now)
       : null;
+  useUsageLimitsRefresh(environmentId, providerInstanceId, report !== null, providerDriver);
   const banner =
     report !== null && panel !== null
       ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".

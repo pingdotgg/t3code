@@ -54,7 +54,11 @@ function fixture(
         id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (request: RequestBody) => {
+      status: number;
+      body: unknown;
+      headers?: Record<string, string[]>;
+    };
     cooldownStatus?: number;
   } = {},
 ) {
@@ -106,7 +110,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          body: encodeJson(upstream.body),
+          header: "headers" in upstream ? upstream.headers : undefined,
+        }),
       );
     }),
   );
@@ -194,6 +202,42 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect(
+    "paces filtered Claude accounts, preserves readings, and shares account cooldowns",
+    () =>
+      Effect.gen(function* () {
+        let limited = false;
+        const test = fixture({
+          accounts: accounts.map((account) => ({ ...account, provider: "claude" })),
+          upstream: () =>
+            limited
+              ? { status: 429, body: {}, headers: { "Retry-After": ["600"] } }
+              : { status: 200, body: { five_hour: { utilization: 25, resets_at: null } } },
+        });
+        const api = yield* test.api;
+        expect(yield* api.readAccounts(config, ["codex"])).toEqual([]);
+        const first = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(first.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
+          25, 25,
+        ]);
+        yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(2);
+        limited = true;
+        yield* TestClock.adjust("5 minutes");
+        const stale = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(stale.map((account) => account.usageLimits)).toEqual(
+          first.map((account) => ({ ...account.usageLimits, stale: true })),
+        );
+        yield* TestClock.adjust("5 minutes");
+        yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
+        ).toHaveLength(4);
+      }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>

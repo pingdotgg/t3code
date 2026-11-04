@@ -18,6 +18,8 @@ import {
 
 import * as DateTime from "effect/DateTime";
 
+export const STALE_USAGE_NOTICE = "Showing the last reading. Usage refresh failed.";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -400,8 +402,16 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
       if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
+      if (provider.usageLimits?.stale)
+        notices.push(`${label(environmentLabel, name)}: ${STALE_USAGE_NOTICE}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (account.usageLimits.stale)
+          notices.push(
+            `${label(environmentLabel, account.email ?? source.label)}: ${STALE_USAGE_NOTICE}`,
+          );
+      }
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
@@ -874,6 +884,9 @@ export function collectProviderUsageLimits(
     if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
       notices.push(`${source.label}: ${source.error}`);
     }
+  }
+  for (const account of accounts) {
+    if (account.limits.stale) notices.push(`${account.label}: ${STALE_USAGE_NOTICE}`);
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }

@@ -1,3 +1,4 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
@@ -195,7 +196,8 @@ export const OpenCodeDriver: ProviderDriver<
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
-    const httpClient = yield* HttpClient.HttpClient;
+    const httpClient =
+      (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
@@ -365,11 +367,16 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        usageLimits: checkUsageLimits,
+        usageLimits: Effect.flatMap(UsagePolling, (enabled) =>
+          enabled ? checkUsageLimits : Effect.succeed(null),
+        ),
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usageLimits }) => ({
+        ...provider,
+        ...(usageLimits ? { usageLimits } : {}),
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),

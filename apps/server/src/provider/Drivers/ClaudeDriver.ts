@@ -1,9 +1,9 @@
+import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -49,7 +49,6 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
-  makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
@@ -104,7 +103,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // The server cwd is $HOME in packaged desktop builds, and `claude`
     // wrappers that scope themselves to their cwd refuse to run there.
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    const httpClient = yield* HttpClient.HttpClient;
+    const usageHttpClient = (yield* ProviderHost.ProviderHost).usageHttpClient;
+    const httpClient = usageHttpClient ?? (yield* HttpClient.HttpClient);
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const catalogService = yield* ModelCatalog.ModelCatalog;
@@ -178,8 +178,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
-      () =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
+      (includeUsage: boolean) =>
+        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir, includeUsage).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
               Effect.map((workspaceId) => ({
@@ -212,23 +212,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.provideService(Path.Path, path),
         ),
       {
-        capacity: 1,
-        timeToLive: (exit) =>
-          // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
-          Exit.isSuccess(exit) &&
-          exit.value._tag === "fresh" &&
-          exit.value.capabilities.usage !== undefined
-            ? CAPABILITIES_PROBE_TTL
-            : Duration.zero,
+        capacity: 2,
+        timeToLive: () => CAPABILITIES_PROBE_TTL,
       },
     );
-    const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
-      effectiveConfig,
-      stateDir,
-      processEnv,
-    );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
-      Effect.map((result) => result.capabilities),
+    const resolveCapabilities = Effect.gen(function* () {
+      let includeUsage = yield* UsagePolling;
+      if (includeUsage && usageHttpClient) {
+        const token = yield* ClaudeResetCredits.readAccessToken(configDir).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (
+          token &&
+          (yield* usageHttpClient.isCoolingDown("https://api.anthropic.com", `Bearer ${token}`))
+        )
+          includeUsage = false;
+      }
+      return (yield* Cache.get(capabilitiesProbeCache, includeUsage)).capabilities;
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
 
     const checkProvider = catalogService.refreshInBackground.pipe(
@@ -275,7 +278,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       checkProvider,
-      invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
+
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -342,7 +345,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         Effect.gen(function* () {
           const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
           yield* Cache.invalidateAll(capabilitiesProbeCache);
-          const refreshed = yield* snapshot.refresh;
+          if (usageHttpClient) {
+            const token = yield* ClaudeResetCredits.readAccessToken(configDir).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.orElseSucceed(() => undefined),
+            );
+            if (token)
+              yield* usageHttpClient.invalidateSuccessfulReads(
+                "https://api.anthropic.com",
+                `Bearer ${token}`,
+              );
+          }
+          const refreshed = yield* snapshot.refresh.pipe(
+            Effect.provideService(UsagePolling, true),
+            Effect.provideService(UsageAfterReset, true),
+          );
           const after = refreshed.usageLimits?.checkedAt;
           if (
             outcome === "reset" &&

@@ -31,6 +31,7 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 /** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
+  stale: Schema.optional(Schema.Boolean),
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),

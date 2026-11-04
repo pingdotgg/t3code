@@ -160,6 +160,7 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
 
 export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   environment: NodeJS.ProcessEnv = process.env,
+  includeUsage = true,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const probeFailed = makeUnavailableUsageLimits({
@@ -172,6 +173,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   );
   if (Option.isNone(credential)) return { email: undefined, usageLimits: probeFailed };
   const email = credential.value?.email?.trim() || undefined;
+  if (!includeUsage) return { email, usageLimits: probeFailed };
   const token = credential.value?.key?.trim();
   if (!token) {
     return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };

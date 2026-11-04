@@ -114,6 +114,10 @@ setting removes it from `settings.json`.
 
 ## Track subscription limits
 
+Limits refresh every five minutes while a limits view is visible. Closing the view or hiding the
+window stops automatic usage requests; provider health checks continue. Refreshing can reuse a
+recent reading, and rate-limited accounts wait before retrying, including manual refreshes.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

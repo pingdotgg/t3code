@@ -1,3 +1,4 @@
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import {
   ProviderDriverKind,
   ProviderSetupError,
@@ -98,7 +99,8 @@ export const CursorDriver: ProviderDriver<
     const host = yield* ProviderHost.ProviderHost;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const httpClient = yield* HttpClient.HttpClient;
+    const httpClient =
+      (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const keychain = yield* CursorKeychain.CursorKeychain;
     const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
@@ -214,52 +216,55 @@ export const CursorDriver: ProviderDriver<
       auth.withAccess,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
-      Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
-        checkCursorProviderStatus(
-          effectiveConfig,
-          {
-            ...processEnv,
-            CURSOR_API_KEY: apiKey,
-          },
-          auth.usesApiKey ? "api-key" : "browser",
-        ).pipe(
-          Effect.filterOrElse(
-            (snapshot) =>
-              !(
-                effectiveConfig.enabled &&
-                snapshot.installed &&
-                snapshot.auth.status === "authenticated"
-              ),
-            (snapshot) =>
-              host.settings.get.pipe(
-                Effect.flatMap((settings) =>
-                  readCursorUsageLimits(
-                    effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
-                    settings.cursorKeychainUsageEnabled,
-                  ),
+    const checkProvider = Effect.flatMap(UsagePolling, (includeUsage) =>
+      auth.readApiKey.pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.flatMap((apiKey) =>
+          checkCursorProviderStatus(
+            effectiveConfig,
+            {
+              ...processEnv,
+              CURSOR_API_KEY: apiKey,
+            },
+            auth.usesApiKey ? "api-key" : "browser",
+          ).pipe(
+            Effect.filterOrElse(
+              (snapshot) =>
+                !(
+                  includeUsage &&
+                  effectiveConfig.enabled &&
+                  snapshot.installed &&
+                  snapshot.auth.status === "authenticated"
                 ),
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              ),
+              (snapshot) =>
+                host.settings.get.pipe(
+                  Effect.flatMap((settings) =>
+                    readCursorUsageLimits(
+                      effectiveConfig,
+                      { ...processEnv, CURSOR_API_KEY: apiKey },
+                      settings.cursorKeychainUsageEnabled,
+                    ),
+                  ),
+                  Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+                ),
+            ),
           ),
         ),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(CursorKeychain.CursorKeychain, keychain),
+        Effect.map(stampSnapshot),
+        Effect.tap((provider) =>
+          Effect.sync(() => {
+            // A failed check lists only custom models, so keep the last loaded catalog.
+            if (provider.models.some((model) => !model.isCustom)) {
+              catalogModels = provider.models;
+            }
+          }),
+        ),
+        Effect.provide(CursorSdkCatalog.layer),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       ),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(CursorKeychain.CursorKeychain, keychain),
-      Effect.map(stampSnapshot),
-      Effect.tap((provider) =>
-        Effect.sync(() => {
-          // A failed check lists only custom models, so keep the last loaded catalog.
-          if (provider.models.some((model) => !model.isCustom)) {
-            catalogModels = provider.models;
-          }
-        }),
-      ),
-      Effect.provide(CursorSdkCatalog.layer),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
