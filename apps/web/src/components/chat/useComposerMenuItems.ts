@@ -1,3 +1,4 @@
+import { pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
@@ -6,6 +7,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 import type {
   EnvironmentId,
+  PluginAction,
   ProjectId,
   ProviderDriverKind,
   PullRequestListInput,
@@ -71,9 +73,17 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  pluginActions,
+  canOperateThread,
+  pluginActionThreadId,
+  pluginActionProjectId,
   workspaceSkillsScanning,
   questionAttachmentTarget,
 }: {
+  readonly pluginActions: ReadonlyArray<PluginAction>;
+  readonly canOperateThread: boolean;
+  readonly pluginActionThreadId: ThreadId | null;
+  readonly pluginActionProjectId: ProjectId | null;
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
   readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
@@ -291,8 +301,29 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
+      // Running a plugin action needs `orchestration:operate`.
+      const pluginActionItems = (
+        canOperateThread
+          ? pluginActionsAt(pluginActions, "composer-slash", {
+              threadId: pluginActionThreadId,
+              projectId: pluginActionProjectId,
+            })
+          : []
+      ).map(({ action, target }) => ({
+        id: `plugin-action:${action.id}`,
+        type: "plugin-action" as const,
+        action,
+        target,
+        label: `/${action.name}`,
+        description: action.title,
+      }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...skillItems,
+          ...pluginActionItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);

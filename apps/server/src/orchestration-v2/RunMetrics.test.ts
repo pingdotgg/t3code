@@ -271,8 +271,20 @@ describe("EventSink run outcomes", () => {
           yield* Fiber.join(terminal),
           yield* Fiber.join(unrelated),
         ];
-        assert.strictEqual(terminalEvents.length, 1);
-        assert.strictEqual(unrelatedEvents.length, 1);
+        assert.deepEqual(
+          terminalEvents.map((stored) => stored.event.type),
+          ["run.updated", "run.finalized"],
+        );
+        assert.deepEqual(terminalEvents[0]?.event, runEvent("run.updated", "completed"));
+        assert.deepEqual(terminalEvents[1]?.event.payload, {
+          runId,
+          outcome: "completed",
+          checkpointId: null,
+        });
+        assert.deepEqual(
+          unrelatedEvents.map((stored) => stored.event.type),
+          ["thread.created"],
+        );
         const counter = (yield* runSnapshots("p-sink")).find(
           (snapshot) => snapshot.id === "t3_runs_total",
         );
