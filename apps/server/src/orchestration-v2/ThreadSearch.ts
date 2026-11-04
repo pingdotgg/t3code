@@ -15,7 +15,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -343,7 +343,7 @@ const OlderSettledTitleRow = Schema.Struct({
 /** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const exactSearchRows = SqlSchema.findAll({
     Request: ExactSearchRequest,
     Result: ExactSearchRow,
@@ -463,7 +463,7 @@ export const make = Effect.gen(function* () {
               }
             : null,
         matches: yield* Effect.forEach(page, (row) =>
-          crypto.digest("SHA-256", new TextEncoder().encode(row.matchText)).pipe(
+          crypto.digest(Digest.sha256, new TextEncoder().encode(row.matchText)).pipe(
             Effect.map((hash) => ({
               threadId: row.threadId,
               projectId: row.projectId,

@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Hex from "effect/encoding/Hex";
@@ -13,7 +13,7 @@ export const requestIdentity = Effect.fn("mcp.requestIdentity")(function* (
   operation: string,
   clientRequestId: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const caller =
     scope.thread === undefined
       ? ["client", scope.requestNamespace]
@@ -25,6 +25,6 @@ export const requestIdentity = Effect.fn("mcp.requestIdentity")(function* (
     clientRequestId,
   ]).pipe(Effect.orDie);
   return Hex.encode(
-    yield* crypto.digest("SHA-256", new TextEncoder().encode(encoded)).pipe(Effect.orDie),
+    yield* crypto.digest(Digest.sha256, new TextEncoder().encode(encoded)).pipe(Effect.orDie),
   );
 });

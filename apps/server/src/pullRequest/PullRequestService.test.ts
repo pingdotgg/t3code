@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, expect, it } from "@effect/vitest";
@@ -300,7 +301,7 @@ function makeService(input: {
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
           Layer.provide(KeyValueStore.layerMemory),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),

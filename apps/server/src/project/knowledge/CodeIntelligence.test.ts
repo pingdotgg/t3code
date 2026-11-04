@@ -311,7 +311,7 @@ it.effect(
             Layer.provide(provided),
             Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
             Layer.provide(Layer.mock(FileHistory.FileHistory)({})),
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(NodeCryptoEffect.layer),
             Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           );
