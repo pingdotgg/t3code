@@ -4,6 +4,7 @@ import {
   OrchestrationDispatchCommandError,
   ProjectId,
   projectCloneProgressSummary,
+  type SourceControlCloneProtocol,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -146,12 +147,12 @@ describe("ProjectCloneTracker", () => {
   });
 
   it.effect("keeps a failed clone with git's own explanation and retries it", () => {
-    let attempts = 0;
+    const protocols: Array<SourceControlCloneProtocol | undefined> = [];
     const harness = makeHarness({
       clone: (input) =>
         Effect.suspend(() => {
-          attempts += 1;
-          return attempts === 1
+          protocols.push(input.protocol);
+          return protocols.length === 1
             ? Effect.fail(
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
@@ -168,7 +169,7 @@ describe("ProjectCloneTracker", () => {
     });
     return Effect.gen(function* () {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* tracker.start(startInput, harness.hooks);
+      yield* tracker.start({ ...startInput, protocol: "ssh" }, harness.hooks);
       yield* Effect.yieldNow;
       const failed = yield* tracker.get(projectId);
       expect(failed).toMatchObject({ phase: "failed", error: "fatal: repository not found" });
@@ -177,7 +178,7 @@ describe("ProjectCloneTracker", () => {
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
-      expect(attempts).toBe(2);
+      expect(protocols).toEqual(["ssh", "ssh"]);
     }).pipe(Effect.provide(harness.layer));
   });
 
