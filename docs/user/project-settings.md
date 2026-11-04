@@ -91,10 +91,11 @@ a new thread on each run survive deletion of their previous threads.
 
 A task that posts into a thread has a **Delivery** setting for runs that arrive
 while the agent is still working there. **Queue**, the default, waits for the
-current turn to finish. **Steer or start** adds the prompt to the current turn,
-or starts a turn when the thread is idle. **Steer only** adds it to the current
+current turn to finish. **Steer or start** adds the prompt to the current turn
+when it can take new input, such as while the agent is not waiting on an
+approval, and otherwise works like Queue. **Steer only** adds it to the current
 turn, and **Restart** stops that turn and starts over with the prompt. Both need
-a running turn: when the thread is idle, nothing is sent and the run is marked
+a turn that can take new input: otherwise nothing is sent and the run is marked
 failed.
 
 You can edit, pause, resume, run immediately, or delete a task from the list.

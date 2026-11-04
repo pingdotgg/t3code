@@ -799,7 +799,7 @@ function TaskForm({
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
-      sendMode: draft.sendMode,
+      ...(draft.sendMode === draft.task?.sendMode ? {} : { sendMode: draft.sendMode }),
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -937,7 +937,7 @@ function TaskForm({
           />
         </SettingsSection>
 
-        {draft.task?.threadId ? (
+        {draft.task?.threadId && config?.environment.capabilities.scheduledTaskSendMode === true ? (
           <SettingsSection
             title="Thread"
             footer={SCHEDULED_TASK_SEND_MODE_COPY[draft.sendMode].description}

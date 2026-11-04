@@ -824,16 +824,20 @@ const make = Effect.gen(function* () {
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
     if (input.mode === "steer" || input.mode === "restart") {
-      if (steerableRun === undefined) {
+      if (steerableRun === undefined && !(yield* hasReceipt(input.commandId))) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
           mode: input.mode,
         });
       }
-      dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
-        targetRunId: steerableRun.id,
-      };
+      // A retry of an accepted send replays its receipt, even after the steered turn has ended.
+      dispatchMode =
+        steerableRun === undefined
+          ? { type: "queue_after_active" }
+          : {
+              type: input.mode === "steer" ? "steer_active" : "restart_active",
+              targetRunId: steerableRun.id,
+            };
     } else if (input.mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {

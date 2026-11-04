@@ -92,11 +92,14 @@ const layerDispatchChokepointTest =
                 id: ThreadId.make("thread:thread-management:chokepoint"),
                 projectId: ProjectId.make("project:thread-management:chokepoint"),
                 deletedAt: null,
+                archivedAt: null,
                 modelSelection: {
                   instanceId: ProviderInstanceId.make("codex_work"),
                   model: "test",
                 },
               },
+              runs: [],
+              providerTurns: [],
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
@@ -197,6 +200,45 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("a retried steer replays its accepted send after the steered turn has ended", () => {
+  const projectId = ProjectId.make("project:thread-management:chokepoint");
+  const threadId = ThreadId.make("thread:thread-management:chokepoint");
+  const commandId = CommandId.make("command:thread-management:steer-replay");
+  const dispatched: Array<string> = [];
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())(dispatched);
+
+  return Effect.gen(function* () {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    yield* receipts.insertIfAbsent({
+      commandId,
+      threadId,
+      commandType: "message.dispatch",
+      acceptedAt: yield* DateTime.now,
+      resultSequence: 1,
+      status: "accepted",
+      error: null,
+    });
+
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    // The stub projection has no messages, so the send fails after dispatch; only the dispatch matters.
+    yield* Effect.exit(
+      threads.sendToThread({
+        projectId,
+        commandId,
+        threadId,
+        messageId: MessageId.make("message:thread-management:steer-replay"),
+        text: "CI failed.",
+        attachments: [],
+        mode: "steer",
+        createdBy: "user",
+        creationSource: "server",
+      }),
+    );
+
+    expect(dispatched).toEqual(["message.dispatch"]);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {

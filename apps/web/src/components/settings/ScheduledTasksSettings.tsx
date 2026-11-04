@@ -1362,7 +1362,8 @@ function ScheduledTaskEditorForm({
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
-      sendMode: draft.sendMode,
+      // Only an edited mode is sent, so a stale form keeps a mode changed elsewhere.
+      ...(draft.sendMode === task?.sendMode ? {} : { sendMode: draft.sendMode }),
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -1491,7 +1492,8 @@ function ScheduledTaskEditorForm({
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
           />
 
-          {draft.threadId ? (
+          {draft.threadId &&
+          environment?.serverConfig?.environment.capabilities.scheduledTaskSendMode === true ? (
             <Field label="Delivery" htmlFor="scheduled-task-send-mode">
               <Select
                 value={draft.sendMode}
