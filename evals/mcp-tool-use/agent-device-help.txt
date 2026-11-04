@@ -1,4 +1,4 @@
-agent-device 0.21.31 prints this help; apps/server/src/device/deviceToolVersions.json pins that version. Regenerate from
+agent-device 0.21.33 prints this help; apps/server/src/device/deviceToolVersions.json pins that version. Regenerate from
 the repo root with: node scripts/node_modules/agent-device/bin/agent-device.mjs help [commands|record|screenshot|open|settings|fill]
 
 $ agent-device help
@@ -56,7 +56,7 @@ Guides (agent-device help <topic>):
 
 
 $ agent-device help commands
-agent-device 0.21.31 — commands
+agent-device 0.21.33 — commands
 
 Full command catalog. Use agent-device help <command> for exact flags and behavior.
 
