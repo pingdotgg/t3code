@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as CodexAdapterV2 from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
@@ -16,7 +17,7 @@ export type ProviderOrchestrationAdapterInfrastructure =
   | CursorKeychain.CursorKeychain
   | IdAllocator.IdAllocatorV2;
 
-/** Reuse the continuation worker's exact layer reference so memoization shares one queue. */
+// Reuse exact continuation and contribution-status layer references so their consumers share state.
 export const layer = Layer.mergeAll(
   ClaudeAdapterV2.layerQueryRunner,
   CodexAdapterV2.layerAppServerClientFactory,
@@ -24,4 +25,5 @@ export const layer = Layer.mergeAll(
   CursorKeychain.layer,
   IdAllocator.layer,
   ProviderContinuationRequests.layer,
+  ContributionStatusStore.layer,
 );

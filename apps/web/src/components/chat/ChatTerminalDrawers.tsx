@@ -18,7 +18,7 @@ import {
 import {
   PersistentThreadTerminalDrawer,
   type PersistentTerminalLaunchContext,
-} from "../PersistentThreadTerminals";
+} from "~/panels/terminal/PersistentThreadTerminalDrawer";
 
 interface ChatTerminalDrawersProps {
   readonly activeThreadKey: string | null;
