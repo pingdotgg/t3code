@@ -462,7 +462,7 @@ export const make = Effect.gen(function* () {
       const identities = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",
         cwd,
-        args: ["rev-parse", "HEAD", "HEAD^{tree}"],
+        args: ["show", "-s", "--format=%H%n%T", "HEAD"],
       });
       const status = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",
