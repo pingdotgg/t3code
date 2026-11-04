@@ -37,6 +37,9 @@ const RECOMMENDED = new Set([
   "whisper-medium",
 ]);
 
+// Handy labels these weights MIT; Moonshine lists them under its Community License at https://huggingface.co/moonshine-ai/moonshine-models.
+const COMMUNITY_LICENSED_MOONSHINE = /^moonshine-(?:(?:base|tiny)-(?:ar|ja|ko|uk|vi|zh)|base-es)$/;
+
 export function generateSpeechCatalog(
   data: CatalogData,
   sourceVersion: string,
@@ -51,6 +54,7 @@ export function generateSpeechCatalog(
     if (
       model.role !== "asr" ||
       /(?:^|[^a-z0-9])nc(?:$|[^a-z0-9])/i.test(model.license) ||
+      COMMUNITY_LICENSED_MOONSHINE.test(model.id) ||
       !ASR_FAMILIES.has(model.family) ||
       compareEngineVersions(model.minEngine ?? data.transcribeCpp, engineVersion) > 0
     )
