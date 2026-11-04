@@ -290,3 +290,33 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
 });
+
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)("links complete scratch paths in prose (%s)", (_, plugins) => {
+  const path =
+    "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
+  const processor = unified().use(remarkParse).use(plugins);
+  const links = (markdown: string) => {
+    const urls: string[] = [];
+    const visit = (node: Root | RootContent) => {
+      if (node.type === "link") urls.push(node.url);
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+    return urls;
+  };
+  expect(links(`Saved to ${path}.`)).toEqual([path]);
+  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
+  expect(links(`**${path}**`)).toEqual([path]);
+  expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
+  expect(links("/tmp/claude-1000/... and /tmp/claude-1000/....")).toEqual([]);
+  expect(links("see /tmp/claude-1000/..., ok")).toEqual([]);
+  expect(links("(see /tmp/claude-1000/...).")).toEqual([]);
+  expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
+    `https://example.com${path}`,
+  ]);
+  expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
+  expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
+});

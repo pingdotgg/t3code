@@ -40,7 +40,7 @@ describe("Codex runtime context", () => {
       });
       NodeAssert.match(
         instructions,
-        /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link any other file.*absolute path.*files viewer.*<\/runtime_info>/,
+        /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link files as Markdown.*full absolute path.*never ellipses.*<\/runtime_info>/,
       );
     }
   });

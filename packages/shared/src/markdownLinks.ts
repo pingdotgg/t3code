@@ -315,7 +315,10 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
   const position = splitFilePathPosition(path, hash);
-  return looksLikeFilePath(position.path, path) ? position : null;
+  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) &&
+    looksLikeFilePath(position.path, path)
+    ? position
+    : null;
 }
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
@@ -429,4 +432,15 @@ export function resolveMarkdownFileLinkTarget(
 
 export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
+}
+
+export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
+  const paths: Array<{ index: number; path: string }> = [];
+  for (const match of text.matchAll(/(^|[\s("'])(\/[^\s<>"'`[\]]+)/g)) {
+    if (/(?:^|\/)(?:\.{3,}|…)(?:\/|[.,;!?:)]*$)/.test(match[2]!)) continue;
+    const path = match[2]!.replace(/[.,;!?:)]+$/, "");
+    if (!parseMarkdownFileLink(path)) continue;
+    paths.push({ index: match.index + match[1]!.length, path });
+  }
+  return paths;
 }
