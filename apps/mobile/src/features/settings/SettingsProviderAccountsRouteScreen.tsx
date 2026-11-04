@@ -32,7 +32,7 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -48,6 +48,7 @@ export function SettingsProviderAccountsRouteScreen({
     }
   | undefined
 >) {
+  const environmentMenu = useSettingsEnvironmentMenu();
   const target = route.params;
   const selection = useSettingsEnvironmentFilter();
   const selectedTargets = target?.environmentId
@@ -61,10 +62,7 @@ export function SettingsProviderAccountsRouteScreen({
   return (
     <>
       {!target?.environmentId ? <SettingsEnvironmentFilterHeader /> : null}
-      <SettingsScreen
-        title="Providers"
-        trailing={!target?.environmentId ? <AndroidSettingsEnvironmentFilter /> : undefined}
-      >
+      <SettingsScreen title="Providers" menus={target?.environmentId ? [] : [environmentMenu]}>
         <ScreenScrollView
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
