@@ -1907,6 +1907,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("lists the repository when GitHub's search answers with a bad gateway", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          matches(call, "PullRequestSearch")
+            ? output('{"message":"Server Error"}', false, false, {}, 502)
+            : output(listedPullRequests(2, 1)),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+    }),
+  );
+
   it.effect("keeps state and involvement filters on the search-free fallback", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
