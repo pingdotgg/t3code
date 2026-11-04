@@ -257,6 +257,36 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("pages past reviewers who already voted when listing requested reviews", () =>
+    Effect.gen(function* () {
+      const row = (number: number, vote: number) => ({
+        ...pullRequestRow,
+        pullRequestId: number,
+        reviewers: [{ uniqueName: "BILAL@acme.dev", vote }],
+      });
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify([row(1, 10), row(2, 0), row(3, -10)]))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([row(4, 0), row(5, 0)]))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([2, 4]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 4);
+      const nextArgs = argsOfCall(1);
+      assert.strictEqual(nextArgs[nextArgs.indexOf("--skip") + 1], "3");
+    }),
+  );
+
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

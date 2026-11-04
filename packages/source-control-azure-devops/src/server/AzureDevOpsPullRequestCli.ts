@@ -416,17 +416,31 @@ export const make = Effect.gen(function* () {
           );
         }
 
-        const lastItemIndex = decoded.success.rawIndexes[remaining - 1];
+        // Azure's reviewer query includes reviewers who already voted.
+        const eligibleIndexes = decoded.success.items.flatMap((item, index) =>
+          input.involvement !== "reviewing" ||
+          item.reviewRequestLogins.some(
+            (login) => login.toLowerCase() === input.viewer.toLowerCase(),
+          )
+            ? [index]
+            : [],
+        );
+        const eligible = eligibleIndexes.map((index) => decoded.success.items[index]!);
+        const lastEligibleIndex = eligibleIndexes[remaining - 1];
+        const lastItemIndex =
+          lastEligibleIndex === undefined
+            ? undefined
+            : decoded.success.rawIndexes[lastEligibleIndex];
         if (lastItemIndex !== undefined) {
           const consumed = lastItemIndex + 1;
           return Effect.succeed({
-            items: [...input.items, ...decoded.success.items.slice(0, remaining)],
+            items: [...input.items, ...eligible.slice(0, remaining)],
             truncated: consumed < decoded.success.rawCount || decoded.success.rawCount === top,
             cursorAdvance: input.cursorAdvance + consumed,
           });
         }
 
-        const items = [...input.items, ...decoded.success.items];
+        const items = [...input.items, ...eligible];
         if (decoded.success.rawCount < top) {
           return Effect.succeed({
             items,
