@@ -60,6 +60,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
+  readonly childProjections?: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
 }) {
@@ -74,7 +75,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     }) =>
       Effect.sync(() => {
         input.projectionRequests?.push(requestInput.threadId);
-        return input.projection ?? v2Projection;
+        return (
+          input.childProjections?.get(requestInput.threadId) ?? input.projection ?? v2Projection
+        );
       }),
     [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
       Effect.sync(() => {
@@ -529,6 +532,97 @@ describe("V2 environment commands", () => {
           { type: "thread.stop", commandId: "lineage-stop", threadId: childThreadId },
         ]);
       }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("stopping a queued follow-up task leaves another task's running child turn alone", () =>
+    Effect.gen(function* () {
+      const childThreadId = ThreadId.make("app-owned-child-thread");
+      const runningTaskId = NodeId.make("running-follow-up-task");
+      const queuedTaskId = NodeId.make("queued-follow-up-task");
+      const queuedRunId = RunId.make("queued-follow-up-run");
+      const task = (id: NodeId, status: "running" | "pending") => ({
+        id,
+        threadId: v2ThreadId,
+        runId: RunId.make("parent-run"),
+        parentNodeId: NodeId.make("owner-node"),
+        origin: "app_owned" as const,
+        createdBy: "agent" as const,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Work",
+        title: null,
+        model: null,
+        result: null,
+        status,
+        startedAt: v2Now,
+        completedAt: null,
+        updatedAt: v2Now,
+      });
+      const childRun = (
+        id: RunId,
+        ordinal: number,
+        status: "running" | "queued",
+        taskId: NodeId,
+      ) => ({
+        id,
+        threadId: childThreadId,
+        ordinal,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: v2Projection.thread.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make(`message-${id}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        requestedAt: v2Now,
+        startedAt: status === "running" ? v2Now : null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        delegatedTaskId: taskId,
+      });
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        advertiseThreadStop: true,
+        projection: {
+          ...v2Projection,
+          subagents: [task(runningTaskId, "running"), task(queuedTaskId, "pending")],
+        },
+        childProjections: new Map([
+          [
+            childThreadId,
+            {
+              ...v2Projection,
+              thread: { ...v2Projection.thread, id: childThreadId },
+              runs: [
+                childRun(RunId.make("running-follow-up-run"), 2, "running", runningTaskId),
+                childRun(queuedRunId, 3, "queued", queuedTaskId),
+              ],
+            },
+          ],
+        ]),
+      });
+
+      yield* interruptThreadTurn({ threadId: v2ThreadId, subagentId: queuedTaskId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(
+        commands.filter((command) => "threadId" in command && command.threadId === childThreadId),
+      ).toEqual([
+        {
+          type: "queued-run.cancel",
+          commandId: expect.any(String),
+          threadId: childThreadId,
+          runId: queuedRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("stops a thread without relying on background work in the history window", () =>
