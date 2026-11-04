@@ -348,7 +348,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
-  it.effect("does not offer Auto, so Auto threads fall back to Supervised", () =>
+  it.effect("does not offer Auto, so Auto threads step down to Auto-accept edits", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeHarness();

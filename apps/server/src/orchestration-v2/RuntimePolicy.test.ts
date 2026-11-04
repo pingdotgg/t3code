@@ -152,23 +152,25 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
-  it.effect("runs a mode the provider does not offer in Supervised", () =>
-    Effect.gen(function* () {
-      const policy = yield* RuntimePolicy.RuntimePolicyV2;
-      const now = yield* DateTime.now;
-      const modeFor = (instanceId: ProviderInstanceId, runtimeMode: RuntimeMode) =>
-        policy
-          .resolve({
-            thread: makeThread({ now, worktreePath: null, runtimeMode }),
-            modelSelection: { instanceId, model: "test-model" },
-          })
-          .pipe(Effect.map((resolved) => resolved.runtimeMode));
+  it.effect(
+    "runs Supervised when the provider offers nothing between it and the requested mode",
+    () =>
+      Effect.gen(function* () {
+        const policy = yield* RuntimePolicy.RuntimePolicyV2;
+        const now = yield* DateTime.now;
+        const modeFor = (instanceId: ProviderInstanceId, runtimeMode: RuntimeMode) =>
+          policy
+            .resolve({
+              thread: makeThread({ now, worktreePath: null, runtimeMode }),
+              modelSelection: { instanceId, model: "test-model" },
+            })
+            .pipe(Effect.map((resolved) => resolved.runtimeMode));
 
-      assert.equal(yield* modeFor(grokInstanceId, "auto-accept-edits"), "approval-required");
-      assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
-      assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
-      assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
-    }),
+        assert.equal(yield* modeFor(grokInstanceId, "auto-accept-edits"), "approval-required");
+        assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
+        assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
+        assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+      }),
   );
 });
 
