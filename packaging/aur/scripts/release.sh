@@ -8,8 +8,10 @@ pkgrel="${PKGREL:-1}"
 
 if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   pkgname='t3code-bin'
+  asset_prefix='T3-Code'
 elif [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
   pkgname='t3code-nightly-bin'
+  asset_prefix='T3-Code-Nightly'
 else
   echo "Release $tag does not publish an AUR package."
   exit 0
@@ -21,11 +23,14 @@ release_json="$(gh api "repos/$repo/releases/tags/$tag")"
 declare -A appimage_names appimage_checksums
 for architecture in x86_64 aarch64; do
   upstream_arch="${architecture/aarch64/arm64}"
-  if ! asset="$(jq -er --arg suffix "-${upstream_arch}.AppImage" '
-    [.assets[] | select(.name | startswith("T3-Code-") and endswith($suffix))]
+  versioned_name="T3-Code-${version}-${upstream_arch}.AppImage"
+  versionless_name="${asset_prefix}-${upstream_arch}.AppImage"
+  if ! asset="$(jq -er --arg versioned "$versioned_name" \
+    --arg versionless "$versionless_name" '
+    [.assets[] | select(.name == $versioned or .name == $versionless)]
     | select(length == 1) | .[0] | [.name, .digest] | @tsv
   ' <<<"$release_json")"; then
-    echo "Release $tag must contain exactly one T3 Code $upstream_arch AppImage." >&2
+    echo "Release $tag must contain exactly one of $versioned_name or $versionless_name." >&2
     exit 1
   fi
   IFS=$'\t' read -r asset_name asset_digest <<<"$asset"
