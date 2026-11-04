@@ -3,6 +3,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
@@ -221,5 +222,18 @@ describe("Claude model catalog", () => {
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next", "claude-custom-tuned"],
     );
+  });
+
+  it("exposes Ultracode and maps it to xhigh across all bundled Claude 5.5 models", () => {
+    for (const slug of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      assert.strictEqual(
+        resolveClaudeCatalogEffort(BUNDLED_CLAUDE_MODEL_CATALOG, slug, "ultracode"),
+        "ultracode",
+      );
+      assert.strictEqual(
+        normalizeClaudeCatalogEffort(BUNDLED_CLAUDE_MODEL_CATALOG, "ultracode", slug),
+        "xhigh",
+      );
+    }
   });
 });

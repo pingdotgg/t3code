@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-02T21:16:47Z",
+  "updatedAt": "2026-11-04T10:28:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -558,6 +558,11 @@
                     "label": "Max"
                   },
                   {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
+                  {
                     "id": "ultrathink",
                     "label": "Ultrathink"
                   }
@@ -569,6 +574,7 @@
           "adapter": {
             "claudeCode": {
               "effortMap": {
+                "ultracode": "xhigh",
                 "ultrathink": null
               },
               "fixedContextWindowTokens": 1000000
@@ -656,6 +662,11 @@
                   { "id": "high", "label": "High" },
                   { "id": "xhigh", "label": "Extra High" },
                   { "id": "max", "label": "Max" },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
                   { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
@@ -664,7 +675,10 @@
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": { "ultrathink": null },
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
               "fixedContextWindowTokens": 1000000
             }
           }
