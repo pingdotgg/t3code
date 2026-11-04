@@ -23,7 +23,12 @@ export type FilePreviewSource = FilePreviewItem & {
   readonly gallery?: readonly FilePreviewItem[];
 };
 
-export interface ResolvedFilePreviewSource extends FilePreviewMetadata {
+interface ResolvedFilePreviewItem extends FilePreviewMetadata {
   readonly uri: string;
-  readonly gallery?: readonly (FilePreviewMetadata & { readonly uri: string })[];
+  /** The thumbnail's expo-image cache key, so a preview can open the bytes it already has. */
+  readonly imageCacheKey?: string;
+}
+
+export interface ResolvedFilePreviewSource extends ResolvedFilePreviewItem {
+  readonly gallery?: readonly ResolvedFilePreviewItem[];
 }

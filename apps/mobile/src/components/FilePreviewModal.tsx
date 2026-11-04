@@ -8,7 +8,8 @@ import {
   shareLocalAttachment,
 } from "../lib/attachmentDownload";
 import { usePreviewPresentation } from "../lib/previewPresentation";
-import { refreshAssetUrl } from "../state/assets";
+import { assetImageCacheKey } from "../lib/assetImageSource";
+import { refreshAssetUrlState } from "../state/assets";
 import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
 import { FilePreviewGallery } from "./FilePreviewGallery";
 import { FilePreview } from "./FilePreview";
@@ -53,7 +54,7 @@ async function resolvePreviewItem(
   }
   if (!("environmentId" in item)) return { source: { ...item, name } };
   // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
-  const url = await refreshAssetUrl(item.environmentId, item.resource, signal)
+  const asset = await refreshAssetUrlState(item.environmentId, item.resource, signal)
     .then((value) => {
       if (!value) throw new Error("Reconnect to this environment and try again.");
       return value;
@@ -64,7 +65,18 @@ async function resolvePreviewItem(
         "Reconnect to this environment and try again. The file may have been moved or deleted.",
       );
     });
-  return { source: { ...item, name, uri: url + (item.srcFragment ?? "") } };
+  const imageCacheKey =
+    item.kind === "image"
+      ? assetImageCacheKey(item.environmentId, item.resource, asset.fileRevision)
+      : undefined;
+  return {
+    source: {
+      ...item,
+      name,
+      uri: asset.url + (item.srcFragment ?? ""),
+      ...(imageCacheKey !== undefined ? { imageCacheKey } : {}),
+    },
+  };
 }
 
 function ResolvedFilePreview(props: {
