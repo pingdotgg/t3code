@@ -95,7 +95,6 @@ const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.Proces
     ),
   );
 
-// Each of these opens in its spawn cwd when run bare, so none needs a directory flag.
 const LINUX_TERMINAL_COMMANDS = [
   "xdg-terminal-exec",
   "x-terminal-emulator",
@@ -385,7 +384,8 @@ const resolveTerminalCommand = Effect.fn("externalLauncher.resolveTerminalComman
     const powershell = resolvePowerShellPath(env);
     return (yield* isCommandAvailable(powershell, { env })) ? powershell : undefined;
   }
-  if (!hasGraphicalLinuxSession(env)) return undefined;
+  if (!hasGraphicalLinuxSession(env) && !hasGraphicalLinuxSession(yield* readGraphicalSessionEnv()))
+    return undefined;
   for (const command of LINUX_TERMINAL_COMMANDS) {
     if (yield* isCommandAvailable(command, { env })) return command;
   }
@@ -588,7 +588,7 @@ const resolveTerminalLaunch = Effect.fn("resolveTerminalLaunch")(function* (
       args: [
         ...POWERSHELL_ARGUMENTS_PREFIX,
         encodeUtf16LeBase64(
-          `$ProgressPreference = 'SilentlyContinue'; Start-Process 'powershell.exe' -WorkingDirectory ${escapePowerShellStringLiteral(directory)}`,
+          `$ProgressPreference = 'SilentlyContinue'; Start-Process 'powershell.exe' -WorkingDirectory ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodeUtf16LeBase64(directory)}')))`,
         ),
       ],
       detached: WINDOWS_POWERSHELL_DETACHED,
@@ -599,8 +599,34 @@ const resolveTerminalLaunch = Effect.fn("resolveTerminalLaunch")(function* (
   const directory = isDirectory ? target : path.dirname(target);
   return platform === "darwin"
     ? { editor: "terminal", target, command, args: ["-a", "Terminal", directory] }
-    : { editor: "terminal", target, command, args: [], cwd: directory };
+    : {
+        editor: "terminal",
+        target,
+        command,
+        args: linuxTerminalArgs(command, directory),
+        cwd: directory,
+      };
 });
+
+function linuxTerminalArgs(command: string, directory: string): ReadonlyArray<string> {
+  switch (command) {
+    case "xdg-terminal-exec":
+      return [`--dir=${directory}`];
+    case "konsole":
+      return ["--workdir", directory];
+    case "kitty":
+      return ["--directory", directory];
+    case "gnome-terminal":
+    case "kgx":
+    case "xfce4-terminal":
+    case "alacritty":
+    case "foot":
+      return [`--working-directory=${directory}`];
+    default:
+      // The desktop's x-terminal-emulator can ignore its inherited cwd.
+      return ["-e", "/bin/sh", "-c", 'cd -- "$1" && exec "${SHELL:-/bin/sh}"', "sh", directory];
+  }
+}
 
 // A replacement manager registers a default Directory shell verb; stock Windows
 // uses "none". Explorer needs its /select argument passed verbatim through
