@@ -311,6 +311,87 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Command-line AV heuristics (AVG/Avast "IDP.HELU.PSE96") kill PowerShell started with
+// -EncodedCommand or -ExecutionPolicy Bypass; PowerShell accepts any unique prefix of a parameter.
+function assertPlainPowerShellLaunch(
+  spawned: ChildProcess.StandardCommand | undefined,
+  expectedText: string,
+) {
+  assert.ok(spawned);
+  assert.isTrue(spawned.command.toLowerCase().endsWith("powershell.exe"));
+  const flags = spawned.args.map((arg) => arg.toLowerCase().replace(/^[-/]+/, "-"));
+  assert.deepEqual(
+    flags.filter((flag) => flag.length > 1 && "-encodedcommand".startsWith(flag)),
+    [],
+    "PowerShell must not receive an encoded command",
+  );
+  assert.deepEqual(
+    flags.filter(
+      (flag) => flag === "bypass" || (flag.length > 2 && "-executionpolicy".startsWith(flag)),
+    ),
+    [],
+    "PowerShell must not receive -ExecutionPolicy Bypass",
+  );
+  assert.include(spawned.args.join(" "), expectedText);
+}
+
+it.effect("reveals a Windows file in File Explorer without an encoded PowerShell command", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const systemRoot = path.join(binDir, "Windows");
+    const powershellPath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    yield* fileSystem.makeDirectory(path.dirname(powershellPath), { recursive: true });
+    yield* fileSystem.writeFileString(powershellPath, "");
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "C:\\Users\\t3\\workspace\\src\\index.ts",
+        reveal: true,
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: systemRoot },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assertPlainPowerShellLaunch(spawned, "C:\\Users\\t3\\workspace\\src\\index.ts");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("opens a browser on Windows without an encoded PowerShell command", () =>
+  Effect.gen(function* () {
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchBrowser("http://localhost:3773/pair#token=abc");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { SYSTEMROOT: "C:\\Windows" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assertPlainPowerShellLaunch(spawned, "http://localhost:3773/pair#token=abc");
+  }),
+);
+
 for (const wsl of [false, true]) {
   it.effect.skipIf(windowsHost)(
     "selects a file over D-Bus on " + (wsl ? "WSLg without interop PowerShell" : "Linux"),
