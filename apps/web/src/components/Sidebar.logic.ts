@@ -190,13 +190,11 @@ export function resolveSidebarThreadSection(input: {
 }
 
 /**
- * Active shelf idle threads: unsettled, unsnoozed, unpinned, and not in Working.
- * Matches the Active list when the Working shelf is enabled.
+ * Idle threads: unsettled, unsnoozed, and not in Working. Pinned idle threads count.
  */
-export function isSidebarActiveIdleThread(
+export function isSidebarIdleThread(
   thread: Pick<
     SidebarThreadSummary,
-    | "pinnedAt"
     | "settledOverride"
     | "snoozedAt"
     | "snoozedUntil"
@@ -211,15 +209,8 @@ export function isSidebarActiveIdleThread(
   input: { readonly now: string; readonly configLoaded?: boolean },
 ): boolean {
   const configLoaded = input.configLoaded ?? true;
-  if (
-    resolveSidebarThreadSection({
-      snoozed: configLoaded && effectiveSnoozed(thread, { now: input.now }),
-      settled: configLoaded && thread.settledOverride === "settled",
-      pinned: thread.pinnedAt != null,
-    }) !== "active"
-  ) {
-    return false;
-  }
+  if (configLoaded && thread.settledOverride === "settled") return false;
+  if (configLoaded && effectiveSnoozed(thread, { now: input.now })) return false;
   return !isThreadWorking(thread);
 }
 

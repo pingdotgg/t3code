@@ -218,8 +218,8 @@ import {
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import {
   collectVisiblePullRequestUrls,
-  isSidebarActiveIdleThread,
   isSidebarHiddenThread,
+  isSidebarIdleThread,
 } from "./Sidebar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
@@ -507,9 +507,9 @@ function OpenCommandPaletteDialog(props: {
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
   const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
-  const activeIdlePullRequestUrls = collectVisiblePullRequestUrls(
+  const idlePullRequestUrls = collectVisiblePullRequestUrls(
     threads.filter((thread) =>
-      isSidebarActiveIdleThread(thread, {
+      isSidebarIdleThread(thread, {
         now: nowMinute,
         configLoaded: serverConfigs.has(thread.environmentId),
       }),
@@ -1395,15 +1395,15 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeIdlePullRequestUrls.length > 0) {
+  if (idlePullRequestUrls.length > 0) {
     actionItems.push({
       kind: "action",
-      value: "action:copy-active-pr-links",
-      searchTerms: ["copy", "pull request", "pr", "links", "active", "idle", "clipboard"],
-      title: "Copy PR links from Active",
-      description: `${activeIdlePullRequestUrls.length} link${activeIdlePullRequestUrls.length === 1 ? "" : "s"}`,
+      value: "action:copy-idle-pr-links",
+      searchTerms: ["copy", "pull request", "pr", "links", "active", "idle", "pinned", "clipboard"],
+      title: "Copy PR links from idle threads",
+      description: `${idlePullRequestUrls.length} link${idlePullRequestUrls.length === 1 ? "" : "s"}`,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
-      run: () => copyPullRequestUrls(activeIdlePullRequestUrls),
+      run: () => copyPullRequestUrls(idlePullRequestUrls),
     });
   }
 

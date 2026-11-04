@@ -9,7 +9,7 @@ import {
   shouldCreateNewThreadInCurrentProject,
   buildBulkCopyPullRequestLinksContextMenuItem,
   collectVisiblePullRequestUrls,
-  isSidebarActiveIdleThread,
+  isSidebarIdleThread,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -112,29 +112,36 @@ describe("buildBulkCopyPullRequestLinksContextMenuItem", () => {
   });
 });
 
-describe("isSidebarActiveIdleThread", () => {
+describe("isSidebarIdleThread", () => {
   const now = "2026-01-01T12:00:00.000Z";
 
-  it("keeps Active-shelf threads and drops pinned, settled, snoozed, and Working ones", () => {
-    // Finished run → Active shelf. Runtime "idle" is still Working.
-    const active = makeThreadFixture({
-      id: ThreadId.make("active"),
+  it("keeps unsettled finished threads including pinned, and drops settled, snoozed, and Working", () => {
+    // Finished run → idle. Runtime "idle" is still Working.
+    const idle = makeThreadFixture({
+      id: ThreadId.make("idle"),
       settledOverride: null,
       pinnedAt: null,
       runtime: null,
       latestRun: null,
     });
-    expect(isSidebarActiveIdleThread(active, { now })).toBe(true);
+    expect(isSidebarIdleThread(idle, { now })).toBe(true);
     expect(
-      isSidebarActiveIdleThread({ ...active, pinnedAt: "2026-01-01T00:00:00.000Z" }, { now }),
-    ).toBe(false);
-    expect(isSidebarActiveIdleThread({ ...active, settledOverride: "settled" }, { now })).toBe(
-      false,
-    );
+      isSidebarIdleThread(
+        makeThreadFixture({
+          id: ThreadId.make("pinned-idle"),
+          settledOverride: null,
+          pinnedAt: "2026-01-01T00:00:00.000Z",
+          runtime: null,
+          latestRun: null,
+        }),
+        { now },
+      ),
+    ).toBe(true);
+    expect(isSidebarIdleThread({ ...idle, settledOverride: "settled" }, { now })).toBe(false);
     expect(
-      isSidebarActiveIdleThread(
+      isSidebarIdleThread(
         {
-          ...active,
+          ...idle,
           snoozedUntil: "2026-01-01T18:00:00.000Z",
           snoozedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -142,9 +149,9 @@ describe("isSidebarActiveIdleThread", () => {
       ),
     ).toBe(false);
     expect(
-      isSidebarActiveIdleThread(
+      isSidebarIdleThread(
         {
-          ...active,
+          ...idle,
           runtime: {
             status: "idle",
             activeRunId: null,
