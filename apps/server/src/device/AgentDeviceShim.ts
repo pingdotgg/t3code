@@ -12,7 +12,7 @@ const STALE_RUNTIME =
 
 const quoteShell = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 
-/** agent-device 0.21.31's flags that take a value, so the launcher can find the command past them. */
+/** agent-device 0.21.33's flags that take a value, so the launcher can find the command past them. */
 const VALUE_FLAGS: ReadonlyArray<string> = [
   "--activity",
   "--all",
@@ -149,7 +149,7 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
 ];
 
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
-// agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
+// agent-device 0.21.33 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
 const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>
