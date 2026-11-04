@@ -55,16 +55,6 @@ export function makeSpeechTextCorrector(
     return previous[right.length]!;
   };
 
-  const punctuation = (value: string) => {
-    const characters = [...value];
-    const first = characters.findIndex((character) => /[\p{L}\p{N}]/u.test(character));
-    const last = characters.findLastIndex((character) => /[\p{L}\p{N}]/u.test(character));
-    return {
-      prefix: first < 0 ? value : characters.slice(0, first).join(""),
-      suffix: last < 0 ? "" : characters.slice(last + 1).join(""),
-    };
-  };
-
   const preserveCase = (original: string, replacement: string) => {
     const letters = [...original].filter((character) => /\p{L}/u.test(character));
     if (letters.length > 0 && letters.every((character) => character === character.toUpperCase()))
@@ -104,11 +94,14 @@ export function makeSpeechTextCorrector(
 
   const apply = (text: string): string => {
     if (keys.length === 0) return text;
-    const tokens = [...text.matchAll(/\S+/g)].map((match) => ({
-      value: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
-    }));
+    // Leave surrounding punctuation in the source; only horizontal whitespace can join words.
+    const tokens = [...text.matchAll(/[\p{L}\p{M}\p{N}](?:\S*[\p{L}\p{M}\p{N}])?/gu)]
+      .filter(([word]) => /^[\p{L}\p{M}\p{N}'’-]+$/u.test(word))
+      .map((match) => ({
+        value: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+      }));
     const output: string[] = [];
     let cursor = 0;
     for (let index = 0; index < tokens.length;) {
@@ -122,8 +115,7 @@ export function makeSpeechTextCorrector(
             .slice(0, -1)
             .some(
               (token, offset) =>
-                punctuation(token.value).suffix ||
-                /[\r\n]/.test(text.slice(token.end, slice[offset + 1]!.start)),
+                !/^[\t\p{Zs}]+$/u.test(text.slice(token.end, slice[offset + 1]!.start)),
             )
         )
           continue;
@@ -138,14 +130,9 @@ export function makeSpeechTextCorrector(
         index += 1;
         continue;
       }
-      const consumed = tokens.slice(index, index + best.count);
-      output.push(text.slice(cursor, consumed[0]!.start));
-      output.push(
-        punctuation(consumed[0]!.value).prefix +
-          preserveCase(consumed[0]!.value, best.word) +
-          punctuation(consumed.at(-1)!.value).suffix,
-      );
-      cursor = consumed.at(-1)!.end;
+      const first = tokens[index]!;
+      output.push(text.slice(cursor, first.start), preserveCase(first.value, best.word));
+      cursor = tokens[index + best.count - 1]!.end;
       index += best.count;
     }
     output.push(text.slice(cursor));
