@@ -5,17 +5,18 @@ import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
 } from "@t3tools/client-runtime/state/pull-requests";
-import type {
-  EnvironmentId,
-  ProjectId,
-  PullRequestChecksState,
-  PullRequestListInput,
-  PullRequestFilterOptionsInput,
-  PullRequestListStatsInput,
-  PullRequestListEntry,
-  PullRequestRef,
-  PullRequestSummary,
-  ThreadPullRequestLink,
+import {
+  PullRequestListResult,
+  type EnvironmentId,
+  type ProjectId,
+  type PullRequestChecksState,
+  type PullRequestListInput,
+  type PullRequestFilterOptionsInput,
+  type PullRequestListStatsInput,
+  type PullRequestListEntry,
+  type PullRequestRef,
+  type PullRequestSummary,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
   threadPullRequestKeyOf,
@@ -24,6 +25,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -35,6 +37,7 @@ import {
 } from "../components/pullRequest/pullRequestList.logic";
 import { writePullRequestDetailSnapshot } from "../components/pullRequest/pullRequestDetail.logic";
 import { pullRequestChecksState } from "../components/pullRequest/pullRequestPresentation";
+import { useGuideRunStore } from "../components/pullRequest/guide/guideRunStore";
 import { formatEnvironmentQueryError } from "./query";
 import { environmentThreadShells } from "./threads";
 
@@ -215,14 +218,159 @@ function observePullRequestSummary(
   );
 }
 
+// Reading localStorage throws where the browser blocks storage; that must not break the page.
 function snapshotStorage(): Storage | undefined {
-  return typeof window === "undefined" ? undefined : window.localStorage;
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+type ListAnswerStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+
+const LIST_SCOPE_INDEX_KEY = "t3.pullRequests.listScopes";
+const LIST_SCOPE_KEY_PREFIX = "t3.pullRequests.listScope:";
+const LEGACY_SNAPSHOT_KEY_PREFIX = "t3.pullRequests.list:";
+const LIST_ANSWER_MAX_ENTRIES = 99;
+/**
+ * A scope holds a page of rows per environment, so only the scopes visited most recently are
+ * kept. Eviction drops a whole scope, never one environment's answer, so a restored list is never
+ * missing environments that did answer.
+ */
+const LIST_SCOPE_MAX_KEPT = 8;
+const listScopeCodec = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.toCodecJson(PullRequestListResult)),
+);
+const decodeListScope = Schema.decodeUnknownOption(listScopeCodec);
+const encodeListScope = Schema.encodeOption(listScopeCodec);
+const decodeListScopeIndex = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
+const sweptStorages = new WeakSet<ListAnswerStorage>();
+
+/**
+ * The project assignment is left out: a cold start asks before the project shells load, when
+ * every environment is asked for all of its projects, while the answers were remembered after
+ * overlapping projects were split between environments. Each environment's answer covers only
+ * its assigned projects, so the scope's answers together still cover the whole scope.
+ */
+const listScopeKey = ({ projectIds: _projectIds, ...scope }: PullRequestListInput) =>
+  `${LIST_SCOPE_KEY_PREFIX}${JSON.stringify(scope)}`;
+
+function readListScope(storage: ListAnswerStorage | undefined, key: string) {
+  let raw: string | null = null;
+  try {
+    raw = storage?.getItem(key) ?? null;
+  } catch {}
+  return Option.getOrElse(decodeListScope(raw), (): Record<string, PullRequestListResult> => ({}));
+}
+
+/** The single composite snapshot this replaced is never read again. */
+function sweepLegacySnapshots(storage: ListAnswerStorage): void {
+  if (sweptStorages.has(storage)) return;
+  sweptStorages.add(storage);
+  const legacy: string[] = [];
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
+    if (key?.startsWith(LEGACY_SNAPSHOT_KEY_PREFIX)) legacy.push(key);
+  }
+  for (const key of legacy) storage.removeItem(key);
+}
+
+/**
+ * Keeps what a cold start can show before the host answers again. Searches, continuation pages
+ * and grown pages are never shown that way, so only first-page reads are kept. Failures and
+ * cursors are dropped: they describe the moment of the read, and a restored list must not
+ * continue from it.
+ */
+export function rememberPullRequestListAnswer(
+  storage: ListAnswerStorage | undefined,
+  target: EnvironmentQueryTarget<PullRequestListInput>,
+  answer: PullRequestListResult,
+): void {
+  const { input } = target;
+  if (storage === undefined || input.query !== undefined || input.cursors !== undefined) return;
+  if (input.limit !== undefined && input.limit > LIST_ANSWER_MAX_ENTRIES) return;
+  const key = listScopeKey(input);
+  try {
+    sweepLegacySnapshots(storage);
+    const scope = readListScope(storage, key);
+    // An answer for some projects replaces only their rows. A repository this environment no
+    // longer owns stays covered until the environment that took it over answers; the next answer
+    // for all of the environment's projects, which every cold start asks for, drops them.
+    const assigned = input.projectIds === undefined ? undefined : new Set(input.projectIds);
+    const retained =
+      assigned === undefined
+        ? []
+        : (scope[target.environmentId]?.entries ?? []).filter(
+            (entry) => !assigned.has(entry.projectId),
+          );
+    const encoded = encodeListScope({
+      ...scope,
+      [target.environmentId]: {
+        ...answer,
+        // The fresh rows come first, so retained rows only fill what is left of the page.
+        entries: [...answer.entries, ...retained].slice(0, LIST_ANSWER_MAX_ENTRIES),
+        errors: [],
+        nextCursors: {},
+      },
+    });
+    if (Option.isNone(encoded)) return;
+    const index = Option.getOrElse(
+      decodeListScopeIndex(storage.getItem(LIST_SCOPE_INDEX_KEY)),
+      () => [],
+    );
+    const kept = [key, ...index.filter((held) => held !== key)];
+    for (const evicted of kept.slice(LIST_SCOPE_MAX_KEPT)) storage.removeItem(evicted);
+    storage.setItem(key, encoded.value);
+    storage.setItem(LIST_SCOPE_INDEX_KEY, JSON.stringify(kept.slice(0, LIST_SCOPE_MAX_KEPT)));
+  } catch {}
+}
+
+/**
+ * The kept answers for these reads, merged the way live answers are. An environment without a
+ * kept answer is left out rather than failing the restore: one whose projects were all assigned
+ * to another environment was never asked, and its pull requests are in that environment's answer.
+ */
+export function restorePullRequestList(
+  storage: ListAnswerStorage | undefined,
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
+): MergedPullRequestList | null {
+  const scopes = new Map<string, Record<string, PullRequestListResult>>();
+  const answers: Array<readonly [EnvironmentId, PullRequestListResult]> = [];
+  for (const target of targets) {
+    const key = listScopeKey(target.input);
+    const scope = scopes.get(key) ?? readListScope(storage, key);
+    scopes.set(key, scope);
+    const answer = scope[target.environmentId];
+    if (answer !== undefined) answers.push([target.environmentId, answer]);
+  }
+  const merged = mergePullRequestLists(answers);
+  if (merged === null) return null;
+  // Answers kept before the projects were reassigned between environments can overlap.
+  const seen = new Set<string>();
+  const entries = merged.entries.filter((entry) => {
+    const key = `${entry.host}:${entry.repository}#${entry.number}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { ...merged, entries };
+}
+
+export function restoredPullRequestList(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
+): MergedPullRequestList | null {
+  return restorePullRequestList(snapshotStorage(), targets);
 }
 
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
-  list: ({ environmentId }, answer, registry) =>
+  list: ({ environmentId, input }, answer, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
+      rememberPullRequestListAnswer(snapshotStorage(), { environmentId, input }, answer);
       for (const entry of answer.entries) {
         observePullRequestSummary(
           registry,
@@ -255,6 +403,20 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
           observedAt,
         }),
       );
+    }),
+  // Covers runs started elsewhere (another client, an agent) as well as this client's own.
+  reviewGuide: ({ environmentId, input }, guide) =>
+    Effect.map(Clock.currentTimeMillis, (since) => {
+      if (guide.run?._tag !== "Running") return;
+      useGuideRunStore.getState().watch({
+        environmentId,
+        reference: input,
+        title: null,
+        previousGuideAt: guide.guide?.generatedAt ?? null,
+        previousFailedAt: null,
+        since,
+        answeredRunning: true,
+      });
     }),
 });
 
@@ -320,6 +482,17 @@ const savedPullRequestSummaryAtom = Atom.family((key: string) =>
   ),
 );
 
+export function observedPullRequestTitle(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): string | null {
+  return (
+    registry.get(pullRequestObservationsAtom(pullRequestSummaryKey(environmentId, reference)))
+      .metadata?.summary.title ?? null
+  );
+}
+
 /** The newest of every list, detail, checks and linked-summary answer and the thread's saved link. */
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
@@ -374,7 +547,7 @@ function createMergedEnvironmentQuery<Input, A>(
         if (result._tag === "Failure" && error === null) {
           error = formatEnvironmentQueryError(result.cause);
         }
-        const value = Option.getOrNull(AsyncResult.value(result));
+        const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) values.push([target.environmentId, value]);
       }
       return { values, error, isPending };
@@ -430,7 +603,7 @@ export function usePullRequestTurnRefreshes(
 
 export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
   const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
-  return Option.getOrNull(AsyncResult.value(result));
+  return AsyncResult.getOrElse(result, () => null);
 }
 
 export interface MergedPullRequestListView {

@@ -71,7 +71,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
   parameters: Schema.Struct({
     html: Html,
     title: Schema.String.check(

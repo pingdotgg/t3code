@@ -79,7 +79,8 @@ const CLONE_ENV = {
   // Force piped progress immediately; refuse credential prompts that would hang without a tty.
   GIT_PROGRESS_DELAY: "0",
   GIT_TERMINAL_PROMPT: "0",
-  LC_ALL: "C",
+  // English progress without overriding LC_CTYPE, which a global post-checkout hook inherits.
+  LANGUAGE: "C",
 } satisfies NodeJS.ProcessEnv;
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
@@ -110,7 +111,7 @@ function toRepositoryInfo(
   };
 }
 
-// Redact credentials from client clone snapshots; git still receives the original URL.
+// Redact credentials from client clone snapshots; git still receives the credentials.
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
@@ -128,10 +129,16 @@ function redactRemoteUrl(remoteUrl: string): string {
 }
 
 // Userinfo can contain @; remove through the last one before the host boundary.
-const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]+@/gi;
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
+// Git leaves quotes inside query tokens unescaped; consume through the closing quote.
+const QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
+const URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
 
 function redactUrlCredentials(text: string): string {
-  return text.replace(URL_WITH_USERINFO, "$1");
+  return text
+    .replace(QUOTED_URL_QUERY, "$1$2$1")
+    .replace(URL_QUERY, "$1")
+    .replace(URL_WITH_USERINFO, "$1");
 }
 
 // The remote already exists after push failure; advise fixing access and pushing.
@@ -340,11 +347,13 @@ export const make = Effect.gen(function* () {
         if (stderrTail.length > 4) stderrTail.shift();
       });
     };
+    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
+    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
     yield* git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", cloneUrl, path.basename(destinationPath)],
+        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,
@@ -493,29 +502,50 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new SourceControlRepositoryError({
-              operation: "publishRepository",
-              provider: providerKind,
-              detail: publishPushFailureDetail({
-                urls,
-                remoteName,
-                remoteUrl,
-                reason: cause.reason,
+      const push = (pushUrl: string) =>
+        git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
+          Effect.map((result) => ({ branch: result.branch, remoteUrl: pushUrl })),
+          Effect.mapError(
+            (cause) =>
+              new SourceControlRepositoryError({
+                operation: "publishRepository",
+                provider: providerKind,
+                detail: publishPushFailureDetail({
+                  urls,
+                  remoteName,
+                  remoteUrl: pushUrl,
+                  reason: cause.reason,
+                }),
+                cause,
               }),
-              cause,
-            }),
+          ),
+        );
+
+      // Like clone, an auto-selected SSH remote switches to HTTPS when SSH is refused;
+      // otherwise the remote keeps failing every later fetch and push.
+      const canSwitchToHttps = input.protocol !== "ssh" && remoteUrl === urls.sshUrl;
+      const pushed = yield* push(remoteUrl).pipe(
+        Effect.catchIf(
+          (error) => canSwitchToHttps && isSshRejection(error),
+          (sshError) =>
+            git
+              .execute({
+                operation: "SourceControlRepositoryService.publishRepository.switchToHttps",
+                cwd: input.cwd,
+                args: ["remote", "set-url", remoteName, urls.url],
+              })
+              .pipe(
+                Effect.mapError(() => sshError),
+                Effect.andThen(push(urls.url)),
+              ),
         ),
       );
 
       return {
         repository: toRepositoryInfo(providerKind, urls),
         remoteName,
-        remoteUrl,
-        branch: pushResult.branch,
-        ...(pushResult.upstreamBranch ? { upstreamBranch: pushResult.upstreamBranch } : {}),
+        remoteUrl: pushed.remoteUrl,
+        branch: pushed.branch,
         status: "pushed" as const,
       };
     },

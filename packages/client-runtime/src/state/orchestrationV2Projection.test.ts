@@ -219,8 +219,9 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).toBe(visibleTurnItems[0]);
   });
 
-  it("replaces only the updated visible item when membership is unchanged", () => {
-    const first = commandItem("item-first", "first");
+  it("replaces only the updated visible item and retains its deferred work cursor", () => {
+    const deferredWork = { cursor: "remaining-work", itemCount: 100, lastOrdinal: 101 };
+    const first = { ...commandItem("item-first", "first"), deferredWork };
     const second = commandItem("item-second", "second");
     const firstRow = {
       position: 0,
@@ -253,9 +254,10 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     } as OrchestrationV2DomainEvent;
 
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
+    expect(next?.visibleTurnItems[0]?.item.deferredWork).toEqual(deferredWork);
     expect(next?.visibleTurnItems).not.toBe(projection.visibleTurnItems);
     expect(next?.visibleTurnItems[0]).not.toBe(firstRow);
-    expect(next?.visibleTurnItems[0]?.item).toBe(updated);
+    expect(next?.visibleTurnItems[0]?.item).toEqual({ ...updated, deferredWork });
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
   });
 

@@ -1,8 +1,6 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import * as Haptics from "expo-haptics";
 import { HeaderHeightContext } from "@react-navigation/elements";
-import { useContext, useEffect, useRef } from "react";
+import { useContext } from "react";
 import { Platform } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,19 +25,6 @@ export function GitActionProgressOverlay(props: {
     Platform.OS === "android"
       ? toolbar.paddingTop + toolbar.height + toolbar.paddingBottom + 8
       : headerHeight + 8;
-  const prevPhaseRef = useRef(progress.phase);
-
-  useEffect(() => {
-    const prev = prevPhaseRef.current;
-    prevPhaseRef.current = progress.phase;
-
-    if (prev === "running" && progress.phase === "success") {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } else if (prev === "running" && progress.phase === "error") {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    }
-  }, [progress.phase]);
-
   const handlePress = () => {
     if (progress.prUrl) {
       void (openPullRequest
@@ -52,11 +37,6 @@ export function GitActionProgressOverlay(props: {
   if (progress.phase === "idle") {
     return null;
   }
-  const prUrl = progress.prUrl;
-  // A finished action reports only the URL it created.
-  const openLabel = prUrl
-    ? `Open ${(sourceControlClients.findByChangeRequestUrl(prUrl) ?? sourceControlClients.get(undefined)).changeRequest.shortLabel}`
-    : null;
 
   return (
     <Animated.View
@@ -79,7 +59,7 @@ export function GitActionProgressOverlay(props: {
               : "default"
         }
         busy={progress.phase === "running"}
-        action={openLabel ? { label: openLabel, onPress: handlePress } : undefined}
+        action={progress.prUrl ? { label: "View", onPress: handlePress } : undefined}
       />
     </Animated.View>
   );

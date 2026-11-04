@@ -5,10 +5,12 @@ export interface Pose {
   readonly device: string;
   readonly form: "phone" | "tablet";
   readonly appearance: "light" | "dark";
-  /** Phones are portrait-only; tablets also run rotated. */
+  /** Phones are portrait-locked; tablets and an unfolded Fold can start rotated. */
   readonly landscape?: boolean;
   readonly fold?: "closed" | "open";
   readonly textSize?: "accessibility-large";
+  /** Why the pose is skipped unless named with --pose. */
+  readonly pending?: string;
 }
 
 const pose = (value: Pose) => value;
@@ -22,79 +24,87 @@ export const POSES: ReadonlyArray<Pose> = [
     appearance: "light",
   }),
   pose({
-    id: "iphone-13-mini-dark",
+    id: "iphone-18-pro-dark",
     platform: "ios",
-    device: "iPhone 13 mini",
+    device: "iPhone 18 Pro",
     form: "phone",
     appearance: "dark",
   }),
   pose({
-    id: "iphone-17-pro",
+    id: "iphone-duo-folded",
     platform: "ios",
-    device: "iPhone 17 Pro",
+    device: "iPhone Duo",
     form: "phone",
     appearance: "light",
+    fold: "closed",
+    pending:
+      "agent-device alert accept cannot see the iOS open-link prompt on the iPhone Duo, so the app never launches",
   }),
   pose({
-    id: "iphone-17-pro-max-large-text",
+    id: "iphone-duo-unfolded",
     platform: "ios",
-    device: "iPhone 17 Pro Max",
-    form: "phone",
+    device: "iPhone Duo",
+    form: "tablet",
     appearance: "dark",
-    textSize: "accessibility-large",
+    fold: "open",
+    pending:
+      "agent-device alert accept cannot see the iOS open-link prompt on the iPhone Duo, so the app never launches",
   }),
   pose({
-    id: "ipad-mini",
+    id: "ipad-13-portrait",
     platform: "ios",
-    device: "iPad mini (A17 Pro)",
+    device: "iPad Pro 13-inch (M5)",
     form: "tablet",
     appearance: "light",
   }),
   pose({
-    id: "ipad-pro-13-landscape",
+    id: "ipad-13-landscape-large-text",
     platform: "ios",
     device: "iPad Pro 13-inch (M5)",
     form: "tablet",
     appearance: "dark",
     landscape: true,
+    textSize: "accessibility-large",
   }),
   pose({
-    id: "pixel-9",
+    id: "pixel-10-pro-large-text",
     platform: "android",
-    device: "Pixel 9",
-    form: "phone",
-    appearance: "light",
-  }),
-  pose({
-    id: "small-phone-dark",
-    platform: "android",
-    device: "Small Phone",
-    form: "phone",
-    appearance: "dark",
-  }),
-  pose({
-    id: "pixel-9-large-text",
-    platform: "android",
-    device: "Pixel 9",
+    device: "Pixel 10 Pro",
     form: "phone",
     appearance: "light",
     textSize: "accessibility-large",
   }),
   pose({
-    id: "pixel-fold-closed",
+    id: "pixel-fold-folded-dark",
     platform: "android",
-    device: "Pixel 9 Pro Fold",
+    device: "Pixel 10 Pro Fold",
     form: "phone",
-    appearance: "light",
+    appearance: "dark",
     fold: "closed",
   }),
   pose({
-    id: "pixel-fold-open",
+    id: "pixel-fold-unfolded",
     platform: "android",
-    device: "Pixel 9 Pro Fold",
+    device: "Pixel 10 Pro Fold",
+    form: "tablet",
+    appearance: "light",
+    fold: "open",
+  }),
+  pose({
+    id: "pixel-fold-unfolded-landscape",
+    platform: "android",
+    device: "Pixel 10 Pro Fold",
     form: "tablet",
     appearance: "dark",
     fold: "open",
+    landscape: true,
+  }),
+  pose({
+    id: "pixel-tablet-portrait",
+    platform: "android",
+    device: "Pixel Tablet",
+    form: "tablet",
+    appearance: "dark",
   }),
   pose({
     id: "pixel-tablet-landscape",

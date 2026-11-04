@@ -1,9 +1,11 @@
 import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
+import { openCommandPalette } from "../commandPaletteBus";
+import { useCommandPaletteStore } from "../commandPaletteStore";
 
 const state = vi.hoisted(() => ({ navigate: vi.fn() }));
 
@@ -24,11 +26,15 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 
 import { registerListNavigationCommands } from "./AppSidebarLayout";
 import { CommandPalette } from "./CommandPalette";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "./ComposerPromptEditorTiptap";
 import { Combobox, ComboboxInput, ComboboxItem, ComboboxList, ComboboxPopup } from "./ui/combobox";
 
 function setup() {
   state.navigate.mockClear();
+  useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
 }
 
 function highlightedText(): string | null {
@@ -43,7 +49,10 @@ describe("rebound list navigation", () => {
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     using _commands = { [Symbol.dispose]: registerListNavigationCommands() };
 
-    await userEvent.keyboard("{Control>}k{/Control}");
+    openCommandPalette();
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
     await userEvent.keyboard("{Control>}n{/Control}{Control>}n{/Control}");
     await vi.waitFor(() => expect(highlightedText()).not.toBeNull());
     const second = highlightedText();

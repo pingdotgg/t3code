@@ -130,6 +130,39 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(layerProtocol)),
   );
 
+  it.effect("keeps proxied paths on the configured server", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockImplementation(async () => new Response("ok"));
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:5733/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          yield* Effect.promise(() =>
+            handler!(new Request("t3code-dev://app//example.com/src/main.tsx?t=1")),
+          );
+          yield* Effect.promise(() => handler!(new Request("t3code-dev://app/\\example.com/")));
+        }),
+      );
+
+      assert.deepEqual(
+        netFetchMock.mock.calls.map((call) => call[0]),
+        [
+          "http://127.0.0.1:5733//example.com/src/main.tsx?t=1",
+          "http://127.0.0.1:5733//example.com/",
+        ],
+      );
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+
   it.effect("rejects custom protocol requests for another host", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;

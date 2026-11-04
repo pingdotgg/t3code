@@ -23,6 +23,7 @@ import {
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
+  terminalNavigationShortcutData,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -36,6 +37,31 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("terminal word navigation", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+Arrow to the terminal encoder on %s",
+    (platform) => {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
+      }
+    },
+  );
+
+  it.each(["Win32", "Linux x86_64", "MacIntel"])(
+    "preserves Alt+Arrow word navigation on %s",
+    (platform) => {
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
+        "\u001bb",
+      );
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
+        "\u001bf",
+      );
+    },
+  );
+});
 
 function modShortcut(
   key: string,
@@ -602,7 +628,7 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 function elementWith(attributes: Record<string, string>) {
-  return { getAttribute: (name: string) => attributes[name] ?? null };
+  return { getAttribute: (name: string) => attributes[name] ?? null } as unknown as Element;
 }
 
 describe("isListFocusTarget", () => {
@@ -621,7 +647,10 @@ describe("isListFocusTarget", () => {
 
 describe("list navigation commands", () => {
   const list = elementWith({ role: "combobox" });
-  const ctrlN = (target?: unknown) => ({ ...event({ key: "n", ctrlKey: true }), target });
+  const ctrlN = (target: EventTarget | null = null) => ({
+    ...event({ key: "n", ctrlKey: true }),
+    target,
+  });
   const rebound = compileResolvedKeybindingsConfig([
     ...DEFAULT_KEYBINDINGS,
     { key: "ctrl+n", command: "list.next", when: "listFocus" },
