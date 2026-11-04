@@ -39,6 +39,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/tmp/claude-1000/…", null],
     ["/tmp/claude-1000/.../scratchpad/notes.md", null],
     ["src/…/main.ts", null],
+    ["/tmp/claude-1000/...:12", null],
+    ["C:\\Users\\me\\...\\notes.md", null],
     [
       "/tmp/claude-1000/-home-me--t3-worktrees-proj-t3-abc123/scratchpad/notes.md",
       "/tmp/claude-1000/-home-me--t3-worktrees-proj-t3-abc123/scratchpad/notes.md",
