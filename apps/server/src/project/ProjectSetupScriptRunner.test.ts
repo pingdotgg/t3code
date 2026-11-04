@@ -179,16 +179,32 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
-  it.effect("drops its terminal listeners when cancelled while the terminal opens", () =>
-    Effect.gen(function* () {
-      const opening = yield* Deferred.make<void>();
-      const { start, listeners } = yield* makeHarness({ opening });
-      const fiber = yield* Effect.forkChild(start);
-      yield* Deferred.await(opening);
-      expect(listeners.size).toBe(2);
-      yield* Fiber.interrupt(fiber);
-      expect(listeners.size).toBe(0);
-    }),
+  it.effect.each(["opening", "completion"] as const)(
+    "stops pending setup when cancelled during %s",
+    (phase) =>
+      Effect.gen(function* () {
+        const opening = yield* Deferred.make<void>();
+        const { start, listeners, writes, emit } = yield* makeHarness(
+          phase === "opening" ? { opening } : {},
+        );
+        const pending =
+          phase === "opening"
+            ? start.pipe(Effect.asVoid)
+            : yield* start.pipe(
+                Effect.map((result) =>
+                  result.status === "started" && result.completion
+                    ? result.completion.pipe(Effect.asVoid)
+                    : Effect.die("setup did not start"),
+                ),
+              );
+        const fiber = yield* pending.pipe(Effect.forkChild({ startImmediately: true }));
+        if (phase === "opening") yield* Deferred.await(opening);
+        expect(listeners.size).toBe(2);
+        yield* Fiber.interrupt(fiber);
+        expect(listeners.size).toBe(0);
+        yield* emit({ ...event, type: "output", data: "\r\n% \x1b[?2004h" });
+        expect(yield* Queue.size(writes)).toBe(0);
+      }),
   );
 
   it.effect.each([false, true])(
