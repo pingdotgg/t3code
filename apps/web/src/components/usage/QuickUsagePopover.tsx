@@ -314,7 +314,7 @@ export function QuickUsagePopover({
                       className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
                         isSelected
                           ? "border-primary/40 bg-primary/12 text-primary"
-                          : "border-input bg-muted/50 text-foreground hover:bg-accent"
+                          : "border-input bg-foreground/5 text-foreground hover:bg-foreground/10"
                       }`}
                     >
                       {PROVIDER_PRESENTATION[provider.kind].label}
@@ -335,6 +335,7 @@ export function QuickUsagePopover({
                       <LimitWindows
                         driver={selected.driver}
                         accentColor={account.accentColor}
+                        barColorOverride="var(--primary)"
                         windows={account.windows}
                         now={now}
                         stacked
@@ -349,7 +350,7 @@ export function QuickUsagePopover({
               </div>
 
               {todaySummary ? (
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2">
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-foreground/5 px-3 py-2">
                   <div className="min-w-0 text-xs tabular-nums">
                     <p className="font-medium text-foreground">Spent today</p>
                     <p className="truncate text-muted-foreground">

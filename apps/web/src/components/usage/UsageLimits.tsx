@@ -188,6 +188,7 @@ function WindowBar({
 export function LimitWindows({
   driver,
   accentColor,
+  barColorOverride,
   windows,
   now,
   compact = false,
@@ -195,12 +196,13 @@ export function LimitWindows({
 }: {
   readonly driver: ServerProvider["driver"];
   readonly accentColor?: string | undefined;
+  readonly barColorOverride?: string | undefined;
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly compact?: boolean;
   readonly stacked?: boolean;
 }) {
-  const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  const color = barColorOverride ?? normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   if (stacked) {
     return (
       <div className="flex flex-col gap-3">
