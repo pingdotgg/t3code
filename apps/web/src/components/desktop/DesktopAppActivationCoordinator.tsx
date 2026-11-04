@@ -43,38 +43,41 @@ export function DesktopAppActivationCoordinator() {
   const shellHasSnapshot = useEnvironmentShellHasSnapshot(
     primaryEnvironment?.environmentId ?? null,
   );
-  const ready =
-    activation !== undefined &&
+  const primaryReady =
     primaryEnvironment?.connection.phase === "connected" &&
     primaryEnvironment.serverConfig !== null &&
     shellHasSnapshot;
+
+  const findWslTarget = (distro: string | null) => {
+    let bootstraps: ReturnType<
+      NonNullable<typeof window.desktopBridge>["getLocalEnvironmentBootstraps"]
+    >;
+    try {
+      bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
+    } catch {
+      return null;
+    }
+    return findWslActivationTarget(
+      distro,
+      environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        backendId:
+          environment.environmentId === primaryEnvironment?.environmentId
+            ? PRIMARY_LOCAL_ENVIRONMENT_ID
+            : desktopLocalBackendId(environment.entry.target),
+        connected: environment.connection.phase === "connected",
+        platform: environment.serverConfig?.environment.platform.os ?? null,
+      })),
+      bootstraps,
+    );
+  };
+  const ready = activation !== undefined && (primaryReady || findWslTarget(null) !== null);
 
   const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
       getTarget: (request) => {
         if (request.wslDistro !== undefined) {
-          const distro = request.wslDistro;
-          let bootstraps: ReturnType<
-            NonNullable<typeof window.desktopBridge>["getLocalEnvironmentBootstraps"]
-          >;
-          try {
-            bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
-          } catch {
-            return null;
-          }
-          return findWslActivationTarget(
-            distro,
-            environments.map((environment) => ({
-              environmentId: environment.environmentId,
-              backendId:
-                environment.environmentId === primaryEnvironment?.environmentId
-                  ? PRIMARY_LOCAL_ENVIRONMENT_ID
-                  : desktopLocalBackendId(environment.entry.target),
-              connected: environment.connection.phase === "connected",
-              platform: environment.serverConfig?.environment.platform.os ?? null,
-            })),
-            bootstraps,
-          );
+          return findWslTarget(request.wslDistro);
         }
         if (
           primaryEnvironment?.connection.phase !== "connected" ||

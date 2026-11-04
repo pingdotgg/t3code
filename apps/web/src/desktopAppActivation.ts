@@ -61,7 +61,7 @@ export interface DesktopAppActivationDependencies {
 }
 
 export function findWslActivationTarget(
-  distro: string,
+  distro: string | null,
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly backendId: string | null;
@@ -75,7 +75,8 @@ export function findWslActivationTarget(
     return (
       environment.connected &&
       environment.platform !== null &&
-      bootstrap?.runningDistro?.toLowerCase() === distro.toLowerCase()
+      bootstrap?.runningDistro != null &&
+      (distro === null || bootstrap.runningDistro.toLowerCase() === distro.toLowerCase())
     );
   });
   return target?.platform

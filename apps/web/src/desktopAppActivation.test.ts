@@ -101,6 +101,13 @@ describe("desktop app activation", () => {
       environmentId: ubuntu,
       platform: "linux",
     });
+    expect(findWslActivationTarget(null, [candidates[1]!], bootstraps)).toEqual({
+      environmentId: ubuntu,
+      platform: "linux",
+    });
+    expect(
+      findWslActivationTarget(null, [{ ...candidates[1]!, connected: false }], bootstraps),
+    ).toBeNull();
     expect(findWslActivationTarget("Ubuntu", [candidates[0]!], bootstraps)).toBeNull();
     expect(
       findWslActivationTarget("Ubuntu", [{ ...candidates[1]!, connected: false }], bootstraps),
