@@ -1,3 +1,5 @@
+import { isMacPlatform } from "./utils";
+
 export type MixerSelection<K> = readonly K[] | null;
 
 const enabledKeys = <K>(keys: readonly K[], enabled: MixerSelection<K>) =>
@@ -36,7 +38,10 @@ export function mixerRowHandlers(actions: {
 }) {
   return {
     onCheckedChange: (_checked: boolean, details: { readonly event: Event }) => {
-      if (details.event instanceof MouseEvent && details.event.altKey) actions.solo();
+      const event = details.event;
+      // macOS turns Ctrl+click into contextmenu, and Safari may still send the click.
+      if (event instanceof MouseEvent && event.ctrlKey && isMacPlatform(navigator.platform)) return;
+      if (event instanceof MouseEvent && event.altKey) actions.solo();
       else actions.toggle();
     },
     onContextMenu: (event: { preventDefault(): void; stopPropagation(): void }) => {
