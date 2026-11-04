@@ -1191,6 +1191,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly streaming?: boolean | undefined;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
@@ -1208,6 +1209,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       onUseArtifactTemplate={props.onUseArtifactTemplate}
       renderImage={props.renderImage}
       skills={props.skills}
+      streaming={props.streaming}
     />
   );
 });
@@ -1220,6 +1222,7 @@ function AssistantMarkdownBlocks(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly streaming?: boolean | undefined;
 }) {
   const blocks = useMemo(
     () =>
@@ -1262,6 +1265,7 @@ function AssistantMarkdownBlocks(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
           renderImage={props.renderImage}
+          streaming={props.streaming}
         />
       );
     });
@@ -2266,6 +2270,7 @@ function renderFeedEntry(
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              streaming={message.streaming}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
