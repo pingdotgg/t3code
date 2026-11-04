@@ -3,6 +3,8 @@ import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudge
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
+  type OrchestratorMcpEnsureChildTaskInput,
   type ChatAttachment,
   EventId,
   MessageId,
@@ -25,6 +27,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -33,6 +36,20 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
+import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as ThreadManagementService from "../ThreadManagementService.ts";
+import * as ThreadLaunchService from "../ThreadLaunchService.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as SecretRequests from "../../secrets/SecretRequests.ts";
+import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as CommandReceiptStore from "../CommandReceiptStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
@@ -113,8 +130,11 @@ function makeTestAdapter(input: {
   >;
   readonly failure?: ReturnType<typeof makeProviderFailure>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly failedThreadIds?: ReadonlySet<ThreadId>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
+  readonly holdThreadIds?: ReadonlySet<ThreadId>;
+  readonly heldCompletions?: Map<ThreadId, Effect.Effect<void>>;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
@@ -279,113 +299,123 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const completeTurn = Effect.gen(function* () {
+                const eventTime = yield* DateTime.now;
+                const providerTurnId = ProviderTurnId.make(
+                  `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                );
+                const terminalStatus =
+                  input.failedRunOrdinals?.has(turnInput.runOrdinal) ||
+                  input.failedThreadIds?.has(turnInput.threadId)
+                    ? "failed"
+                    : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                      ? "interrupted"
+                      : "completed";
+                const response =
+                  input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
+                  input.responseByRunOrdinal[turnInput.runOrdinal] ??
+                  `${input.driver} response for run ${turnInput.runOrdinal}`;
+                const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
+                  {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turnInput.providerThread.id,
+                      nodeId: turnInput.rootNodeId,
+                      runAttemptId: turnInput.attemptId,
+                      nativeTurnRef: {
+                        driver: input.driver,
+                        nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                        strength: "strong",
+                      },
+                      ordinal: turnInput.runOrdinal,
+                      status: terminalStatus,
+                      startedAt: eventTime,
+                      completedAt: eventTime,
+                    },
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: TurnItemId.make(
+                        `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: terminalStatus,
+                      title: null,
+                      startedAt: eventTime,
+                      completedAt: eventTime,
+                      updatedAt: eventTime,
+                      type: "assistant_message",
+                      messageId: MessageId.make(
+                        `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      text: response,
+                      streaming: false,
+                    },
+                  },
+                  {
+                    type: "turn.terminal",
+                    driver: input.driver,
+                    providerThreadId: turnInput.providerThread.id,
+                    providerTurnId,
+                    runOrdinal: turnInput.runOrdinal,
+                    ...(terminalStatus === "failed"
+                      ? {
+                          status: terminalStatus,
+                          failureItemOrdinal: turnInput.runOrdinal * 100 + 2,
+                          failure:
+                            input.failure ??
+                            makeProviderFailure({
+                              message: "Simulated provider failure.",
+                              code: "simulated_failure",
+                              class: "provider_error",
+                            }),
+                        }
+                      : { status: terminalStatus, failure: null }),
+                    threadDisposition: "reusable",
+                  },
+                ];
+                const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
+                const turnEvent = providerEvents[0];
+                if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
+                  yield* PubSub.publish(events, {
+                    ...turnEvent,
+                    providerTurn: {
+                      ...turnEvent.providerTurn,
+                      status: "running",
+                      completedAt: null,
+                      tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
+                    },
+                  });
+                }
+                for (const event of providerEvents) {
+                  yield* PubSub.publish(events, event);
+                }
+              });
               if (
-                turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
+                (input.holdThreadIds === undefined
+                  ? turnInput.runOrdinal === (input.holdRunOrdinal ?? 1)
+                  : input.holdThreadIds.has(turnInput.threadId)) &&
                 input.holdFirstTurn !== undefined
               ) {
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
-                if (input.releaseFirstTurn === undefined) return;
+                if (input.releaseFirstTurn === undefined) {
+                  input.heldCompletions?.set(turnInput.threadId, completeTurn);
+                  return;
+                }
                 yield* Deferred.await(input.releaseFirstTurn);
               }
-              const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
-                ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : "completed";
-              const response =
-                input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
-                input.responseByRunOrdinal[turnInput.runOrdinal] ??
-                `${input.driver} response for run ${turnInput.runOrdinal}`;
-              const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
-                {
-                  type: "provider_turn.updated",
-                  driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
-                    },
-                    ordinal: turnInput.runOrdinal,
-                    status: terminalStatus,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                  },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver: input.driver,
-                  turnItem: {
-                    id: TurnItemId.make(
-                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    threadId: turnInput.threadId,
-                    runId: turnInput.runId,
-                    nodeId: turnInput.rootNodeId,
-                    providerThreadId: turnInput.providerThread.id,
-                    providerTurnId,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: turnInput.runOrdinal * 100 + 1,
-                    status: terminalStatus,
-                    title: null,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                    updatedAt: eventTime,
-                    type: "assistant_message",
-                    messageId: MessageId.make(
-                      `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    text: response,
-                    streaming: false,
-                  },
-                },
-                {
-                  type: "turn.terminal",
-                  driver: input.driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId,
-                  runOrdinal: turnInput.runOrdinal,
-                  ...(terminalStatus === "failed"
-                    ? {
-                        status: terminalStatus,
-                        failureItemOrdinal: turnInput.runOrdinal * 100 + 2,
-                        failure:
-                          input.failure ??
-                          makeProviderFailure({
-                            message: "Simulated provider failure.",
-                            code: "simulated_failure",
-                            class: "provider_error",
-                          }),
-                      }
-                    : { status: terminalStatus, failure: null }),
-                  threadDisposition: "reusable",
-                },
-              ];
-              const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
-              const turnEvent = providerEvents[0];
-              if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
-                yield* PubSub.publish(events, {
-                  ...turnEvent,
-                  providerTurn: {
-                    ...turnEvent.providerTurn,
-                    status: "running",
-                    completedAt: null,
-                    tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
-                  },
-                });
-              }
-              for (const event of providerEvents) {
-                yield* PubSub.publish(events, event);
-              }
+              yield* completeTurn;
             }),
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,
@@ -3495,5 +3525,544 @@ describe("orchestration v2 provider switching", () => {
   it.live(
     "reissues imported v1 context when a queued provider starts after the first provider fails",
     () => importedFailureScenario(true),
+  );
+});
+
+const ensureClient: McpInvocationScope = {
+  environmentId: EnvironmentId.make("environment:ensure-test"),
+  requestNamespace: "client:session-one",
+  issuedAt: 0,
+  thread: undefined,
+  client: { sessionId: "session-one", label: "test", access: "full-access" },
+  capabilities: new Set(["orchestration"]),
+};
+
+const withEnsureHost = Effect.fn("test.ensureChildHost")(function* <A, E, R>(
+  active: boolean,
+  test: (fixture: {
+    input: OrchestratorMcpEnsureChildTaskInput;
+    anchor: OrchestrationV2ThreadProjection["runs"][number];
+    capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+    heldThreads: Set<ThreadId>;
+    heldCompletions: Map<ThreadId, Effect.Effect<void>>;
+  }) => Effect.Effect<A, E, R>,
+  restart = false,
+  parentFailed = false,
+) {
+  const cwd = yield* checkpointWorkspace("ensure-child");
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ensure-child-db-" });
+  const databaseLayer = SqlitePersistence.layerFromPath(`${directory}/state.sqlite`).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+  const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+  const heldThreads = new Set<ThreadId>(active ? [threadId] : []);
+  const heldCompletions = new Map<ThreadId, Effect.Effect<void>>();
+  const holdFirstTurn = yield* Deferred.make<void>();
+  const registry = ProviderAdapterRegistry.layerFromAdapters([
+    makeTestAdapter({
+      instanceId: CODEX_MODEL_SELECTION.instanceId,
+      driver: CODEX_DRIVER,
+      capabilities: CodexProviderCapabilitiesV2,
+      modelSelection: CODEX_MODEL_SELECTION,
+      capturedTurns,
+      responseByRunOrdinal: { 1: "native test result" },
+      holdThreadIds: heldThreads,
+      holdFirstTurn,
+      heldCompletions,
+      ...(parentFailed ? { failedThreadIds: new Set([threadId]) } : {}),
+    }),
+  ]);
+  const runtime = ProviderReplayHarness.layerWithRegistry(
+    { name: "ensure-child", runtimePolicyOverride: { cwd } },
+    registry,
+    { databaseLayer },
+  );
+  const settings = ServerSettings.layerTest();
+  const threads = ThreadManagementService.layer.pipe(
+    Layer.provideMerge(runtime),
+    Layer.provide(settings),
+    Layer.provide(
+      Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+        ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+      }),
+    ),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer))),
+  );
+  const service = OrchestratorMcpService.layer.pipe(
+    Layer.provideMerge(threads),
+    Layer.provide(
+      Layer.mergeAll(
+        registry,
+        settings,
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            {
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              enabled: true,
+              installed: true,
+              version: "test",
+              status: "ready",
+              auth: { status: "authenticated" },
+              checkedAt: "2026-11-03T00:00:00Z",
+              models: [
+                {
+                  slug: CODEX_MODEL_SELECTION.model,
+                  name: "test",
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ]),
+        }),
+      ),
+    ),
+  );
+  const result = yield* Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("ensure:parent:create"),
+      threadId,
+      projectId,
+      title: "Parent",
+      modelSelection: CODEX_MODEL_SELECTION,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: cwd,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("ensure:parent:start"),
+      threadId,
+      messageId: MessageId.make("ensure:parent:message"),
+      text: "Parent input only",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* worker.drain();
+    if (!active) yield* waitForIdle(threadId);
+    const anchor = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    const input: OrchestratorMcpEnsureChildTaskInput = {
+      parentThreadId: threadId,
+      anchorRunId: anchor.id,
+      requestKey: "external-child",
+      task: "Self-contained child input only",
+      target: {
+        providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+        model: CODEX_MODEL_SELECTION.model,
+      },
+    };
+    return yield* test({ input, anchor, capturedTurns, heldThreads, heldCompletions });
+  }).pipe(Effect.provide(service));
+  if (restart) {
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const accepted = parent.subagents.find(
+        (task) => task.ensuredRequest?.requestKey === "external-child",
+      )!;
+      const input = {
+        parentThreadId: threadId,
+        anchorRunId: parent.runs[0]!.id,
+        requestKey: "external-child",
+        task: "Self-contained child input only",
+        target: {
+          providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+          model: CODEX_MODEL_SELECTION.model,
+        },
+      };
+      const secondSession = {
+        ...ensureClient,
+        requestNamespace: "client:after-restart",
+        client: { ...ensureClient.client!, sessionId: "after-restart" },
+      };
+      const replay = yield* mcp.ensureChildTask(secondSession, input);
+      assert.equal(replay.taskId, accepted.id);
+      assert.equal(replay.childThreadId, accepted.childThreadId);
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).subagents.length, 1);
+      const native = yield* mcp.readThread(secondSession, { threadId: replay.childThreadId });
+      assert.include(JSON.stringify(native), "native test result");
+      assert.equal(native.recentRuns[0]!.delegatedTaskId, replay.taskId);
+      assert.equal(
+        (yield* Ref.get(capturedTurns)).filter((turn) => turn.threadId === replay.childThreadId)
+          .length,
+        1,
+      );
+      const conflict = yield* mcp
+        .ensureChildTask(secondSession, { ...input, task: "Changed after restart" })
+        .pipe(Effect.flip);
+      assert.equal(conflict.code, "invalid_request");
+    }).pipe(Effect.provide(Layer.fresh(service)));
+  }
+  return result;
+});
+
+describe("ensure_child_task", () => {
+  it.live(
+    "serializes simultaneous external clients before commit with matching and conflicting inputs",
+    () =>
+      withEnsureHost(false, ({ input, capturedTurns }) =>
+        Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const threads = yield* ThreadManagementService.ThreadManagementService;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const otherClient = {
+            ...ensureClient,
+            requestNamespace: "client:simultaneous-session",
+            client: { ...ensureClient.client!, sessionId: "simultaneous-session" },
+          };
+          for (const conflicting of [false, true]) {
+            const arrivals = yield* Ref.make(0);
+            const bothReady = yield* Deferred.make<void>();
+            const dispatch = threads.dispatch;
+            using barrier = vi.spyOn(threads, "dispatch").mockImplementation((command) =>
+              command.type !== "delegated_task.ensure"
+                ? dispatch(command)
+                : Effect.gen(function* () {
+                    if ((yield* Ref.updateAndGet(arrivals, (count) => count + 1)) === 2) {
+                      yield* Deferred.succeed(bothReady, undefined);
+                    }
+                    yield* Deferred.await(bothReady);
+                    return yield* dispatch(command);
+                  }),
+            );
+            const request = { ...input, requestKey: `simultaneous:${conflicting}` };
+            const results = yield* Effect.forEach(
+              [
+                service.ensureChildTask(ensureClient, request),
+                service.ensureChildTask(otherClient, {
+                  ...request,
+                  ...(conflicting ? { task: "Conflicting content before either commit" } : {}),
+                }),
+              ],
+              (call) =>
+                call.pipe(
+                  Effect.match({
+                    onSuccess: (receipt) => ({ ok: true as const, receipt }),
+                    onFailure: (error) => ({ ok: false as const, error }),
+                  }),
+                ),
+              { concurrency: "unbounded" },
+            );
+            barrier.mockRestore();
+            assert.equal(yield* Ref.get(arrivals), 2);
+            const accepted = results.filter((result) => result.ok);
+            assert.equal(accepted.length, conflicting ? 1 : 2);
+            if (conflicting) {
+              const rejected = results.find((result) => !result.ok)!;
+              assert.isFalse(rejected.ok);
+              if (!rejected.ok) assert.equal(rejected.error.code, "invalid_request");
+            } else {
+              assert.deepEqual(accepted[0]!.receipt, accepted[1]!.receipt);
+            }
+            const receipt = accepted[0]!.receipt;
+            yield* worker.drain();
+            yield* waitForIdle(receipt.childThreadId);
+            assert.equal(
+              (yield* Ref.get(capturedTurns)).filter(
+                (turn) => turn.threadId === receipt.childThreadId,
+              ).length,
+              1,
+            );
+          }
+          const parent = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(parent.subagents.length, 2);
+          assert.equal(parent.runs.length, 1);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops an already running ensured child and refuses another launch", () =>
+    withEnsureHost(false, ({ input, heldThreads, capturedTurns }) =>
+      Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const receipt = yield* mcp.ensureChildTask(ensureClient, input);
+        heldThreads.add(receipt.childThreadId);
+        yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(receipt.childThreadId)).runs[0]!.status,
+          "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("ensure:stop-running-child"),
+          threadId,
+        });
+        // The replay worker stubs thread management; execute its stop effect with the real service.
+        yield* (yield* ThreadManagementService.ThreadManagementService).stopDelegatedTasks({
+          threadId,
+          commandId: CommandId.make("ensure:stop-running-child"),
+        });
+        yield* worker.drain();
+        const stopped = (yield* orchestrator.getThreadProjection(receipt.childThreadId)).runs[0]!
+          .status;
+        assert.isTrue(stopped === "interrupted" || stopped === "cancelled");
+        yield* mcp
+          .ensureChildTask(ensureClient, { ...input, requestKey: "after-explicit-stop" })
+          .pipe(Effect.flip);
+        assert.equal((yield* orchestrator.getThreadProjection(threadId)).subagents.length, 1);
+        assert.equal(
+          (yield* Ref.get(capturedTurns)).filter((turn) => turn.threadId === receipt.childThreadId)
+            .length,
+          1,
+        );
+      }),
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("admits a technically failed anchor without reviving the parent", () =>
+    withEnsureHost(
+      false,
+      ({ input, anchor, capturedTurns }) =>
+        Effect.gen(function* () {
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          assert.equal(anchor.status, "failed");
+          const receipt = yield* mcp.ensureChildTask(ensureClient, input);
+          yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+          yield* waitForIdle(receipt.childThreadId);
+          assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 1);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.status,
+            "failed",
+          );
+          assert.equal(
+            (yield* Ref.get(capturedTurns)).filter(
+              (turn) => turn.threadId === receipt.childThreadId,
+            ).length,
+            1,
+          );
+        }),
+      false,
+      true,
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each([false, true])(
+    "starts one native child with active parent=%s and an active sibling",
+    (active) =>
+      withEnsureHost(active, ({ input, anchor, capturedTurns, heldThreads }) =>
+        Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const sibling = yield* service.ensureChildTask(ensureClient, {
+            ...input,
+            requestKey: "sibling",
+          });
+          heldThreads.add(sibling.childThreadId);
+          yield* worker.drain();
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(sibling.childThreadId)).runs[0]!.status,
+            "running",
+          );
+          const child = yield* service.ensureChildTask(ensureClient, input);
+          yield* worker.drain();
+          yield* waitForIdle(child.childThreadId);
+          const secondSession = {
+            ...ensureClient,
+            requestNamespace: "client:another-session",
+            client: { ...ensureClient.client!, sessionId: "another-session" },
+          };
+          const replay = yield* service.ensureChildTask(secondSession, input);
+          assert.equal(replay.childThreadId, child.childThreadId);
+          assert.equal(replay.initialChildRunId, child.initialChildRunId);
+          assert.equal(replay.taskId, child.taskId);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(after.runs.length, 1);
+          assert.equal(after.subagents.length, 2);
+          assert.deepEqual(after.runs[0], before.runs[0]);
+          assert.equal(after.runs[0]!.status, active ? "running" : "completed");
+          assert.deepEqual(after.runs[0]!.completedAt, anchor.completedAt);
+          const projection = yield* orchestrator.getThreadProjection(child.childThreadId);
+          assert.equal(projection.thread.lineage.relationshipToParent, "subagent");
+          assert.equal(projection.thread.lineage.parentThreadId, threadId);
+          assert.equal(projection.thread.worktreePath, before.thread.worktreePath);
+          assert.equal(projection.runs[0]!.id, child.initialChildRunId);
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) => item.type === "assistant_message" && item.text === "native test result",
+            ),
+          );
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.filter((turn) => turn.threadId === threadId).length, 1);
+          assert.equal(turns.filter((turn) => turn.threadId === child.childThreadId).length, 1);
+          assert.equal(
+            turns.find((turn) => turn.threadId === child.childThreadId)!.text,
+            input.task,
+          );
+          const conflict = yield* service
+            .ensureChildTask(secondSession, { ...input, task: "Different" })
+            .pipe(Effect.flip);
+          assert.equal(conflict.code, "invalid_request");
+          if (!active) {
+            const ordinary = yield* service
+              .delegateTask(
+                {
+                  ...ensureClient,
+                  client: undefined,
+                  thread: {
+                    threadId,
+                    providerSessionId: "test",
+                    providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                  },
+                },
+                { task: "ordinary task" },
+              )
+              .pipe(Effect.flip);
+            assert.equal(ordinary.code, "parent_not_active");
+          }
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps the child result readable after its parent finishes during child work", () =>
+    withEnsureHost(true, ({ input, heldThreads, heldCompletions, capturedTurns }) =>
+      Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const child = yield* mcp.ensureChildTask(ensureClient, input);
+        heldThreads.add(child.childThreadId);
+        yield* worker.drain();
+        assert.ok(heldCompletions.has(threadId));
+        assert.ok(heldCompletions.has(child.childThreadId));
+        yield* heldCompletions.get(threadId)!;
+        yield* waitForIdle(threadId);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(child.childThreadId)).runs[0]!.status,
+          "running",
+        );
+        yield* heldCompletions.get(child.childThreadId)!;
+        yield* waitForIdle(child.childThreadId);
+        const result = yield* mcp.readThread(ensureClient, { threadId: child.childThreadId });
+        assert.include(JSON.stringify(result), "native test result");
+        assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 1);
+        assert.equal(
+          (yield* Ref.get(capturedTurns)).filter((turn) => turn.threadId === threadId).length,
+          1,
+        );
+      }),
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("recovers a response lost after commit in a rebuilt service and another session", () =>
+    withEnsureHost(
+      false,
+      ({ input }) =>
+        Effect.gen(function* () {
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const threads = yield* ThreadManagementService.ThreadManagementService;
+          const dispatch = threads.dispatch;
+          using lostReply = vi.spyOn(threads, "dispatch").mockImplementation((command) =>
+            dispatch(command).pipe(
+              Effect.filterOrFail(
+                () => command.type !== "delegated_task.ensure",
+                () =>
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "response lost after commit",
+                  }),
+              ),
+            ),
+          );
+          yield* mcp.ensureChildTask(ensureClient, input).pipe(Effect.flip);
+          lostReply.mockRestore();
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const committed = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!;
+          yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+          yield* waitForIdle(committed.childThreadId!);
+          assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 1);
+        }),
+      true,
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each(["stop", "archive", "snooze", "delete"] as const)(
+    "refuses new children after %s",
+    (action) =>
+      withEnsureHost(false, ({ input }) =>
+        Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const commandId = CommandId.make(`ensure:${action}`);
+          if (action === "snooze")
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId,
+              threadId,
+              snoozedUntil: "2099-11-03T22:00:00Z",
+            });
+          else yield* orchestrator.dispatch({ type: `thread.${action}`, commandId, threadId });
+          yield* service.ensureChildTask(ensureClient, input).pipe(Effect.flip);
+          assert.equal((yield* orchestrator.getThreadProjection(threadId)).subagents.length, 0);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "refuses missing authorization, read-only clients, thread callers and higher target modes",
+    () =>
+      withEnsureHost(false, ({ input }) =>
+        Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const callers: ReadonlyArray<McpInvocationScope> = [
+            { ...ensureClient, capabilities: new Set() },
+            { ...ensureClient, client: undefined },
+            { ...ensureClient, client: { ...ensureClient.client!, access: "read-only" } },
+            { ...ensureClient, client: { ...ensureClient.client!, access: "approval-required" } },
+            {
+              ...ensureClient,
+              client: undefined,
+              thread: {
+                threadId,
+                providerSessionId: "test",
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+              },
+            },
+          ];
+          for (const caller of callers)
+            yield* service.ensureChildTask(caller, input).pipe(Effect.flip);
+          for (const destination of [
+            { environmentId: EnvironmentId.make("other-environment") },
+            { projectId: ProjectId.make("other-project") },
+          ]) {
+            const rejected = yield* service
+              .ensureChildTask(ensureClient, {
+                ...input,
+                target: { ...input.target, ...destination },
+              })
+              .pipe(Effect.flip);
+            assert.equal(rejected.code, "invalid_request");
+          }
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          assert.equal((yield* orchestrator.getThreadProjection(threadId)).subagents.length, 0);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
