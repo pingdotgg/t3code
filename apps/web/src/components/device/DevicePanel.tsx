@@ -222,7 +222,7 @@ export function DevicePanel(props: {
           <div hidden={!!activeDevice}>
             {diagnostics.map((diagnostic) => (
               <DeviceDiscoveryWarning
-                key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
+                key={`${environmentId}\u0000${diagnostic.hostId}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
                 incomplete={diagnostic.incomplete}
@@ -237,9 +237,7 @@ export function DevicePanel(props: {
             </div>
           ) : null}
           {operationError ? (
-            <DeviceNotice tone="error" onDismiss={() => setOperation(null)}>
-              {operationError}
-            </DeviceNotice>
+            <DeviceNotice onDismiss={() => setOperation(null)}>{operationError}</DeviceNotice>
           ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
@@ -382,20 +380,11 @@ export function DevicePanel(props: {
   );
 }
 
-function DeviceNotice(props: {
-  readonly tone: "warning" | "error";
-  readonly onDismiss: () => void;
-  readonly children: ReactNode;
-}) {
+function DeviceNotice(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
   return (
     <div
       role="alert"
-      className={cn(
-        "flex items-start gap-2 border-b px-3 py-2 text-xs",
-        props.tone === "warning"
-          ? "bg-warning-surface text-warning-foreground"
-          : "bg-destructive/5 text-destructive",
-      )}
+      className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
     >
       <CircleAlert className="mt-1 size-3.5 shrink-0" />
       <div
@@ -407,7 +396,7 @@ function DeviceNotice(props: {
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label={props.tone === "warning" ? "Dismiss device warning" : "Dismiss device error"}
+        aria-label="Dismiss device error"
         onClick={props.onDismiss}
       >
         <X />
@@ -422,11 +411,13 @@ function DeviceDiscoveryWarning(props: {
   readonly incomplete: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [dismissedDetail, setDismissedDetail] = useState<string | null>(null);
+  if (dismissedDetail === props.detail) return null;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
         role="status"
-        className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground"
+        className="flex items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground"
       >
         <CircleAlert className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">
@@ -434,12 +425,31 @@ function DeviceDiscoveryWarning(props: {
             ? `Some devices on ${props.label} could not be listed.`
             : `Device discovery reported a warning on ${props.label}.`}
         </span>
-        <CollapsibleTrigger aria-label={`Details for ${props.label}`}>Details</CollapsibleTrigger>
+        <CollapsibleTrigger
+          aria-label={`Details for ${props.label}`}
+          render={<Button size="micro" variant="ghost" />}
+        >
+          Details
+        </CollapsibleTrigger>
+        <Button
+          size="icon-micro"
+          variant="ghost"
+          aria-label={`Dismiss device warning for ${props.label}`}
+          onClick={() => {
+            setOpen(false);
+            setDismissedDetail(props.detail);
+          }}
+        >
+          <X />
+        </Button>
       </div>
       <CollapsiblePanel>
-        <DeviceNotice tone="warning" onDismiss={() => setOpen(false)}>
+        <div
+          className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-b bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+          tabIndex={0}
+        >
           {props.detail}
-        </DeviceNotice>
+        </div>
       </CollapsiblePanel>
     </Collapsible>
   );

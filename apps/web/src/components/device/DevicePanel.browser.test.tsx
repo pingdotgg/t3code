@@ -213,3 +213,31 @@ describe("DevicePanel host probe", () => {
     ]);
   });
 });
+
+describe("DevicePanel discovery warning", () => {
+  it("keeps Details open across causes and a dismissal only for the cause it hid", async () => {
+    setup();
+    const withCause = (detail: string): DeviceServiceState => ({
+      ...deviceState,
+      hostStatuses: { local: { status: "ready", detail, incompletePlatforms: ["ios"] } },
+    });
+    const warning = "Some devices on This Mac could not be listed.";
+    currentState = withCause("first cause");
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await screen.getByRole("button", { name: "Details for This Mac" }).click();
+    await expect.element(screen.getByText("first cause")).toBeVisible();
+
+    currentState = withCause("second cause");
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText("second cause")).toBeVisible();
+
+    await screen.getByRole("button", { name: "Dismiss device warning for This Mac" }).click();
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText(warning)).not.toBeInTheDocument();
+
+    currentState = withCause("third cause");
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText(warning)).toBeVisible();
+  });
+});
