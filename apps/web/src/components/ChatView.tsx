@@ -258,6 +258,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { GeminiLiveVoiceControl } from "./chat/GeminiLiveVoiceControl";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -2980,6 +2981,14 @@ export default function ChatView(props: ChatViewProps) {
     void onSend(undefined, "auto", "foreground", { annotation, image });
   };
   const sendPreviewAnnotationStable = useStableCallback(sendPreviewAnnotation);
+  const sendVoicePrompt = async (voicePromptText: string) => {
+    const trimmed = voicePromptText.trim();
+    if (!trimmed) return;
+    promptRef.current = trimmed;
+    setComposerDraftPrompt(composerDraftTarget, trimmed);
+    await onSend(undefined, "auto", "foreground");
+  };
+  const sendVoicePromptStable = useStableCallback(sendVoicePrompt);
   const onComposerResumeStable = useStableCallback(onResume);
   const onComposerCompactContextStable = useStableCallback(onCompactContext);
   // Read from the projection the footer renders, so the scroll below sees the new message.
@@ -3543,6 +3552,24 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {embedded || showProviderSubagentBar ? null : (
+                      <GeminiLiveVoiceControl
+                        threadKey={routeThreadKey}
+                        threadTitle={activeThread.title}
+                        projectName={activeProject?.title ?? null}
+                        isWorking={isWorking}
+                        phase={phase}
+                        canInterrupt={canInterruptRunningThread}
+                        pendingApprovalCount={pendingApprovals.length}
+                        pendingQuestionText={
+                          activePendingProgress?.activeQuestion?.question ?? null
+                        }
+                        messages={timelineMessages}
+                        onSendVoicePrompt={sendVoicePromptStable}
+                        onInterruptThread={onInterruptStable}
+                        onStartNewThread={handleNewThreadInActiveProjectStable}
+                      />
+                    )}
                     <ChildThreadApprovals threadRef={activeThreadRef} />
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                       <ComposerSurface.Host
