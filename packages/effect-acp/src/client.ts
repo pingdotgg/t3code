@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -30,6 +31,16 @@ import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
 const decodeElicitationRequest = Schema.decodeUnknownEffect(
   Schema.Union([AcpSchemaV2.CreateElicitationRequest, AcpSchemaV1.CreateElicitationRequest]),
+);
+// ACP session notices postdate the pinned v1.21 and v2 alpha.3 schemas, so they arrive as unknown updates.
+const decodeNoticeUpdate = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sessionUpdate: Schema.Literal("notice"),
+    severity: Schema.String,
+    title: Schema.NonEmptyString,
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+  }),
 );
 
 export interface AcpClientOptions {
@@ -480,7 +491,9 @@ function normalizeSessionUpdate(
         },
       };
     }
-    default:
+    default: {
+      const notice = decodeNoticeUpdate(update);
+      if (Option.isSome(notice)) return { ...base, update: notice.value };
       return {
         ...base,
         update: {
@@ -489,12 +502,27 @@ function normalizeSessionUpdate(
           raw: update,
         },
       };
+    }
   }
 }
 
 function normalizeV1SessionUpdate(
   notification: AcpSchemaV1.SessionNotification,
 ): AcpSchema.SessionNotification {
+  // v1 passes unknown updates through raw, so a malformed notice must not reach consumers as one.
+  if ((notification.update.sessionUpdate as string) === "notice") {
+    const notice = decodeNoticeUpdate(notification.update);
+    return {
+      ...notification,
+      update: Option.isSome(notice)
+        ? notice.value
+        : {
+            sessionUpdate: "_t3_unknown",
+            originalSessionUpdate: "notice",
+            raw: notification.update,
+          },
+    };
+  }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;
   }
@@ -722,6 +750,7 @@ function normalizePermissionRequest(
     ...(request._meta === undefined ? {} : { _meta: request._meta }),
   };
 }
+const decodeMessageMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
 
 export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   stdio: AcpProtocol.AcpStdio,
@@ -753,6 +782,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     | ((method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>)
     | undefined;
   let negotiatedProtocolGeneration: 1 | 2 | undefined;
+  let sessionDeleteSupported = false;
 
   const runNotificationHandlers = <A>(
     registration: BufferedNotificationHandler<A>,
@@ -797,6 +827,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
                 return Deferred.succeed(completion, {
                   stopReason: idle.stopReason ?? "end_turn",
                   ...(idle.usage === undefined ? {} : { usage: idle.usage }),
+                  ...(idle.error === undefined ? {} : { error: idle.error }),
                   ...(idle._meta === undefined ? {} : { _meta: idle._meta }),
                 }).pipe(Effect.asVoid);
               })
@@ -1051,12 +1082,14 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2
             // with the v1 agentInfo/agentCapabilities response shape.
-            if (isV2InitializeResponse(response)) {
-              negotiatedProtocolGeneration = 2;
-              return normalizeInitializeResponse(response);
-            }
-            negotiatedProtocolGeneration = 1;
-            return response as AcpSchema.InitializeResponse;
+            const isV2 = isV2InitializeResponse(response);
+            negotiatedProtocolGeneration = isV2 ? 2 : 1;
+            const normalized = isV2
+              ? normalizeInitializeResponse(response)
+              : (response as AcpSchema.InitializeResponse);
+            sessionDeleteSupported =
+              normalized.agentCapabilities?.sessionCapabilities?.delete != null;
+            return normalized;
           }),
         ),
       authenticate: (payload) =>
@@ -1152,9 +1185,11 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => response as AcpSchema.CloseSessionResponse),
         ),
       deleteSession: (payload) =>
-        negotiatedProtocolGeneration === 1
-          ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete))
-          : callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload)),
+        Effect.suspend(() =>
+          sessionDeleteSupported
+            ? callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload))
+            : Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete)),
+        ),
       listProviders: (payload) =>
         negotiatedProtocolGeneration === 1
           ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.providers_list))
@@ -1241,98 +1276,121 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             }),
       cancel: (payload) => transport.notify(AGENT_METHODS.session_cancel, payload),
     },
-    handleRequestPermission: (handler) =>
-      Effect.suspend(() => {
+    handleRequestPermission: Effect.fn("AcpClient.handleRequestPermission")(function (handler) {
+      return Effect.suspend(() => {
         coreHandlers.requestPermission = handler;
         return Effect.void;
-      }),
-    handleElicitation: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleElicitation: Effect.fn("AcpClient.handleElicitation")(function (handler) {
+      return Effect.suspend(() => {
         coreHandlers.elicitation = handler;
         return Effect.void;
-      }),
-    handleMcpConnect: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpConnect: Effect.fn("AcpClient.handleMcpConnect")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpConnect = handler;
-      }),
-    handleMcpMessage: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpMessage: Effect.fn("AcpClient.handleMcpMessage")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpMessage = handler;
-      }),
-    handleMcpDisconnect: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpDisconnect: Effect.fn("AcpClient.handleMcpDisconnect")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.mcpDisconnect = handler;
-      }),
-    handleMcpNotification: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleMcpNotification: Effect.fn("AcpClient.handleMcpNotification")(function (handler) {
+      return Effect.sync(() => {
         extNotificationHandlers.set(CLIENT_METHODS.mcp_message, (params) =>
-          Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification)(params).pipe(
+          decodeMessageMcpNotification(params).pipe(
             Effect.mapError(() => AcpError.AcpRequestError.invalidParams()),
             Effect.flatMap(handler),
           ),
         );
-      }),
-    handleReadTextFile: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleReadTextFile: Effect.fn("AcpClient.handleReadTextFile")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.readTextFile = handler;
-      }),
-    handleWriteTextFile: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleWriteTextFile: Effect.fn("AcpClient.handleWriteTextFile")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.writeTextFile = handler;
-      }),
-    handleCreateTerminal: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleCreateTerminal: Effect.fn("AcpClient.handleCreateTerminal")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.createTerminal = handler;
-      }),
-    handleTerminalOutput: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalOutput: Effect.fn("AcpClient.handleTerminalOutput")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalOutput = handler;
-      }),
-    handleTerminalWaitForExit: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalWaitForExit: Effect.fn("AcpClient.handleTerminalWaitForExit")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalWaitForExit = handler;
-      }),
-    handleTerminalKill: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalKill: Effect.fn("AcpClient.handleTerminalKill")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalKill = handler;
-      }),
-    handleTerminalRelease: (handler) =>
-      Effect.sync(() => {
+      });
+    }),
+    handleTerminalRelease: Effect.fn("AcpClient.handleTerminalRelease")(function (handler) {
+      return Effect.sync(() => {
         coreHandlers.terminalRelease = handler;
-      }),
-    handleSessionUpdate: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleSessionUpdate: Effect.fn("AcpClient.handleSessionUpdate")(function (handler) {
+      return Effect.suspend(() => {
         notificationHandlers.sessionUpdate.handlers.push(handler);
         return flushBufferedNotifications(notificationHandlers.sessionUpdate);
-      }),
-    handleElicitationComplete: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleElicitationComplete: Effect.fn("AcpClient.handleElicitationComplete")(function (handler) {
+      return Effect.suspend(() => {
         notificationHandlers.elicitationComplete.handlers.push(handler);
         return flushBufferedNotifications(notificationHandlers.elicitationComplete);
-      }),
-    handleUnknownExtRequest: (handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleUnknownExtRequest: Effect.fn("AcpClient.handleUnknownExtRequest")(function (handler) {
+      return Effect.suspend(() => {
         unknownExtRequestHandler = handler;
         return Effect.void;
-      }),
-    handleUnknownExtNotification: (handler) =>
-      Effect.suspend(() => {
-        unknownExtNotificationHandler = handler;
-        return Effect.void;
-      }),
-    handleExtRequest: (method, payload, handler) =>
-      Effect.suspend(() => {
+      });
+    }),
+    handleUnknownExtNotification: Effect.fn("AcpClient.handleUnknownExtNotification")(
+      function (handler) {
+        return Effect.suspend(() => {
+          unknownExtNotificationHandler = handler;
+          return Effect.void;
+        });
+      },
+    ),
+    handleExtRequest: Effect.fn("AcpClient.handleExtRequest")(function (method, payload, handler) {
+      return Effect.suspend(() => {
         extRequestHandlers.set(method, decodeExtRequestRegistration(method, payload, handler));
         return Effect.void;
-      }),
-    handleExtNotification: (method, payload, handler) =>
-      Effect.suspend(() => {
-        extNotificationHandlers.set(
-          method,
-          decodeExtNotificationRegistration(method, payload, handler),
-        );
-        return Effect.void;
-      }),
+      });
+    }),
+    handleExtNotification: Effect.fn("AcpClient.handleExtNotification")(
+      function (method, payload, handler) {
+        return Effect.suspend(() => {
+          extNotificationHandlers.set(
+            method,
+            decodeExtNotificationRegistration(method, payload, handler),
+          );
+          return Effect.void;
+        });
+      },
+    ),
   });
 });
 

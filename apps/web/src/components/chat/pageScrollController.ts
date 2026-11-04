@@ -1,6 +1,6 @@
-export const PAGE_SCROLL_ANIMATION_MS = 150;
-export const PAGE_SCROLL_ACCELERATION_MS = 400;
-export const PAGE_SCROLL_MAX_MULTIPLIER = 2;
+const PAGE_SCROLL_ANIMATION_MS = 150;
+const PAGE_SCROLL_ACCELERATION_MS = 400;
+const PAGE_SCROLL_MAX_MULTIPLIER = 2;
 
 const PAGE_SCROLL_ALIGNMENT_OFFSET_PX = 36;
 const PAGE_SCROLL_BOUNDARY_EPSILON_PX = 1;
@@ -81,6 +81,7 @@ type PageScrollEnv = {
   cancelAnimationFrame: (handle: number) => void;
   setTimeout: (callback: () => void, delay: number) => number;
   clearTimeout: (handle: number) => void;
+  prefersReducedMotion: () => boolean;
 };
 
 function getDefaultEnv(): PageScrollEnv {
@@ -90,15 +91,16 @@ function getDefaultEnv(): PageScrollEnv {
     cancelAnimationFrame: (handle) => window.cancelAnimationFrame(handle),
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
     clearTimeout: (handle) => window.clearTimeout(handle),
+    prefersReducedMotion: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   };
 }
 
-export function getPageScrollMultiplier(holdElapsedMs: number): number {
+function getPageScrollMultiplier(holdElapsedMs: number): number {
   const progress = Math.max(0, holdElapsedMs) / PAGE_SCROLL_ACCELERATION_MS;
   return 1 + Math.min(progress, 1) * (PAGE_SCROLL_MAX_MULTIPLIER - 1);
 }
 
-export function getPageScrollVelocityPxPerMs({
+function getPageScrollVelocityPxPerMs({
   holdElapsedMs,
   pageScrollDistancePx,
 }: {
@@ -108,7 +110,7 @@ export function getPageScrollVelocityPxPerMs({
   return (pageScrollDistancePx * getPageScrollMultiplier(holdElapsedMs)) / PAGE_SCROLL_ANIMATION_MS;
 }
 
-export function getPageScrollDistancePx({
+function getPageScrollDistancePx({
   containerHeightPx,
   scrollPaddingBottomPx,
 }: {
@@ -206,8 +208,13 @@ export function createPageScrollController({
     state.holdActive = false;
   };
 
-  const smoothScrollBy = (container: PageScrollContainer, deltaY: number) => {
+  const scrollBy = (container: PageScrollContainer, deltaY: number) => {
     cancelDiscreteAnimation();
+
+    if (env.prefersReducedMotion()) {
+      container.scrollTop += deltaY;
+      return;
+    }
 
     const startScrollTop = container.scrollTop;
     const startTime = env.now();
@@ -279,7 +286,7 @@ export function createPageScrollController({
       state.activeKey = key;
       onScrollStart?.(key);
 
-      smoothScrollBy(container, readPageScrollDistance(container) * getDirection(key));
+      scrollBy(container, readPageScrollDistance(container) * getDirection(key));
 
       state.holdDelayTimeout = env.setTimeout(() => {
         state.holdDelayTimeout = 0;

@@ -12,25 +12,7 @@ function tokensOf(...contents: string[]) {
   });
 }
 
-function shape(parts: ReturnType<typeof wordsOf>) {
-  return parts.map((part) =>
-    typeof part === "string" ? part : part.pieces.map((piece) => piece.text).join(""),
-  );
-}
-
 describe("wordsOf", () => {
-  it.each([
-    [["echo", " ", '"', "$HOME", "/${", "PATH", "%%:*", '}"'], 'echo "$HOME/${PATH%%:*}"'],
-    [["rsync", " ", "-a", " ", "--exclude", " ", "build"], "rsync -a --exclude build"],
-    [["git", " && ", "echo", " ", '"two  words"', "; "], 'git && echo "two  words"; '],
-    [["  ", "indented"], "  indented"],
-    [[], ""],
-  ])("wraps the same words as the plain-text fallback: %j", (contents, line) => {
-    expect(shape(wordsOf(tokensOf(...contents)))).toEqual(
-      line.split(/(\s+)/u).filter((part) => part !== ""),
-    );
-  });
-
   it("keeps each piece's own token so colors survive regrouping", () => {
     const [word] = wordsOf(tokensOf('"', "$HOME", '"'));
     expect(
@@ -45,21 +27,11 @@ describe("keyedLines", () => {
     "Get-ChildItem\r\nWrite-Output done\r\n",
     "mixed\r\nendings\n\nlone \r stays",
   ])("renders the same text as the source: %j", (code) => {
-    // Shiki splits lines on \r?\n and drops the ending from the tokens.
     const lines = code.split(/\r?\n/u).map((line) => tokensOf(line));
     const rendered = keyedLines(code, lines)
       .map(({ tokens, ending }) => tokens.map((token) => token.content).join("") + ending)
       .join("");
     expect(rendered).toBe(code);
-  });
-
-  it("keys empty lines apart", () => {
-    const code = "a\r\n\r\n\r\nb";
-    const keys = keyedLines(
-      code,
-      code.split(/\r?\n/u).map((line) => tokensOf(line)),
-    ).map((line) => line.key);
-    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 

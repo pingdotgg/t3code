@@ -1,20 +1,5 @@
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-
-export function isPullRequestTestFile(path: string): boolean {
-  const segments = path.replaceAll("\\", "/").split("/");
-  const name = segments.at(-1) ?? "";
-  return (
-    segments
-      .slice(0, -1)
-      .some((segment) => /^(?:__tests__|__snapshots__|tests?|spec|e2e)$/i.test(segment)) ||
-    /\.(?:test|spec)\./i.test(name) ||
-    /\.snap$/i.test(name) ||
-    /^(?:test_.+|.+_test)\.py$/i.test(name) ||
-    /_test\.(?:go|rs|rb|c|cc|cpp|h|hpp)$/i.test(name) ||
-    /(?:Test|Tests|Spec)\.(?:java|kt|kts|swift|cs)$/.test(name) ||
-    /_spec\.rb$/i.test(name)
-  );
-}
 
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,
@@ -23,7 +8,7 @@ export function filterPullRequestTestFiles(
 ): ReviewParsedDiff {
   if (!hideTestFiles || parsed.kind !== "files") return parsed;
   const files = parsed.files.filter(
-    (file) => file.path === includePath || !isPullRequestTestFile(file.path),
+    (file) => file.path === includePath || !isTestChangedFile(file.path),
   );
   if (files.length === parsed.files.length) return parsed;
   return {

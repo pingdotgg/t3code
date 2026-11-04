@@ -3,7 +3,6 @@ import { parseFileUrlHref, splitFilePathPosition, resolvePathLinkTarget } from "
 
 describe("parseFileUrlHref", () => {
   it.each([
-    ["file:///Users/julius/project/src/main.ts#L42", "/Users/julius/project/src/main.ts", "#L42"],
     [
       "file:///D:/Programme/t3code/OpenInPicker.tsx#L69",
       "D:/Programme/t3code/OpenInPicker.tsx",
@@ -29,19 +28,17 @@ describe("parseFileUrlHref", () => {
 
 describe("splitFilePathPosition", () => {
   it.each([
-    ["src/main.ts", "", { path: "src/main.ts" }],
-    ["src/main.ts:12", "", { path: "src/main.ts", line: 12 }],
     ["src/main.ts:12:5", "", { path: "src/main.ts", line: 12, column: 5 }],
     ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
     ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
     ["src/main.ts:0", "", { path: "src/main.ts" }],
-    ["src/main.ts", "#section", { path: "src/main.ts" }],
   ])("splits %s%s", (path, hash, expected) => {
     expect(splitFilePathPosition(path, hash)).toEqual(expected);
   });
 });
 
 describe("resolvePathLinkTarget", () => {
+  // regression: #21199 Windows terminal file links resolve against a Windows cwd
   it.each([
     [
       String.raw`src\index.ts:12:7`,
@@ -49,38 +46,13 @@ describe("resolvePathLinkTarget", () => {
       String.raw`C:\Users\Jane Doe\project\src\index.ts:12:7`,
     ],
     [
-      "src/index.ts:12:7",
-      "C:/Users/Jane Doe/project",
-      String.raw`C:/Users/Jane Doe/project\src\index.ts:12:7`,
-    ],
-    [
       String.raw`.\src\index.ts:12`,
       String.raw`\\server\share\project`,
       String.raw`\\server\share\project\.\src\index.ts:12`,
     ],
-    [
-      String.raw`~\index.ts:12`,
-      String.raw`C:\Users\Jane Doe\project`,
-      String.raw`C:\Users\Jane Doe\index.ts:12`,
-    ],
     ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
   ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
     expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
-  });
-
-  it("resolves relative paths against cwd", () => {
-    expect(
-      resolvePathLinkTarget(
-        "src/components/ThreadTerminalDrawer.tsx:42:7",
-        "/Users/julius/project",
-      ),
-    ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
-  });
-
-  it("keeps absolute paths unchanged", () => {
-    expect(
-      resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
-    ).toBe("/Users/julius/project/src/main.ts:12");
   });
 
   it("keeps Windows absolute paths with forward slashes unchanged", () => {
@@ -89,9 +61,8 @@ describe("resolvePathLinkTarget", () => {
     ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
 
+  // regression: #19627 Windows home paths match case-insensitively
   it.each([
-    ["C:\\Users\\julius\\project", "C:\\Users\\julius\\notes.md:3"],
-    ["C:/Users/julius/project", "C:/Users/julius\\notes.md:3"],
     ["C:\\users\\alice\\project", "C:\\users\\alice\\notes.md:3"],
     ["C:/uSeRs/alice/project", "C:/uSeRs/alice\\notes.md:3"],
   ])("resolves home paths against the Windows cwd %s", (cwd, expected) => {

@@ -44,9 +44,9 @@ export function PullRequestDetailHeaderBody({
           />
           {head}
         </span>
-        <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
-          <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
-            <FileDiffIcon aria-hidden className="size-3.5" />
+        <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2">
+          <span className="inline-flex min-w-16 items-baseline justify-end gap-1.5 tabular-nums">
+            <FileDiffIcon aria-hidden className="size-3.5 self-center" />
             {files}
           </span>
           {diffStat}

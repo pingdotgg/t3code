@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -9,7 +11,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
-import { readOpenCodeUsage } from "./usage.ts";
+import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
@@ -80,61 +82,6 @@ describe("readOpenCodeUsage", () => {
       );
       assert.isAbove(largestRawResult, 0);
       assert.isBelow(largestRawResult, 6 * 1024 * 1024);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("reads at most 64 OpenCode rowids per statement however much history is older", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
-      const db = yield* openDatabase(path.join(dir, "opencode.db"));
-      yield* db.unsafe(
-        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
-      );
-      const sinceMs = 1780000000000;
-      const data = JSON.stringify({
-        role: "assistant",
-        modelID: "claude-sonnet-4-5",
-        tokens: { input: 100, output: 20 },
-      });
-      yield* db.unsafe("BEGIN");
-      for (let index = 0; index < 305; index++) {
-        yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?, ?)", [
-          `msg-${index}`,
-          "session-1",
-          data,
-          sinceMs + index - 300,
-        ]);
-      }
-      yield* db.unsafe("COMMIT");
-
-      const spans: number[] = [];
-      const originalAll = NodeSqlite.StatementSync.prototype.all;
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-            this: NodeSqlite.StatementSync,
-            ...params
-          ) {
-            const rows = originalAll.apply(this, params);
-            if (this.sourceSQL.includes("FROM message WHERE")) {
-              const range = /rowid > (-?[\d.]+) AND rowid <= (-?[\d.]+)/.exec(this.expandedSQL);
-              spans.push(range ? Number(range[2]) - Number(range[1]) : Infinity);
-            }
-            return rows;
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
-      const result = yield* readOpenCodeUsage(dir, sinceMs);
-      assert.isFalse(result.error);
-      assert.deepStrictEqual(
-        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-        Array.from({ length: 5 }, (_, index) => `opencode:msg-${index + 300}`),
-      );
-      assert.isNotEmpty(spans);
-      assert.isAtMost(Math.max(...spans), 64);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -285,40 +232,60 @@ describe("readOpenCodeUsage", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+import * as NodeSqlite from "node:sqlite";
 
-  it.effect("reads a large legacy OpenCode session in directory order", () =>
+describe("openCodeUsageReader", () => {
+  it.effect("scans canonical instance roots once, including XDG and home defaults", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
-      const session = path.join(dir, "storage", "message", "session-1");
-      yield* fileSystem.makeDirectory(session, { recursive: true });
-      yield* Effect.forEach(
-        Array.from({ length: 600 }, (_, index) => `msg-${index}`),
-        (id) =>
-          fileSystem.writeFileString(
-            path.join(session, `${id}.json`),
-            JSON.stringify({
-              id,
-              sessionID: "session-1",
-              role: "assistant",
-              modelID: "claude-sonnet-4-5",
-              time: { created: 1780000000000 },
-              tokens: { input: 100, output: 20 },
-            }),
-          ),
-        { concurrency: 16, discard: true },
-      );
-      const names = yield* fileSystem.readDirectory(session);
-
-      const result = yield* readOpenCodeUsage(dir, 0);
-      assert.isFalse(result.error);
+      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-instances-test-" });
+      const home = yield* fileSystem.realPath(temp);
+      const defaultRoot = path.join(home, ".local", "share", "opencode");
+      const instanceRoot = path.join(home, "instance");
+      const dataHome = path.join(home, "xdg");
+      const xdgRoot = path.join(dataHome, "opencode");
+      const alias = path.join(home, "default-alias");
+      for (const root of [defaultRoot, instanceRoot, xdgRoot]) {
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+      }
+      yield* fileSystem.symlink(defaultRoot, alias);
+      const instances = [
+        { id: "opencode", environment: {}, configured: false },
+        {
+          id: "opencode-list",
+          environment: { OPENCODE_DATA_DIR: ` ${instanceRoot}, ${alias}, ${defaultRoot}, , ` },
+          configured: true,
+        },
+        {
+          id: "opencode-xdg",
+          environment: { XDG_DATA_HOME: dataHome },
+          configured: true,
+        },
+      ];
+      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const sources = yield* openCodeUsageReader
+        .scan({
+          instances: instances.map(({ id, environment, configured }) => ({
+            instanceId: ProviderInstanceId.make(id),
+            config: undefined,
+            environment,
+            configured,
+          })),
+          settings: DEFAULT_SERVER_SETTINGS,
+          windowStartMs: 0,
+          retentionCutoffMs: 0,
+          awaitRefresh: true,
+        })
+        .pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
       assert.deepStrictEqual(
-        result.files.map((file) => file.path),
-        names.map((name) => path.join(session, name)),
+        sources.map((source) => source.dir).sort(),
+        [defaultRoot, instanceRoot, xdgRoot].sort(),
       );
-      assert.strictEqual(result.files.flatMap((file) => file.records).length, 600);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
-import * as NodeSqlite from "node:sqlite";

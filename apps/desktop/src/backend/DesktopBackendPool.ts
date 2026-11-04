@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +16,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
@@ -106,16 +108,12 @@ export const layer = Layer.effect(
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    // Without this, instance scopes are orphaned: they only close via explicit unregister() calls,
-    // so on app shutdown the WSL backend child process gets hard-killed by the OS instead of
-    // receiving the graceful SIGTERM + grace period the instance's stop finalizer would otherwise
-    // run.
+    const { primaryBackendStartup } = yield* DesktopState.DesktopState;
+    // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
 
-    // Fatal configuration failures persist the Windows fallback. Bounded
-    // transport failures use an in-memory fallback for this launch so the app
-    // opens without overwriting the user's WSL preference.
+    // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
         const { reason, fatal } = failure;
@@ -137,11 +135,10 @@ export const layer = Layer.effect(
         });
         yield* electronDialog.showErrorBox(
           "WSL backend couldn't start",
-          `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
+          `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Sharing & access once the WSL distro is fixed.`,
         );
-        // Clearing wslBackendEnabled alone would leave a stale wslOnly:true that silently re-traps
-        // the user in wsl-only mode the next time they enable WSL. If the persisted write fails,
-        // keep this process recoverable by applying the fallback to in-memory settings.
+        // Clear wslOnly too so enabling WSL cannot restore a failed mode.
+        // Keep the in-memory fallback if persistence fails.
         yield* appSettings.applyWslWindowsFallback.pipe(
           Effect.catch((error) =>
             logBackendPoolWarning(
@@ -158,29 +155,29 @@ export const layer = Layer.effect(
 
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
-      // Keep this lazy. The pool layer is initialized before startup loads
-      // persisted desktop settings, so resolving the primary label here would
-      // permanently capture DEFAULT_DESKTOP_SETTINGS and mislabel WSL-only
-      // primaries as Windows.
+      // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
-      // Window creation errors propagating out of handleBackendReady must not block the readiness
-      // callback (that would prevent restartAttempt from being reset), so we absorb them here.
+      // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl) =>
         desktopWindow.handleBackendReady(httpBaseUrl).pipe(
+          // Only once the main window exists, so the recovery window never closes into nothing.
+          Effect.andThen(SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" })),
           Effect.catch((error) =>
             logBackendPoolWarning("failed to open main window after backend readiness", {
               error: error.message,
             }),
           ),
         ),
+      onStartupFailure: (failure) =>
+        SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
         electronDialog
           .showErrorBox(
             "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory. Stop that server and reopen T3 Code, or set a separate T3CODE_HOME and pair with the running server.",
+            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
           )
           .pipe(Effect.andThen(electronApp.quit)),
     });
@@ -219,10 +216,7 @@ export const layer = Layer.effect(
               ] as const);
             }
             return Effect.gen(function* () {
-              // Provide the child scope after the captured factory context. That
-              // context also holds the pool layer's Scope, so providing it last
-              // would let it shadow the child scope and leave the instance's
-              // stop finalizer and restart fibers running after unregister.
+              // Provide the child Scope last so the captured pool Scope cannot shadow it and orphan stop/restart finalizers.
               const instanceScope = yield* Scope.fork(layerScope, "sequential");
               const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
                 Scope.provide(instanceScope),
@@ -249,70 +243,69 @@ export const layer = Layer.effect(
         ),
       );
 
-    const unregister: DesktopBackendPool["Service"]["unregister"] = (id) =>
-      Effect.gen(function* () {
-        if (id === DesktopBackendManager.PRIMARY_INSTANCE_ID) {
-          return yield* new DesktopBackendPoolCannotUnregisterPrimaryError();
-        }
-        const done = yield* Deferred.make<void>();
-        const action = yield* SynchronizedRef.modifyEffect(
-          instancesRef,
-          (
-            current,
-          ): Effect.Effect<
-            readonly [UnregisterAction, ReadonlyMap<BackendInstanceId, RegisteredInstance>]
-          > => {
-            const entry = current.get(id);
-            if (entry === undefined) {
-              return Effect.succeed([{ _tag: "Absent" } as const, current] as const);
-            }
-            if (entry._tag === "Closing") {
-              return Effect.succeed([
-                { _tag: "Wait", done: entry.done } as const,
-                current,
-              ] as const);
-            }
-            const next = new Map(current);
-            next.set(id, { _tag: "Closing", done });
-            return Effect.succeed([
-              { _tag: "Close", entry } as const,
-              next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
-            ] as const);
-          },
-        );
-
-        if (action._tag === "Absent") return;
-        if (action._tag === "Wait") {
-          yield* Deferred.await(action.done);
-          return;
-        }
-
-        const finish = SynchronizedRef.modifyEffect(instancesRef, (current) => {
-          const closing = current.get(id);
-          if (closing?._tag !== "Closing" || closing.done !== done) {
-            return Effect.succeed([undefined, current] as const);
+    const unregister: DesktopBackendPool["Service"]["unregister"] = Effect.fn(
+      "DesktopBackendPool.unregister",
+    )(function* (id) {
+      if (id === DesktopBackendManager.PRIMARY_INSTANCE_ID) {
+        return yield* new DesktopBackendPoolCannotUnregisterPrimaryError();
+      }
+      const done = yield* Deferred.make<void>();
+      const action = yield* SynchronizedRef.modifyEffect(
+        instancesRef,
+        (
+          current,
+        ): Effect.Effect<
+          readonly [UnregisterAction, ReadonlyMap<BackendInstanceId, RegisteredInstance>]
+        > => {
+          const entry = current.get(id);
+          if (entry === undefined) {
+            return Effect.succeed([{ _tag: "Absent" } as const, current] as const);
+          }
+          if (entry._tag === "Closing") {
+            return Effect.succeed([{ _tag: "Wait", done: entry.done } as const, current] as const);
           }
           const next = new Map(current);
-          next.delete(id);
+          next.set(id, { _tag: "Closing", done });
           return Effect.succeed([
-            undefined,
+            { _tag: "Close", entry } as const,
             next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
           ] as const);
-        }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid);
-        yield* Option.match(action.entry.scope, {
-          onNone: () => Effect.void,
-          onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
-        }).pipe(Effect.ensuring(finish));
-      });
+        },
+      );
+
+      if (action._tag === "Absent") return;
+      if (action._tag === "Wait") {
+        yield* Deferred.await(action.done);
+        return;
+      }
+
+      const finish = SynchronizedRef.modifyEffect(instancesRef, (current) => {
+        const closing = current.get(id);
+        if (closing?._tag !== "Closing" || closing.done !== done) {
+          return Effect.succeed([undefined, current] as const);
+        }
+        const next = new Map(current);
+        next.delete(id);
+        return Effect.succeed([
+          undefined,
+          next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
+        ] as const);
+      }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid);
+      yield* Option.match(action.entry.scope, {
+        onNone: () => Effect.void,
+        onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
+      }).pipe(Effect.ensuring(finish));
+    });
 
     return DesktopBackendPool.of({
-      get: (id) =>
-        SynchronizedRef.get(instancesRef).pipe(
+      get: Effect.fn("DesktopBackendPool.get")(function (id) {
+        return SynchronizedRef.get(instancesRef).pipe(
           Effect.map((instances) => {
             const entry = instances.get(id);
             return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
           }),
-        ),
+        );
+      }),
       list: SynchronizedRef.get(instancesRef).pipe(
         Effect.map((instances) =>
           Array.from(instances.values()).flatMap((entry) =>
@@ -341,11 +334,17 @@ export const layerTest = (
       );
       const primary = instances[0]!;
       return DesktopBackendPool.of({
-        get: (id) => Effect.succeed(Option.fromNullishOr(byId.get(id))),
+        get: Effect.fn("DesktopBackendPool.get")(function (id) {
+          return Effect.succeed(Option.fromNullishOr(byId.get(id)));
+        }),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
-        register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
-        unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
+        register: Effect.fn("DesktopBackendPool.register")(function () {
+          return Effect.die("DesktopBackendPool.layerTest does not support register");
+        }),
+        unregister: Effect.fn("DesktopBackendPool.unregister")(function () {
+          return Effect.die("DesktopBackendPool.layerTest does not support unregister");
+        }),
       });
     }),
   );

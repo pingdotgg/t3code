@@ -1,7 +1,7 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   type AtomCommandResult,
   squashAtomCommandFailure,
@@ -14,7 +14,7 @@ import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-co
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -24,6 +24,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import { PullRequestAvatar } from "./PullRequestPresentation";
+import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
@@ -63,6 +64,15 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(64);
+  // Replies from "Load more" live only here, outside the activity an edit refreshes. After one
+  // is edited, drop the loaded pages so the next load reads the new body instead of the old one.
+  const extraEdited = useRef(false);
+  useFocusEffect(() => {
+    if (!extraEdited.current) return;
+    extraEdited.current = false;
+    setExtra([]);
+    setCursor(undefined);
+  });
   const operation = async (run: () => Promise<AtomCommandResult<unknown, unknown> | undefined>) => {
     if (pending.current) return;
     pending.current = true;
@@ -124,16 +134,14 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
-    <PullRequestMarkdownRepository
-      params={params}
-      value={detail.data?.provider === "github" ? detail.data.url : null}
-    >
+    <PullRequestMarkdownRepository params={params} changeRequest={detail.data}>
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions
           options={{ title: "Discussion", unstable_headerSubtitle: `#${params.number}` }}
         />
         {Platform.OS === "android" ? (
-          <AndroidScreenHeader
+          <AppBar
+            embedded
             title="Discussion"
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}
@@ -203,6 +211,16 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   </Text>
                 </View>
                 <PullRequestMarkdown markdown={comment.body} />
+                <PullRequestCommentFooter
+                  params={params}
+                  comment={{ ...comment, kind: "review-comment" }}
+                  permissions={permissions}
+                  onChanged={refresh}
+                  onEdit={() => {
+                    if (extra.some((loaded) => loaded.id === comment.id))
+                      extraEdited.current = true;
+                  }}
+                />
               </View>
             ))}
             {nextCursor ? (

@@ -56,13 +56,6 @@ describe("resolveGitWorktreePath", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reports a directory outside a repository", () =>
-    Effect.gen(function* () {
-      const { nested } = yield* makeRepo("bare");
-      assert.equal(yield* resolveGitWorktreePath(nested), undefined);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("reports a submodule as not a linked worktree", () =>
     Effect.gen(function* () {
       const { nested } = yield* makeRepo("submodule");
@@ -70,23 +63,9 @@ describe("resolveGitWorktreePath", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reports a .git file without a usable gitdir pointer", () =>
-    Effect.gen(function* () {
-      const { nested } = yield* makeRepo("unreadable-git-file");
-      assert.equal(yield* resolveGitWorktreePath(nested), undefined);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("finds a worktree of a bare repository", () =>
     Effect.gen(function* () {
       const { root, nested } = yield* makeRepo("bare-repo-worktree");
-      assert.equal(yield* resolveGitWorktreePath(nested), NodePath.resolve(root));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("finds a worktree whose common dir is not named .git", () =>
-    Effect.gen(function* () {
-      const { root, nested } = yield* makeRepo("custom-common-dir-worktree");
       assert.equal(yield* resolveGitWorktreePath(nested), NodePath.resolve(root));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

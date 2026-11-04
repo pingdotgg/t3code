@@ -3,8 +3,6 @@ import ExpoModulesCore
 import Security
 import UIKit
 
-// Expo Modules 2.0: plain members marked @JS are bound by the macro, while the
-// views and main-queue presenters stay in definition(). Both are merged.
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
@@ -12,6 +10,7 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {
         return [
@@ -32,9 +31,24 @@ public final class T3NativeControlsModule: Module {
       Prop("appearance") { (view: T3SegmentedControlView, value: String) in view.appearance = value }
     }
 
+    View(T3SidebarTabBarView.self) {
+      ViewName("SidebarTabBar")
+      Events("onSelectionChange", "onCompose")
+      Prop("tabs") { (view: T3SidebarTabBarView, value: [String]) in view.tabs = value }
+      Prop("selectedTab") { (view: T3SidebarTabBarView, value: String) in view.selectedTab = value }
+      Prop("selectedColor") { (view: T3SidebarTabBarView, value: UIColor) in view.selectedColor = value }
+      Prop("showsCompose") { (view: T3SidebarTabBarView, value: Bool) in view.showsCompose = value }
+      Prop("compact") { (view: T3SidebarTabBarView, value: Bool) in view.compact = value }
+      Prop("appearance") { (view: T3SidebarTabBarView, value: String) in view.appearance = value }
+    }
+
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
+    }
+
+    View(T3ScrollEdgeBleedView.self) {
+      ViewName("ScrollEdgeBleed")
     }
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
@@ -52,11 +66,14 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, identifier: String, promise: Promise) in
-      guard !urls.isEmpty, urls.count == titles.count, urls.indices.contains(selectedIndex) else {
+    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+      guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
+        urls.indices.contains(selectedIndex)
+      else {
         throw URLError(.badURL)
       }
-      let file = try self.makeFilePresentation(sourceIdentifier: "", identifier: identifier, promise: promise)
+      let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
+                                               promise: promise)
       guard let presenter = self.appContext?.utilities?.currentViewController() else {
         file.dismiss()
         return
@@ -144,12 +161,8 @@ public final class T3NativeControlsModule: Module {
     }
   }
 
-  // The geometry request above can fail transiently (for example before the
-  // scene is foreground-active), so callers poll this until it settles.
-  // Screen bounds — not the scene's interface orientation — decide the
-  // answer because they match the captured framebuffer: with iPadOS
-  // windowing active, a floating landscape window still reports a portrait
-  // screen, and screenshots would come out portrait.
+  // Geometry requests can fail before foreground activation; callers retry until bounds match.
+  // Use screen bounds because iPadOS floating-window orientation can differ from the captured framebuffer.
   @JS
   @MainActor
   func getInterfaceOrientation() async -> String {
@@ -162,6 +175,12 @@ public final class T3NativeControlsModule: Module {
     }
     let bounds = windowScene.screen.coordinateSpace.bounds
     return bounds.width > bounds.height ? "landscape" : "portrait"
+  }
+
+  @JS
+  @MainActor
+  func isProtectedDataAvailable() async -> Bool {
+    UIApplication.shared.isProtectedDataAvailable
   }
 
   private func launchArgument(_ flag: String) -> String? {
@@ -229,10 +248,16 @@ public final class T3NativeControlsModule: Module {
         userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."]
       )
     }
-    let presentation = T3NativeVideoPresentation(identifier: identifier, url: url, title: title) { [weak self] error in
-      self?.videoPresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let presentation = T3NativeVideoPresentation(
+      identifier: identifier, url: url, title: title,
+      onPlaybackChange: { [weak self] isPlaying in
+        self?.sendEvent("videoPlaybackChange", ["identifier": identifier, "isPlaying": isPlaying])
+      },
+      completion: { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     videoPresentation = presentation
     presentation.present(from: presenter, sources: presentationSources, sourceIdentifier: sourceIdentifier)
   }
@@ -241,13 +266,13 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
-  private func makeFilePresentation(sourceIdentifier: String, identifier: String,
+  private func makeFilePresentation(sourceIdentifiers: [String], identifier: String,
                                     promise: Promise) throws -> T3NativeFilePresentation {
     guard filePresentation == nil, videoPresentation == nil,
       appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifier: sourceIdentifier) { [weak self] error in
+                                        sourceIdentifiers: sourceIdentifiers) { [weak self] error in
       self?.filePresentation = nil
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
@@ -257,7 +282,7 @@ public final class T3NativeControlsModule: Module {
 
   private func presentFile(url: URL, title: String, sourceIdentifier: String,
                            identifier: String, promise: Promise) throws {
-    let file = try makeFilePresentation(sourceIdentifier: sourceIdentifier, identifier: identifier, promise: promise)
+    let file = try makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier, promise: promise)
     guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
     file.present(url: url, title: title, from: presenter)
   }

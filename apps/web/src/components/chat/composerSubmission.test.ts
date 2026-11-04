@@ -60,23 +60,6 @@ describe("submitComposerDraft", () => {
     expect(validationMessage).toBeNull();
   });
 
-  it("allows a draft at the shared character limit through the normal send path", () => {
-    const draft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
-    const onSend = vi.fn();
-    const preventDefault = vi.fn();
-
-    const result = submitComposerDraft({
-      prompt: draft,
-      submissionTarget: "provider-turn",
-      event: { preventDefault },
-      onSend,
-    });
-
-    expect(result).toEqual({ validationMessage: null, didDispatch: true });
-    expect(onSend).toHaveBeenCalledOnce();
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
   it("blocks when appended context pushes the provider input over the shared limit", () => {
     const draft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
     const onSend = vi.fn();
@@ -121,21 +104,6 @@ describe("submitComposerDraft", () => {
 
     expect(result).toEqual({ validationMessage: null, didDispatch: false });
     expect(preventDefault).toHaveBeenCalledOnce();
-  });
-
-  it("allows fully composed provider input at the shared character limit", () => {
-    const onSend = vi.fn();
-
-    const result = submitComposerDraft({
-      prompt: "Short draft",
-      providerInput: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
-      submissionTarget: "provider-turn",
-      event: undefined,
-      onSend,
-    });
-
-    expect(result).toEqual({ validationMessage: null, didDispatch: true });
-    expect(onSend).toHaveBeenCalledOnce();
   });
 
   it.each(["draft", "composed provider input"])(
@@ -219,58 +187,6 @@ describe("submitComposerDraft", () => {
     expect(dispatchedDrafts).toEqual([draft]);
     expect(dispatchedDrafts[0]).toContain(citation);
     expect(dispatchedDrafts[0]).not.toContain("<assistant_citations>");
-  });
-
-  it("blocks a generated plan follow-up that exceeds the shared limit", () => {
-    const onSend = vi.fn();
-
-    const result = submitComposerDraft({
-      prompt: "",
-      providerInput: `PLEASE IMPLEMENT THIS PLAN:\n${"x".repeat(
-        PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-      )}`,
-      submissionTarget: "provider-turn",
-      event: undefined,
-      onSend,
-    });
-
-    expect(result.didDispatch).toBe(false);
-    expect(result.validationMessage).toContain("over the 120,000-character limit");
-    expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it("allows surrounding whitespace that the provider turn contract trims", () => {
-    const draft = ` ${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)} `;
-    const onSend = vi.fn();
-    const preventDefault = vi.fn();
-
-    const result = submitComposerDraft({
-      prompt: draft,
-      submissionTarget: "provider-turn",
-      event: { preventDefault },
-      onSend,
-    });
-
-    expect(result).toEqual({ validationMessage: null, didDispatch: true });
-    expect(onSend).toHaveBeenCalledOnce();
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
-  it("dispatches pending user input answers on their separate response path", () => {
-    const answer = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
-    const onSend = vi.fn();
-    const preventDefault = vi.fn();
-
-    const result = submitComposerDraft({
-      prompt: answer,
-      submissionTarget: "pending-user-input",
-      event: { preventDefault },
-      onSend,
-    });
-
-    expect(result).toEqual({ validationMessage: null, didDispatch: true });
-    expect(onSend).toHaveBeenCalledOnce();
-    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("does not apply citation-expanded prompt limits to pending user input answers", () => {

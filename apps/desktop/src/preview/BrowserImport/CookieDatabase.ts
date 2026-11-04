@@ -9,11 +9,7 @@ export interface ImportedCookie {
   readonly url: string;
   readonly name: string;
   readonly value: string;
-  /**
-   * A host-only cookie leaves this undefined: Electron treats any `domain` it is given as marking a
-   * domain cookie and re-adds the dot, which would widen the cookie to every subdomain of the host
-   * it was scoped to, and rejects `__Host-` cookies, which require it to be absent.
-   */
+  /** Leave host-only cookies undefined; Electron widens any supplied domain and rejects __Host- cookies with one. */
   readonly domain: string | undefined;
   readonly path: string;
   readonly secure: boolean;
@@ -47,10 +43,7 @@ export const cookieScope = (
 
 export const bareHost = (host: string): string => (host.startsWith(".") ? host.slice(1) : host);
 
-/**
- * Both engines keep the file open with WAL while the browser runs, so reading in place can observe
- * a torn write. Copying also guarantees we never open the browser's own file for writing.
- */
+/** Copy before reading to avoid live WAL writes and never open the source browser database for writing. */
 export const snapshotCookieDatabase = Effect.fn("CookieDatabase.snapshotCookieDatabase")(function* (
   cookiePath: string,
   tempPrefix = "t3code-cookie-import-",

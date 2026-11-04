@@ -319,13 +319,6 @@ export const PullRequestTimelineItemsConnection = Schema.Struct({
 })
 export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
 
-/** The connection type for Commit. */
-export const CommitConnection = Schema.Struct({
-  /** Identifies the total count of items in the connection. */
-  totalCount: Shared.Int
-})
-export interface CommitConnection extends Schema.Struct.Type<typeof CommitConnection.fields> {}
-
 /** Represents an actor in a Git commit (ie. an author or committer). */
 export const GitActor = Schema.Struct({
   /** The name in the Git commit. */
@@ -352,12 +345,6 @@ export const Commit = Schema.Struct({
   messageHeadline: Schema.String,
   /** The datetime when this commit was committed. */
   committedDate: Shared.DateTime,
-  /** The number of additions in this commit. */
-  additions: Shared.Int,
-  /** The number of deletions in this commit. */
-  deletions: Shared.Int,
-  /** The parents of a commit. */
-  parents: CommitConnection,
   /**
    * The list of authors for this commit based on the git author and the Co-authored-by
    * message trailer. The git author will always be first.
@@ -421,11 +408,12 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
-      { name: "after", body: "String" }
+      { name: "after", body: "String" },
+      { name: "requestedReviewers", body: "Int!" }
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "after", "){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:50){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate additions deletions parents(first:1){totalCount}authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "after", "){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
     ],
     fragments: [
       { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url...Reactions}"] },
@@ -436,7 +424,8 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
     owner: Schema.String,
     name: Schema.String,
     number: Shared.Int,
-    after: Schema.optional(Schema.NullOr(Schema.String))
+    after: Schema.optional(Schema.NullOr(Schema.String)),
+    requestedReviewers: Shared.Int
   },
   result: Schema.Struct({
     /** The currently authenticated user. */

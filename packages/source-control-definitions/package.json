@@ -1,0 +1,23 @@
+{
+  "name": "@t3tools/source-control-definitions",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./registry": {
+      "types": "./src/registry.ts",
+      "import": "./src/registry.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/source-control-azure-devops": "workspace:*",
+    "@t3tools/source-control-bitbucket": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "@t3tools/source-control-forgejo": "workspace:*",
+    "@t3tools/source-control-gitcafe": "workspace:*",
+    "@t3tools/source-control-github": "workspace:*",
+    "@t3tools/source-control-gitlab": "workspace:*"
+  }
+}

@@ -1,7 +1,11 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
+import {
+  getProviderSummary,
+  getProviderVersionAdvisoryPresentation,
+  getProviderStatusKey,
+} from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -18,13 +22,6 @@ const provider: ServerProvider = {
 };
 
 describe("getProviderSummary", () => {
-  it("reports ready providers with unknown authentication as available", () => {
-    expect(getProviderSummary({ ...provider, auth: { status: "unknown" } })).toEqual({
-      headline: "Available",
-      detail: null,
-    });
-  });
-
   it("does not hide a provider error behind a previous authenticated state", () => {
     expect(
       getProviderSummary({
@@ -35,19 +32,6 @@ describe("getProviderSummary", () => {
     ).toEqual({
       headline: "Unavailable",
       detail: "The provider process failed to start.",
-    });
-  });
-
-  it("does not hide a provider warning behind an authenticated state", () => {
-    expect(
-      getProviderSummary({
-        ...provider,
-        status: "warning",
-        message: "The provider version is unsupported.",
-      }),
-    ).toEqual({
-      headline: "Needs attention",
-      detail: "The provider version is unsupported.",
     });
   });
 
@@ -64,9 +48,86 @@ describe("getProviderSummary", () => {
       detail: "Run codex login.",
     });
   });
+});
 
-  it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
-    expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
+describe("Antigravity with unchecked sign-in", () => {
+  const unchecked: ServerProvider = {
+    ...provider,
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    status: "warning",
+    auth: { status: "unknown" },
+    message: "Antigravity is installed. Google account access is not checked yet.",
+  };
+
+  it("presents an unchecked Google sign-in neutrally without claiming authentication is required", () => {
+    for (const auth of [unchecked.auth, { status: "unknown", type: "oauth-personal" }] as const) {
+      const candidate = { ...unchecked, auth };
+      expect.soft(getProviderSummary(candidate)).toEqual({
+        headline: "Installed · Sign-in not checked",
+        detail: unchecked.message,
+      });
+      expect(getProviderStatusKey(candidate)).toBe("neutral");
+    }
+  });
+
+  // regression: #18623 neutral unchecked-sign-in display must not mask real warnings
+  it("preserves actionable warnings, failures and disabled states outside unchecked Google sign-in", () => {
+    const cases = [
+      {
+        name: "confirmed sign-out",
+        change: { auth: { status: "unauthenticated" } },
+        headline: "Not authenticated",
+        status: "warning",
+      },
+      {
+        name: "warning despite known authentication",
+        change: { auth: { status: "authenticated" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "probe failure",
+        change: { status: "error" },
+        headline: "Unavailable",
+        status: "error",
+      },
+      {
+        name: "missing CLI",
+        change: { installed: false },
+        headline: "Not found",
+        status: "warning",
+      },
+      {
+        name: "API key authentication",
+        change: { auth: { status: "unknown", type: "gemini-api-key" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "Agent Platform authentication",
+        change: { auth: { status: "unknown", type: "agent-platform" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "another provider",
+        change: { driver: provider.driver },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "disabled provider",
+        change: { enabled: false },
+        headline: "Disabled",
+        status: "disabled",
+      },
+    ] as const;
+    for (const { name, change, headline, status } of cases) {
+      const candidate = { ...unchecked, ...change };
+      expect.soft(getProviderSummary(candidate).headline, name).toBe(headline);
+      expect.soft(getProviderStatusKey(candidate), name).toBe(status);
+    }
   });
 });
 
@@ -170,22 +231,5 @@ it("shows compatibility in the version popover even when the installed version i
     updateCommand: null,
     emphasis: "normal",
     targetVersion: null,
-  });
-});
-
-describe("provider status copy", () => {
-  it("surfaces an ACP-advertised authentication method", () => {
-    const provider = {
-      enabled: true,
-      installed: true,
-      status: "error",
-      auth: { status: "unauthenticated", type: "agent", label: "Company login" },
-      message: "Complete this authentication method on the server.",
-    } as ServerProvider;
-
-    expect(getProviderSummary(provider)).toEqual({
-      headline: "Not authenticated · Company login",
-      detail: "Complete this authentication method on the server.",
-    });
   });
 });

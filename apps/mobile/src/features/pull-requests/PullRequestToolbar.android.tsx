@@ -1,33 +1,27 @@
-import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { useCallback, useEffect, useRef } from "react";
-import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import {
-  AndroidHeaderIconButton,
-  AndroidScreenHeader,
-} from "../../components/ui/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { SearchField } from "../../components/ui/SearchField";
-import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
+import { useNavigation } from "@react-navigation/native";
+import { useEffect } from "react";
+import { BackHandler, Keyboard } from "react-native";
+import { AppBar } from "../../components/ui/AppBar";
+import { appBarMenuItemsFromActions } from "../../components/ui/menuActionItems";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { WorkspaceBrandTitle } from "../workspace/WorkspaceBrandTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import type { PullRequestFilterMenu } from "./PullRequestListFilters";
+import { openSettings } from "../settings/settings-navigation";
 
-/** PR search shares the thread list's native Android header placement. */
+/** PR search shares the thread list's Android header. */
 export function PullRequestToolbar(props: {
-  readonly sidebar?: boolean;
+  readonly filters: PullRequestFilterMenu | null;
   readonly onRequestVisibility?: () => void;
 }) {
   const navigation = useNavigation();
+  const { filters } = props;
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
-  const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
-  const listFocused = homeFocused && workspace.state.selectedTab === "pullRequests";
   const { onRequestVisibility } = props;
-  const showThreads = useWorkspaceListNavigation("threads");
   const tab = workspace.state.tabs.pullRequests;
-  const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
-  const openSearch = useCallback(() => {
+  const openSearch = () => {
     onRequestVisibility?.();
     dispatch({
       type: "scroll",
@@ -35,19 +29,20 @@ export function PullRequestToolbar(props: {
       offset: getScrollOffset("pullRequests"),
     });
     dispatch({ type: "search", tab: "pullRequests" });
-    input.current?.focus();
     return true;
-  }, [dispatch, getScrollOffset, onRequestVisibility]);
+  };
   useHardwareKeyboardCommand("focusSearch", openSearch);
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     Keyboard.dismiss();
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
-  }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to BackHandler while searching to close the PR search on Android back
   useEffect(() => {
-    if (!searching || !listFocused) return;
+    if (!searching) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      // Frozen Home screens can keep effects alive after a detail route opens.
+      // Frozen Home screens stay mounted under a detail route or another tab,
+      // so back only applies while the PR list is in front.
       const state = navigation.getState();
       if (!state || state.routes[state.index]?.name !== "Home" || !isTabActive("pullRequests"))
         return false;
@@ -56,78 +51,36 @@ export function PullRequestToolbar(props: {
       return true;
     });
     return () => subscription.remove();
-  }, [searching, closeSearch, listFocused, navigation, isTabActive]);
+  }, [searching, closeSearch, navigation, isTabActive]);
   return (
-    <AndroidScreenHeader
-      title="Pull requests"
+    <AppBar
+      title="T3 Code"
       titleContent={
-        searching ? (
-          <SearchField
-            inputRef={input}
-            accessibilityLabel="Search pull requests"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search pull requests"
-            value={tab.query}
-            onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
-          />
-        ) : (
-          <View className="min-w-0 flex-1 pl-3">
-            <WorkspaceConnectionTitle
-              grow
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel="T3 Code, Pull requests"
-                  fit
-                />
-              }
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                })
-              }
-            />
-          </View>
-        )
+        <WorkspaceBrandTitle
+          accessibilityLabel="T3 Code, Pull requests"
+          onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
+        />
       }
-      leading={
-        searching ? (
-          <AndroidHeaderIconButton
-            accessibilityLabel="Close search"
-            icon="arrow.left"
-            onPress={closeSearch}
-          />
-        ) : undefined
-      }
-      actions={
-        searching
-          ? []
-          : [
-              ...(props.sidebar
-                ? [
-                    {
-                      accessibilityLabel: "Show threads",
-                      icon: "text.bubble",
-                      onPress: showThreads,
-                    } as const,
-                  ]
-                : []),
+      search={{
+        value: tab.query,
+        onChangeText: (query) => dispatch({ type: "query", tab: "pullRequests", query }),
+        placeholder: "Search pull requests",
+        active: searching,
+        onOpen: openSearch,
+        onClose: closeSearch,
+      }}
+      menus={
+        filters
+          ? [
               {
-                accessibilityLabel: "Search pull requests",
-                icon: "magnifyingglass",
-                onPress: openSearch,
-              },
-              {
-                accessibilityLabel: "Open settings",
-                icon: "gearshape",
-                onPress: () =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "Settings" },
-                  }),
+                title: "Filter pull requests",
+                icon: filters.customized
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle",
+                items: appBarMenuItemsFromActions(filters.actions, filters.onSelect),
               },
             ]
+          : undefined
       }
     />
   );

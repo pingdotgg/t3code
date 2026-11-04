@@ -1,33 +1,26 @@
-import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { SheetCloseButton } from "../../../components/ui/SheetHeader";
+import { useNavigation } from "@react-navigation/native";
+import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
+import { Button } from "../../../components/ui/Button";
+import { IconButton } from "../../../components/ui/IconButton";
 import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
 
   return (
-    <Pressable
+    <SheetCloseButton
       accessibilityLabel="Close legal document"
-      accessibilityRole="button"
-      hitSlop={12}
-      onPress={() => navigation.goBack()}
-      className="p-2 active:opacity-60"
-    >
-      <SymbolView
-        name="xmark"
-        size={18}
-        tintColorClassName={"accent-icon"}
-        type="monochrome"
-        weight="semibold"
-      />
-    </Pressable>
+      onClose={() => navigation.goBack()}
+    />
   );
 }
 
@@ -39,22 +32,16 @@ export function SettingsLegalDocumentExternalHeaderButton({
   const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
-    <Pressable
+    <IconButton
       accessibilityLabel="Open legal documents in external browser"
-      accessibilityRole="button"
-      hitSlop={12}
+      icon="safari"
       onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
-      className="p-2 active:opacity-60"
-    >
-      <SymbolView
-        name="safari"
-        size={19}
-        tintColorClassName={"accent-icon"}
-        type="monochrome"
-        weight="regular"
-      />
-    </Pressable>
+    />
   );
+}
+
+function externalHeaderButton(externalUrl: string) {
+  return () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />;
 }
 
 interface SettingsLegalDocumentRouteScreenProps {
@@ -66,28 +53,26 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
-  const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
-  const renderExternalHeaderButton = useCallback(
-    () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
-    [externalUrl],
+  const headerOptions = (
+    <NativeStackScreenOptions
+      options={{
+        headerRight: externalHeaderButton(externalUrl),
+      }}
+      optionsVersion={externalUrl}
+    />
   );
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: renderExternalHeaderButton,
-    });
-  }, [navigation, renderExternalHeaderButton]);
-
-  const openExternalUrl = useCallback((url: string) => {
+  const openExternalUrl = (url: string) => {
     void Linking.openURL(url).catch(() => undefined);
-  }, []);
+  };
   if (loadError) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
+        {headerOptions}
         <SymbolView
           name="exclamationmark.triangle"
           size={32}
@@ -104,16 +89,15 @@ export function SettingsLegalDocumentRouteScreen({
           </Text>
         </View>
         <View className="w-full max-w-[320px] gap-2">
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label="Try Again"
+            tone="contrast"
+            fullWidth
             onPress={() => {
               setLoadError(null);
               setReloadKey((value) => value + 1);
             }}
-            className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
-          >
-            <Text className="font-t3-bold text-base text-sheet">Try Again</Text>
-          </Pressable>
+          />
           <Pressable
             accessibilityRole="link"
             onPress={() => openExternalUrl(documentUrl)}
@@ -128,6 +112,7 @@ export function SettingsLegalDocumentRouteScreen({
 
   return (
     <View className="relative flex-1 bg-sheet">
+      {headerOptions}
       {loadProgress > 0 && loadProgress < 1 ? <LoadingStrip progress={loadProgress} /> : null}
       <WebView
         key={reloadKey}

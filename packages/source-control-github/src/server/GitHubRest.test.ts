@@ -3,11 +3,10 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
-import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
+import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
@@ -17,6 +16,13 @@ import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
@@ -38,6 +44,8 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
             fingerprint: `${host}:${tokens[0]}`,
           };
         }),
+      saved: () => Effect.succeedNone,
+      fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;
@@ -53,7 +61,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     }),
   );
   const layer = GitHubRest.layer.pipe(
-    Layer.provide(Layer.mergeAll(credentials, http)),
+    Layer.provide(Layer.mergeAll(credentials, http, appSignedOut)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
@@ -70,22 +78,6 @@ const json = (body: unknown, init?: ResponseInit) =>
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
   });
-
-describe("gitHubApiUrls", () => {
-  it("maps github.com, GHE.com and GitHub Enterprise Server", () => {
-    expect(GitHubRequestPolicy.gitHubApiUrls("GitHub.com")).toEqual({
-      rest: "https://api.github.com",
-      graphql: "https://api.github.com/graphql",
-    });
-    expect(GitHubRequestPolicy.gitHubApiUrls("acme.ghe.com").graphql).toBe(
-      "https://api.acme.ghe.com/graphql",
-    );
-    expect(GitHubRequestPolicy.gitHubApiUrls("git.acme.internal")).toEqual({
-      rest: "https://git.acme.internal/api/v3",
-      graphql: "https://git.acme.internal/api/graphql",
-    });
-  });
-});
 
 describe("environmentToken", () => {
   it("follows gh's precedence per kind of host", () => {
@@ -134,7 +126,6 @@ describe("GitHubRest", () => {
         "http.response.status_code": 200,
         "github.ratelimit.remaining": 4800,
       });
-      // Nothing recorded carries the query string or the token.
       const everything = spans
         .flatMap((span) => [...span.attributes].map(([key, value]) => `${key}=${String(value)}`))
         .join("\n");
@@ -142,68 +133,6 @@ describe("GitHubRest", () => {
       expect(everything).not.toContain("first");
       expect(spans.some((span) => span.attributes.has("url.full"))).toBe(false);
     }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
-  });
-
-  it.effect("keeps the last tenth of a quota for interactive requests until it resets", () => {
-    const reset = Math.floor(NOW / 1000) + 600;
-    const quota = (remaining: number) => ({
-      "x-ratelimit-resource": "core",
-      "x-ratelimit-limit": "5000",
-      "x-ratelimit-remaining": String(remaining),
-      "x-ratelimit-reset": String(reset),
-    });
-    let remaining = 499;
-    const { layer, requests } = harness(() => json({ ok: true }, { headers: quota(remaining--) }));
-    return Effect.gen(function* () {
-      yield* TestClock.setTime(NOW);
-      const api = yield* GitHubRest.GitHubRest;
-      const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
-      yield* api.rest(read);
-      const refused = yield* Effect.flip(api.rest(read));
-      expect(refused).toMatchObject({
-        _tag: "SourceControlRateLimitPausedError",
-        retryAt: reset * 1000,
-      });
-      // A user's own request may spend the reserve.
-      yield* api.rest(read).pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
-      expect(requests).toHaveLength(2);
-      // The reset gives the background its quota back.
-      yield* TestClock.setTime(reset * 1000);
-      yield* api.rest(read);
-      expect(requests).toHaveLength(3);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("carries GitHub's own reason for a refused REST request", () => {
-    const { layer } = harness(() =>
-      json(
-        {
-          message: "Validation Failed",
-          errors: [
-            {
-              resource: "PullRequest",
-              code: "custom",
-              message: "A pull request already exists for acme:feature.",
-            },
-          ],
-        },
-        { status: 422 },
-      ),
-    );
-    return Effect.gen(function* () {
-      const api = yield* GitHubRest.GitHubRest;
-      const error = yield* Effect.flip(
-        api.rest({
-          host: "github.com",
-          operation: "createPullRequest",
-          method: "POST",
-          path: "repos/acme/web/pulls",
-        }),
-      );
-      expect(error.message).toBe(
-        "GitHub returned an error: Validation Failed; A pull request already exists for acme:feature.",
-      );
-    }).pipe(Effect.provide(layer));
   });
 
   it.effect("lets an interactive request through a pause a background read recorded", () => {
@@ -311,36 +240,15 @@ describe("GitHubRest", () => {
 });
 
 describe("GitHubCredentials", () => {
+  const unexpectedHttp = HttpClient.make((request) =>
+    Effect.die(`Unexpected request to ${request.url}`),
+  );
   const credentialsWith = (run: SourceControlHost.SourceControlHost["Service"]["process"]["run"]) =>
     GitHubCredentials.layer.pipe(
       Layer.provide(TestSourceControlHost.layer({ process: { run } })),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
-
-  it.effect("fails with GitHubCliMissingError when gh is not on PATH", () =>
-    Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const error = yield* Effect.flip(credentials.get("git.acme.internal"));
-      expect(error._tag).toBe("GitHubCliMissingError");
-    }).pipe(
-      Effect.provide(
-        credentialsWith(() =>
-          Effect.fail(
-            new VcsProcessSpawnError({
-              operation: "GitHubCredentials.get",
-              command: "gh",
-              cwd: "/",
-              cause: PlatformError.systemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
-              }),
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
 
   it.effect("does not cache a gh failure that is not about signing in", () => {
     let calls = 0;

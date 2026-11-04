@@ -1,10 +1,13 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
 import type { DevicePlatform } from "@t3tools/contracts";
+import type { PlatformOSType } from "react-native";
 
 export interface DeviceStreamConfiguration {
   readonly access: DeviceHubAccess;
   readonly platform: DevicePlatform;
   readonly deviceId: string;
+  /** See `DeviceStreamTarget.serveSimOnly`. */
+  readonly serveSimOnly?: boolean;
   readonly colors: {
     readonly background: string;
     readonly foreground: string;
@@ -13,6 +16,19 @@ export interface DeviceStreamConfiguration {
     readonly buttonForeground: string;
     readonly buttonBorder: string;
   };
+}
+
+export function deviceStreamBaseUrl(
+  viewerPlatform: PlatformOSType,
+  devicePlatform: DevicePlatform,
+  httpBase: string,
+) {
+  if (viewerPlatform !== "android") return "file:///";
+  // Android targets stream through WebCodecs, which needs a secure context. iOS targets
+  // stream an MJPEG image from the environment, which a synthetic https document blocks as
+  // mixed content on plain-http environments even with mixedContentMode="always".
+  if (devicePlatform === "android") return "https://localhost/";
+  return `${new URL(httpBase).origin}/`;
 }
 
 export function deviceStreamDocument(configuration: string, script: string) {

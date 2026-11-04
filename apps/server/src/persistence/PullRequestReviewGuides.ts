@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -50,17 +51,19 @@ const make = Effect.gen(function* () {
   const encodeGuide = Schema.encodeEffect(Schema.fromJsonString(PullRequestReviewGuide));
 
   return PullRequestReviewGuideRepository.of({
-    get: (key) =>
-      findGuide(key).pipe(
+    get: Effect.fn("PullRequestReviewGuideRepository.get")(function (key) {
+      return findGuide(key).pipe(
+        NodeSqliteClient.readOnly,
         Effect.map(Option.map((row) => row.guide)),
         Effect.mapError((cause) =>
           Schema.isSchemaError(cause)
             ? PersistenceDecodeError.fromSchemaError("PullRequestReviewGuide", cause)
             : new PersistenceSqlError({ operation: "getPullRequestReviewGuide", cause }),
         ),
-      ),
-    put: (key, guide) =>
-      encodeGuide(guide).pipe(
+      );
+    }),
+    put: Effect.fn("PullRequestReviewGuideRepository.put")(function (key, guide) {
+      return encodeGuide(guide).pipe(
         Effect.mapError((cause) =>
           PersistenceDecodeError.fromSchemaError("PullRequestReviewGuide", cause),
         ),
@@ -76,7 +79,8 @@ const make = Effect.gen(function* () {
           ),
         ),
         Effect.asVoid,
-      ),
+      );
+    }),
   });
 });
 

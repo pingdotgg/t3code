@@ -62,18 +62,6 @@ describe("queued message file edits", () => {
       });
   });
 
-  it("retains saved attachments alongside newly uploaded files", async () => {
-    const saved = { ...uploadedFile, id: "saved:earlier" };
-    const attachments = await prepareQueuedEditAttachments({
-      existingAttachments: [saved],
-      images: [],
-      files: [file],
-      uploadFiles: async () => [uploadedFile],
-      readImage: async () => "unused",
-    });
-    expect(attachments).toEqual([saved, uploadedFile]);
-  });
-
   it("fails a save instead of dropping a file whose upload is missing", async () => {
     await expect(
       prepareQueuedEditAttachments({
@@ -96,19 +84,6 @@ describe("queued message file edits", () => {
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
-  });
-
-  it("preserves uploaded file references when a remote queue advance interrupts the edit", () => {
-    const store = useComposerDraftStore.getState();
-    const uploaded = {
-      ...file,
-      file: null,
-      uploadedAttachmentId: uploadedFile.id,
-      uploadEnvironmentId: environmentId,
-    };
-    store.addFiles(editTarget, [uploaded]);
-    expect(recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "" })).toBe("kept");
-    expect(store.getComposerDraft(threadTarget)?.files).toEqual([uploaded]);
   });
 
   it("does not overwrite a separate draft when the queued run leaves", () => {

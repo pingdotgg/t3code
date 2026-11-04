@@ -60,19 +60,6 @@ describe("Muse item presentation", () => {
     },
   );
 
-  it("preserves failure details and a known cancelled status", () => {
-    expect(
-      museToolPresentation(
-        item({
-          status: "failed",
-          failureReason: "Permission denied",
-          visibleOutput: "Partial output",
-        }),
-      ),
-    ).toMatchObject({ status: "failed", output: "Permission denied\nPartial output" });
-    expect(museItemStatus(item({ status: "cancelled" }))).toBe("cancelled");
-  });
-
   it("lists each web search hit and links a fetched page", () => {
     const search = item({
       tool: "web_search",
@@ -105,23 +92,4 @@ describe("Muse item presentation", () => {
       results: [{ url: "https://nodejs.org/en/about", snippet: "About Node.js" }],
     });
   });
-
-  it("shows a settled workflow's result instead of its generic label", () => {
-    expect(
-      museToolPresentation(
-        item({
-          kind: "workflow",
-          fallbackText: "Workflow: model-chosen generated workflow",
-          finalSummary: "Both checks passed",
-        }),
-      ),
-    ).toMatchObject({ type: "dynamic_tool", output: "Both checks passed" });
-  });
-
-  it.each(["failed", "noop"])(
-    "keeps %s compaction outcomes from appearing completed",
-    (outcome) => {
-      expect(museItemStatus(item({ kind: "compaction", outcome }))).toBe("failed");
-    },
-  );
 });

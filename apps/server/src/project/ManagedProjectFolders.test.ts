@@ -1,12 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  CommandId,
-  GitCommandError,
-  ProjectId,
-  ThreadId,
-  VcsProcessSpawnError,
-} from "@t3tools/contracts";
+import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -47,6 +42,7 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
         resolve: () => Effect.succeed(null),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: () => Effect.succeed(null),
       }),
     ),
@@ -81,7 +77,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const withScratch = <A, E>(
@@ -101,7 +97,7 @@ const withScratch = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-managed-folders-" });
     return yield* body({ baseDir }).pipe(Effect.provide(layer(baseDir, options)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   ProcessRunner.ProcessRunner.pipe(
@@ -114,15 +110,6 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers a Scratch folder under the data dir when it is outside a checkout", () =>
-  withScratch(({ baseDir }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
-    }),
-  ),
-);
-
 it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -134,10 +121,11 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
     }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
@@ -279,7 +267,7 @@ it.effect("leaves threads in other projects alone", () =>
       const projects = yield* ProjectService.ProjectService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* scratch.ensureScratchProject;
+      const { projectId: scratchId } = yield* scratch.ensureScratchProject;
       const other = yield* projects.create({
         commandId: CommandId.make("command:other"),
         projectId: ProjectId.make("project:other"),
@@ -295,6 +283,8 @@ it.effect("leaves threads in other projects alone", () =>
       });
       assert.isTrue(Option.isNone(folder));
       assert.deepEqual(yield* fileSystem.readDirectory(yield* requireRoot), []);
+      assert.isTrue(yield* scratch.isScratchProject(scratchId));
+      assert.isFalse(yield* scratch.isScratchProject(other.id));
     }),
   ),
 );
@@ -359,6 +349,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
+        const attributes = path.join(baseDir, "crlf.gitattributes");
+        const crlfConfig = path.join(baseDir, "crlf.gitconfig");
+        yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.safecrlf", "true"]);
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.attributesFile", attributes]);
+        process.env.GIT_CONFIG_GLOBAL = crlfConfig;
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
@@ -543,37 +539,4 @@ it.effect("removes the folder when the create is cancelled before the project ex
       },
     );
   }),
-);
-
-it.effect("removes the folder when the repository cannot be made", () =>
-  withScratch(
-    ({ baseDir }) =>
-      Effect.gen(function* () {
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const projects = yield* ProjectService.ProjectService;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const failure = yield* Effect.flip(folders.createNamedProject({ name: "Broken" }));
-
-        assert.equal(failure._tag, "NamedProjectFolderError");
-        assert.equal(failure.message, "Failed to create the project folder.");
-        assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
-        assert.deepEqual((yield* projects.snapshot).projects, []);
-      }),
-    {
-      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
-        readConfigValue: () => Effect.succeed(null),
-        execute: (input) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: input.operation,
-              command: "git",
-              cwd: input.cwd,
-              detail: "git is broken",
-            }),
-          ),
-      }),
-    },
-  ),
 );

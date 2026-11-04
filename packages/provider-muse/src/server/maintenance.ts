@@ -39,47 +39,46 @@ export const compareMuseVersions = (current: string, latest: string) =>
 
 /** Only the official launcher owns an update channel; a standalone binary cannot update itself. */
 export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (context) =>
-    Effect.gen(function* () {
-      const manual = {
-        ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
-        compareVersions: compareMuseVersions,
-      };
-      if (!context || context.platform === "win32") return manual;
-      const fs = yield* FileSystem.FileSystem;
-      const isLauncher = yield* Effect.gen(function* () {
-        const stat = yield* fs.stat(context.realCommandPath);
-        if (Number(stat.size) > 128 * 1_024) return false;
-        const source = yield* fs.readFileString(context.realCommandPath);
-        return source.includes("muse-code/launcher-") && source.includes("MUSE_SYNC_UPDATE");
-      }).pipe(Effect.orElseSucceed(() => false));
-      if (!isLauncher) return manual;
-      // The launcher has no `update` subcommand. Its documented launch environment
-      // forces a synchronous refresh of this executable's own installation.
-      const updateEnv = {
-        ...(context.env.MUSE_CHANNEL ? { MUSE_CHANNEL: context.env.MUSE_CHANNEL } : {}),
-        MUSE_NO_AUTO_UPDATE: "0",
-        MUSE_SYNC_UPDATE: "1",
-        MUSE_UPDATE_INTERVAL_SECONDS: "0",
-      };
-      return {
-        ...makeProviderMaintenanceCapabilities({
-          provider: DRIVER,
-          packageName: null,
-          updateExecutable: context.resolvedCommandPath,
-          updateArgs: ["--version"],
-          updateCommand: [
-            ...Object.entries(updateEnv).map(([key, value]) => `${key}=${shellQuote(value)}`),
-            shellQuote(context.resolvedCommandPath),
-            "--version",
-          ].join(" "),
-          updateLockKey: `muse:${context.realCommandPath}`,
-          platform: context.platform,
-          env: { ...context.env, ...updateEnv },
-        }),
-        compareVersions: compareMuseVersions,
-      };
-    }),
+  resolve: Effect.fn("MuseMaintenance.resolve")(function* (context) {
+    const manual = {
+      ...makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER, packageName: null }),
+      compareVersions: compareMuseVersions,
+    };
+    if (!context || context.platform === "win32") return manual;
+    const fs = yield* FileSystem.FileSystem;
+    const isLauncher = yield* Effect.gen(function* () {
+      const stat = yield* fs.stat(context.realCommandPath);
+      if (Number(stat.size) > 128 * 1_024) return false;
+      const source = yield* fs.readFileString(context.realCommandPath);
+      return source.includes("muse-code/launcher-") && source.includes("MUSE_SYNC_UPDATE");
+    }).pipe(Effect.orElseSucceed(() => false));
+    if (!isLauncher) return manual;
+    // The launcher has no `update` subcommand. Its documented launch environment
+    // forces a synchronous refresh of this executable's own installation.
+    const updateEnv = {
+      ...(context.env.MUSE_CHANNEL ? { MUSE_CHANNEL: context.env.MUSE_CHANNEL } : {}),
+      MUSE_NO_AUTO_UPDATE: "0",
+      MUSE_SYNC_UPDATE: "1",
+      MUSE_UPDATE_INTERVAL_SECONDS: "0",
+    };
+    return {
+      ...makeProviderMaintenanceCapabilities({
+        provider: DRIVER,
+        packageName: null,
+        updateExecutable: context.resolvedCommandPath,
+        updateArgs: ["--version"],
+        updateCommand: [
+          ...Object.entries(updateEnv).map(([key, value]) => `${key}=${shellQuote(value)}`),
+          shellQuote(context.resolvedCommandPath),
+          "--version",
+        ].join(" "),
+        updateLockKey: `muse:${context.realCommandPath}`,
+        platform: context.platform,
+        env: { ...context.env, ...updateEnv },
+      }),
+      compareVersions: compareMuseVersions,
+    };
+  }),
 };
 
 function shellQuote(word: string) {

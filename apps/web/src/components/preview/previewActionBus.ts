@@ -1,5 +1,3 @@
-"use client";
-
 export type PreviewAction =
   | "toggle-panel"
   | "refresh"

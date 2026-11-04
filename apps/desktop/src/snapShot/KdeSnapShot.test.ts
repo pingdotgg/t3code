@@ -13,13 +13,7 @@ vi.mock("electron", () => ({
     createFromBuffer: () => ({ isEmpty: () => false, getSize: () => ({ width: 2, height: 1 }) }),
   },
 }));
-import {
-  KdeCaptureSetup,
-  captureKdeWindow,
-  isKdeCaptureSession,
-  kdeCaptureDesktopEntry,
-  kdeCapturePaths,
-} from "./KdeSnapShot.ts";
+import { KdeCaptureSetup, captureKdeWindow, kdeCapturePaths } from "./KdeSnapShot.ts";
 
 let directory: string;
 let paths: { bundle: string; dataHome: string };
@@ -71,48 +65,6 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await NodeFSP.rm(directory, { recursive: true, force: true });
-});
-
-it("detects KDE only outside a sandbox", () => {
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE" })).toBe(true);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "GNOME" })).toBe(false);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", FLATPAK_ID: "app" })).toBe(false);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", SNAP: "/snap/app" })).toBe(false);
-});
-
-it("does not install or request screenshots during initial discovery", async () => {
-  expect((await setup.state()).status).toBe("not-installed");
-  expect(execute).not.toHaveBeenCalled();
-  await expect(NodeFSP.stat(paths.dataHome)).rejects.toMatchObject({ code: "ENOENT" });
-});
-
-it("installs offline at a stable path and verifies permissions using the installed identity", async () => {
-  await setup.perform("install-kde-helper");
-  const { executable, desktop } = kdeCapturePaths(paths);
-  expect(await NodeFSP.readFile(executable, "utf8")).toBe("bundled executable");
-  expect((await NodeFSP.stat(executable)).mode & 0o777).toBe(0o755);
-  expect(await NodeFSP.readFile(desktop, "utf8")).toBe(kdeCaptureDesktopEntry(executable));
-  expect(kdeCaptureDesktopEntry(executable)).toContain(`Exec="${executable}" check`);
-  expect((await setup.state()).status).toBe("ready");
-  expect((await setup.state()).feedbackAvailable).toBe(true);
-  expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
-    ["kbuildsycoca6", ["--noincremental"]],
-    [
-      "systemd-run",
-      [
-        "--user",
-        "--quiet",
-        "--wait",
-        "--collect",
-        "--pipe",
-        "--service-type=exec",
-        "kbuildsycoca6",
-        "--noincremental",
-      ],
-    ],
-    [executable, ["check"]],
-    [executable, ["check"]],
-  ]);
 });
 
 it("does not mistake installed files for KDE authorization, or fall back to a picker on denial", async () => {

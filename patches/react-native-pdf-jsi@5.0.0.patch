@@ -1,0 +1,23 @@
+diff --git a/android/build.gradle b/android/build.gradle
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -128,7 +128,7 @@
+     buildTypes {
+         release {
+             minifyEnabled false
+-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
++            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+             
+             externalNativeBuild {
+                 cmake {
+diff --git a/android/src/main/java/org/wonday/pdf/RNPDFPackage.java b/android/src/main/java/org/wonday/pdf/RNPDFPackage.java
+--- a/android/src/main/java/org/wonday/pdf/RNPDFPackage.java
++++ b/android/src/main/java/org/wonday/pdf/RNPDFPackage.java
+@@ -11,3 +11,7 @@
+ public class RNPDFPackage implements ReactPackage {
+ 
++    static {
++        System.loadLibrary("NitroPdfJsi");
++    }
++
+     @Override

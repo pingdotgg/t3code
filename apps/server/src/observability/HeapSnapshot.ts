@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 
-export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
+const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
   function* (logsDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const timestamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");

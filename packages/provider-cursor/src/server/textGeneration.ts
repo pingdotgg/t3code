@@ -11,6 +11,7 @@ import type { CursorSettings } from "../settings.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -23,17 +24,15 @@ function cursorSdkResultDetail(result: RunResult): string {
     case "cancelled":
       return "Cursor SDK request was cancelled.";
     case "error":
-      return "Cursor SDK request finished with an error.";
+      return CursorAgentSdk.isCursorUsageLimitError(result.error)
+        ? "Cursor usage limit reached. Try again later or choose another text-generation provider."
+        : "Cursor SDK request finished with an error.";
     case "finished":
       return "Cursor SDK returned empty output.";
   }
 }
 
-/**
- * The SDK throws this when `sandboxOptions.enabled` is set and local sandboxing
- * is unavailable. That happens on hosts that cannot launch `cursorsandbox`, and
- * also after an unsandboxed run caches "unsupported" for the process.
- */
+// Sandboxing fails without cursorsandbox or after a process-wide unsupported result.
 function cursorSandboxUnsupported(cause: unknown): boolean {
   const seen = new Set<object>();
   let current = cause;
@@ -54,37 +53,41 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   withAccess?: CursorAuth["withAccess"],
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const { Agent, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
+  const sdk = yield* CursorSdk.CursorSdk;
   const resolvedEnvironment = environment ?? process.env;
 
-  const resolveCursorApiKey = (operation: TextGenerationOperations.Operation) =>
-    Effect.gen(function* () {
-      if (!cursorSettings.enabled) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Cursor is disabled in T3 Code settings.",
-        });
-      }
+  const resolveCursorApiKey = Effect.fn("CursorTextGeneration.resolveCursorApiKey")(function* (
+    operation: TextGenerationOperations.Operation,
+  ) {
+    if (!cursorSettings.enabled) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Cursor is disabled in T3 Code settings.",
+      });
+    }
 
-      const apiKey = resolveApiKey
-        ? yield* resolveApiKey
-        : resolvedEnvironment.CURSOR_API_KEY?.trim();
-      if (!apiKey) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
-        });
-      }
+    const apiKey = resolveApiKey
+      ? yield* resolveApiKey
+      : resolvedEnvironment.CURSOR_API_KEY?.trim();
+    if (!apiKey) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
+      });
+    }
 
-      return apiKey;
-    });
+    return apiKey;
+  });
 
-  const runCursorJson: TextGenerationOperations.Runner = (input) => {
-    const { operation, prompt, modelSelection } = input;
-    return Effect.gen(function* () {
+  const runCursorJson: TextGenerationOperations.Runner = Effect.fn(
+    "CursorTextGeneration.runCursorJson",
+  )(
+    function* (input) {
+      const { operation, prompt, modelSelection } = input;
+
       const apiKey = yield* resolveCursorApiKey(operation);
-      // The SDK loads sandbox.json independently of settingSources and lets it
-      // expand the writable paths. Its public API cannot override that policy.
+      const { Agent } = yield* Effect.try(sdk.load);
+      // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
       if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
         return yield* new TextGenerationError({
           operation,
@@ -93,12 +96,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-" });
-      // The SDK keeps SQLite handles open after `agent.close()` and only releases
-      // them from a store the caller disposes. Its state lives outside `cwd` so the
-      // agent's workspace stays empty.
+      // Only store disposal releases SDK SQLite handles; keep state outside the empty workspace.
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-state-" });
       const store = yield* Effect.acquireRelease(
-        Effect.tryPromise(() => SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot })),
+        Effect.tryPromise(() =>
+          sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot }),
+        ),
         (store) => Effect.tryPromise(() => store.dispose()).pipe(Effect.ignore({ log: true })),
       );
       const agentOptions = {
@@ -133,8 +136,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         );
 
       const request = Effect.gen(function* () {
-        // When the SDK refuses it, the empty temp directory and empty setting
-        // sources still keep this run off the user's project.
+        // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
         const agent = yield* Effect.acquireRelease(
           createCursorAgent(true).pipe(
             Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
@@ -183,26 +185,30 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         return yield* new TextGenerationError({
           operation,
           detail: cursorSdkResultDetail(promptResult),
+          ...(promptResult.error ? { cause: promptResult.error } : {}),
         });
       }
 
       return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
-    }).pipe(
-      // Scope this call inside `withAccess`, so sign-out closes the agent before its store.
-      Effect.scoped,
-      (effect) => (withAccess ? withAccess(effect) : effect),
-      Effect.scoped,
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Cursor SDK text generation failed.",
-              cause,
-            }),
-      ),
-    );
-  };
+    },
+    (effect, input) => {
+      const { operation } = input;
+      return effect.pipe(
+        Effect.scoped,
+        (effect) => (withAccess ? withAccess(effect) : effect),
+        Effect.scoped,
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Cursor SDK text generation failed.",
+                cause,
+              }),
+        ),
+      );
+    },
+  );
 
   return TextGenerationOperations.fromRunner(
     "CursorTextGeneration",

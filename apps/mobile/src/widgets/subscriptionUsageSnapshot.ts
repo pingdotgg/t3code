@@ -5,7 +5,10 @@ import {
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
+import type { WidgetTheme } from "./widgetTheme";
+
 export interface SubscriptionUsageSnapshot {
+  theme?: WidgetTheme;
   url?: string;
   checkedAt: number;
   providers: Array<{
@@ -17,8 +20,7 @@ export interface SubscriptionUsageSnapshot {
   }>;
 }
 
-// Snapshots expire after 15 minutes; background refresh needs a
-// separate authenticated transport while the mobile app is suspended.
+// Snapshots expire after 15 minutes; suspended refresh requires a separate authenticated transport.
 const SNAPSHOT_MAX_AGE = 15 * 60_000;
 export const WIDGET_REFRESH_INTERVAL = 5 * 60_000;
 

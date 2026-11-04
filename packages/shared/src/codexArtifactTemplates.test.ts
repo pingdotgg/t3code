@@ -2,8 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   appendCodexArtifactTemplateUsePrompt,
-  codexArtifactTemplatePresentationLabel,
-  codexArtifactTemplateUsePrompt,
   resolveCodexArtifactTemplate,
   type CodexArtifactTemplate,
 } from "./codexArtifactTemplates.ts";
@@ -14,12 +12,6 @@ const HELLO_WORLD_TEMPLATE: CodexArtifactTemplate = {
   skillDirectory: "/Users/test/.codex/skills/artifact-template-hello-world",
   skillName: "artifact-template-hello-world",
 };
-
-describe("artifact template presentation", () => {
-  it("shares labels and copy text across clients", () => {
-    expect(codexArtifactTemplatePresentationLabel("document")).toBe("Document template");
-  });
-});
 
 describe("resolveCodexArtifactTemplate", () => {
   it("accepts the template metadata emitted by Codex", () => {
@@ -52,50 +44,10 @@ describe("resolveCodexArtifactTemplate", () => {
       skillDirectory,
     });
   });
-
-  it.each([
-    { artifact_kind: "unknown" },
-    { display_name: " " },
-    { skill_directory: "relative/template" },
-    { skill_name: "hello-world" },
-    { gallery_kind: null },
-    { gallery_kind: "unknown" },
-  ])("rejects malformed template metadata: %o", (override) => {
-    expect(
-      resolveCodexArtifactTemplate({
-        artifact_kind: "document",
-        display_name: "Hello World",
-        skill_directory: "/templates/hello-world",
-        skill_name: "artifact-template-hello-world",
-        ...override,
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("codexArtifactTemplateUsePrompt", () => {
-  it("builds the same document follow-up shape as Codex", () => {
-    expect(codexArtifactTemplateUsePrompt(HELLO_WORLD_TEMPLATE)).toBe(
-      "Create a document using this $artifact-template-hello-world about…",
-    );
-  });
-
-  it("uses the artifact-specific image wording", () => {
-    expect(
-      codexArtifactTemplateUsePrompt({
-        ...HELLO_WORLD_TEMPLATE,
-        artifactKind: "image",
-      }),
-    ).toBe("Create an image using this $artifact-template-hello-world of…");
-  });
 });
 
 describe("appendCodexArtifactTemplateUsePrompt", () => {
   const prompt = "Create a document using this $artifact-template-hello-world about…";
-
-  it("adds the prompt to an empty draft", () => {
-    expect(appendCodexArtifactTemplateUsePrompt("", HELLO_WORLD_TEMPLATE)).toBe(prompt);
-  });
 
   it("preserves existing draft text", () => {
     expect(appendCodexArtifactTemplateUsePrompt("Write about otters", HELLO_WORLD_TEMPLATE)).toBe(

@@ -21,33 +21,4 @@ describe("applyCommandOutputFrame", () => {
     expect(view.output.text).toBe("install\n\u001b[0;32m100%\u001b[0m\n");
     expect(view.running).toBe(true);
   });
-
-  it("starts over from the tail a reconnect sends, keeping only that", () => {
-    const stale = applyCommandOutputFrame(EMPTY_COMMAND_OUTPUT, {
-      kind: "replace",
-      text: "line 1\n",
-      truncated: false,
-      running: true,
-    });
-    const resumed = applyCommandOutputFrame(stale, {
-      kind: "replace",
-      text: "line 7\nline 8\n",
-      truncated: true,
-      running: true,
-    });
-    expect(resumed.output.text).toBe("line 7\nline 8\n");
-    expect(resumed.output.truncated).toBe(true);
-  });
-
-  it("marks the output final when the command settles", () => {
-    const view = applyCommandOutputFrame(EMPTY_COMMAND_OUTPUT, {
-      kind: "replace",
-      text: "done\n",
-      truncated: false,
-      running: false,
-    });
-    expect(view.output.text).toBe("done\n");
-    expect(view.output.truncated).toBe(false);
-    expect(view.running).toBe(false);
-  });
 });

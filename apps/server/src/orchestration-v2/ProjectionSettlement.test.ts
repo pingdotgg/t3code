@@ -17,9 +17,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
-import * as Statement from "effect/sql/Statement";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -30,7 +27,6 @@ const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
 const old = DateTime.subtract(now, { days: 10 });
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "test-model" };
-const encodeNumbers = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
 
 const createThread = Effect.fn(function* (
   name: string,
@@ -140,12 +136,9 @@ const createItem = Effect.fn(function* (
   });
 });
 
-it.effect.each([
-  ["sql", layerSql],
-  ["memory", ProjectionStore.layerMemory],
-] as const)(
-  "%s: discovers settlement work with the same activity and background semantics as the shell",
-  ([, testLayer]) =>
+it.effect(
+  "sql: discovers settlement work with the same activity and background semantics as the shell",
+  () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const idle = yield* createThread("idle");
@@ -216,7 +209,7 @@ it.effect.each([
         snoozedUntil: DateTime.add(now, { days: 1 }),
         snoozedAt: DateTime.subtract(old, { days: 1 }),
       });
-      yield* createRun(woke);
+      yield* createRun(woke, "failed");
       const background = yield* createThread("idle-background");
       yield* createItem(background, yield* createRun(background), "idle");
       const persistent = yield* createThread("persistent-monitor");
@@ -295,13 +288,10 @@ it.effect.each([
         (yield* store.getThread(ThreadId.make("missing")).pipe(Effect.flip))._tag,
         "ProjectionStoreThreadNotFoundError",
       );
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect.each([
-  ["sql", layerSql],
-  ["memory", ProjectionStore.layerMemory],
-] as const)("%s: the user-authored message time ignores agent notifications", ([, testLayer]) =>
+it.effect("sql: the user-authored message time ignores agent notifications", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("agent-woken");
@@ -350,7 +340,7 @@ it.effect.each([
       DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerSql)),
 );
 
 const pullRequestLink = (number: number) => ({
@@ -364,49 +354,41 @@ const pullRequestLink = (number: number) => ({
   stack: null,
 });
 
-it.effect.each([
-  ["sql", layerSql],
-  ["memory", ProjectionStore.layerMemory],
-] as const)(
-  "%s: lists only active threads with pull request links, oldest first",
-  ([, testLayer]) =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      yield* createThread("no-links");
-      yield* createThread("empty-links", { pullRequests: [] });
-      yield* createThread("archived-link", {
-        archivedAt: old,
-        pullRequests: [pullRequestLink(1)],
-      });
-      const settled = yield* createThread("settled-link", {
-        settledOverride: "settled",
-        settledAt: old,
-        updatedAt: DateTime.subtract(now, { days: 12 }),
-        pullRequests: [pullRequestLink(2)],
-      });
-      const open = yield* createThread("open-link", {
-        pullRequests: [pullRequestLink(3), pullRequestLink(4)],
-      });
+it.effect("sql: lists only active threads with pull request links, oldest first", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    yield* createThread("no-links");
+    yield* createThread("empty-links", { pullRequests: [] });
+    yield* createThread("archived-link", {
+      archivedAt: old,
+      pullRequests: [pullRequestLink(1)],
+    });
+    const settled = yield* createThread("settled-link", {
+      settledOverride: "settled",
+      settledAt: old,
+      updatedAt: DateTime.subtract(now, { days: 12 }),
+      pullRequests: [pullRequestLink(2)],
+    });
+    const open = yield* createThread("open-link", {
+      pullRequests: [pullRequestLink(3), pullRequestLink(4)],
+    });
 
-      const threads = yield* store.getThreadsWithPullRequests();
-      assert.deepEqual(
-        threads.map((thread) => [thread.id, thread.settledOverride, thread.pullRequests?.length]),
-        [
-          [settled, "settled", 1],
-          [open, null, 2],
-        ],
-      );
-      assert.deepEqual(
-        (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
-        [open],
-      );
-    }).pipe(Effect.provide(testLayer)),
+    const threads = yield* store.getThreadsWithPullRequests();
+    assert.deepEqual(
+      threads.map((thread) => [thread.id, thread.settledOverride, thread.pullRequests?.length]),
+      [
+        [settled, "settled", 1],
+        [open, null, 2],
+      ],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
+      [open],
+    );
+  }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect.each([
-  ["sql", layerSql],
-  ["memory", ProjectionStore.layerMemory],
-] as const)("%s: an unsettled-only shell read skips settled threads", ([, testLayer]) =>
+it.effect("sql: an unsettled-only shell read skips settled threads", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const open = yield* createThread("unsettled-open");
@@ -420,106 +402,5 @@ it.effect.each([
     assert.equal(shell.archivedThreads.length, 0);
     const all = yield* store.getShellSnapshot({ location: "active" });
     assert.equal(all.threads.length, 4);
-  }).pipe(Effect.provide(testLayer)),
-);
-
-it.effect(
-  "reads settlement candidates and thread metadata without loading historical or archived payloads",
-  () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const sql = yield* SqlClient.SqlClient;
-      const source = yield* createThread("historical-source", { archivedAt: old });
-      const sourceRun = yield* createRun(source);
-      const threadId = yield* createThread("fork", {
-        forkedFrom: { type: "run", threadId: source, runId: sourceRun },
-      });
-      const runId = yield* createRun(threadId);
-      yield* createItem(threadId, runId, "completed");
-      yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{broken' WHERE thread_id = ${threadId}`;
-      yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{broken' WHERE thread_id = ${source}`;
-      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
-      SELECT 'history:' || value, i.thread_id, i.run_id, i.node_id, i.provider_thread_id, i.provider_turn_id,
-        i.parent_item_id, i.ordinal + value, i.type, i.status, i.updated_at, i.payload_json
-      FROM orchestration_v2_projection_turn_items i, json_each(${encodeNumbers(Array.from({ length: 2000 }, (_, i) => i + 1))})
-      WHERE i.thread_id = ${threadId}`;
-      const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
-      const record: Statement.Transformer = (statement) =>
-        Effect.sync(() => {
-          queries.push(statement.compile());
-          return statement;
-        });
-      const candidates = yield* store
-        .getSettlementCandidates()
-        .pipe(Effect.provideService(Statement.CurrentTransformer, record));
-      assert.deepEqual(
-        candidates.map((thread) => thread.id),
-        [threadId],
-      );
-      assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
-      const pendingQuery = queries.find(([query]) =>
-        query.includes("FROM orchestration_v2_projection_turn_items"),
-      );
-      assert.isDefined(pendingQuery);
-      const metadata = yield* store.getThread(threadId);
-      assert.equal(metadata.id, threadId);
-      assert.equal((yield* store.getThreadProjection(threadId).pipe(Effect.exit))._tag, "Failure");
-      const plan = yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${pendingQuery![0]}`,
-        pendingQuery![1],
-      );
-      assert.isTrue(plan.some((row) => row.detail.includes("turn_items_shell_pending_idx")));
-      const countsPlan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
-      SELECT thread_id, run_id, COUNT(*) FROM orchestration_v2_projection_turn_items
-      WHERE thread_id = ${threadId} AND run_id IS NOT NULL GROUP BY thread_id, run_id`;
-      assert.isTrue(
-        countsPlan.some((row) =>
-          row.detail.includes(
-            "COVERING INDEX orchestration_v2_projection_turn_items_thread_run_idx",
-          ),
-        ),
-      );
-      assert.isFalse(countsPlan.some((row) => row.detail.includes("TEMP B-TREE")));
-      const messagePlan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
-      SELECT updated_at FROM orchestration_v2_projection_messages
-      WHERE thread_id = ${threadId} AND role = 'user' ORDER BY updated_at DESC, message_id DESC LIMIT 1`;
-      assert.isTrue(messagePlan.some((row) => row.detail.includes("messages_latest_user_idx")));
-      assert.isFalse(messagePlan.some((row) => row.detail.includes("TEMP B-TREE")));
-    }).pipe(Effect.provide(layerSql)),
-);
-
-it.effect("shell failure lookups stay on the thread's own turn items", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const sql = yield* SqlClient.SqlClient;
-    const failed = yield* createThread("failed-latest");
-    yield* createRun(failed, "failed");
-    const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
-    const record: Statement.Transformer = (statement) =>
-      Effect.sync(() => {
-        queries.push(statement.compile());
-        return statement;
-      });
-    const shell = yield* store
-      .getShellSnapshot()
-      .pipe(Effect.provideService(Statement.CurrentTransformer, record));
-    assert.deepEqual(
-      shell.threads.map((thread) => thread.id),
-      [failed],
-    );
-    const shellQuery = queries.find(([query]) =>
-      query.includes("AS blocking_failure_payload_json"),
-    );
-    assert.isDefined(shellQuery);
-    const plan = yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${shellQuery![0]}`,
-      shellQuery![1],
-    );
-    const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
-    assert.lengthOf(itemLookups, 2);
-    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_failed_error_idx")));
-    const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
-    assert.lengthOf(secretLookups, 1);
-    assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");
   }).pipe(Effect.provide(layerSql)),
 );

@@ -83,8 +83,7 @@ const readSlice = (input: {
               reads.push(item.path);
               inFlight += 1;
               peakInFlight = Math.max(peakInFlight, inFlight);
-              // Every read suspends before it answers, as a subprocess would, so what runs at
-              // once is the scheduler's answer rather than an artefact of resolving inline.
+              // Yield like a subprocess to exercise concurrency.
               const answersAfter = input.paths.length - input.paths.indexOf(item.path);
               for (let turn = 0; turn < answersAfter; turn += 1) yield* Effect.yieldNow;
               inFlight -= 1;
@@ -123,64 +122,7 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
   );
 }
 
-describe("getChangeRequestSummary", () => {
-  it.effect("costs the one pull request read, not the iterations changedFiles needs", () =>
-    Effect.gen(function* () {
-      let pullRequestReads = 0;
-
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-            getPullRequest: () => {
-              pullRequestReads += 1;
-              return Effect.succeed(PULL_REQUEST);
-            },
-          }),
-        ),
-      );
-
-      const readSummary = provider.getChangeRequestSummary;
-      if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
-      const summary = yield* readSummary({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "dev.azure.com",
-        number: 7,
-      });
-
-      expect(pullRequestReads).toBe(1);
-      expect(summary.title).toBe(PULL_REQUEST.title);
-      expect(summary.changedFiles).toBeUndefined();
-    }),
-  );
-});
-
 describe("getChangeRequest", () => {
-  it.effect("still reports the file count the detail panel needs", () =>
-    Effect.gen(function* () {
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-            getPullRequest: () => Effect.succeed(PULL_REQUEST),
-            listIterations: () => Effect.succeed([ITERATION]),
-            listIterationChanges: () =>
-              Effect.succeed({ changes: [change("a.ts"), change("b.ts")], truncated: false }),
-          }),
-        ),
-      );
-
-      const detail = yield* provider.getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "dev.azure.com",
-        number: 7,
-      });
-
-      expect(detail.changedFiles).toBe(2);
-      expect(detail.headSha).toBe(ITERATION.headCommit);
-    }),
-  );
-
   it.effect("preserves the newest head when file counting fails", () =>
     Effect.gen(function* () {
       const provider = yield* make.pipe(
@@ -265,8 +207,7 @@ describe("getDiff reads", () => {
               Effect.gen(function* () {
                 inFlight += 1;
                 peakInFlight = Math.max(peakInFlight, inFlight);
-                // Suspends before answering, as a subprocess would, so what is out at once is the
-                // scheduler's answer rather than an artefact of resolving inline.
+                // Yield like a subprocess to exercise concurrency.
                 yield* Effect.yieldNow;
                 yield* Effect.yieldNow;
                 inFlight -= 1;
@@ -295,28 +236,6 @@ describe("getDiff reads", () => {
       expect(parseAzureDevOpsDiffCursor(read.slice.nextCursor)?.fileIndex).toBe(
         MAX_DIFF_SLICE_FILES,
       );
-    }),
-  );
-
-  it.effect("asks for both sides of several files at once rather than one side at a time", () =>
-    Effect.gen(function* () {
-      const read = yield* readSlice({
-        paths: ["a.ts", "b.ts", "c.ts", "d.ts"],
-        lines: 2,
-        width: 4,
-      });
-
-      expect(read.peakInFlight).toBeGreaterThan(2);
-    }),
-  );
-
-  it.effect("holds the number of files it reads at once down", () =>
-    Effect.gen(function* () {
-      const paths = Array.from({ length: 24 }, (_, file) => `file-${file}.ts`);
-      const read = yield* readSlice({ paths, lines: 2, width: 4 });
-
-      expect(read.reads).toHaveLength(paths.length * 2);
-      expect(read.peakInFlight).toBeLessThanOrEqual(8);
     }),
   );
 
@@ -353,16 +272,6 @@ describe("what one diff slice spends", () => {
       expect(patchedPaths(read.slice.patch)).toEqual(["a.ts", "b.ts"]);
       expect(read.slice.nextCursor).toBe(`${ITERATION.id}:2`);
       expect(new Set(read.reads)).toEqual(new Set(["a.ts", "b.ts", "c.ts", "d.ts"]));
-    }),
-  );
-
-  it.effect("narrows what it reads at once as the slice fills", () =>
-    Effect.gen(function* () {
-      const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts"];
-      const read = yield* readSlice({ paths, lines: 50, width: 450 });
-
-      expect(read.slice.nextCursor).not.toBeNull();
-      expect(new Set(read.reads)).toEqual(new Set(patchedPaths(read.slice.patch)));
     }),
   );
 

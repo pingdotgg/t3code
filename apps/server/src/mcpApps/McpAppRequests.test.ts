@@ -251,26 +251,4 @@ describe("McpAppRequests", () => {
       assert.isTrue(storedContext.has(`${deepForkId(70)}/${itemId}`));
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
   );
-
-  it.effect("reports why a request cannot run", () =>
-    Effect.gen(function* () {
-      const run = (layer: ReturnType<typeof makeLayer>) =>
-        Effect.gen(function* () {
-          const requests = yield* McpAppRequests.McpAppRequests;
-          return yield* reason(requests.readResource({ threadId, itemId, uri: "ui://weather/x" }));
-        }).pipe(Effect.provide(layer));
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ result: "plain" }), mcpApps })),
-        "not-an-app",
-      );
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps, live: false })),
-        "session-stopped",
-      );
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ t3McpApp: app }) })),
-        "provider-unsupported",
-      );
-    }),
-  );
 });

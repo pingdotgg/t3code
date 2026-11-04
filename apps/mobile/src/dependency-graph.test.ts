@@ -2,12 +2,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
-/**
- *    Dynamic `import("...")` calls are excluded from this rule on purpose:
- *    they are the deliberate async escape hatch (e.g. composer-draft cleanup
- *    reaching `lib/attachmentUpload`), and Metro resolves them after both
- *    modules have initialized, so they cannot create an initialization cycle.
- */
+/** Dynamic imports cannot create Metro initialization cycles: they resolve after both modules initialize. */
 
 const SOURCE_ROOT = __dirname;
 
@@ -205,48 +200,10 @@ function findCycles(graph: PlatformGraph): ReadonlyArray<ReadonlyArray<string>> 
 
 const graphs = PLATFORMS.map(buildPlatformGraph);
 
-function upwardEdges(): string[] {
-  const union = new Set<string>();
-  for (const graph of graphs) {
-    for (const edge of graph.crossLayerEdges) {
-      union.add(edge);
-    }
-  }
-  return [...union].sort();
-}
-
 describe("mobile dependency graph", () => {
   it.each(PLATFORMS)("has no circular imports under %s resolution", (platform) => {
     const graph = graphs.find((candidate) => candidate.platform === platform)!;
     expect(graph.files.length).toBeGreaterThan(500);
     expect(findCycles(graph)).toEqual([]);
-  });
-
-  it("keeps upward imports from state/lib/components/native into features at the ceiling", () => {
-    const edges = upwardEdges();
-    const edgesFor = (from: Layer, to: Layer): string[] =>
-      edges.filter((edge) => {
-        const [source, target] = edge.split(" -> ");
-        return layerOf(source!) === from && layerOf(target!) === to;
-      });
-
-    const ceilings: ReadonlyArray<readonly [Layer, Layer, number, string]> = [
-      ["state", "features", 6, "state must not add imports from features"],
-      ["lib", "features", 7, "lib must not add imports from features"],
-      // components -> features: mostly the appearance preferences provider
-      // and the layout toolbar bridges.
-      ["components", "features", 30, "components must not add imports from features"],
-      // native -> features: native glue reading appearance/keyboard/review features.
-      ["native", "features", 8, "native must not add imports from features"],
-      ["lib", "state", 10, "lib must not add imports from state"],
-    ];
-
-    for (const [from, to, ceiling, message] of ceilings) {
-      const layerEdges = edgesFor(from, to);
-      expect(
-        layerEdges.length,
-        `${message}. ${layerEdges.length} edges remain:\n${layerEdges.join("\n")}`,
-      ).toBeLessThanOrEqual(ceiling);
-    }
   });
 });

@@ -22,8 +22,6 @@ const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
   it("returns the published object itself when no window moved", () => {
-    // Codex repeats the same numbers beside every token-usage tick; the
-    // ingestion path relies on identity to skip the publish.
     const next = applyUsageLimitsUpdate({
       previous: published,
       checkedAt: "2026-09-03T12:00:05.000Z",
@@ -62,6 +60,12 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("marks a first sparse update as unavailable", () => {
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
+    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
@@ -79,6 +83,35 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it("uses read order for windows while taking metadata from the successful probe", () => {
+    const live = {
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [
+        { ...session, usedPercent: 95 },
+        { ...weekly, usedPercent: 70 },
+      ],
+      resetCredits: { availableCount: 2 },
+      externalUsage: { label: "Old dashboard", url: "https://example.com/old" },
+    };
+    const probed = {
+      ...published,
+      windows: [{ ...session, usedPercent: 0 }],
+      resetCredits: { availableCount: 1 },
+      externalUsage: { label: "Usage dashboard", url: "https://example.com/usage" },
+    };
+
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed })).toEqual({
+      ...probed,
+      checkedAt: live.checkedAt,
+      windows: live.windows,
+    });
+
+    const sameTime = { ...probed, checkedAt: live.checkedAt };
+    const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: newer })).toEqual(newer);
+  });
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };

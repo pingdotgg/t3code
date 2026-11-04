@@ -2,10 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -22,8 +22,32 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
+const mockedAppToken = vi.fn<(host: string) => Effect.Effect<Option.Option<string>>>(
+  () => Effect.succeedNone,
+);
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+// GitHub's field-level reviewer refusal; the surrounding response data is synthetic.
+const refusedReviewer = {
+  type: "FORBIDDEN",
+  message: "Resource not accessible by integration",
+  path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
+};
+const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+type PullRequestRead = (
+  input: typeof pullRequestInput,
+) => Effect.Effect<unknown, GitHubPullRequestApi.GitHubPullRequestApiError>;
+const refusedReviewerResponse = () =>
+  Effect.succeed(output(encodeJson({ ...coreResponse(), errors: [refusedReviewer] })));
 
 const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
   data: {
@@ -31,6 +55,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
       mergeCommitAllowed: true,
       squashMergeAllowed: false,
       rebaseMergeAllowed: true,
+      autoMergeAllowed: true,
       viewerPermission: "WRITE",
       pullRequest: {
         number: 7,
@@ -39,6 +64,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         body: "",
         isDraft: false,
         mergeable: "MERGEABLE",
+        mergeStateStatus: "BLOCKED",
         reviewDecision: null,
         additions: 0,
         deletions: 0,
@@ -46,6 +72,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         mergedAt: null,
         closedAt: null,
         isCrossRepository: false,
+        maintainerCanModify: true,
         headRepositoryOwner: null,
         headRepository: null,
         headRef: null,
@@ -73,8 +100,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 type ApiCall =
   | {
       readonly kind: "graphql";
+      readonly authorization: string | undefined;
       readonly partial?: boolean;
-      /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
       readonly host: string;
       readonly operation: string;
@@ -88,25 +115,25 @@ type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolic
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
   Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
-const mockedCredential = vi.fn(defaultCredential);
+const mockedCredential =
+  vi.fn<
+    (
+      host: string,
+    ) => Effect.Effect<GitHubRequestPolicy.GitHubHeldCredential, GitHubRequestPolicy.GitHubApiError>
+  >(defaultCredential);
 const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
 
-/** The REST transport, answered from the mocks above. */
 const mockApi = Layer.succeed(
   GitHubRest.GitHubRest,
   GitHubRest.GitHubRest.of({
     rest: (input) => mockedExecute({ kind: "rest", ...input }),
     credential: (host) => mockedCredential(host),
+    appCredential: () => Effect.succeedNone,
   }),
 );
 
-/**
- * The HTTP side of the generated GraphQL reads, answered from the same mocks: a request to a
- * host's GraphQL endpoint is recorded as a `graphql` call, carrying the `partial` flag the batches
- * read with, and answered with the mocked body, status and headers.
- */
 const mockHttp = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -122,6 +149,7 @@ const mockHttp = Layer.succeed(
           : { query: "", operationName: "", variables: {} };
       const call: ApiCall = {
         kind: "graphql",
+        authorization: request.headers["authorization"],
         host,
         operation: "batch",
         operationName: sent.operationName,
@@ -129,7 +157,6 @@ const mockHttp = Layer.succeed(
         variables: sent.variables,
         partial: true,
       };
-      // A mocked failure with a status is what GitHub would have answered with it.
       const answer = yield* (
         sent.query.startsWith("query PullRequestStackMembership(")
           ? mockedStackMemberships
@@ -141,8 +168,7 @@ const mockHttp = Layer.succeed(
         }),
         Effect.orDie,
       );
-      // A mutation mocked as `{}` is one whose answer the test does not read. GitHub always
-      // answers a mutation that ran with `data`, so it is sent as the null payload it selects.
+      // Empty mutation mocks still need the selected GraphQL root field.
       const body =
         answer.body === "{}" && sent.query.startsWith("mutation ")
           ? encodeJson(mutationAnswer(sent.query))
@@ -160,15 +186,28 @@ const mockHttp = Layer.succeed(
 
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
+    Layer.provideMerge(GitHubAppAccess.layer),
     Layer.provideMerge(mockApi),
     Layer.provideMerge(GitHubRequestPolicy.layer),
+    Layer.provideMerge(
+      Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+        enabled: false,
+        token: (host) => mockedAppToken(host),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(mockHttp),
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
         get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+          mockedCredential(host).pipe(
+            Effect.map((held) => ({ source: "gh" as const, ...held, host })),
+            Effect.mapError(() => new GitHubCredentials.GitHubCliMissingError({ host })),
+          ),
+        saved: () => Effect.succeedNone,
+        fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
         invalidate: () => Effect.void,
       }),
     ),
@@ -197,7 +236,6 @@ function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
   };
 }
 
-/** What every listing row answers with, which a fixture overrides only where it matters. */
 const rowDefaults = {
   author: null,
   state: "OPEN",
@@ -211,13 +249,8 @@ const rowDefaults = {
   commits: { nodes: [] },
 };
 
-/** A connection's page info with no next page, as GitHub sends it: the cursor is always there. */
 const lastPage = { hasNextPage: false, endCursor: null };
 
-/**
- * Listing rows as GraphQL answers them. Overrides may use the flat shapes a test reads most
- * easily: `reviewRequests` as `[{ login }]` or `[{ slug }]`, and `checks` as the rollup state.
- */
 function rows(
   count: number,
   firstNumber: number,
@@ -336,6 +369,7 @@ function thread(id: string, ...commentIds: ReadonlyArray<string>) {
 function reviewThreadsPage(
   nodes: ReadonlyArray<Record<string, unknown>>,
   endCursor: string | null,
+  requestedReviewers: ReadonlyArray<Record<string, unknown>> = [],
 ): string {
   return encodeJson({
     data: {
@@ -353,7 +387,9 @@ function reviewThreadsPage(
           reactionGroups: [],
           comments: { nodes: [] },
           reviews: { nodes: [] },
-          reviewRequests: { nodes: [] },
+          reviewRequests: {
+            nodes: requestedReviewers.map((requestedReviewer) => ({ requestedReviewer })),
+          },
           latestReviews: { nodes: [] },
           reviewDismissals: { pageInfo: lastPage, nodes: [] },
           commits: { nodes: [] },
@@ -382,7 +418,6 @@ function threadCommentsPage(
   });
 }
 
-/** What GitHub answers for a pull request it will not serve a whole diff for. */
 const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   host: "github.com",
   operation: "getPullRequestDiff",
@@ -453,17 +488,12 @@ function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
 
 const searchQueryOfCall = searchOfCall;
 
-/** Whether a request is the GraphQL operation `needle` names, or its document or path holds it. */
 function matches(call: ApiCall, needle: string): boolean {
   return call.kind === "graphql"
     ? call.operationName === needle || call.query.includes(needle)
     : call.path.includes(needle);
 }
 
-/**
- * Answers every request with the body of the first route whose needle it matches, and any
- * unrouted mutation with the empty payload each one selects, which nothing reads back.
- */
 function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
   mockedExecute.mockImplementation((call) => {
     const match = routes.find(([needle]) => matches(call, needle));
@@ -479,30 +509,24 @@ function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]
   });
 }
 
-/** What a mutation answers when nothing is asked of its payload: each root field, null. */
 function mutationAnswer(query: string) {
   const root = /\)\{(\w+)(?:\(|\{|@)/.exec(query)?.[1];
   return { data: root === undefined ? {} : { [root]: null } };
 }
 
-/** The variables of every GraphQL request `needle` matches, in order. */
 function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unknown>>> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "graphql" && matches(call, needle) ? [call.variables ?? {}] : [],
   );
 }
 
-/** Every REST request whose path contains `needle`, in order. */
 function restCallsTo(needle: string): ReadonlyArray<GitHubRest.GitHubRestInput> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "rest" && call.path.includes(needle) ? [call] : [],
   );
 }
 
-/**
- * The check that a client-given node hangs off the pull request it names. Routed before the node
- * id lookup, whose document it contains.
- */
+/** Route before the node-ID lookup, whose document is contained in this scope query. */
 const SUBJECT_SCOPE_QUERY = "PullRequestSubject";
 const subjectScope = (subjectId: string, pullRequestId: string) => ({
   data: {
@@ -511,7 +535,6 @@ const subjectScope = (subjectId: string, pullRequestId: string) => ({
   },
 });
 
-/** A check run as the `CheckContext` fragment answers it, with `fields` over the defaults. */
 const checkRun = (fields: Record<string, unknown>) => ({
   __typename: "CheckRun",
   name: "",
@@ -524,7 +547,6 @@ const checkRun = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-/** One page of a head commit's check contexts, the read a rollup past one page is walked by. */
 const checkContextsPage = (
   nodes: ReadonlyArray<Record<string, unknown>>,
   endCursor: string | null,
@@ -552,6 +574,7 @@ const checkContextsPage = (
   });
 
 const pullRequestRefs = encodeJson({ base: { sha: "a1b2c3d" }, head: { sha: "b1c2d3e" } });
+const pullRequestMergeBase = encodeJson({ merge_base_commit: { sha: "c1d2e3f" } });
 
 const crossRepositoryDetail = (headRefOid = "abc123") =>
   coreResponse({
@@ -605,7 +628,7 @@ function workflowApprovalRoutes(
   );
 }
 
-/** The pull request node id lookup, which the layer caches for every test after the first. */
+/** Node IDs stay cached after the first test. */
 const NODE_ID_QUERY = "PullRequestNodeId";
 const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
 
@@ -613,6 +636,7 @@ afterEach(() => {
   mockedExecute.mockReset();
   mockedStackMemberships.mockReset();
   mockedCredential.mockReset();
+  mockedAppToken.mockReset();
   mockedCredential.mockImplementation(defaultCredential);
 });
 
@@ -633,6 +657,8 @@ it.effect(
               source: "gh" as const,
               fingerprint: `${host}:${activeToken.length}${activeToken.at(-1)}`,
             })),
+          saved: () => Effect.succeedNone,
+          fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
           invalidate: () => Effect.void,
         }),
       );
@@ -658,8 +684,9 @@ it.effect(
       );
       const cli = yield* GitHubPullRequestApi.make.pipe(
         Effect.provide(
-          GitHubRest.layer.pipe(
-            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+          GitHubAppAccess.layer.pipe(
+            Layer.provideMerge(GitHubRest.layer),
+            Layer.provideMerge(Layer.mergeAll(credentials, http, appSignedOut)),
             Layer.provideMerge(GitHubQuota.layer),
             Layer.provideMerge(SourceControlRateLimit.layer),
             Layer.merge(TestSourceControlHost.layer()),
@@ -704,52 +731,93 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
-  it.effect("holds background previews once an answer reports the reserve, until it resets", () =>
+  it.effect("turns maintainer edits off without rewriting the pull request's text", () =>
     Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const quota = yield* GitHubQuota.GitHubQuota;
-      const resetAt = "2099-08-13T14:00:00Z";
-      yield* quota.observe("preview-budget.example", graphqlQuota(501, resetAt));
-      mockedExecute.mockReturnValue(
+      mockedExecute.mockImplementation((call) =>
         Effect.succeed(
           output(
-            encodeJson({
-              data: {
-                repository: {
-                  pullRequest: {
-                    number: 7,
-                    title: "Fast previews",
-                    url: "https://preview-budget.example/acme/web/pull/7",
-                    state: "OPEN",
-                    isDraft: false,
-                    createdAt: "2026-07-01T00:00:00Z",
-                    author: null,
-                  },
-                },
-              },
-            }),
-            false,
-            false,
-            graphqlQuota(499, resetAt),
+            encodeJson(
+              call.kind === "graphql" && matches(call, NODE_ID_QUERY) ? nodeIdAnswer("PR_7") : {},
+            ),
           ),
         ),
       );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const input = {
-        cwd: "/w",
-        repository: "acme/web",
-        host: "preview-budget.example",
-        number: 7,
-      };
-      yield* cli.getPullRequestPreview(input);
-      const held = yield* Effect.flip(cli.getPullRequestPreview({ ...input, number: 8 }));
-      expect(held._tag).toBe("SourceControlRateLimitPausedError");
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
-      yield* TestClock.setTime(Date.parse(resetAt));
-      yield* cli.getPullRequestPreview(input);
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-      yield* TestClock.setTime(now);
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* api.updatePullRequest({ ...pullRequestInput, maintainerCanModify: false });
+      expect(variablesOf("mutation UpdatePullRequest")).toEqual([
+        { pullRequestId: "PR_7", maintainerCanModify: false },
+      ]);
     }),
+  );
+
+  it.effect.each(["mixed", "merges", "unavailable"] as const)(
+    "reads stats only for displayed non-merge commits (%s)",
+    (kind) =>
+      Effect.gen(function* () {
+        const oids = kind === "merges" ? ["merge"] : ["regular", "merge"];
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      author: null,
+                      comments: { nodes: [], pageInfo: lastPage },
+                      reviews: { nodes: [], pageInfo: lastPage },
+                      commits: {
+                        nodes: oids.map((oid) => ({
+                          commit: {
+                            id: "node-" + oid,
+                            oid,
+                            messageHeadline: oid,
+                            committedDate: "2026-07-05T00:00:00Z",
+                            parents: { totalCount: oid === "merge" ? 2 : 1 },
+                            authors: { nodes: [] },
+                          },
+                        })),
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        if (kind === "unavailable") {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}", false, false, {}, 503)));
+        } else if (kind !== "merges") {
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                encodeJson({
+                  data: {
+                    nodes: [{ __typename: "Commit", oid: "regular", additions: 18, deletions: 7 }],
+                  },
+                }),
+              ),
+            ),
+          );
+        }
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+        expect(activity.commits.map((commit) => commit.oid)).toEqual(oids);
+        expect(activity.commits.find((commit) => commit.oid === "merge")).not.toHaveProperty(
+          "additions",
+        );
+        expect(activity.commits.find((commit) => commit.oid === "merge")).not.toHaveProperty(
+          "deletions",
+        );
+        if (kind === "mixed") {
+          expect(activity.commits[0]).toMatchObject({ additions: 18, deletions: 7 });
+        } else if (kind === "unavailable") {
+          expect(activity.commits[0]).not.toHaveProperty("additions");
+        }
+        expect(variablesOf("PullRequestCommitStats")).toEqual(
+          kind === "merges" ? [] : [{ ids: ["node-regular"] }],
+        );
+        expect(mockedExecute).toHaveBeenCalledTimes(kind === "merges" ? 1 : 2);
+      }),
   );
 
   it.effect("loads the complete hover card with one GraphQL request", () =>
@@ -946,55 +1014,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("fingerprints watched pull requests on one host in one read", () =>
-    Effect.gen(function* () {
-      const node = (comments: number) => ({
-        state: "OPEN",
-        mergeable: "MERGEABLE",
-        headRefOid: "abc123",
-        comments: { totalCount: comments, nodes: [] },
-        reviews: { totalCount: 0, nodes: [] },
-        reviewThreads: { totalCount: 0 },
-        commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
-      });
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              data: {
-                _0_repository: { pullRequest: node(1) },
-                _1_repository: { pullRequest: null },
-              },
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const reads = yield* Effect.forEach(
-        [7, 8],
-        (number) =>
-          cli.getPullRequestWatchFingerprint({
-            cwd: "/w",
-            repository: "acme/web",
-            host: "github.com",
-            number,
-          }),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.forkChild);
-      yield* TestClock.adjust("10 millis");
-      const [seven, eight] = yield* Fiber.join(reads);
-
-      expect(seven?.remarks.startsWith("1 ")).toBe(true);
-      expect(eight).toBeNull();
-      expect(mockedExecute).toHaveBeenCalledOnce();
-      expect(queryAt(0)).toContain(
-        "_1_repository:repository(owner:$_1_owner name:$_1_name){pullRequest(number:$_1_number)",
-      );
-      expect(varsAt(0)).toMatchObject({ _1_owner: "acme", _1_name: "web", _1_number: 8 });
-    }),
-  );
-
   it.effect(
     "fails only the pull request GitHub cannot find, and answers the rest of its batch",
     () =>
@@ -1061,7 +1080,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
         expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
         expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
-        // One request answered both; nothing was read again on its own.
         expect(mockedExecute).toHaveBeenCalledOnce();
         expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
       }),
@@ -1119,57 +1137,43 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("fetches layer titles only when the caller asks for stack details", () =>
+  it.effect("revalidates a polled stack, per credential, so an unchanged one costs no quota", () =>
     Effect.gen(function* () {
-      const minimal = {
-        url: "https://api.github.com/repos/acme/web/stacks/3",
-        number: 3,
-        base: { ref: "main" },
-        pull_requests: [
-          { number: 7, head: { ref: "feat/two", sha: "abc123" }, state: "open", merged_at: null },
-        ],
-      };
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson([minimal]))));
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              ...minimal,
-              pull_requests: [{ ...minimal.pull_requests[0], title: "Second layer", draft: false }],
-            }),
-          ),
-        ),
+      const listing = encodeJson([
+        {
+          number: 4,
+          url: "https://api.github.com/repos/acme/poll/stacks/4",
+          base: { ref: "main" },
+          pull_requests: [
+            { number: 9, head: { ref: "feat/nine" }, state: "open", merged_at: null },
+          ],
+        },
+      ]);
+      const read = Effect.flatMap(GitHubPullRequestApi.GitHubPullRequestApi, (cli) =>
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/poll",
+          host: "github.com",
+          number: 9,
+        }),
       );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const stack = yield* cli.getPullRequestStack({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        includeDetails: true,
-      });
-      expect(stack?.layers[0]).toMatchObject({
-        title: "Second layer",
-        headSha: "abc123",
-        isDraft: false,
-      });
-      expect(pathAt(1)).toBe("repos/acme/web/stacks/3");
-    }),
-  );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listing, false, false, { etag: 'W/"v1"' })),
+      );
+      const first = yield* read;
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("", false, false, {}, 304)));
+      const second = yield* read;
+      mockedCredential.mockImplementationOnce(() =>
+        Effect.succeed({ token: Redacted.make("other"), fingerprint: "github.com:other" }),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(listing)));
+      yield* read;
 
-  it.effect("reads an empty stacks listing as not stacked", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const stack = yield* cli.getPullRequestStack({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-
-      assert.isNull(stack);
+      assert.deepStrictEqual(second, first);
+      expect(callAt(0)).not.toHaveProperty("ifNoneMatch");
+      expect(callAt(1)).toMatchObject({ ifNoneMatch: 'W/"v1"' });
+      // Another account never revalidates the first account's answer.
+      expect(callAt(2)).not.toHaveProperty("ifNoneMatch");
     }),
   );
 
@@ -1242,49 +1246,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reports a stacks answer it cannot read against the stack read", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('[{"id":42}]')));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.getPullRequestStack({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
-      if (error._tag !== "GitHubPullRequestReadError") return;
-      assert.strictEqual(error.operation, "getPullRequestStack");
-    }),
-  );
-
-  it.effect("asks for one row more than the page, to probe for a next page", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const batch = yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      assert.strictEqual(batch.items.length, 3);
-      assert.isFalse(batch.truncated);
-      expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.com" });
-      expect(searchOfCall(0)).toBe("is:pr is:open sort:updated-desc repo:acme/web");
-      expect(varsAt(0)["first"]).toBe(11);
-    }),
-  );
-
   it.effect("reports truncation from the extra row, counted before decoding", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(11, 1))));
@@ -1335,80 +1296,98 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("excludes merged pull requests from the Closed tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
+  /**
+   * Lists a repository GitHub will not return, answering credential lookups in turn (the last
+   * answer repeats; `undefined` is no credential), and returns the error with the tokens sent.
+   */
+  const listUnreadableRepository = (
+    ...lookups: ReadonlyArray<
+      | { readonly token: string; readonly source: GitHubCredentials.GitHubCredentialSource }
+      | undefined
+    >
+  ) => {
+    mockedExecute.mockClear();
+    let lookup = 0;
+    mockedCredential.mockImplementation((host) =>
+      Effect.suspend(() => {
+        const held = lookups[Math.min(lookup++, lookups.length - 1)];
+        return held === undefined
+          ? Effect.fail(
+              new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                host,
+                operation: "credential",
+              }),
+            )
+          : Effect.succeed({
+              token: Redacted.make(held.token),
+              fingerprint: `${host}:${held.token}`,
+              source: held.source,
+            });
+      }),
+    );
+    route(
+      ["PullRequestSearch", { data: { search: { pageInfo: lastPage, nodes: [] } } }],
+      [
+        "PullRequestList",
+        {
+          data: { repository: null },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              path: ["repository"],
+              message: "Could not resolve to a Repository with the name 'acme/private'.",
+            },
+          ],
+        },
+      ],
+    );
+    return GitHubPullRequestProvider.make.pipe(
+      Effect.flatMap((provider) =>
+        Effect.flip(
+          provider.listChangeRequests({
+            cwd: "/w",
+            repository: "acme/private",
+            host: "github.com",
+            state: "open",
+            involvement: "all",
+            viewer: "bilal",
+            limit: 10,
+          }),
         ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(searchOfCall(0)).toBe("is:pr is:closed is:unmerged sort:updated-desc repo:acme/web");
-    }),
-  );
-
-  it.effect("narrows to the author on the authored tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
+      ),
+      Effect.map((error) => ({
+        error,
+        sentWith: mockedExecute.mock.calls.map(([call]) =>
+          call.kind === "graphql" ? call.authorization : undefined,
         ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      })),
+    );
+  };
 
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "authored",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(searchOfCall(0)).toBe("is:pr is:open author:bilal sort:updated-desc repo:acme/web");
-    }),
-  );
-
-  it.effect("narrows through search on the reviewing tab", () =>
+  it.effect("names the credential GitHub would not return a repository to", () =>
     Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
+      // The saved token is replaced mid-read; every request still goes out with the one named.
+      const saved = yield* listUnreadableRepository(
+        { token: "first", source: "settings" },
+        { token: "replaced", source: "settings" },
       );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(saved.error.accessHint).toContain("saved GitHub token");
+      assert.isAbove(saved.sentWith.length, 1);
+      for (const authorization of saved.sentWith) expect(authorization).toContain("first");
 
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 10,
-      });
+      // The policy hands what the app cannot see to the gh login, which GitHub refuses too.
+      mockedAppToken.mockReturnValue(Effect.succeedSome("app"));
+      const app = { token: "app", source: "app" } as const;
+      const gh = { token: "personal", source: "gh" } as const;
+      const retried = yield* listUnreadableRepository(app, gh);
+      expect(retried.error.accessHint).toContain("gh login");
+      expect(retried.sentWith).toEqual(["Bearer app", "Bearer app", "Bearer personal"]);
 
-      expect(searchOfCall(0)).toBe(
-        "is:pr is:open review-requested:bilal sort:updated-desc repo:acme/web",
-      );
+      // With no gh login when the app is refused, the app made the last request; a login that
+      // turns up afterwards is not named.
+      const appOnly = yield* listUnreadableRepository(app, undefined, gh);
+      assert.isUndefined(appOnly.error.accessHint);
+      expect(appOnly.sentWith).toEqual(["Bearer app", "Bearer app"]);
     }),
   );
 
@@ -1434,28 +1413,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         searchQueryOfCall(0),
         'is:pr is:closed is:unmerged review-requested:bilal "pull requests page" ' +
           "updated:<=2026-07-02T00:00:00Z sort:updated-desc repo:acme/web repo:pingdotgg/t3code",
-      );
-    }),
-  );
-
-  it.effect("narrows a search to the author, and to merged on the merged tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(searchPage([])));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.searchPullRequests({
-        cwd: "/w",
-        host: "github.com",
-        repositories: ["acme/web"],
-        state: "merged",
-        involvement: "authored",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      assert.strictEqual(
-        searchQueryOfCall(0),
-        "is:pr is:merged author:bilal sort:updated-desc repo:acme/web",
       );
     }),
   );
@@ -1690,28 +1647,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("skips membership enrichment for empty pages and enterprise hosts", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(emptyList()));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 7))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const input = {
-        cwd: "/w",
-        repository: "acme/web",
-        state: "open" as const,
-        involvement: "all" as const,
-        viewer: "bilal",
-        limit: 2,
-      };
-      const empty = yield* cli.listPullRequests({ ...input, host: "github.com" });
-      const enterprise = yield* cli.listPullRequests({ ...input, host: "github.acme.test" });
-      expect(empty.items).toEqual([]);
-      expect(enterprise.items.map((item) => item.number)).toEqual([7]);
-      expect(mockedStackMemberships).not.toHaveBeenCalled();
-    }),
-  );
-
   it.effect("reads the line counts in chunks, and files them back by position", () =>
     Effect.gen(function* () {
       const changeRequests = Array.from({ length: 26 }, (_, index) => ({
@@ -1719,8 +1654,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: index + 1,
       }));
       mockedExecute.mockImplementation((call) =>
-        // Every chunk finds only its first pull request, so a row GitHub had nothing for is
-        // dropped rather than shown as a change of no size.
         Effect.succeed(
           output(
             encodeJson({
@@ -1751,79 +1684,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       ]);
       expect(queryAt(0)).toContain("_0_repository:repository(owner:$_0_owner name:$_0_name)");
       expect(varsAt(0)).toMatchObject({ _0_owner: "acme", _0_name: "web", _24_number: 25 });
-    }),
-  );
-
-  it.effect("refuses to look up counts for a repository GitHub cannot address", () =>
-    Effect.gen(function* () {
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const failure = yield* Effect.flip(
-        cli.listPullRequestStats({
-          cwd: "/w",
-          host: "github.com",
-          changeRequests: [{ repository: 'acme/web") { x } #', number: 1 }],
-        }),
-      );
-
-      assert.strictEqual(failure._tag, "GitHubRepositorySelectorError");
-      assert.strictEqual(mockedExecute.mock.calls.length, 0);
-    }),
-  );
-
-  it.effect("hands a search to GitHub rather than to the rows already read", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        query: "pull requests page",
-      });
-
-      expect(searchOfCall(0)).toBe(
-        'is:pr is:open "pull requests page" sort:updated-desc repo:acme/web',
-      );
-    }),
-  );
-
-  it.effect("joins a search onto the tab's own qualifiers instead of replacing them", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 10,
-        query: "page",
-      });
-
-      expect(searchOfCall(0)).toBe(
-        'is:pr is:closed is:unmerged review-requested:bilal "page" sort:updated-desc repo:acme/web',
-      );
     }),
   );
 
@@ -1975,83 +1835,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "falls back for a repository the index does not cover even under a judgeable filter",
-    () =>
-      Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(output(listedPullRequests(2, 1, (number) => ({ isDraft: number === 1 })))),
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-        const batch = yield* cli.listPullRequests({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          state: "open",
-          involvement: "all",
-          viewer: "bilal",
-          limit: 10,
-          filters: { draft: "hide" },
-        });
-
-        expect(searchOfCall(1)).toBeUndefined();
-        expect(batch.items.map((item) => item.number)).toEqual([2]);
-      }),
-  );
-
-  it.effect("carries the further narrowings into a batched search", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(searchPage([])));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.searchPullRequests({
-        cwd: "/w",
-        host: "github.com",
-        repositories: ["acme/web"],
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        filters: { draft: "only", review: "none", labels: [["bug"]] },
-      });
-
-      assert.strictEqual(
-        searchQueryOfCall(0),
-        'is:pr is:open label:"bug" draft:true review:none sort:updated-desc repo:acme/web',
-      );
-    }),
-  );
-
-  it.effect("quotes a search, so it cannot add a qualifier or a flag of its own", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        query: '-- is:merged label:secret "widen me"',
-      });
-
-      expect(searchOfCall(0)).toBe(
-        String.raw`is:pr is:open "-- is:merged label:secret \"widen me\"" sort:updated-desc repo:acme/web`,
-      );
-    }),
-  );
-
   it.effect("escapes a backslash before the quote it would otherwise let out", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
@@ -2077,32 +1860,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(searchOfCall(0)).toBe(
         String.raw`is:pr is:open "a\\\" is:merged" sort:updated-desc repo:acme/web`,
       );
-    }),
-  );
-
-  it.effect("asks for nothing but the order when the reader typed only spaces", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        query: "   ",
-      });
-
-      expect(searchOfCall(0)).toBe("is:pr is:open sort:updated-desc repo:acme/web");
     }),
   );
 
@@ -2147,31 +1904,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(batch.items.length, 0);
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
-    }),
-  );
-
-  it.effect("reads a repository GitHub will not search from its own list", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(3, 1, () => ({ state: "CLOSED" })))),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const batch = yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      assert.strictEqual(batch.items.length, 3);
-      expect(searchOfCall(1)).toBeUndefined();
-      expect(varsAt(1)).toMatchObject({ owner: "acme", name: "web", states: ["CLOSED", "MERGED"] });
-      assert.isFalse(batch.continues);
     }),
   );
 
@@ -2243,76 +1975,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("bounds a sparse search-free fallback and reports the unread tail", () =>
-    Effect.gen(function* () {
-      let listed = 0;
-      mockedExecute.mockImplementation((call) => {
-        if (call.kind !== "graphql" || call.operationName !== "PullRequestList") {
-          return Effect.succeed(emptySearch());
-        }
-        const first = Number(call.variables?.["first"]);
-        const nodes = rows(first, listed + 1, () => ({
-          reviewRequests: [{ login: "somebody-else" }],
-        }));
-        listed += first;
-        return Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  pullRequests: { pageInfo: { hasNextPage: true, endCursor: `c${listed}` }, nodes },
-                },
-              },
-            }),
-          ),
-        );
-      });
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const batch = yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 2,
-      });
-
-      const last = mockedExecute.mock.calls.length - 1;
-      expect(varsAt(last)["after"]).toBe(`c${listed - 100}`);
-      expect(listed - (3 + 6 + 12 + 24 + 48 + 96 + 192 + 384 + 768)).toBe(1000);
-      assert.strictEqual(batch.items.length, 0);
-      assert.isTrue(batch.truncated);
-    }),
-  );
-
-  it.effect("takes an empty slice for a repository that has run out, not one to read again", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-    }),
-  );
-
   const actionState = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       repository: {
@@ -2334,55 +1996,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       },
     },
   });
-
-  it.effect("updates a stale branch with a merge commit unless asked to rebase", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "update-branch",
-      });
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "update-branch",
-        updateMethod: "rebase",
-      });
-
-      expect(variablesOf("updatePullRequestBranch(")).toEqual([
-        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
-        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "REBASE" },
-      ]);
-    }),
-  );
-
-  it.effect("merges with the strategy it was asked for", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "merge",
-        mergeMethod: "squash",
-      });
-
-      expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
-      ]);
-      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
-    }),
-  );
 
   it.effect.each([
     {
@@ -2530,20 +2143,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect.each([
     { description: "an open PR", head: { state: "OPEN" }, source: {} },
-    { description: "a missing source repository", head: { headRepository: null }, source: {} },
     { description: "the base branch", head: { headRefName: "main" }, source: {} },
     {
       description: "the default branch",
       head: {},
       source: { defaultBranchRef: { name: "feat/delete" } },
     },
-    { description: "a missing default branch", head: {}, source: { defaultBranchRef: null } },
     {
       description: "a changed branch",
       head: {},
       source: { ref: { target: { __typename: "Commit", oid: "new-commit" } } },
     },
-    { description: "an unavailable source repository", head: {}, source: null },
   ])("refuses to delete $description", ({ head, source }) =>
     Effect.gen(function* () {
       route(
@@ -2723,26 +2333,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("does not fetch a message for rebase merges", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "merge",
-        mergeMethod: "rebase",
-        removeAgentCreditsOnMerge: true,
-      });
-      expect(variablesOf("query PullRequestMergeMessage")).toEqual([]);
-      expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "REBASE" } },
-      ]);
-    }),
-  );
-
   it.effect("refuses to merge when the proposed message cannot be read", () =>
     Effect.gen(function* () {
       route(
@@ -2765,35 +2355,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("arms auto-merge with the same strategy a merge would have used", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "enable-auto-merge",
-        mergeMethod: "squash",
-      });
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "enable-auto-merge",
-      });
-
-      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
-        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
-      ]);
-      expect(variablesOf("mergePullRequest(")).toEqual([]);
-    }),
-  );
-
   it.effect("merges at once when auto-merge is asked of a pull request that is ready now", () =>
     Effect.gen(function* () {
       route(["query PullRequestActionState", actionState({ mergeStateStatus: "CLEAN" })]);
@@ -2812,41 +2373,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
       ]);
       expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
-    }),
-  );
-
-  it.effect("takes auto-merge back off without naming a strategy", () =>
-    Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "disable-auto-merge",
-        mergeMethod: "squash",
-      });
-
-      expect(variablesOf("disablePullRequestAutoMerge(")).toEqual([{ pullRequestId: "PR_7" }]);
-    }),
-  );
-
-  it.effect("opens a pull request that reverts a merged pull request", () =>
-    Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "revert",
-      });
-
-      expect(variablesOf("revertPullRequest(")).toEqual([{ pullRequestId: "PR_7" }]);
     }),
   );
 
@@ -2899,8 +2425,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         action: "approve-workflows",
       });
 
-      // Open pull requests on this head branch, and runs scoped to this exact head.
-      // The first page sends no cursor at all, which reads from the start.
       expect(variablesOf("PullRequestHeads")[0]).toEqual({
         owner: "acme",
         name: "web",
@@ -3156,24 +2680,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("returns a pull request to draft by converting it", () =>
-    Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "draft",
-      });
-
-      expect(variablesOf("convertPullRequestToDraft(")).toEqual([{ pullRequestId: "PR_7" }]);
-      expect(variablesOf("markPullRequestReadyForReview(")).toEqual([]);
-    }),
-  );
-
   it.effect("sends a comment body as a variable, never inside the document", () =>
     Effect.gen(function* () {
       route([NODE_ID_QUERY, nodeIdAnswer("PR_7")]);
@@ -3221,48 +2727,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("asks a GitHub Enterprise host for its own review threads", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listReviewThreadComments({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.acme.dev",
-        number: 7,
-      });
-
-      expect(callAt(0).host).toBe("github.acme.dev");
-      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
-    }),
-  );
-
-  it.effect("serves a diff GitHub hands over whole in one request, with no next slice", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("diff --git a/a b/a")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const diff = yield* cli.getPullRequestDiff({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-
-      assert.strictEqual(diff.patch, "diff --git a/a b/a");
-      assert.isNull(diff.nextCursor);
-      assert.isFalse(diff.truncated);
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      const call = callAt(0);
-      assert.strictEqual(call.kind, "rest");
-      if (call.kind === "rest") {
-        assert.strictEqual(call.path, "repos/acme/web/pulls/7");
-        assert.strictEqual(call.accept, "application/vnd.github.diff");
-      }
-    }),
-  );
-
   it.effect("reads one files page when GitHub refuses the diff, and says it is the last", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
@@ -3301,25 +2765,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.isFalse(diff.truncated);
       assert.isNotNull(diff.nextCursor);
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-    }),
-  );
-
-  it.effect("carries on from a cursor without asking for the whole diff again", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
-
-      const first = yield* cli.getPullRequestDiff(target);
-      assert.isNotNull(first.nextCursor);
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 100))));
-      const second = yield* cli.getPullRequestDiff({ ...target, cursor: first.nextCursor });
-
-      assert.isNull(second.nextCursor);
-      expect(second.patch).toContain("diff --git a/src/file100.ts b/src/file100.ts");
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      assert.strictEqual(pathAt(2), "repos/acme/web/pulls/7/files?per_page=100&page=2");
     }),
   );
 
@@ -3364,33 +2809,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         pathAt(0),
         "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=100&page=1",
       );
-    }),
-  );
-
-  it.effect("pages inside a commit the way it pages the pull request's own files", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(`{"files":${pullRequestFiles(100, 0)}}`)),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const target = {
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        commit: "a1b2c3d",
-      };
-
-      const first = yield* cli.getPullRequestDiff(target);
-      assert.isNotNull(first.nextCursor);
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(`{"files":${pullRequestFiles(4, 100)}}`)),
-      );
-      const second = yield* cli.getPullRequestDiff({ ...target, cursor: first.nextCursor });
-
-      assert.isNull(second.nextCursor);
-      expect(second.patch).toContain("src/file100.ts");
-      assert.strictEqual(pathAt(1), "repos/acme/web/commits/a1b2c3d?per_page=100&page=2");
     }),
   );
 
@@ -3439,6 +2857,34 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("expands a pull request file from its merge base, not the moved base tip", () =>
+    Effect.gen(function* () {
+      const answers: Record<string, string> = {
+        "repos/acme/web/pulls/7": pullRequestRefs,
+        "repos/acme/web/compare/a1b2c3d...b1c2d3e?per_page=1&page=2": pullRequestMergeBase,
+        "repos/acme/web/contents/src/a.ts?ref=a1b2c3d": "base tip\n",
+        "repos/acme/web/contents/src/a.ts?ref=c1d2e3f": "merge base\n",
+        "repos/acme/web/contents/src/a.ts?ref=b1c2d3e": "head\n",
+      };
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(output(call.kind === "rest" ? (answers[call.path] ?? "") : "")),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const contents = yield* cli.getPullRequestDiffFileContents({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        changeType: "change",
+        oldPath: "src/a.ts",
+        newPath: "src/a.ts",
+      });
+
+      expect(contents).toEqual({ oldContents: "merge base\n", newContents: "head\n" });
+    }),
+  );
+
   it.effect("reports unusable diff revisions as a structured error", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("not-a-sha\tstill-not-a-sha\n")));
@@ -3465,36 +2911,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reports an oversized diff file with its path and reason", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("partial", true)));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.getPullRequestDiffFileContents({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          changeType: "deleted",
-          oldPath: "src/large.ts",
-          newPath: "src/large.ts",
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubDiffFileContentsUnavailableError");
-      if (error._tag === "GitHubDiffFileContentsUnavailableError") {
-        assert.strictEqual(error.path, "src/large.ts");
-        assert.strictEqual(error.reason, "oversized");
-      }
-      assert.strictEqual(pathAt(1), "repos/acme/web/contents/src/large.ts?ref=a1b2c3d");
-    }),
-  );
-
   it.effect("reports undecodable diff file contents as binary", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestMergeBase)));
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("binary�contents", false, true)));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3521,6 +2941,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("returns valid text containing a literal replacement character", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestMergeBase)));
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("before�after")));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -3575,74 +2996,127 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("skips the avatar lookup when a listing named nobody", () =>
+  it.effect("verifies a REST-forbidden account through GraphQL with the pinned credential", () =>
     Effect.gen(function* () {
+      const input = { cwd: "/w", host: "github.identity-fallback.test" };
+      const original = {
+        token: Redacted.make("original-token"),
+        fingerprint: `${input.host}:original`,
+      };
+      mockedCredential.mockReturnValue(Effect.succeed(original));
+      mockedExecute.mockImplementation((call) =>
+        Effect.gen(function* () {
+          expect(yield* SourceControlRateLimit.CredentialScope).toBe(original.fingerprint);
+          if (call.kind === "rest") {
+            expect(call.path).toBe("user");
+            expect(yield* GitHubRequestPolicy.PinnedGitHubCredential).toMatchObject({
+              host: input.host,
+              credentialFingerprint: original.fingerprint,
+            });
+            mockedCredential.mockReturnValue(
+              Effect.succeed({
+                token: Redacted.make("replacement-token"),
+                fingerprint: `${input.host}:replacement`,
+              }),
+            );
+            return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+              host: input.host,
+              operation: "getRoutingIdentity",
+              status: 403,
+              githubErrors: ["Resource not accessible by integration"],
+            });
+          }
+          expect(call.host).toBe(input.host);
+          expect(call.authorization).toBe("Bearer original-token");
+          expect(call.query).toMatch(/viewer\s*\{/);
+          expect(call.query).toContain("databaseId");
+          expect(call.query).toContain("login");
+          return output(
+            '{"data":{"viewer":{"databaseId":789,"login":"acme-app[bot]"}}}',
+            false,
+            false,
+            graphqlQuota(0),
+          );
+        }),
+      );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const quota = yield* GitHubQuota.GitHubQuota;
+      yield* quota
+        .observe(input.host, graphqlQuota(1))
+        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, original.fingerprint));
+      const identity = { accountId: "789", viewer: "acme-app[bot]" };
+      expect(yield* cli.getRoutingIdentity(input)).toEqual(identity);
 
-      const avatars = yield* cli.listActorAvatars({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        ids: [],
-      });
+      mockedCredential.mockReturnValue(Effect.succeed(original));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual(identity);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
 
-      assert.strictEqual(avatars.size, 0);
-      assert.strictEqual(mockedExecute.mock.calls.length, 0);
-    }),
-  );
-
-  it.effect("looks up avatars by node id in one GraphQL read", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                nodes: [
-                  { __typename: "User", login: "octocat", avatarUrl: "https://avatars/octocat" },
-                ],
-              },
-            }),
+      const exhausted = yield* quota
+        .admit(input.host, "graphql")
+        .pipe(
+          Effect.provideService(SourceControlRateLimit.CredentialScope, original.fingerprint),
+          Effect.flip,
+        );
+      expect(exhausted._tag).toBe("SourceControlRateLimitPausedError");
+      yield* quota
+        .admit(input.host, "graphql")
+        .pipe(
+          Effect.provideService(
+            SourceControlRateLimit.CredentialScope,
+            `${input.host}:replacement`,
           ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        );
+    }),
+  );
 
-      const avatars = yield* cli.listActorAvatars({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        ids: ["MDQ6VXNlcjE="],
+  it.effect("rejects a null GraphQL account id without caching it", () =>
+    Effect.gen(function* () {
+      const input = { cwd: "/w", host: "github.identity-null.test" };
+      const forbidden = new GitHubRequestPolicy.GitHubApiResponseError({
+        host: input.host,
+        operation: "getRoutingIdentity",
+        status: 403,
       });
-
-      expect(varsAt(0)).toEqual({ ids: ["MDQ6VXNlcjE="] });
-      expect(avatars.get("octocat")).toBe("https://avatars/octocat");
-    }),
-  );
-
-  it.effect("fails when the authenticated account has no login", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
+      mockedExecute
+        .mockReturnValueOnce(Effect.fail(forbidden))
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"databaseId":null,"login":"acme-app[bot]"}}}')),
+        )
+        .mockReturnValueOnce(Effect.fail(forbidden))
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"databaseId":789,"login":"acme-app[bot]"}}}')),
+        );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
-
-      assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
+      const error = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubViewerLoginUnavailableError");
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "789",
+        viewer: "acme-app[bot]",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
     }),
   );
 
-  it.effect("looks up the authenticated account on the requested enterprise host", () =>
+  // regression: #18780 credentials that cannot read /user still load pull requests
+  it.effect.each([
+    new GitHubRequestPolicy.GitHubApiAuthenticationError({
+      host: "github.identity-auth-error.test",
+      operation: "getRoutingIdentity",
+    }),
+    new GitHubRequestPolicy.GitHubApiResponseError({
+      host: "github.identity-server-error.test",
+      operation: "getRoutingIdentity",
+      status: 500,
+    }),
+  ])("preserves $_tag from REST identity verification without trying GraphQL", (error) =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output('{"id":456,"login":"enterprise-user"}')),
+      mockedExecute.mockReturnValue(Effect.fail(error));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(yield* cli.getRoutingIdentity({ cwd: "/w", host: error.host }).pipe(Effect.flip)).toBe(
+        error,
       );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
-
-      expect(login).toBe("enterprise-user");
-      expect(mockedCredential).toHaveBeenCalledWith("github.acme.com");
-      expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(callAt(0)).toMatchObject({ kind: "rest", path: "user" });
     }),
   );
 
@@ -3690,84 +3164,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("sends a whole review as one request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.submitReview({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        verdict: "approve",
-        body: "Looks right.",
-        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(restCallsTo("/reviews")).toMatchObject([
-        {
-          method: "POST",
-          path: "repos/acme/web/pulls/7/reviews",
-          body: {
-            event: "APPROVE",
-            body: "Looks right.",
-            comments: [{ path: "src/a.ts", line: 4, side: "RIGHT", body: "nit" }],
-          },
-        },
-      ]);
-    }),
-  );
-
-  it.effect("sends a reply body as a variable, never inside the document", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.replyToReviewThread({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        threadId: "PRRT_1",
-        body: "Fixed in 42ff8ec.",
-      });
-
-      expect(variablesOf("addPullRequestReviewThreadReply(")).toEqual([
-        { threadId: "PRRT_1", body: "Fixed in 42ff8ec." },
-      ]);
-      expect(queryAt(0)).not.toContain("Fixed in 42ff8ec.");
-    }),
-  );
-
-  it.effect("resolves and unresolves through the mutation each one needs", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReviewThreadResolution({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.acme.dev",
-        threadId: "PRRT_1",
-        resolved: true,
-      });
-      yield* cli.setReviewThreadResolution({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.acme.dev",
-        threadId: "PRRT_1",
-        resolved: false,
-      });
-
-      expect(queryAt(0)).toContain("resolveReviewThread(");
-      expect(queryAt(0)).not.toContain("unresolveReviewThread(");
-      expect(queryAt(1)).toContain("unresolveReviewThread(");
-      expect([varsAt(0), varsAt(1)]).toEqual([{ threadId: "PRRT_1" }, { threadId: "PRRT_1" }]);
-      expect([callAt(0).host, callAt(1).host]).toEqual(["github.acme.dev", "github.acme.dev"]);
-    }),
-  );
-
   it.effect("confirms a given subject belongs to the named pull request, then reacts to it", () =>
     Effect.gen(function* () {
       route([SUBJECT_SCOPE_QUERY, subjectScope("IC_1", "PR_kwDOA")]);
@@ -3799,8 +3195,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson({
               data: {
                 repository: { pullRequest: { id: "PR_thisOne" } },
-                // A comment on pull request #99 of a different repository, named as though it
-                // belonged to #7 here.
                 node: {
                   __typename: "IssueComment",
                   id: "IC_99",
@@ -3830,231 +3224,112 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("looks up the pull request's own node id when no subject was given", () =>
+  // regression: #19564 only a refused reviewer path is retried; other failures surface as-is
+  it.effect.each([
+    {
+      name: "check path",
+      errors: [
+        {
+          ...refusedReviewer,
+          path: ["repository", "pullRequest", "commits", "nodes", 0, "commit", "statusCheckRollup"],
+        },
+      ],
+    },
+    { name: "HTTP 403", errors: [refusedReviewer], status: 403 },
+    {
+      name: "GraphQL rate limit",
+      errors: [refusedReviewer, { message: "API rate limit exceeded", type: "RATE_LIMITED" }],
+      tag: "GitHubApiRateLimitError",
+    },
+  ])("does not retry a reviewer refusal with $name", ({ name, errors, status = 200, tag }) =>
     Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_kwDOA")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReaction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 21,
-        content: "rocket",
-        reacted: true,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(variablesOf(NODE_ID_QUERY)).toEqual([{ owner: "acme", name: "web", number: 21 }]);
-      expect(variablesOf("addReaction(")).toEqual([{ subjectId: "PR_kwDOA", content: "ROCKET" }]);
-    }),
-  );
-
-  it.effect("takes a reaction back through the remove mutation", () =>
-    Effect.gen(function* () {
-      route([SUBJECT_SCOPE_QUERY, subjectScope("IC_1", "PR_kwDOA")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReaction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        subjectId: "IC_1",
-        content: "heart",
-        reacted: false,
-      });
-
-      expect(variablesOf("removeReaction(")).toEqual([{ subjectId: "IC_1", content: "HEART" }]);
-      expect(variablesOf("addReaction(")).toEqual([]);
-    }),
-  );
-
-  it.effect("rewrites only the words a request named", () =>
-    Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_kwDOA")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const rewrite = (fields: { readonly title?: string; readonly body?: string }) =>
-        cli.updatePullRequest({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 22,
-          ...fields,
-        });
-
-      yield* rewrite({ title: "A better title" });
-      yield* rewrite({ body: "A better description." });
-      yield* rewrite({ title: "Both", body: "at once." });
-
-      assert.strictEqual(variablesOf(NODE_ID_QUERY).length, 1);
-      expect(variablesOf("updatePullRequest(")).toEqual([
-        { pullRequestId: "PR_kwDOA", title: "A better title" },
-        { pullRequestId: "PR_kwDOA", body: "A better description." },
-        { pullRequestId: "PR_kwDOA", title: "Both", body: "at once." },
-      ]);
-    }),
-  );
-
-  it.effect("rewrites a remark through the mutation its kind needs", () =>
-    Effect.gen(function* () {
-      route([SUBJECT_SCOPE_QUERY, subjectScope("IC_1", "PR_kwDOA")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const rewrite = (kind: "issue-comment" | "review-comment") =>
-        cli.updateComment({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          commentId: "IC_1",
-          kind,
-          body: "Reworded.",
-        });
-
-      yield* rewrite("issue-comment");
-      yield* rewrite("review-comment");
-
-      expect(variablesOf(SUBJECT_SCOPE_QUERY).map((variables) => variables["subjectId"])).toEqual([
-        "IC_1",
-        "IC_1",
-      ]);
-      expect(variablesOf("updateIssueComment(")).toEqual([
-        { commentId: "IC_1", body: "Reworded." },
-      ]);
-      expect(variablesOf("updatePullRequestReviewComment(")).toEqual([
-        { commentId: "IC_1", body: "Reworded." },
-      ]);
-    }),
-  );
-
-  it.effect("refuses a comment that belongs to a different pull request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
+      mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
-            encodeJson({
-              data: {
-                repository: { pullRequest: { id: "PR_thisOne" } },
-                node: {
-                  __typename: "IssueComment",
-                  id: "IC_99",
-                  pullRequest: { id: "PR_someOtherOne" },
-                },
-              },
-            }),
+            encodeJson(status === 401 ? { message: "Bad credentials" } : { data: null, errors }),
+            false,
+            false,
+            {},
+            status,
           ),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.updateComment({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          commentId: "IC_99",
-          kind: "issue-comment",
-          body: "Reworded.",
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubSubjectScopeError");
-      if (error._tag === "GitHubSubjectScopeError")
-        assert.strictEqual(error.operation, "updateComment");
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      const reads: ReadonlyArray<PullRequestRead> = [
+        cli.getPullRequestDetail,
+        cli.listReviewThreadComments,
+      ];
+      for (const [index, read] of reads.entries()) {
+        const error = yield* read({
+          ...pullRequestInput,
+          host: `github-${name.replaceAll(" ", "-")}-${index}.test`,
+        }).pipe(Effect.asVoid, Effect.flip);
+        expect(error._tag).toBe(tag ?? "GitHubApiResponseError");
+        if (error._tag === "GitHubApiResponseError")
+          expect(error).toMatchObject({ status, githubErrors: errors.map((e) => e.message) });
+        expect(mockedExecute).toHaveBeenCalledTimes(index + 1);
+      }
     }),
   );
 
-  it.effect("fails the read when gh returns something unreadable", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"not found"}')));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
-    }),
-  );
-
-  it.effect("keeps the core detail read separate from conversation activity", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson(
-              coreResponse({
-                title: "Progressive detail",
-                author: {
-                  __typename: "User",
-                  id: "U_octocat",
-                  login: "octocat",
-                  name: null,
-                  avatarUrl: "https://a/o",
-                },
-                body: "Core body",
-                changedFiles: 2,
-              }),
-            ),
-          ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: {
-                  pullRequest: {
-                    author: {
-                      __typename: "User",
-                      login: "octocat",
-                      avatarUrl: "https://a/o",
-                      name: null,
-                    },
-                    commits: { nodes: [] },
-                    comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
-                    reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+  it.effect.each([false, true])(
+    "keeps thread cursors and reviewers after a refusal (later page: %s)",
+    (later) =>
+      Effect.gen(function* () {
+        if (later)
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                reviewThreadsPage([thread("T1", "c1")], "next", [
+                  {
+                    __typename: "User",
+                    login: "prior",
+                    name: null,
+                    avatarUrl: "https://avatars/prior",
                   },
-                },
-              },
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const input = {
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      } as const;
+                ]),
+              ),
+            ),
+          );
+        mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const read = cli.listReviewThreadComments(pullRequestInput);
+        const conversation = yield* read;
+        expect(
+          variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
+        ).toEqual(
+          later
+            ? [
+                [null, 50],
+                ["next", 50],
+                ["next", 0],
+                ["last", 0],
+              ]
+            : [
+                [null, 50],
+                [null, 0],
+                ["last", 0],
+              ],
+        );
+        expect(conversation.comments.map((c) => c.id)).toEqual(
+          later ? ["c1", "c2", "c3"] : ["c2", "c3"],
+        );
+        expect(conversation.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
+        expect(conversation.truncated).toBe(false);
 
-      const detail = yield* cli.getPullRequestDetail(input);
-      const activity = yield* cli.getPullRequestActivity(input);
-
-      expect(detail.body).toBe("Core body");
-      expect(activity.author?.login).toBe("octocat");
-      expect(varsAt(0)).toMatchObject({ number: 7, headRef: "refs/pull/7/head" });
-      expect(queryAt(0)).toContain("viewerCanUpdateBranch");
-      expect(queryAt(0)).not.toContain("reviews(");
-      expect(detail.viewerAccess.mergeCapabilities).toEqual({
-        merge: true,
-        squash: false,
-        rebase: true,
-      });
-      expect(detail.comparison).toEqual({ behindBy: 2, viewerCanUpdate: true });
-      expect(queryAt(1)).toContain("reviews(");
-      expect(varsAt(1)).toMatchObject({ head: true, withComments: true, withReviews: true });
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-    }),
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
+        yield* read;
+        expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
+          after: null,
+          requestedReviewers: 50,
+        });
+      }),
   );
 
   it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
@@ -4136,111 +3411,116 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads every check when the combined response has another page", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson(
-              coreResponse({
-                commits: {
-                  nodes: [
-                    {
-                      commit: {
-                        statusCheckRollup: {
-                          contexts: {
-                            nodes: [
-                              checkRun({
-                                name: "first",
-                                status: "COMPLETED",
-                                conclusion: "SUCCESS",
-                              }),
-                            ],
-                            pageInfo: { hasNextPage: true, endCursor: "c1" },
+  it.effect.each([false, true])(
+    "reads every check when the combined response has another page (reviewer refusal: %s)",
+    (refused) =>
+      Effect.gen(function* () {
+        if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                coreResponse({
+                  commits: {
+                    nodes: [
+                      {
+                        commit: {
+                          statusCheckRollup: {
+                            contexts: {
+                              nodes: [
+                                checkRun({
+                                  name: "first",
+                                  status: "COMPLETED",
+                                  conclusion: "SUCCESS",
+                                }),
+                              ],
+                              pageInfo: { hasNextPage: true, endCursor: "c1" },
+                            },
                           },
                         },
                       },
-                    },
-                  ],
-                },
-              }),
+                    ],
+                  },
+                }),
+              ),
             ),
           ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            checkContextsPage(
-              [
-                checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
-              ],
-              null,
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              checkContextsPage(
+                [
+                  checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
+                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
+                ],
+                null,
+              ),
             ),
           ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const detail = yield* cli.getPullRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      expect(detail.checks).toHaveLength(2);
-      expect(detail.checksState).toBe("failing");
-      expect(detail.checksTruncated).toBe(false);
-      // The whole rollup is walked from its start, so no check is counted twice or skipped.
-      expect(varsAt(1)).toMatchObject({ number: 7 });
-      expect(varsAt(1)).not.toHaveProperty("after");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-    }),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const read = cli.getPullRequestDetail(pullRequestInput);
+        const detail = yield* read;
+        expect(detail.reviewRequestLogins).toEqual([]);
+        expect(detail.reviewRequestTeams).toEqual([]);
+        expect(detail.hasTeamReviewRequest).toBe(false);
+        if (refused)
+          expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
+            100, 0,
+          ]);
+        expect(detail.checks).toHaveLength(2);
+        expect(detail.checksState).toBe("failing");
+        expect(detail.checksTruncated).toBe(false);
+        // The whole rollup is walked from its start, so no check is counted twice or skipped.
+        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
+        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
+
+        if (refused) {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+          yield* read;
+          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 100 });
+        }
+      }),
   );
 
-  it.effect("refuses to combine checks from different head revisions", () =>
-    Effect.gen(function* () {
-      const response = coreResponse({
-        commits: {
-          nodes: [
-            {
-              commit: {
-                statusCheckRollup: {
-                  contexts: {
-                    nodes: [],
-                    pageInfo: { hasNextPage: true },
+  it.effect.each([false, true])(
+    "refuses to combine checks from different head revisions (reviewer refusal: %s)",
+    (refused) =>
+      Effect.gen(function* () {
+        if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        const response = coreResponse({
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [],
+                      pageInfo: { hasNextPage: true },
+                    },
                   },
                 },
               },
-            },
-          ],
-        },
-      });
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              ...response.data.repository.pullRequest,
-              headRefOid: "new-head",
-              reviewRequests: [],
-              labels: [],
-              statusCheckRollup: [],
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
-      expect(error._tag).toBe("GitHubPullRequestReadError");
-    }),
+            ],
+          },
+        });
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(checkContextsPage([], null, "new-head"))),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const error = yield* Effect.flip(
+          cli.getPullRequestDetail({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number: 7,
+          }),
+        );
+        expect(error._tag).toBe("GitHubPullRequestReadError");
+      }),
   );
 
   it.effect("preserves the reserve for automatic detail reads and allows manual checks", () =>
@@ -4325,7 +3605,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // The first page asks from the beginning; the next carries on from where it stopped.
       expect(varsAt(0)["after"]).toBeNull();
       expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
@@ -4443,54 +3722,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "asks for the reader's standing on the repository and on the pull request at once",
-    () =>
-      Effect.gen(function* () {
-        mockedExecute.mockReturnValue(
-          Effect.succeed(
-            output(
-              encodeJson({
-                data: {
-                  repository: {
-                    mergeCommitAllowed: true,
-                    squashMergeAllowed: false,
-                    rebaseMergeAllowed: true,
-                    viewerPermission: "READ",
-                    pullRequest: {
-                      viewerCanUpdate: true,
-                      viewerDidAuthor: true,
-                      headRepository: null,
-                    },
-                  },
-                },
-              }),
-            ),
-          ),
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-        const access = yield* cli.getViewerAccess({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        });
-
-        assert.strictEqual(mockedExecute.mock.calls.length, 1);
-        expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
-        expect(queryAt(0)).toContain("mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed");
-        expect(access).toEqual({
-          mergeCapabilities: { merge: true, squash: false, rebase: true },
-          canWrite: false,
-          canDeleteBranch: false,
-          canTriage: false,
-          canUpdate: true,
-          didAuthor: true,
-        });
-      }),
-  );
-
   it.effect("stops GraphQL reads at the protected reserve until reset", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(
@@ -4502,6 +3733,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   mergeCommitAllowed: true,
                   squashMergeAllowed: false,
                   rebaseMergeAllowed: true,
+                  autoMergeAllowed: true,
                   viewerPermission: "READ",
                   pullRequest: {
                     viewerCanUpdate: true,
@@ -4535,132 +3767,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(error.retryAt, Date.parse("2099-08-13T14:00:00Z"));
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
-    }),
-  );
-
-  it.effect("lets an interactive permission read use the protected reserve", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              encodeJson({
-                data: {
-                  repository: {
-                    mergeCommitAllowed: true,
-                    squashMergeAllowed: false,
-                    rebaseMergeAllowed: true,
-                    viewerPermission: "READ",
-                    pullRequest: {
-                      viewerCanUpdate: true,
-                      viewerDidAuthor: true,
-                      headRepository: null,
-                    },
-                  },
-                },
-              }),
-              false,
-              false,
-              graphqlQuota(499),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              encodeJson({
-                data: {
-                  repository: {
-                    mergeCommitAllowed: true,
-                    squashMergeAllowed: false,
-                    rebaseMergeAllowed: true,
-                    viewerPermission: "READ",
-                    pullRequest: {
-                      viewerCanUpdate: true,
-                      viewerDidAuthor: true,
-                      headRepository: null,
-                    },
-                  },
-                },
-              }),
-            ),
-          ),
-        );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.getViewerAccess({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      const access = yield* cli.getViewerAccess({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        allowReserve: true,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(access).toEqual({
-        mergeCapabilities: { merge: true, squash: false, rebase: true },
-        canWrite: false,
-        canDeleteBranch: false,
-        canTriage: false,
-        canUpdate: true,
-        didAuthor: true,
-      });
-      yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
-    }),
-  );
-
-  it.effect("asks GitHub to review, naming the collection a request is added to", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReviewerRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        reviewers: [
-          { id: "octocat", kind: "user" },
-          { id: "reviewers", kind: "team" },
-        ],
-        requested: true,
-      });
-
-      expect(callAt(0)).toMatchObject({
-        kind: "rest",
-        method: "POST",
-        path: "repos/acme/web/pulls/7/requested_reviewers",
-        body: { reviewers: ["octocat"], team_reviewers: ["reviewers"] },
-      });
-    }),
-  );
-
-  it.effect("takes a request back by deleting from the same collection it was added to", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReviewerRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        reviewers: [{ id: "octocat", kind: "user" }],
-        requested: false,
-      });
-
-      expect(callAt(0)).toMatchObject({
-        kind: "rest",
-        method: "DELETE",
-        path: "repos/acme/web/pulls/7/requested_reviewers",
-        body: { reviewers: ["octocat"], team_reviewers: [] },
-      });
     }),
   );
 
@@ -4716,30 +3822,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ["octocat", true],
         ["hubot", false],
       ]);
-    }),
-  );
-
-  it.effect("puts labels on by posting to the issue's own collection, all at once", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setLabels({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        labels: ["bug", "size:XL"],
-        applied: true,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(callAt(0)).toMatchObject({
-        kind: "rest",
-        method: "POST",
-        path: "repos/acme/web/issues/7/labels",
-        body: { labels: ["bug", "size:XL"] },
-      });
     }),
   );
 
@@ -4853,91 +3935,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.isTrue(viewed.truncated);
-    }),
-  );
-
-  it.effect("clears and restores a burst of files in one request", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(encodeJson({ data: { repository: { pullRequest: { id: "PR_1" } } } })),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setPullRequestFilesViewed({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 23,
-        files: [
-          { path: "src/a.ts", viewed: true },
-          { path: "src/b.ts", viewed: false },
-        ],
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(queryAt(1)).toContain("_0_markFileAsViewed:markFileAsViewed(");
-      expect(queryAt(1)).toContain("_1_unmarkFileAsViewed:unmarkFileAsViewed(");
-      // Each path travels as a variable, so none can be read as part of the document.
-      expect(varsAt(1)).toEqual({
-        _0_pullRequestId: "PR_1",
-        _0_path: "src/a.ts",
-        _0_viewed: true,
-        _1_pullRequestId: "PR_1",
-        _1_path: "src/b.ts",
-        _1_viewed: false,
-      });
-    }),
-  );
-
-  it.effect("asks the host nothing when nothing was pressed", () =>
-    Effect.gen(function* () {
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setPullRequestFilesViewed({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        files: [],
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 0);
-    }),
-  );
-
-  it.effect("looks a pull request's node id up once, however often it is written to", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(encodeJson({ data: { repository: { pullRequest: { id: "PR_24" } } } })),
-          ),
-        )
-        .mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const pullRequest = { cwd: "/w", repository: "acme/web", host: "github.com", number: 24 };
-
-      yield* cli.setPullRequestFilesViewed({
-        ...pullRequest,
-        files: [{ path: "src/a.ts", viewed: true }],
-      });
-      yield* cli.setPullRequestFilesViewed({
-        ...pullRequest,
-        files: [{ path: "src/b.ts", viewed: true }],
-      });
-      yield* cli.updatePullRequest({ ...pullRequest, title: "Ticked through" });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 4);
-      expect(varsAt(0)).toEqual({ owner: "acme", name: "web", number: 24 });
-      expect(
-        [1, 2, 3].map(
-          (index) => varsAt(index)["pullRequestId"] ?? varsAt(index)["_0_pullRequestId"],
-        ),
-      ).toEqual(["PR_24", "PR_24", "PR_24"]);
     }),
   );
 

@@ -1,5 +1,6 @@
 import type { ModelSelection as CursorSdkModelSelection, ModelParameterValue } from "@cursor/sdk";
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ServerProviderModel } from "@t3tools/contracts";
+import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 
 const CURSOR_SDK_PARAMETER_TO_PROVIDER_OPTION: Readonly<Record<string, string>> = {
   context: "contextWindow",
@@ -33,6 +34,25 @@ export function cursorSdkParameterPriority(parameterId: string): number {
     default:
       return 4;
   }
+}
+
+export function cursorContextWindowTokens(
+  modelSelection: ModelSelection,
+  models: ReadonlyArray<ServerProviderModel>,
+): number | undefined {
+  // The SDK forwards explicit values even when the catalog does not list them.
+  const explicit = modelSelection.options?.find((option) => option.id === "contextWindow");
+  let value = explicit?.value;
+  if (explicit === undefined) {
+    const descriptor = models
+      .find((model) => model.slug === modelSelection.model)
+      ?.capabilities?.optionDescriptors?.find((option) => option.id === "contextWindow");
+    value = getProviderOptionCurrentValue(descriptor);
+  }
+  const match = /^(\d+)([km])$/i.exec(typeof value === "string" ? value.trim() : "");
+  if (match === null) return undefined;
+  const tokens = Number(match[1]) * (match[2]?.toLowerCase() === "m" ? 1_000_000 : 1_000);
+  return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
 }
 
 export function cursorSdkModelSelection(modelSelection: ModelSelection): CursorSdkModelSelection {

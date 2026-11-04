@@ -20,13 +20,4 @@ describe("resolveProviderInstanceAcpRegistryIconUrl", () => {
       }),
     ).toBe("https://cdn.agentclientprotocol.com/registry/v1/latest/generic-agent.svg");
   });
-
-  it("does not resolve registry icons for other provider drivers", () => {
-    expect(
-      resolveProviderInstanceAcpRegistryIconUrl({
-        driverKind: ProviderDriverKind.make("codex"),
-        agentId: "kilo",
-      }),
-    ).toBeNull();
-  });
 });

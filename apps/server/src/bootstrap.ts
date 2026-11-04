@@ -166,43 +166,44 @@ const isFdReady = (fd: number) =>
     }),
   );
 
-const makeBootstrapInputStream = (fd: number) =>
-  Effect.gen(function* () {
-    const platform = yield* HostProcess.Platform;
-    const fdPath = resolveFdPath(fd, platform);
-    return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
-      try: () => {
-        if (fdPath === undefined) {
+const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
+  fd: number,
+) {
+  const platform = yield* HostProcess.Platform;
+  const fdPath = resolveFdPath(fd, platform);
+  return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
+    try: () => {
+      if (fdPath === undefined) {
+        return makeDirectBootstrapStream(fd);
+      }
+
+      let streamFd: number | undefined;
+      try {
+        streamFd = NodeFS.openSync(fdPath, "r");
+        return NodeFS.createReadStream("", {
+          fd: streamFd,
+          encoding: "utf8",
+          autoClose: true,
+        });
+      } catch (error) {
+        if (isBootstrapFdPathDuplicationError(error)) {
+          if (streamFd !== undefined) {
+            NodeFS.closeSync(streamFd);
+          }
           return makeDirectBootstrapStream(fd);
         }
-
-        let streamFd: number | undefined;
-        try {
-          streamFd = NodeFS.openSync(fdPath, "r");
-          return NodeFS.createReadStream("", {
-            fd: streamFd,
-            encoding: "utf8",
-            autoClose: true,
-          });
-        } catch (error) {
-          if (isBootstrapFdPathDuplicationError(error)) {
-            if (streamFd !== undefined) {
-              NodeFS.closeSync(streamFd);
-            }
-            return makeDirectBootstrapStream(fd);
-          }
-          throw error;
-        }
-      },
-      catch: (error) =>
-        new BootstrapInputStreamOpenError({
-          fd,
-          platform,
-          ...(fdPath === undefined ? {} : { fdPath }),
-          cause: error,
-        }),
-    });
+        throw error;
+      }
+    },
+    catch: (error) =>
+      new BootstrapInputStreamOpenError({
+        fd,
+        platform,
+        ...(fdPath === undefined ? {} : { fdPath }),
+        cause: error,
+      }),
   });
+});
 
 const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   try {
@@ -222,9 +223,8 @@ const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   }
 };
 
-// Stdin pipes inherited across the wsl.exe boundary report EACCES when we try
-// to re-open them via /proc/self/fd/0 — fall back to reading the fd directly
-// in that case, the same way we already do for ENXIO/EINVAL/EPERM.
+// WSL-inherited stdin pipes cannot be reopened via /proc/self/fd/0 (EACCES),
+// so they must be read directly.
 const isBootstrapFdPathDuplicationError = Predicate.compose(
   Predicate.hasProperty("code"),
   (_) => _.code === "ENXIO" || _.code === "EINVAL" || _.code === "EPERM" || _.code === "EACCES",

@@ -61,6 +61,10 @@ public class T3ReviewDiffModule: Module {
         view.setInitialRowIndex(initialRowIndex)
       }
 
+      Prop("initialFileId") { (view: T3ReviewDiffView, fileId: String) in
+        view.setInitialFileId(fileId)
+      }
+
       Prop("scrollEnabled") { (view: T3ReviewDiffView, enabled: Bool) in
         view.setScrollEnabled(enabled)
       }
@@ -106,8 +110,10 @@ public class T3ReviewDiffModule: Module {
         view.setTokensJson(tokensJson)
       }
 
-      AsyncFunction("setTokensPatchJson") { (view: T3ReviewDiffView, tokensPatchJson: String) in
-        view.setTokensPatchJson(tokensPatchJson)
+      AsyncFunction("setTokensPatchJson") { (view: T3ReviewDiffView, tokensPatchJson: String, promise: Promise) in
+        view.setTokensPatchJson(tokensPatchJson) { accepted in
+          promise.resolve(accepted)
+        }
       }
     }
   }

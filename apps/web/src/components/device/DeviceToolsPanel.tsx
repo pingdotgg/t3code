@@ -1,7 +1,8 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { DevicePermission, DeviceSummary, DeviceTextSize } from "@t3tools/contracts";
 import { ChevronDown, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
@@ -18,7 +19,7 @@ import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import type { DeviceControls } from "./useDeviceControls";
-import { type DeviceEventLogEntry, subscribeDeviceEventLog } from "./deviceHubApi";
+import { deviceEventLogAtom } from "./deviceHubAtoms";
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: "Small" },
@@ -127,7 +128,7 @@ export function DeviceToolsPanel(props: {
 
         <Section title="App">
           <Row label="Foreground">
-            <span className="truncate font-mono text-xs">{foregroundApp?.id ?? "—"}</span>
+            <span className="truncate font-mono text-xs">{foregroundApp?.id ?? "-"}</span>
           </Row>
           {foregroundApp ? (
             <div className="flex gap-1.5">
@@ -311,7 +312,7 @@ export function DeviceToolsPanel(props: {
               onSubmit={(payload) =>
                 foregroundApp
                   ? act({ type: "sendPush", appId: foregroundApp.id, payload })
-                  : Promise.resolve()
+                  : Promise.resolve(false)
               }
             />
             {!foregroundApp ? (
@@ -348,7 +349,7 @@ function SwitchRow(props: {
   readonly label: string;
   readonly checked: boolean | undefined;
   readonly disabled: boolean;
-  readonly onChange: (value: boolean) => Promise<void>;
+  readonly onChange: (value: boolean) => Promise<unknown>;
 }) {
   return (
     <Row label={props.label}>
@@ -369,7 +370,7 @@ function ChoiceSelect<V extends string>(props: {
   readonly options: ReadonlyArray<{ readonly value: V; readonly label: string }>;
   readonly disabled: boolean;
   readonly placeholder?: string;
-  readonly onChange: (value: V) => Promise<void>;
+  readonly onChange: (value: V) => Promise<unknown>;
 }) {
   const current = props.options.find((option) => option.value === props.value);
   return (
@@ -404,13 +405,15 @@ function SubmitRow(props: {
   readonly placeholder: string;
   readonly action: string;
   readonly disabled: boolean;
-  readonly onSubmit: (value: string) => Promise<void>;
+  readonly onSubmit: (value: string) => Promise<boolean>;
 }) {
   const [value, setValue] = useState("");
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    void props.onSubmit(trimmed).then(() => setValue(""));
+    void props.onSubmit(trimmed).then((sent) => {
+      if (sent) setValue("");
+    });
   };
   return (
     <form
@@ -444,8 +447,8 @@ function SubmitRow(props: {
 function LocationSection(props: {
   readonly disabled: boolean;
   readonly canClear: boolean;
-  readonly onSet: (latitude: number, longitude: number) => Promise<void>;
-  readonly onClear: () => Promise<void>;
+  readonly onSet: (latitude: number, longitude: number) => Promise<unknown>;
+  readonly onClear: () => Promise<unknown>;
 }) {
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
@@ -540,7 +543,7 @@ function PermissionsSection(props: {
     appId: string,
     permission: DevicePermission,
     decision: "grant" | "revoke" | "reset",
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }) {
   const [appId, setAppId] = useState("");
   const [permission, setPermission] = useState<DevicePermission>("camera");
@@ -599,31 +602,11 @@ function PermissionsSection(props: {
   );
 }
 
-const EVENT_LOG_LIMIT = 100;
-
 function EventLogSection(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
 }) {
   const [open, setOpen] = useState(false);
-  const [entries, setEntries] = useState<ReadonlyArray<DeviceEventLogEntry>>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    const unsubscribe = subscribeDeviceEventLog(
-      { access: props.access, platform: props.device.platform, deviceId: props.device.id },
-      (incoming, reset) => {
-        setEntries((current) => {
-          const merged = reset ? [...incoming] : [...current, ...incoming];
-          return merged.length > EVENT_LOG_LIMIT ? merged.slice(-EVENT_LOG_LIMIT) : merged;
-        });
-      },
-    );
-    return () => {
-      unsubscribe();
-      setEntries([]);
-    };
-  }, [open, props.access, props.device.id, props.device.platform]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -634,21 +617,36 @@ function EventLogSection(props: {
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-2xs leading-relaxed">
-          {entries.length === 0 ? (
-            <li className="text-muted-foreground">No events yet.</li>
-          ) : (
-            entries.map((entry) => (
-              <li key={entry.id} className="flex gap-2">
-                <span className="shrink-0 text-muted-foreground">
-                  {entry.timestamp.slice(11, 19)}
-                </span>
-                <span className="truncate">{entry.summary}</span>
-              </li>
-            ))
-          )}
-        </ol>
+        <EventLogEntries access={props.access} device={props.device} />
       </CollapsiblePanel>
     </Collapsible>
+  );
+}
+
+// The panel unmounts while closed, so the log streams only while it is open.
+function EventLogEntries(props: {
+  readonly access: DeviceHubAccess;
+  readonly device: DeviceSummary;
+}) {
+  const entries = useAtomValue(
+    deviceEventLogAtom({
+      access: props.access,
+      platform: props.device.platform,
+      deviceId: props.device.id,
+    }),
+  );
+  return (
+    <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-2xs leading-relaxed">
+      {entries.length === 0 ? (
+        <li className="text-muted-foreground">No events yet.</li>
+      ) : (
+        entries.map((entry) => (
+          <li key={entry.id} className="flex gap-2">
+            <span className="shrink-0 text-muted-foreground">{entry.timestamp.slice(11, 19)}</span>
+            <span className="truncate">{entry.summary}</span>
+          </li>
+        ))
+      )}
+    </ol>
   );
 }

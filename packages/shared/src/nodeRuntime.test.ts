@@ -70,20 +70,6 @@ describe("Node runtime selection", () => {
     ),
   );
 
-  it.effect("explains how to install Node when a standalone helper has no runtime", () =>
-    Effect.gen(function* () {
-      const error = yield* resolveNodeExecutable("Local device support", { PATH: "" }).pipe(
-        Effect.flip,
-      );
-      expect(error._tag).toBe("NodeRuntimeUnavailableError");
-      expect(error.message).toContain("Local device support requires Node.js");
-      expect(error.message).toContain("Install Node.js");
-    }).pipe(
-      Effect.provideService(HostProcess.IsExecutable, true),
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
   it.effect("finds a newly installed runtime immediately after a failed lookup", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

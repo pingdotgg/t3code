@@ -1,30 +1,153 @@
 name: Setup CI dependencies
 description: Install Vite+ and the workspace dependencies from cache.
+inputs:
+  task-cache-read-token:
+    description: Read-only credential for the private maintainer task cache
+    required: false
+    default: ""
+  install:
+    description: Set to "false" to set up Vite+ only, with no pnpm store or install
+    required: false
+    default: "true"
+  install-args:
+    description: Arguments for `vp install`, such as filters. Empty installs the whole workspace.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
-    # setup-vp reuses an installed exact version, so restoring its home skips the
-    # installer download on every job.
+    # ~/.vite-plus holds vp, the Node.js runtime, and pnpm. A cache entry never
+    # updates, so the key names all three versions; otherwise a pnpm or Node.js
+    # bump makes every job download them from npm again.
     - name: Resolve Vite+ version
       id: vp
       shell: bash
       run: |
         echo "version=$(sed -nE 's/^  vite-plus: ([0-9][^ ]*)$/\1/p' pnpm-workspace.yaml)" >> "$GITHUB_OUTPUT"
+        echo "node=$(jq -r '.engines.node' package.json)" >> "$GITHUB_OUTPUT"
+        echo "pnpm=$(jq -r '.packageManager' package.json)" >> "$GITHUB_OUTPUT"
 
+    # Pinned because release-desktop.yml signs builds with this action in the job.
     - name: Cache Vite+
+      id: vp_cache
       if: steps.vp.outputs.version != ''
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.vite-plus
-        key: vite-plus-home-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}
+        key: vite-plus-home-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}-node${{ steps.vp.outputs.node }}-${{ steps.vp.outputs.pnpm }}
 
+    # setup-vp always runs the installer, which fetches vp from npm even when
+    # this exact version is installed. A cache hit already has everything, so
+    # skip setup-vp and do its remaining work here. This keeps npm outages from
+    # failing jobs.
+    - name: Use cached Vite+
+      if: steps.vp_cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
+        "$HOME/.vite-plus/bin/vp" env use "${{ steps.vp.outputs.node }}"
+
+    # vp gives each Node.js download attempt 10 minutes by default, so one
+    # stalled stream holds the job that long. It retries 3 times and resumes
+    # partial bytes, so a shorter limit costs a slow download only a retry.
+    - name: Setup Vite+
+      if: steps.vp_cache.outputs.cache-hit != 'true'
+      uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+      env:
+        VP_DOWNLOAD_TIMEOUT: "120"
+      with:
+        node-version-file: package.json
+        cache: false
+        run-install: false
+
+    # A shared key lets whichever install saves first, often a small filtered
+    # one, become every job's store. Each set of install args gets its own.
+    - name: Resolve pnpm store
+      id: pnpm_store
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      run: |
+        echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+        metadata_dir="${pnpm_config_cache_dir:-$RUNNER_TEMP/pnpm-metadata}"
+        echo "pnpm_config_cache_dir=$metadata_dir" >> "$GITHUB_ENV"
+        echo "verified=$metadata_dir/lockfile-verified.jsonl" >> "$GITHUB_OUTPUT"
+        if [[ -z "$INSTALL_ARGS" ]]; then
+          echo "namespace=full" >> "$GITHUB_OUTPUT"
+        else
+          echo "namespace=filtered-$(printf '%s' "$INSTALL_ARGS" | cksum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Filtered installs prefer the current full store, which holds every package,
+    # over an older store of their own.
     # The pnpm store stays a cache tarball on the runner's own disk. A store on a
     # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
     # package across filesystems instead of hard-linking it: install took 28-49s
     # against 9s plus an 11s restore.
-    - name: Setup Vite+
-      uses: voidzero-dev/setup-vp@v1
+    - name: Restore pnpm store
+      id: pnpm_cache
+      if: inputs.install == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
-        node-version-file: package.json
-        cache: true
-        run-install: true
+        path: ${{ steps.pnpm_store.outputs.path }}
+        key: pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+        restore-keys: |
+          pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-
+          pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
+
+    # pnpm accepts an earlier pass for the same lockfile and policy at any age, so
+    # a cached record skips fetching registry metadata for every package.
+    - name: Restore lockfile verification
+      id: pnpm_verified
+      if: inputs.install == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.verified }}
+        key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      # Unquoted so each filter is its own argument.
+      run: vp install $INSTALL_ARGS
+
+    - name: Save lockfile verification
+      if: inputs.install == 'true' && steps.pnpm_verified.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.verified }}
+        key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
+
+    # A filtered install that started from the current full store adds nothing
+    # worth a second copy of it.
+    - name: Save pnpm store
+      if: >-
+        inputs.install == 'true' &&
+        steps.pnpm_cache.outputs.cache-hit != 'true' &&
+        (steps.pnpm_store.outputs.namespace == 'full' ||
+          steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.pnpm_store.outputs.path }}
+        key: ${{ steps.pnpm_cache.outputs.cache-primary-key }}
+
+    - name: Enable shared task cache
+      if: >-
+        github.repository == 'pingdotgg/t3code' &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+        hashFiles('.task-cache.json') != '' &&
+        inputs.task-cache-read-token != ''
+      shell: bash
+      env:
+        T3_TASK_CACHE_READ_TOKEN: ${{ inputs.task-cache-read-token }}
+      run: |
+        node infra/task-cache/scripts/install-ci.ts
+        if [[ ( "$GITHUB_EVENT_NAME" == pull_request && "$GITHUB_BASE_REF" == main ) || ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+          echo 'VP_REMOTE_CACHE=read-write' >> "$GITHUB_ENV"
+        else
+          echo 'VP_REMOTE_CACHE=read' >> "$GITHUB_ENV"
+        fi

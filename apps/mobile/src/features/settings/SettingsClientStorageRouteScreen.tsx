@@ -5,12 +5,12 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachineSymbol";
 import {
   clearClientCacheAtom,
   clientCacheSummaryAtom,
@@ -18,7 +18,7 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
@@ -167,28 +167,15 @@ function CacheEnvironmentRow(props: {
   readonly onClear: () => void;
 }) {
   return (
-    <View
-      className={
-        props.first
-          ? "flex-row items-center gap-3 p-4"
-          : "border-t border-border flex-row items-center gap-3 p-4"
-      }
-    >
-      <EnvironmentMachineSymbol kind={props.machine} size={22} tintColorClassName="accent-icon" />
-      <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
-        {props.environmentLabel}
-      </Text>
-      <Pressable
-        accessibilityLabel={`Clear cache for ${props.environmentLabel}`}
-        accessibilityRole="button"
+    <View className={props.first ? undefined : "border-t border-border"}>
+      <SettingsActionRow
+        icon={ENVIRONMENT_MACHINE_SYMBOLS[props.machine]}
+        label={props.environmentLabel}
+        description={`Clear ${formatBytes(props.environment.payloadBytes)} of cached data`}
+        tone="danger"
         disabled={props.disabled}
         onPress={props.onClear}
-        className="rounded-full px-3 py-2 disabled:opacity-40"
-      >
-        <Text className="font-t3-medium tabular-nums text-danger-foreground" numberOfLines={1}>
-          Clear {formatBytes(props.environment.payloadBytes)}
-        </Text>
-      </Pressable>
+      />
     </View>
   );
 }

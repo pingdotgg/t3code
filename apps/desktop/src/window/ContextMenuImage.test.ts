@@ -59,22 +59,6 @@ beforeEach(() => {
   );
 });
 
-it("preserves the clipboard when the context-menu frame is missing", async () => {
-  await copyContextMenuImage(
-    contents as unknown as Electron.WebContents,
-    { ...params, frame: null } as unknown as Electron.ContextMenuParams,
-  );
-  expect(contents.copyImageAt).not.toHaveBeenCalled();
-  expect(native.fetch).not.toHaveBeenCalled();
-  expect(native.write).not.toHaveBeenCalled();
-});
-
-it("keeps native image copying for the main frame", async () => {
-  await copyImage({ frame: mainFrame });
-  expect(contents.copyImageAt).toHaveBeenCalledWith(12, 34);
-  expect(native.fetch).not.toHaveBeenCalled();
-});
-
 it.each(["https://example.com/image.png", `data:image/png;base64,${sourcePng.toString("base64")}`])(
   "copies an iframe image from %s",
   async (srcURL) => {

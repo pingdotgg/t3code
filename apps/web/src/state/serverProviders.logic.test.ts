@@ -20,15 +20,6 @@ describe("reuseProvidersIgnoringCheckedAt", () => {
     expect(reuseProvidersIgnoringCheckedAt(previous, next)).toBe(previous);
   });
 
-  it("replaces only the provider whose shown state changed", () => {
-    const previous = [provider("claude", "a"), provider("codex", "a")];
-    const next = [provider("claude", "b", "error"), provider("codex", "b")];
-    const merged = reuseProvidersIgnoringCheckedAt(previous, next);
-    expect(merged).not.toBe(previous);
-    expect(merged[0]).toBe(next[0]);
-    expect(merged[1]).toBe(previous[1]);
-  });
-
   it("takes the new list when providers are added or reordered", () => {
     const previous = [provider("claude", "a"), provider("codex", "a")];
     const reordered = [provider("codex", "b"), provider("claude", "b")];

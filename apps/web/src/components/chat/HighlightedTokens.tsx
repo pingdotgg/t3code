@@ -25,10 +25,7 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
   };
 }
 
-/**
- * Suspends while the grammar loads; wrap it in Suspense with the plain text as
- * the fallback.
- */
+/** Suspends during grammar loading; use plain text as the Suspense fallback. */
 export function HighlightedTokens({
   code,
   language,
@@ -52,8 +49,7 @@ export function HighlightedTokens({
     withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
   );
 
-  // A fragment, not the bare array: the compiler only treats this as a component when it
-  // returns JSX, since `use` alone does not count as a hook call for that inference.
+  // The compiler requires JSX to recognize this component; `use` alone does not suffice.
   return (
     <>
       {lines.map(({ key, tokens, ending }) => (
@@ -144,10 +140,7 @@ function restyledLines(
   return lines;
 }
 
-/**
- * Shiki drops `\n` and `\r\n` from tokens alike, so CRLF has to come back from
- * the source.
- */
+/** Restore CRLF from source; Shiki strips both line-ending forms. */
 export function keyedLines<Token extends SyntaxToken>(
   code: string,
   lines: ReadonlyArray<ReadonlyArray<Token>>,

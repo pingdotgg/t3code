@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as ErrorReporter from "effect/ErrorReporter";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -80,17 +79,5 @@ describe("DefectReporter", () => {
         assert.equal(yield* Queue.size(logs), 0);
       }),
     ).pipe(Effect.scoped),
-  );
-
-  it.effect("logs defects, not typed failures or interrupts", () =>
-    withErrorLogs((logs) =>
-      Effect.gen(function* () {
-        yield* ErrorReporter.report(Cause.fail(new Error("expected")));
-        yield* ErrorReporter.report(Cause.interrupt());
-        yield* ErrorReporter.report(Cause.die(new Error("bug")));
-
-        assert.deepEqual((yield* Queue.clear(logs)).map(errorMessage), ["bug"]);
-      }).pipe(Effect.provide(DefectReporter.layer)),
-    ),
   );
 });

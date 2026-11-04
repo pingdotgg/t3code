@@ -19,6 +19,7 @@ import {
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
+  PreviewCaptureFailure,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
   PreviewForwardedShortcut,
@@ -32,6 +33,7 @@ import * as NodeURL from "node:url";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import { normalizeCaptureFailure } from "../../preview/captureErrors.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
@@ -45,9 +47,6 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribeStateChanges((tabId, state) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state),
   );
-  yield* manager.subscribeRecordingFrames((frame) =>
-    electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
-  );
   yield* manager.subscribeRecordingInputs((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, event),
   );
@@ -59,7 +58,7 @@ export const installPreviewEventForwarding = Effect.fn(
   );
 });
 
-export const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
+const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL,
   payload: Schema.Array(PreviewForwardedShortcut).check(Schema.isMaxLength(MAX_KEYBINDINGS_COUNT)),
   result: Schema.Void,
@@ -69,7 +68,7 @@ export const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const createTab = DesktopIpc.makeIpcMethod({
+const createTab = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CREATE_TAB_CHANNEL,
   payload: DesktopPreviewCreateTabInputSchema,
   result: Schema.Void,
@@ -84,7 +83,7 @@ export const createTab = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const closeTab = DesktopIpc.makeIpcMethod({
+const closeTab = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
   result: Schema.Void,
@@ -94,7 +93,7 @@ export const closeTab = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const registerWebview = DesktopIpc.makeIpcMethod({
+const registerWebview = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL,
   payload: DesktopPreviewRegisterWebviewInputSchema,
   result: Schema.Void,
@@ -104,7 +103,7 @@ export const registerWebview = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const navigate = DesktopIpc.makeIpcMethod({
+const navigate = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_NAVIGATE_CHANNEL,
   payload: DesktopPreviewNavigateInputSchema,
   result: Schema.Void,
@@ -132,42 +131,42 @@ const tabMethod = (
     }),
   });
 
-export const goBack = tabMethod(
+const goBack = tabMethod(
   IpcChannels.PREVIEW_GO_BACK_CHANNEL,
   "desktop.ipc.preview.goBack",
   (manager, tabId) => manager.goBack(tabId),
 );
-export const goForward = tabMethod(
+const goForward = tabMethod(
   IpcChannels.PREVIEW_GO_FORWARD_CHANNEL,
   "desktop.ipc.preview.goForward",
   (manager, tabId) => manager.goForward(tabId),
 );
-export const refresh = tabMethod(
+const refresh = tabMethod(
   IpcChannels.PREVIEW_REFRESH_CHANNEL,
   "desktop.ipc.preview.refresh",
   (manager, tabId) => manager.refresh(tabId),
 );
-export const zoomIn = tabMethod(
+const zoomIn = tabMethod(
   IpcChannels.PREVIEW_ZOOM_IN_CHANNEL,
   "desktop.ipc.preview.zoomIn",
   (manager, tabId) => manager.zoomIn(tabId),
 );
-export const zoomOut = tabMethod(
+const zoomOut = tabMethod(
   IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL,
   "desktop.ipc.preview.zoomOut",
   (manager, tabId) => manager.zoomOut(tabId),
 );
-export const resetZoom = tabMethod(
+const resetZoom = tabMethod(
   IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL,
   "desktop.ipc.preview.resetZoom",
   (manager, tabId) => manager.resetZoom(tabId),
 );
-export const hardReload = tabMethod(
+const hardReload = tabMethod(
   IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL,
   "desktop.ipc.preview.hardReload",
   (manager, tabId) => manager.hardReload(tabId),
 );
-export const setZoomFactor = DesktopIpc.makeIpcMethod({
+const setZoomFactor = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ZOOM_FACTOR_CHANNEL,
   payload: DesktopPreviewSetZoomFactorInputSchema,
   result: Schema.Void,
@@ -176,7 +175,7 @@ export const setZoomFactor = DesktopIpc.makeIpcMethod({
     yield* manager.setZoomFactor(tabId, zoomFactor);
   }),
 });
-export const setColorScheme = DesktopIpc.makeIpcMethod({
+const setColorScheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
   payload: DesktopPreviewSetColorSchemeInputSchema,
   result: Schema.Void,
@@ -185,7 +184,7 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
     yield* manager.setColorScheme(tabId, colorScheme);
   }),
 });
-export const setAudioMuted = DesktopIpc.makeIpcMethod({
+const setAudioMuted = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL,
   payload: DesktopPreviewSetAudioMutedInputSchema,
   result: Schema.Void,
@@ -194,12 +193,12 @@ export const setAudioMuted = DesktopIpc.makeIpcMethod({
     yield* manager.setAudioMuted(tabId, audioMuted);
   }),
 });
-export const openDevTools = tabMethod(
+const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
   (manager, tabId) => manager.openDevTools(tabId),
 );
-export const cancelPickElement = tabMethod(
+const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
   "desktop.ipc.preview.cancelPickElement",
   (manager, tabId) => manager.cancelPickElement(tabId),
@@ -207,7 +206,8 @@ export const cancelPickElement = tabMethod(
 export const startRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: Schema.Void,
+  // Void encodes any value as undefined, so the tagged failure must be tried first.
+  result: Schema.Union([PreviewCaptureFailure, Schema.Void]),
   handler: Effect.fn("desktop.ipc.preview.startRecording")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     const store = yield* DesktopClientSettings.DesktopClientSettings;
@@ -216,26 +216,30 @@ export const startRecording = DesktopIpc.makeIpcMethod({
       showKeyPresses: value.browserRecordingShowKeyPresses,
       showMousePresses: value.browserRecordingShowMousePresses,
     }));
-    yield* manager.startRecording(tabId, Option.getOrUndefined(options));
+    return yield* manager
+      .startRecording(tabId, Option.getOrUndefined(options))
+      .pipe(
+        Effect.catch((error) => Effect.succeed(normalizeCaptureFailure(error, "recording-start"))),
+      );
   }),
 });
-export const stopRecording = tabMethod(
+const stopRecording = tabMethod(
   IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
   "desktop.ipc.preview.stopRecording",
   (manager, tabId) => manager.stopRecording(tabId),
 );
-export const openPictureInPicture = tabMethod(
+const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
   (manager, tabId) => manager.openPictureInPicture(tabId),
 );
-export const closePictureInPicture = tabMethod(
+const closePictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
   "desktop.ipc.preview.closePictureInPicture",
   (manager, tabId) => manager.closePictureInPicture(tabId),
 );
 
-export const clearCookies = DesktopIpc.makeIpcMethod({
+const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
   payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
@@ -245,7 +249,7 @@ export const clearCookies = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const clearCache = DesktopIpc.makeIpcMethod({
+const clearCache = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL,
   payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
@@ -255,11 +259,7 @@ export const clearCache = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/**
- * The default profile keeps the bare environment id it used before profiles
- * existed, so upgrading does not strand anyone's existing logins in an orphaned
- * partition.
- */
+/** Keep the default profile's bare environment id so existing logins retain their partition. */
 export function resolvePartitionScope(
   environmentId: string,
   profileId: string | undefined,
@@ -271,9 +271,7 @@ export function resolvePartitionScope(
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
     return { scope: environmentId, persistent: true };
   }
-  // JSON's tuple framing is injective for strings, including lone UTF-16
-  // surrogates (which it escapes). URI encoding throws on those supported ids,
-  // while replacing them with U+FFFD would collapse distinct identities.
+  // JSON framing preserves lone UTF-16 surrogates; URI encoding throws and replacement would collide.
   return {
     scope: JSON.stringify([environmentId, profileId]),
     persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
@@ -281,11 +279,7 @@ export function resolvePartitionScope(
   };
 }
 
-/**
- * Clearing without a profile keeps the historical "everything" behaviour for
- * an explicit all-profiles action; naming a profile confines it to that
- * profile's partition so one profile's sign-out cannot reach the others.
- */
+/** Omitting a profile clears every partition; a named profile clears only its own partition. */
 const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartitions")(function* (
   manager: PreviewManager.PreviewManager["Service"],
   environmentId: string,
@@ -293,24 +287,19 @@ const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartit
 ) {
   if (profileId === undefined) return undefined;
   const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
-  // Loading the session is what puts the partition in the map the clear walks.
-  // Deriving the partition string alone leaves nothing to match, so clearing a
-  // profile with no tab open this run — after a restart, or when deleting a
-  // profile — would report success and delete nothing.
+  // getBrowserSession registers the partition; deriving its name alone leaves unopened profiles uncleared.
   yield* manager.getBrowserSession(scope, persistent, namespace);
   return [yield* manager.getBrowserPartition(scope, persistent, namespace)];
 });
 
-export const getPreviewConfig = DesktopIpc.makeIpcMethod({
+const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
   handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
     const manager = yield* PreviewManager.PreviewManager;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
-    // Creating the session first is what installs the UA rewrite and permission
-    // handlers; a guest that attached to an untouched partition would run with
-    // Electron's default UA and Chromium's default permission behaviour.
+    // Session creation installs UA and permission handlers before a guest can attach.
     yield* manager.getBrowserSession(scope, persistent, namespace);
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
@@ -339,8 +328,6 @@ export const importBrowserCookies = DesktopIpc.makeIpcMethod({
     ...importInput
   }) {
     const browserImport = yield* BrowserImport.BrowserImport;
-    // Derived in main from the same helper the webview config uses, so cookies
-    // land in exactly the partition the profile's tabs attach to.
     const { scope, persistent, namespace } = resolvePartitionScope(
       environmentId,
       importInput.targetProfileId,
@@ -354,7 +341,7 @@ export const importBrowserCookies = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
+const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
   payload: DesktopPreviewAnnotationThemeInputSchema,
   result: Schema.Void,
@@ -364,7 +351,7 @@ export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const pickElement = DesktopIpc.makeIpcMethod({
+const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
   result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
@@ -374,7 +361,7 @@ export const pickElement = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const setAnnotationSendEnabled = DesktopIpc.makeIpcMethod({
+const setAnnotationSendEnabled = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ANNOTATION_SEND_ENABLED_CHANNEL,
   payload: DesktopPreviewAnnotationSendEnabledInputSchema,
   result: Schema.Void,
@@ -390,14 +377,16 @@ export const setAnnotationSendEnabled = DesktopIpc.makeIpcMethod({
 export const captureScreenshot = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: DesktopPreviewScreenshotArtifactSchema,
+  result: Schema.Union([DesktopPreviewScreenshotArtifactSchema, PreviewCaptureFailure]),
   handler: Effect.fn("desktop.ipc.preview.captureScreenshot")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.captureScreenshot(tabId);
+    return yield* manager
+      .captureScreenshot(tabId)
+      .pipe(Effect.catch((error) => Effect.succeed(normalizeCaptureFailure(error, "screenshot"))));
   }),
 });
 
-export const revealArtifact = DesktopIpc.makeIpcMethod({
+const revealArtifact = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
   result: Schema.Void,
@@ -407,7 +396,7 @@ export const revealArtifact = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
+const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
   result: Schema.Void,
@@ -417,7 +406,7 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const saveRecording = DesktopIpc.makeIpcMethod({
+const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
   result: DesktopPreviewRecordingArtifactSchema,

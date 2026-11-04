@@ -1,5 +1,10 @@
 // @effect-diagnostics globalDate:off -- Usage windows are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
-import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  UsageDay,
+  type UsageResolution,
+  type UsageSource,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 
 import type { UsageContractMismatch } from "./usageMerge.ts";
 
@@ -11,6 +16,45 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+
+export function formatMalformedUsageWarning(count: number): string {
+  return `${count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`;
+}
+
+export function usageSourceMessages(sources: readonly UsageSource[]): readonly string[] {
+  const messages = new Set<string>();
+  const malformedBySource = new Map<string, number>();
+  for (const source of sources) {
+    if (
+      source.action ||
+      (source.status !== "partial" &&
+        source.status !== "failed" &&
+        source.fingerprint.provider !== "cursor" &&
+        !(source.status === "missing" && source.malformedRecords > 0))
+    ) {
+      continue;
+    }
+    let message = source.message;
+    if (source.malformedRecords > 0) {
+      const { hostId, provider, resolvedHomePath, volumeId } = source.fingerprint;
+      const key = JSON.stringify([hostId, provider, resolvedHomePath, volumeId]);
+      malformedBySource.set(
+        key,
+        Math.max(malformedBySource.get(key) ?? 0, source.malformedRecords),
+      );
+      // Servers also append this warning to message; retain any preceding read failure.
+      const warning = formatMalformedUsageWarning(source.malformedRecords);
+      if (message?.endsWith(warning)) message = message.slice(0, -warning.length).trim();
+    }
+    if (message) messages.add(message);
+  }
+  const malformedRecords = [...malformedBySource.values()].reduce(
+    (total, count) => total + count,
+    0,
+  );
+  if (malformedRecords > 0) messages.add(formatMalformedUsageWarning(malformedRecords));
+  return [...messages];
+}
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
@@ -114,17 +158,30 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
   return starts;
 }
 
+function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
+  return hour12 ? { hour: "numeric" } : { hour: "2-digit", hourCycle: "h23" };
+}
+
+function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
+  if (hour12) return formatter.format(date);
+  // Rolling buckets can start between whole hours, but their labels always name the hour.
+  return formatter
+    .formatToParts(date)
+    .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
+    .join("");
+}
+
 /**
  * Repeated wall-clock hours during a fall-back transition include their short zone name so the
  * two distinct buckets remain distinguishable.
  */
-export function formatHourShort(hourStart: string, timeZone?: string): string {
+export function formatHourShort(hourStart: string, timeZone?: string, hour12 = true): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
   const options = timeZone === undefined ? {} : { timeZone };
   const hourFormat = dateTimeFormatter("en-US", {
     ...options,
-    hour: "numeric",
+    ...hourOptions(hour12),
   });
   const wallHourFormat = dateTimeFormatter("en-CA", {
     ...options,
@@ -139,34 +196,37 @@ export function formatHourShort(hourStart: string, timeZone?: string): string {
     (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
   );
 
-  if (!isRepeatedHour) return hourFormat.format(instant);
-  return dateTimeFormatter("en-US", {
-    ...(timeZone === undefined ? {} : { timeZone }),
-    hour: "numeric",
+  if (!isRepeatedHour) return formatHour(hourFormat, instant, hour12);
+  const zonedHourFormat = dateTimeFormatter("en-US", {
+    ...options,
+    ...hourOptions(hour12),
     timeZoneName: "short",
-  }).format(instant);
+  });
+  return formatHour(zonedHourFormat, instant, hour12);
 }
 
-export function formatDateTimeShort(instant: string, timeZone?: string): string {
+export function formatDateTimeShort(instant: string, timeZone?: string, hour12 = true): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
-  return dateTimeFormatter("en-US", {
+  const dateHourFormat = dateTimeFormatter("en-US", {
     ...(timeZone === undefined ? {} : { timeZone }),
     month: "short",
     day: "numeric",
-    hour: "numeric",
-  }).format(date);
+    ...hourOptions(hour12),
+  });
+  return formatHour(dateHourFormat, date, hour12);
 }
 
 export function formatRelativeHourShort(
   hourStart: string,
   relativeTo: string,
   timeZone?: string,
+  hour12 = true,
 ): string {
   const instant = new Date(hourStart);
   const reference = new Date(relativeTo);
   if (Number.isNaN(instant.getTime()) || Number.isNaN(reference.getTime())) {
-    return formatDateTimeShort(hourStart, timeZone);
+    return formatDateTimeShort(hourStart, timeZone, hour12);
   }
 
   const dayFormat = dateTimeFormatter("en-CA", {
@@ -178,11 +238,11 @@ export function formatRelativeHourShort(
   const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
   const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
-  const hour = formatHourShort(hourStart, timeZone);
+  const hour = formatHourShort(hourStart, timeZone, hour12);
 
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
-  return formatDateTimeShort(hourStart, timeZone);
+  return formatDateTimeShort(hourStart, timeZone, hour12);
 }
 
 export function makeWindow(
@@ -223,9 +283,7 @@ export function makeWindow(
       untilTime: untilTime.toISOString(),
     };
   }
-  // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
-  // around a DST transition. The window start is pure calendar arithmetic on
-  // the local end day, done in UTC where days are uniform.
+  // Use calendar arithmetic in UTC; fixed millisecond subtraction crosses DST days incorrectly.
   const [year = 0, month = 1, dayOfMonth = 1] = untilDay
     .split("-")
     .map((part) => Number.parseInt(part, 10));

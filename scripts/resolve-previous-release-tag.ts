@@ -192,44 +192,39 @@ const parseNightlyTag = (
   };
 };
 
-export const resolvePreviousReleaseTag = (
-  channel: ReleaseChannel,
-  currentTag: string,
-  tags: ReadonlyArray<string>,
-) =>
-  Effect.gen(function* () {
-    if (channel === "stable") {
-      const current = parseStableTag(currentTag);
-      if (!current) {
-        return yield* new InvalidReleaseTagError({ channel, currentTag });
-      }
-
-      const candidates = tags
-        .map((tag) => ({ tag, parsed: parseStableTag(tag) }))
-        .filter(
-          (entry): entry is { tag: string; parsed: StableVersion } => entry.parsed !== undefined,
-        )
-        .filter((entry) => compareStableVersions(entry.parsed, current) < 0)
-        .toSorted((left, right) => compareStableVersions(right.parsed, left.parsed));
-
-      return candidates[0]?.tag;
-    }
-
-    const current = parseNightlyTag(currentTag, channel);
+export const resolvePreviousReleaseTag = Effect.fn(
+  "resolve-previous-release-tag.resolvePreviousReleaseTag",
+)(function* (channel: ReleaseChannel, currentTag: string, tags: ReadonlyArray<string>) {
+  if (channel === "stable") {
+    const current = parseStableTag(currentTag);
     if (!current) {
       return yield* new InvalidReleaseTagError({ channel, currentTag });
     }
 
     const candidates = tags
-      .map((tag) => ({ tag, parsed: parseNightlyTag(tag, channel) }))
+      .map((tag) => ({ tag, parsed: parseStableTag(tag) }))
       .filter(
-        (entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined,
+        (entry): entry is { tag: string; parsed: StableVersion } => entry.parsed !== undefined,
       )
-      .filter((entry) => compareNightlyVersions(entry.parsed, current) < 0)
-      .toSorted((left, right) => compareNightlyVersions(right.parsed, left.parsed));
+      .filter((entry) => compareStableVersions(entry.parsed, current) < 0)
+      .toSorted((left, right) => compareStableVersions(right.parsed, left.parsed));
 
     return candidates[0]?.tag;
-  });
+  }
+
+  const current = parseNightlyTag(currentTag, channel);
+  if (!current) {
+    return yield* new InvalidReleaseTagError({ channel, currentTag });
+  }
+
+  const candidates = tags
+    .map((tag) => ({ tag, parsed: parseNightlyTag(tag, channel) }))
+    .filter((entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined)
+    .filter((entry) => compareNightlyVersions(entry.parsed, current) < 0)
+    .toSorted((left, right) => compareNightlyVersions(right.parsed, left.parsed));
+
+  return candidates[0]?.tag;
+});
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
