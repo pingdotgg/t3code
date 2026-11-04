@@ -5,6 +5,7 @@ import { WorkspaceRootScreen } from "./WorkspaceRootScreen.android";
 import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
+  shouldRestoreNativeSearch,
   workspaceTabForNativeSlot,
   resolveWorkspaceTabOrder,
   workspaceSearchBottomClearance,
@@ -142,6 +143,19 @@ describe("workspace root navigation", () => {
     expect(state.tabs.pullRequests.searchMode).toBe("resting");
     expect(workspaceTabsReducer(state, { type: "select", tab: "pullRequests" })).toBe(state);
   });
+
+  it("keeps an empty search closed after iOS closes it with only a blur", () => {
+    const opened = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
+    const closed = workspaceTabsReducer(opened, { type: "expand" });
+    const filtered = workspaceTabsReducer(closed, { type: "query", query: "skia" });
+
+    expect(shouldRestoreNativeSearch(closed.tabs.threads, false)).toBe(false);
+    expect(shouldRestoreNativeSearch(closed.tabs.threads, true)).toBe(true);
+    expect(shouldRestoreNativeSearch(filtered.tabs.threads, false)).toBe(true);
+    expect(shouldRestoreNativeSearch(opened.tabs.threads, false)).toBe(true);
+    expect(shouldRestoreNativeSearch(initialWorkspaceTabsState().tabs.threads, true)).toBe(false);
+  });
+
   it("returns from Usage without losing list state", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
       type: "query",
@@ -198,8 +212,8 @@ vi.mock("./WorkspaceExtraTab", () => ({
   },
 }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
-vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
+vi.mock("../layout/WorkspaceEmptyDetail", () => ({ WorkspaceEmptyDetail: () => null }));
 vi.mock("../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
@@ -218,6 +232,11 @@ vi.mock("./AndroidWorkspaceNavigation", () => ({
   FloatingWorkspaceTabs: () => null,
 }));
 vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+vi.mock("../../components/ui/Pane", () => ({ usePaneRole: () => "screen" }));
+vi.mock("./AndroidWorkspaceSidebar.android", () => ({ AndroidWorkspaceSidebar: () => null }));
+vi.mock("../../components/ui/WorkspaceAppBar.android", () => ({
+  WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
+}));
 
 function setup(split: boolean, floating: boolean) {
   mocks.split = split;
