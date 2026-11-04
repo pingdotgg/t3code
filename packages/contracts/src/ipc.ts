@@ -282,18 +282,31 @@ export interface DesktopUpdateState {
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
   notAppliedVersion?: string;
+  /** Off only because a managed policy rules out this channel; switching channels turns it on. */
+  channelBlockedByPolicy?: true;
 }
 
 export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
   totalItems: number;
+  /** ISO time from the update feed for the offered version, else `YYYY-MM-DD` from a prerelease version. */
+  releasedAt?: string;
+  /** Paragraph-style summaries from older releases keep their fixes in `items`. */
+  intro?: string;
+  /** Generated summaries only, for example "275 changes from 22 contributors". */
+  stats?: string;
+  footer?: string;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
+  releasedAt: Schema.optionalKey(Schema.String),
+  intro: Schema.optionalKey(Schema.String),
+  stats: Schema.optionalKey(Schema.String),
+  footer: Schema.optionalKey(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({
@@ -999,6 +1012,13 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
+export const DesktopMediaReadSchema = Schema.Struct({
+  status: Schema.Number,
+  mimeType: Schema.String,
+  data: Schema.Uint8Array,
+});
+export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1009,6 +1029,7 @@ export interface DesktopBridge {
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
+  onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;
   /**
    * Renderer `window.focus()` cannot raise an Electron window, and on Wayland
@@ -1085,6 +1106,8 @@ export interface DesktopBridge {
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;
+  /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
+  readMedia: (url: string) => Promise<DesktopMediaRead | null>;
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
@@ -1096,10 +1119,15 @@ export interface DesktopBridge {
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;
-  setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
+  /** `minimumVersion` is a track switch's checked release; nothing older is offered after. */
+  setUpdateChannel: (
+    channel: DesktopUpdateChannel,
+    minimumVersion?: string,
+  ) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
-  installUpdate: () => Promise<DesktopUpdateActionResult>;
+  /** With a version, installs only that downloaded build. */
+  installUpdate: (expectedVersion?: string) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   cliCommand: {
     getState: () => Promise<DesktopCliCommandState>;

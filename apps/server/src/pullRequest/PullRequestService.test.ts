@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, expect, it } from "@effect/vitest";
@@ -257,6 +258,7 @@ function makeService(input: {
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
+  readonly onProjectRead?: () => void;
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -280,11 +282,17 @@ function makeService(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           listShells: (options) =>
-            Effect.succeed(
-              input.projects.filter((project) => options?.projectIds?.includes(project.id) ?? true),
-            ),
+            Effect.sync(() => {
+              input.onProjectRead?.();
+              return input.projects.filter(
+                (project) => options?.projectIds?.includes(project.id) ?? true,
+              );
+            }),
           getShell: (projectId) =>
-            Effect.succeed(Option.fromNullishOr(input.projects.find((p) => p.id === projectId))),
+            Effect.sync(() => {
+              input.onProjectRead?.();
+              return Option.fromNullishOr(input.projects.find((p) => p.id === projectId));
+            }),
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
@@ -293,7 +301,7 @@ function makeService(input: {
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
           Layer.provide(KeyValueStore.layerMemory),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),
@@ -470,6 +478,52 @@ it.effect("reads nothing from a host with no implementation, but reports it", ()
       [
         { kind: SourceControlProviderKind.make("github"), configured: true, projectCount: 1 },
         { kind: SourceControlProviderKind.make("gitlab"), configured: false, projectCount: 1 },
+      ],
+    );
+  }),
+);
+
+it.effect("reads nothing from a host its provider does not serve, but reports it", () =>
+  Effect.gen(function* () {
+    const reached = new Set<string>();
+    const bitbucket = (id: string, host: string) =>
+      project({
+        id,
+        title: host,
+        workspaceRoot: `/${id}`,
+        repository: "proj/repo",
+        provider: SourceControlProviderKind.make("bitbucket"),
+        host,
+      });
+    const service = yield* makeService({
+      projects: [bitbucket("p1", "bitbucket.org"), bitbucket("p2", "bitbucket.example.com")],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("bitbucket"), {
+          servesHost: (host) => host === "bitbucket.org",
+          getViewer: ({ host }) => {
+            reached.add(host ?? "");
+            return Effect.succeed("bilal");
+          },
+          listChangeRequests: ({ host }) => {
+            reached.add(host);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual([...reached], ["bitbucket.org"]);
+    assert.deepStrictEqual(
+      result.providers.map(({ host, configured, detail }) => ({ host, configured, detail })),
+      [
+        { host: "bitbucket.org", configured: true, detail: null },
+        {
+          host: "bitbucket.example.com",
+          configured: false,
+          detail: "This host cannot be browsed here yet.",
+        },
       ],
     );
   }),
@@ -1708,7 +1762,11 @@ it.effect("resolves a project's repository identity when its shell has none cach
 it.effect("routes a hosted reference to another repository through a project on that host", () =>
   Effect.gen(function* () {
     const seen: Array<{ cwd: string; repository: string; host: string }> = [];
+    let projectReads = 0;
     const service = yield* makeService({
+      onProjectRead: () => {
+        projectReads += 1;
+      },
       projects: [
         project({ id: "frontend", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
       ],
@@ -1730,6 +1788,20 @@ it.effect("routes a hosted reference to another repository through a project on 
 
     assert.strictEqual(summary.number, 7);
     assert.deepStrictEqual(seen, [{ cwd: "/web", repository: "acme/api", host: "github.com" }]);
+
+    // A sync sweep resolves the project once for all of its references, then reads fresh again.
+    const readsPerReference = projectReads;
+    const read = (number: number) =>
+      service.summary(
+        { projectId: "frontend" as ProjectId, host: "github.com", repository: "acme/api", number },
+        { recoverTransientFailure: false },
+      );
+    assert.isAbove(readsPerReference, 2);
+    yield* service.withSharedProjectReads(Effect.all([read(8), read(9), read(10)]));
+    // One read of the project and one of the host's projects, for all three references.
+    assert.strictEqual(projectReads, readsPerReference + 2);
+    yield* read(11);
+    assert.strictEqual(projectReads, readsPerReference * 2 + 2);
   }),
 );
 
@@ -2186,6 +2258,98 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
     for (let index = 0; index < 2048; index++)
       yield* service.refreshAfterTurn(`project-${index}` as ProjectId);
     assert.strictEqual((yield* service.summary(ref))?.title, "new");
+  }),
+);
+
+it.effect("a refresh or a finished turn drops the provider's own change request reads", () =>
+  Effect.gen(function* () {
+    const forgotten: Array<{ readonly repository: string; readonly number?: number } | undefined> =
+      [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          forgetChangeRequestReads: (scope) => Effect.sync(() => void forgotten.push(scope)),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.invalidate({ reference });
+    yield* service.refreshAfterTurn(reference.projectId);
+    yield* service.invalidate({});
+
+    assert.deepStrictEqual(forgotten, [
+      { repository: "acme/web", number: 1 },
+      undefined,
+      undefined,
+    ]);
+  }),
+);
+
+it.effect("a read during a refresh cannot keep the provider's old change request", () =>
+  Effect.gen(function* () {
+    let hostTitle = "old";
+    let held: string | undefined;
+    let gate:
+      | { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+      | undefined;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              held ??= hostTitle;
+              return { ...hostedChangeRequest("body"), title: held };
+            }),
+          forgetChangeRequestReads: () =>
+            Effect.gen(function* () {
+              if (gate !== undefined) {
+                yield* Deferred.succeed(gate.entered, undefined);
+                yield* Deferred.await(gate.release);
+              }
+              held = undefined;
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const refreshWithReadInBetween = (refresh: Effect.Effect<void>) =>
+      Effect.gen(function* () {
+        gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+        const running = yield* refresh.pipe(Effect.forkChild());
+        yield* Deferred.await(gate.entered);
+        yield* service.detail(reference);
+        yield* Deferred.succeed(gate.release, undefined);
+        yield* Fiber.join(running);
+        gate = undefined;
+      });
+
+    assert.strictEqual((yield* service.detail(reference)).title, "old");
+    hostTitle = "after turn";
+    yield* refreshWithReadInBetween(service.refreshAfterTurn(reference.projectId));
+    assert.strictEqual((yield* service.detail(reference)).title, "after turn");
+
+    hostTitle = "after refresh";
+    yield* refreshWithReadInBetween(service.invalidate({ reference }));
+    assert.strictEqual((yield* service.detail(reference)).title, "after refresh");
   }),
 );
 
@@ -3819,19 +3983,19 @@ it.effect("finishes two presses on one file in the order they were made", () =>
       ],
     });
 
-    const tick = service
+    const tick = yield* service
       .setFilesViewed({
         ...GITLAB_REFERENCE,
         files: [{ path: "src/a.ts", viewed: true }],
       })
-      .pipe(Effect.runFork);
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* TestClock.adjust("1 second");
-    const untick = service
+    const untick = yield* service
       .setFilesViewed({
         ...GITLAB_REFERENCE,
         files: [{ path: "src/a.ts", viewed: false }],
       })
-      .pipe(Effect.runFork);
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* TestClock.adjust("1 second");
     yield* Deferred.succeed(held, undefined);
     yield* Fiber.join(tick);

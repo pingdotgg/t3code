@@ -6,6 +6,7 @@ import * as ServerConfig from "../config.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "node:crypto";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -13,11 +14,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
@@ -43,9 +44,23 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   const environment = ServerEnvironment.ServerEnvironmentIdentity.of({
     getEnvironmentId: Effect.succeed(environmentId),
   });
-  const keys = yield* Effect.promise(() => generateKeyPair("RS256"));
-  const jwk = yield* Effect.promise(() => exportJWK(keys.publicKey));
-  const untrustedKeys = yield* Effect.promise(() => generateKeyPair("RS256"));
+  const signingKeyFor = (kid: string) => {
+    const pair = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    return {
+      kid,
+      privateKey: pair.privateKey,
+      publicJwk: { ...pair.publicKey.export({ format: "jwk" }), kid, alg: "RS256", use: "sig" },
+    };
+  };
+  let signingKey = signingKeyFor("test");
+  let jwksRequests = 0;
+  const untrustedKeys = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const signIdToken = (claims: Record<string, unknown>, privateKey: NodeCrypto.KeyObject) => {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const signingInput = `${encode({ alg: "RS256", kid: signingKey.kid })}.${encode(claims)}`;
+    const signature = NodeCrypto.sign("sha256", Buffer.from(signingInput), privateKey);
+    return `${signingInput}.${signature.toString("base64url")}`;
+  };
   const secrets = ServerSecretStore.ServerSecretStore.of({
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(bytes.get(name))),
     set: (name, value) =>
@@ -98,9 +113,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
               return;
             }
             if (request.url === "/jwks") {
-              response.end(
-                JSON.stringify({ keys: [{ ...jwk, kid: "test", alg: "RS256", use: "sig" }] }),
-              );
+              jwksRequests += 1;
+              response.end(JSON.stringify({ keys: [signingKey.publicJwk] }));
               return;
             }
             if (request.url === "/revoke") {
@@ -166,21 +180,20 @@ const makeHarnessFor = Effect.fnUntraced(function* (
                   .digest("base64url"),
                 authorize.searchParams.get("code_challenge"),
               );
-              const token = await new SignJWT({
-                nonce: invalidNonce ? "incorrect" : authorize.searchParams.get("nonce"),
-                email,
-              })
-                .setProtectedHeader({ alg: "RS256", kid: "test" })
-                .setIssuer(identityFailure === "issuer" ? "https://untrusted-issuer.test" : origin)
-                .setAudience(
-                  identityFailure === "audience"
-                    ? "oaiapp_untrusted_audience"
-                    : body.get("client_id")!,
-                )
-                .setSubject(subject)
-                .setIssuedAt()
-                .setExpirationTime("1h")
-                .sign(identityFailure === "signature" ? untrustedKeys.privateKey : keys.privateKey);
+              const token = signIdToken(
+                {
+                  nonce: invalidNonce ? "incorrect" : authorize.searchParams.get("nonce"),
+                  email,
+                  iss: identityFailure === "issuer" ? "https://untrusted-issuer.test" : origin,
+                  aud:
+                    identityFailure === "audience"
+                      ? "oaiapp_untrusted_audience"
+                      : body.get("client_id")!,
+                  sub: subject,
+                  exp: 4_102_444_800,
+                },
+                identityFailure === "signature" ? untrustedKeys.privateKey : signingKey.privateKey,
+              );
               response.end(
                 JSON.stringify({
                   access_token: "initial-access",
@@ -282,6 +295,10 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   });
   return {
     auth,
+    jwksRequests: () => jwksRequests,
+    rotateSigningKey: () => {
+      signingKey = signingKeyFor("rotated");
+    },
     analyticsEvents,
     secrets,
     environmentId,
@@ -403,7 +420,9 @@ const makeHarness = makeHarnessFor(instanceId);
 const provision = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer, NodePlatformCrypto.layer),
+    ),
   );
 it.effect(
   "changing account registers a new user-owned client and then reuses that registration",
@@ -646,6 +665,17 @@ it.effect(
           h.exchanges[2]!.get("redirect_uri"),
           reconnect.searchParams.get("redirect_uri"),
         );
+        assert.strictEqual(h.jwksRequests(), 1);
+        h.rotateSigningKey();
+        yield* h.auth.controller.logout(Effect.void);
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(h.jwksRequests(), 2);
+        yield* TestClock.adjust("10 minutes");
+        yield* h.auth.controller.logout(Effect.void);
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(h.jwksRequests(), 3);
       }),
     ),
 );
@@ -920,7 +950,9 @@ it.effect(
       assert.strictEqual(harness.exchanges.length, 2);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+      ),
     ),
 );
 
@@ -957,7 +989,9 @@ it.effect(
       yield* harness.phase("succeeded");
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+      ),
     ),
 );
 
@@ -991,7 +1025,12 @@ it.effect("keeps simultaneous remote accounts and environments independent", () 
     yield* second.phase("succeeded");
     assert.strictEqual(Option.getOrThrow(yield* first.auth.read).subject, "user-test");
     assert.strictEqual(Option.getOrThrow(yield* second.auth.read).subject, "other-user");
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+    ),
+  ),
 );
 
 it.effect(
@@ -1762,7 +1801,7 @@ const provideBroker = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.scoped,
     Effect.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-renewal-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
       ),
     ),
   );

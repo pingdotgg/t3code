@@ -1,7 +1,7 @@
+import * as Neon from "@alchemy.run/neon";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import { RuntimeContext } from "alchemy";
-import * as Neon from "alchemy/Neon";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { BetterAuth, Database } from "@/index.ts";
 import { applyMigrations } from "@/Migrate.ts";
