@@ -139,8 +139,8 @@ private final class TerminalInputField: UITextField {
   }
 
   override func deleteBackward() {
-    // While an IME composes, Backspace edits the marked text, not the PTY.
-    if markedTextRange == nil {
+    // Backspace edits marked or committed field text first; the field diff sends that DEL.
+    if markedTextRange == nil, !hasText {
       onDeleteBackward?()
     }
     super.deleteBackward()
@@ -202,6 +202,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastAppliedBuffer = ""
   private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
+  private var sentInput = ""
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
   private var isCreatingSurface = false
@@ -366,6 +367,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
     inputField.onInsert = { [weak self] data in
       self?.emitInput(data)
+      self?.resetInputField()
     }
 
     focusTapGesture.addTarget(self, action: #selector(handleViewportTap))
@@ -422,18 +424,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
-  // An IME's first keystroke arrives here before it becomes marked text, so insertions
-  // land in the field and handleInputEditingChanged emits them once committed.
-  public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-    // Deletions outside a composition already reached the PTY through deleteBackward.
-    textField.markedTextRange != nil || !string.isEmpty
-  }
-
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
     // Return during a composition commits it; that is not Enter.
     guard textField.markedTextRange == nil else { return false }
     emitInput(TerminalInputSequence.carriageReturn)
-    textField.text = ""
+    resetInputField()
     return false
   }
 
@@ -482,19 +477,38 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  // Korean keyboards build a syllable by replacing the committed character before the cursor,
+  // so the field keeps what was sent and each change goes out as DELs plus the new suffix.
+  // Scalars, not Characters: a Thai or Indic mark joins the previous grapheme, and resending
+  // that grapheme after one DEL would leave its base twice in a code-point line editor.
   @objc
   private func handleInputEditingChanged() {
-    guard inputField.markedTextRange == nil, let text = inputField.text, !text.isEmpty else { return }
+    guard inputField.markedTextRange == nil else { return }
+    let text = inputField.text ?? ""
+    let fieldScalars = text.unicodeScalars
+    let sentScalars = sentInput.unicodeScalars
+    let commonCount = zip(fieldScalars, sentScalars).prefix { $0.0 == $0.1 }.count
+    let unsent = String(String.UnicodeScalarView(sentScalars.dropFirst(commonCount)))
+    let added = String(String.UnicodeScalarView(fieldScalars.dropFirst(commonCount)))
     // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
-    emitInput(TerminalInputSequence.normalizingReturn(text))
-    inputField.text = ""
+    emitInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
+    sentInput = text
+    // A Hangul syllable never spans whitespace; the cap bounds the field without one.
+    if text.last?.isWhitespace == true || text.count > 64 {
+      resetInputField()
+    }
   }
 
   @objc
   private func handleInputEditingDidBegin() {
     // A composition abandoned by losing focus must not reach the PTY with the next keystroke.
-    inputField.text = ""
+    resetInputField()
     textInputModeDidChange()
+  }
+
+  private func resetInputField() {
+    inputField.text = ""
+    sentInput = ""
   }
 
   private func createSurfaceIfPossible() {
