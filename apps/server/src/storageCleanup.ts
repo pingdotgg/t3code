@@ -602,6 +602,51 @@ const make = Effect.gen(function* () {
     return (name?.startsWith("(") ? null : name) !== branch;
   });
 
+  // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
+  const hiddenTrackedChange = Effect.fn("StorageCleanup.hiddenTrackedChange")(function* (
+    cwd: string,
+  ) {
+    const inspect = (args: string[], stdin?: string) =>
+      git.execute({
+        operation: "StorageCleanup.hiddenTrackedChanges",
+        cwd,
+        args,
+        ...(stdin === undefined ? {} : { stdin }),
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+    const listing = yield* inspect(["ls-files", "-v", "-z"]);
+    if (listing.stdoutTruncated) return "tracked files exceed the inspection limit";
+    // Tag S is skip-worktree and a lowercase tag is assume-unchanged.
+    const flagged = listing.stdout
+      .split("\0")
+      .filter((entry) => /^(?:S|[a-z]) /.test(entry))
+      .map((entry) => entry.slice(2));
+    // Sparse checkouts flag every file outside the cone and leave it off disk.
+    const present = yield* Effect.filter(flagged, (file) => fs.exists(path.join(cwd, file)), {
+      concurrency: 16,
+    });
+    if (present.length === 0) return null;
+    const reason = (file: string) => `has uncommitted changes hidden from git status (${file})`;
+    // Both commands read newline-separated paths; hash-object C-unquotes ones starting with a quote.
+    const unreadable = present.find((file) => file.includes("\n") || file.startsWith('"'));
+    if (unreadable !== undefined) return reason(unreadable);
+    const worktree = yield* inspect(
+      ["hash-object", "--stdin-paths"],
+      present.map((file) => `${file}\n`).join(""),
+    );
+    // The explicit stage keeps a path such as "0:x" from being read as stage syntax.
+    const index = yield* inspect(
+      ["cat-file", "--batch-check=%(objectname)"],
+      present.map((file) => `:0:${file}\n`).join(""),
+    );
+    if (worktree.stdoutTruncated || index.stdoutTruncated)
+      return "tracked files exceed the inspection limit";
+    const worktreeIds = worktree.stdout.split("\n");
+    const indexIds = index.stdout.split("\n");
+    const changed = present.find((_, i) => worktreeIds[i] !== indexIds[i]);
+    return changed === undefined ? null : reason(changed);
+  });
+
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -628,6 +673,8 @@ const make = Effect.gen(function* () {
       if (/^[RC]|^.[RC]/.test(records[i]!)) i++;
     }
     if (count > 0) return `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
+    const hidden = yield* hiddenTrackedChange(cwd);
+    if (hidden !== null) return hidden;
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",

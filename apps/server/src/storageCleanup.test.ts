@@ -2440,6 +2440,17 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  it.live("removes worktrees whose flagged files are unchanged or outside a sparse checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        yield* command(worktree, ["update-index", "--assume-unchanged", ".gitignore"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(
       Effect.gen(function* () {
