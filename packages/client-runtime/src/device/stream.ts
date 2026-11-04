@@ -8,6 +8,7 @@ import {
 } from "./duoControl.ts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
@@ -370,6 +371,104 @@ const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
   MetaRight: 0xe7,
 };
 
+// The simulator reads HID keys with a US layout, so a key is found from the character the user's
+// own layout typed, not from its position.
+const US_KEY_BY_CHARACTER: ReadonlyMap<string, { usage: number; shift: boolean }> = new Map(
+  (
+    [
+      ["abcdefghijklmnopqrstuvwxyz1234567890", "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()", 0x04],
+      [" -=[]\\", " _+{}|", 0x2c],
+      [";'`,./", ':"~<>?', 0x33],
+    ] as const
+  ).flatMap(([plain, shifted, first]) =>
+    [...plain].flatMap((character, index): [string, { usage: number; shift: boolean }][] => [
+      [shifted[index]!, { usage: first + index, shift: true }],
+      [character, { usage: first + index, shift: false }],
+    ]),
+  ),
+);
+
+const IOS_MODIFIER_USAGES = [
+  ["shiftKey", 0xe1],
+  ["ctrlKey", 0xe0],
+  ["altKey", 0xe2],
+  ["metaKey", 0xe3],
+] as const;
+
+// iOS takes the Option keys and accent keys of the macOS US layout.
+const US_OPTION_CHARACTERS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    ç: "c",
+    Ç: "C",
+    œ: "q",
+    Œ: "Q",
+    æ: "'",
+    Æ: '"',
+    ß: "s",
+    ø: "o",
+    Ø: "O",
+    å: "a",
+    Å: "A",
+    "€": "@",
+    "£": "3",
+    "§": "6",
+    "°": "*",
+    µ: "m",
+    "«": "\\",
+    "»": "|",
+    "…": ";",
+    "–": "-",
+    // oxlint-disable-next-line t3code/no-em-dash-copy -- A typed character, not screen text.
+    "—": "_",
+    "“": "[",
+    "”": "{",
+    "‘": "]",
+    "’": "}",
+    "•": "8",
+    "¡": "1",
+    "¿": "?",
+    "©": "g",
+    "®": "r",
+    "™": "2",
+  }),
+);
+const US_DEAD_KEYS: ReadonlyMap<string, string> = new Map([
+  ["\u0300", "`"],
+  ["\u0301", "e"],
+  ["\u0302", "i"],
+  ["\u0303", "n"],
+  ["\u0308", "u"],
+]);
+
+type UsKeyStroke = { usage: number; shift: boolean; option: boolean };
+
+function usKeyStrokes(character: string): UsKeyStroke[] | null {
+  const plain = US_KEY_BY_CHARACTER.get(character);
+  if (plain) return [{ ...plain, option: false }];
+  const option = US_KEY_BY_CHARACTER.get(US_OPTION_CHARACTERS.get(character) ?? "");
+  if (option) return [{ ...option, option: true }];
+  const [base = "", mark = "", ...rest] = character.normalize("NFD");
+  const dead = US_KEY_BY_CHARACTER.get(US_DEAD_KEYS.get(mark) ?? "");
+  const letter = US_KEY_BY_CHARACTER.get(base);
+  if (rest.length > 0 || !dead || !letter) return null;
+  return [
+    { ...dead, option: true },
+    { ...letter, option: false },
+  ];
+}
+
+function typedCharacter(event: KeyboardEvent): string | null {
+  if (event.metaKey) return null;
+  const character = [...event.key].length === 1 ? event.key : null;
+  if (!event.ctrlKey || event.getModifierState("AltGraph")) return character;
+  // Windows reports AltGr as Ctrl+Alt. A real Ctrl+Alt shortcut reports the plain letter or digit.
+  const altGraph =
+    event.altKey &&
+    !isMacPlatform(globalThis.navigator?.platform ?? "") &&
+    !/^[a-z0-9]$/i.test(character ?? "a");
+  return altGraph ? character : null;
+}
+
 function hidUsageForCode(code: string): number | null {
   if (/^Key[A-Z]$/.test(code)) return 0x04 + (code.charCodeAt(3) - 65);
   if (/^Digit[1-9]$/.test(code)) return 0x1e + (code.charCodeAt(5) - 49);
@@ -426,6 +525,19 @@ export function createDeviceStreamClient(
   let decodedVideoGeneration: number | null = null;
   let iosInputAdmitted = false;
   let iosInputUnavailable = false;
+  const iosHeldModifiers = new Set<number>();
+  const iosPressedKeys = new Map<string, number>();
+  const sendIosKey = (type: "down" | "up", usage: number) =>
+    send(taggedJson(IOS_MSG_KEY, { type, usage }));
+  const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
+    for (const [flag, usage] of IOS_MODIFIER_USAGES) {
+      const wanted = event?.[flag] === true;
+      if (wanted === iosHeldModifiers.has(usage) || (wanted && phase === "up")) continue;
+      if (wanted) iosHeldModifiers.add(usage);
+      else iosHeldModifiers.delete(usage);
+      sendIosKey(wanted ? "down" : "up", usage);
+    }
+  };
   let timestamp = 0;
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
@@ -1381,8 +1493,43 @@ export function createDeviceStreamClient(
     },
     sendKey: (event, phase) => {
       if (avcc) {
-        const usage = hidUsageForCode(event.code);
-        if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
+        if (phase === "up") {
+          const usage = iosPressedKeys.get(event.code);
+          iosPressedKeys.delete(event.code);
+          if (usage !== undefined) sendIosKey("up", usage);
+          syncIosModifiers(event, "up");
+          return;
+        }
+        if (
+          event.isComposing ||
+          event.key === "Dead" ||
+          /^(Shift|Control|Alt|Meta)/.test(event.code)
+        ) {
+          return;
+        }
+        const character = typedCharacter(event);
+        // Keypad keys type the same character on every layout.
+        const strokes =
+          character === null || event.code.startsWith("Numpad") ? null : usKeyStrokes(character);
+        if (strokes) {
+          syncIosModifiers(null);
+          for (const { usage, shift, option } of strokes) {
+            if (option) sendIosKey("down", 0xe2);
+            if (shift) sendIosKey("down", 0xe1);
+            sendIosKey("down", usage);
+            sendIosKey("up", usage);
+            if (shift) sendIosKey("up", 0xe1);
+            if (option) sendIosKey("up", 0xe2);
+          }
+          return;
+        }
+        const usage =
+          (character === null ? US_KEY_BY_CHARACTER.get(event.key)?.usage : undefined) ??
+          hidUsageForCode(event.code);
+        if (usage === null) return;
+        syncIosModifiers(event);
+        iosPressedKeys.set(event.code, usage);
+        sendIosKey("down", usage);
         return;
       }
       if (phase !== "down") return;
