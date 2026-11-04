@@ -165,7 +165,9 @@ interface FakePi {
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork" | "abort") => void;
+  readonly deferNextLifecycle: (
+    type: "switch_session" | "new_session" | "fork" | "abort" | "get_entries",
+  ) => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
@@ -1270,6 +1272,105 @@ describe("PiAdapterV2", () => {
         data: { cancelled: true },
       });
       assert.isTrue(Exit.isFailure(yield* Fiber.await(resuming)));
+      const sessionError = yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      assert.isTrue(
+        sessionError.type === "provider_session.updated" &&
+          sessionError.providerSession.lastError?.includes("invisible tool execution") === true,
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("stops held resume work when startup is interrupted before the wake is offered", () =>
+    Effect.gen(function* () {
+      const previous = yield* makeFakePi;
+      const { runtime: previousRuntime } = yield* openRuntime(previous);
+      const providerThread = yield* previousRuntime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const offers =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        { offer: (request) => Queue.offer(offers, request).pipe(Effect.asVoid) },
+      );
+      fake.deferNextLifecycle("switch_session");
+      const resuming = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: providerThread,
+        })
+        .pipe(Effect.forkScoped);
+      const switchRequest = yield* fake.takeRequest("switch_session");
+      yield* fake.emit({ type: "agent_start" });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "running",
+      );
+      fake.deferNextLifecycle("get_entries");
+      yield* fake.emit({
+        type: "response",
+        id: switchRequest["id"],
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      yield* fake.takeRequest("get_entries");
+      yield* Fiber.interrupt(resuming);
+
+      const sessionError = yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      assert.isTrue(
+        sessionError.type === "provider_session.updated" &&
+          sessionError.providerSession.lastError?.includes("invisible tool execution") === true,
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.equal(yield* Queue.size(offers), 0);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("stops native work an extension starts while a new session is created", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        { offer: () => Effect.void },
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("new_session");
+      yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: { ...providerThread, nativeThreadRef: null },
+        })
+        .pipe(Effect.forkScoped);
+      yield* fake.takeRequest("new_session");
+      yield* fake.emit({ type: "agent_start" });
+
       const sessionError = yield* takeEvent(
         (event) =>
           event.type === "provider_session.updated" && event.providerSession.status === "error",

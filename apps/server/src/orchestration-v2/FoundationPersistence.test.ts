@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -2140,6 +2141,47 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         const nextStart = yield* outbox.claimNext({ workerId: "start-worker" });
         assert.equal(Option.getOrUndefined(nextStart)?.id, nextStartEffectId);
         yield* outbox.succeed({ effectId: nextStartEffectId, workerId: "start-worker" });
+
+        const interruptEffectId = "effect:foundation-respond-during-start:d-interrupt";
+        const laterRespondEffectId = "effect:foundation-respond-during-start:e-respond";
+        yield* outbox.enqueue([
+          {
+            id: interruptEffectId,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-turn.interrupt",
+              providerSessionId: ProviderSessionId.make("session:foundation-respond-during-start"),
+              providerThreadId: ProviderThreadId.make("provider-thread:foundation-respond"),
+              providerTurnId: ProviderTurnId.make("provider-turn:foundation-respond"),
+            },
+          },
+          {
+            id: laterRespondEffectId,
+            commandId,
+            threadId,
+            request: {
+              type: "runtime-request.respond",
+              providerSessionId: ProviderSessionId.make("session:foundation-respond-during-start"),
+              requestId: RuntimeRequestId.make("request:foundation-respond-during-start:later"),
+              decision: "accept",
+            },
+          },
+        ]);
+        const interrupt = yield* outbox.claimNext({ workerId: "interrupt-worker" });
+        assert.equal(Option.getOrUndefined(interrupt)?.id, interruptEffectId);
+        const respondFilter = { effectType: "runtime-request.respond" } as const;
+        assert.isTrue(
+          Option.isNone(yield* outbox.claimNext({ workerId: "respond-worker", ...respondFilter })),
+          "runtime-request.respond passed a running provider-turn.interrupt",
+        );
+        assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt(respondFilter)));
+        yield* outbox.succeed({ effectId: interruptEffectId, workerId: "interrupt-worker" });
+        const laterRespond = yield* outbox.claimNext({
+          workerId: "respond-worker",
+          ...respondFilter,
+        });
+        assert.equal(Option.getOrUndefined(laterRespond)?.id, laterRespondEffectId);
       }),
   );
 
@@ -2179,7 +2221,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       if (Option.isNone(claimed)) return;
       assert.equal(claimed.value.id, "effect:foundation-next-claimable:a1");
 
-      const whileBlocked = yield* outbox.nextClaimableAt;
+      const whileBlocked = yield* outbox.nextClaimableAt();
       assert.isTrue(Option.isSome(whileBlocked));
       if (Option.isSome(whileBlocked)) {
         assert.equal(DateTime.toEpochMillis(whileBlocked.value), DateTime.toEpochMillis(future));
@@ -2189,7 +2231,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         effectId: claimed.value.id,
         workerId: "next-claimable-worker",
       });
-      const afterCompletion = yield* outbox.nextClaimableAt;
+      const afterCompletion = yield* outbox.nextClaimableAt();
       assert.isTrue(Option.isSome(afterCompletion));
       if (Option.isSome(afterCompletion)) {
         assert.isAtMost(DateTime.toEpochMillis(afterCompletion.value), DateTime.toEpochMillis(now));
@@ -2366,7 +2408,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.equal(Option.getOrUndefined(title)?.id, "effect:foundation-retry-order:b-title");
       const blocked = yield* outbox.claimNext({ workerId });
       assert.isTrue(Option.isNone(blocked));
-      const nextClaimable = yield* outbox.nextClaimableAt;
+      const nextClaimable = yield* outbox.nextClaimableAt();
       assert.isTrue(Option.isSome(nextClaimable));
       if (Option.isSome(nextClaimable)) {
         assert.equal(
@@ -2496,6 +2538,99 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         );
       }).pipe(Effect.provide(layerWorker), Effect.scoped);
     }),
+  );
+
+  it.effect("delivers a runtime request answer while turn starts occupy every worker", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-reserved-respond");
+      const threadA = ThreadId.make("thread:foundation-reserved-respond:a");
+      const threadB = ThreadId.make("thread:foundation-reserved-respond:b");
+      const startA = "effect:foundation-reserved-respond:a-start";
+      const startB = "effect:foundation-reserved-respond:b-start";
+      const respondA = "effect:foundation-reserved-respond:a-respond";
+      const startedA = yield* Deferred.make<void>();
+      const startedB = yield* Deferred.make<void>();
+      const answeredA = yield* Deferred.make<void>();
+      const releaseB = yield* Deferred.make<void>();
+      const layerExecutor = Layer.succeed(
+        EffectWorker.OrchestrationEffectExecutorV2,
+        EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: (effect) => {
+            switch (effect.id) {
+              case startA:
+                return Deferred.succeed(startedA, undefined).pipe(
+                  Effect.andThen(Deferred.await(answeredA)),
+                );
+              case startB:
+                return Deferred.succeed(startedB, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseB)),
+                );
+              case respondA:
+                return Deferred.succeed(answeredA, undefined).pipe(Effect.asVoid);
+              default:
+                return Effect.die(`Unexpected effect ${effect.id}`);
+            }
+          },
+        }),
+      );
+      const layerWorker = EffectWorker.layerWithOptions({
+        workerId: "reserved-respond-worker",
+      }).pipe(
+        Layer.provide(
+          Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
+        yield* outbox.enqueue([
+          {
+            id: startA,
+            commandId,
+            threadId: threadA,
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-reserved-respond:a"),
+            },
+          },
+          {
+            id: startB,
+            commandId,
+            threadId: threadB,
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-reserved-respond:b"),
+            },
+          },
+        ]);
+        yield* outbox.notifyAvailable(2);
+        yield* Effect.all([Deferred.await(startedA), Deferred.await(startedB)]);
+
+        // Both ordinary workers now wait inside turn starts; only the reserved lane can answer.
+        yield* outbox.enqueue([
+          {
+            id: respondA,
+            commandId,
+            threadId: threadA,
+            request: {
+              type: "runtime-request.respond",
+              providerSessionId: ProviderSessionId.make("session:foundation-reserved-respond"),
+              requestId: RuntimeRequestId.make("request:foundation-reserved-respond"),
+              decision: "accept",
+            },
+          },
+        ]);
+        yield* outbox.notifyAvailable(1);
+        yield* outbox.awaitSettled(startA);
+        yield* Deferred.succeed(releaseB, undefined);
+        yield* outbox.awaitSettled(startB);
+        yield* outbox.awaitSettled(respondA);
+        const effects = yield* outbox.listByCommandId(commandId);
+        assert.equal(effects.length, 3);
+        assert.isTrue(effects.every((effect) => effect.status === "succeeded"));
+      }).pipe(Effect.provide(layerWorker), Effect.scoped);
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
@@ -2893,6 +3028,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runRecoveryOnce: Effect.succeed(false),
             runOnce: Effect.succeed(false),
             nextClaimableAt: Effect.succeedNone,
+            awaitRuntimeRequestWork: Effect.void,
+            runRuntimeRequestOnce: Effect.succeed(false),
+            nextRuntimeRequestClaimableAt: Effect.succeedNone,
             drain: () => Effect.succeed(0),
           }),
         ),
@@ -3110,6 +3248,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runRecoveryOnce: Effect.succeed(false),
             runOnce: Effect.succeed(false),
             nextClaimableAt: Effect.succeedNone,
+            awaitRuntimeRequestWork: Effect.void,
+            runRuntimeRequestOnce: Effect.succeed(false),
+            nextRuntimeRequestClaimableAt: Effect.succeedNone,
             drain: () => Effect.succeed(0),
           }),
         ),

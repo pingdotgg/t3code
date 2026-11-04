@@ -29,6 +29,7 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -2311,28 +2312,47 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             "Cannot switch Pi threads while native work is awaiting a turn",
           );
         }
-        const current: PiRegistration = { wakeEvents: null };
+        // Only a restored session's session_start hooks resume earlier work for this thread.
+        const current: PiRegistration | null =
+          threadInput.existingProviderThread?.nativeThreadRef?.nativeId == null
+            ? null
+            : { wakeEvents: null };
         registration = current;
-        const providerThread = yield* bindNativeThread(threadInput, publish, current).pipe(
-          Effect.onExit(() =>
-            registration !== current
+        return yield* bindNativeThread(threadInput, publish, current).pipe(
+          Effect.tap(() =>
+            sessionEventPermit.withPermits(1)(
+              Effect.suspend(() =>
+                pendingWake !== null && pendingWake.events === current?.wakeEvents
+                  ? offerPendingWake(pendingWake)
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Effect.onExit((exit) =>
+            current === null || registration !== current
               ? Effect.void
               : Effect.suspend(() => {
                   registration = null;
-                  // Work started for a thread that never bound must not keep running unseen.
-                  return current.wakeEvents === null
-                    ? Effect.void
-                    : sessionEventPermit.withPermits(1)(stopUnsolicitedActivity);
+                  if (Exit.isSuccess(exit) || current.wakeEvents === null) return Effect.void;
+                  // Work held for a registration that never offered it must not keep running unseen.
+                  return sessionEventPermit.withPermits(1)(
+                    Effect.suspend(() => {
+                      const held = pendingWake?.events === current.wakeEvents;
+                      // Once bound, a wake this registration no longer holds was already stopped.
+                      if (!held && threadState !== null) return Effect.void;
+                      if (held) pendingWake = null;
+                      return stopUnsolicitedActivity;
+                    }),
+                  );
                 }),
           ),
         );
-        return providerThread;
       });
 
       const bindNativeThread = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish: boolean,
-        current: PiRegistration,
+        current: PiRegistration | null,
       ) {
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
@@ -2424,8 +2444,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               };
         const state: PiThreadState = { providerThread, activeTurn: null };
         threadState = state;
-        if (registration === current) registration = null;
-        if (current.wakeEvents !== null) pendingWake = { state, events: current.wakeEvents };
+        if (current?.wakeEvents != null) pendingWake = { state, events: current.wakeEvents };
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
@@ -2437,12 +2456,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             driver: PI_PROVIDER,
             providerThread,
           });
-        const wake = pendingWake;
-        if (wake !== null && wake.events === current.wakeEvents) {
-          yield* sessionEventPermit.withPermits(1)(
-            Effect.suspend(() => (pendingWake === wake ? offerPendingWake(wake) : Effect.void)),
-          );
-        }
         return providerThread;
       });
 
