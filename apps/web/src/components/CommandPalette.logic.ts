@@ -228,6 +228,8 @@ export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
 export interface CommandPaletteGroup {
   readonly value: string;
   readonly label: string;
+  /** Rows without a shortcut of their own take the jump shortcuts in the order they are shown. */
+  readonly jumpShortcuts?: boolean;
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
@@ -332,16 +334,17 @@ export function findHighlightedCommandPaletteItem(
   return null;
 }
 
-export function enumerateCommandPaletteItems(
-  items: ReadonlyArray<CommandPaletteActionItem>,
-): CommandPaletteActionItem[] {
-  return items.map((item, index) => {
-    const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
-    if (shortcutCommand) return { ...item, shortcutCommand };
-
-    const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
-    return itemWithoutShortcut;
-  });
+function withJumpShortcuts(group: CommandPaletteGroup): CommandPaletteGroup {
+  if (!group.jumpShortcuts) return group;
+  let jumpIndex = 0;
+  return {
+    ...group,
+    items: group.items.map((item) => {
+      if (item.shortcutCommand) return item;
+      const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[jumpIndex++];
+      return shortcutCommand ? { ...item, shortcutCommand } : item;
+    }),
+  };
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
@@ -576,7 +579,7 @@ export function filterCommandPaletteGroups(input: {
     if (isActionsFilter) {
       return input.activeGroups.filter((group) => group.value === "actions");
     }
-    return [...input.activeGroups];
+    return input.activeGroups.map(withJumpShortcuts);
   }
 
   let baseGroups = [...input.activeGroups];
@@ -648,7 +651,7 @@ export function filterCommandPaletteGroups(input: {
         const matchHint = match.explain?.();
         return matchHint ? { ...item, matchHint } : item;
       });
-    return { value: group.value, label: group.label, items };
+    return withJumpShortcuts({ ...group, items });
   });
 
   if (!searchesEverything) return groups;
