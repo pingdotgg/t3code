@@ -232,9 +232,13 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    const streaming = getSettingsSearchTargetScope("response-streaming")!;
-    expect(streaming.scope).toBe("project-defaults");
-    expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
+    for (const id of ["response-streaming", "speech-project-dictionary"]) {
+      const defaults = getSettingsSearchTargetScope(id)!;
+      expect(defaults.scope).toBe("project-defaults");
+      for (const scope of ["all", "environment", "project"] as const) {
+        expect(isSettingsSearchScopeAvailable(defaults.scope, scope)).toBe(true);
+      }
+    }
     for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "boring-sidebar"]) {
       expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
     }

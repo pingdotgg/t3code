@@ -121,6 +121,7 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
 function ModelCard(props: {
   readonly model: EnvironmentSpeechModel;
   readonly busy: boolean;
+  readonly canCancel: boolean;
   readonly onDownload: () => void;
   readonly onSelect: () => void;
   readonly onCancel: () => void;
@@ -190,6 +191,7 @@ function ModelCard(props: {
             size="icon-sm"
             variant="ghost"
             aria-label={`Cancel ${model.name} download`}
+            disabled={!props.canCancel}
             onClick={props.onCancel}
           >
             <XIcon className="size-3.5" />
@@ -495,6 +497,14 @@ function EnvironmentModelsSection(props: {
   const [search, setSearch] = useState("");
   const [languageFilter, setLanguageFilter] = useState("");
   const [busy, setBusy] = useState(false);
+  const [requestedDownload, setRequestedDownload] = useState<string | null>(null);
+  const [actionConnection, setActionConnection] = useState(prepared);
+  if (actionConnection !== prepared) {
+    setActionConnection(prepared);
+    setBusy(false);
+    setRequestedDownload(null);
+    setModels([]);
+  }
   const epoch = useRef(0);
   const refresh = useStableCallback(async (connection: PreparedConnection) => {
     const current = epoch.current;
@@ -523,27 +533,48 @@ function EnvironmentModelsSection(props: {
       epoch.current += 1;
     };
   }, [prepared, refresh]);
-  const downloading = models.some(
-    (model) => model.state === "downloading" || model.state === "verifying",
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the environment reports an active download
+  const downloading =
+    requestedDownload !== null ||
+    models.some((model) => model.state === "downloading" || model.state === "verifying");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls progress while a local request or the environment reports an active download
   useEffect(() => {
     if (!downloading) return;
-    const timer = window.setInterval(() => void refresh(prepared), 500);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh(prepared);
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [downloading, prepared, refresh]);
 
-  const run = async (label: string, work: () => Promise<unknown>) => {
-    setBusy(true);
-    const failure = await work()
-      .then(() => refresh(prepared))
-      .then(
-        () => null,
-        (error: unknown) => (error instanceof Error ? error.message : String(error)),
-      );
-    setBusy(false);
-    if (failure !== null) toastManager.add({ type: "error", title: label, description: failure });
+  const run = async (label: string, work: () => Promise<unknown>, downloadId?: string) => {
+    if (!canManage) return;
+    const current = epoch.current;
+    if (downloadId) setRequestedDownload(downloadId);
+    else setBusy(true);
+    try {
+      await work();
+    } catch (error) {
+      if (current === epoch.current)
+        toastManager.add({
+          type: "error",
+          title: label,
+          description: error instanceof Error ? error.message : String(error),
+        });
+    } finally {
+      if (current === epoch.current) {
+        if (downloadId) setRequestedDownload(null);
+        else setBusy(false);
+        await refresh(prepared);
+      }
+    }
   };
+  const controlsDisabled = busy || downloading || !canManage;
   const supported = status?.supported ? status : null;
   const languages = [...new Set(models.flatMap((model) => model.languages))].sort((a, b) =>
     languageLabel(a).localeCompare(languageLabel(b)),
@@ -572,7 +603,7 @@ function EnvironmentModelsSection(props: {
             control={
               <Select
                 value={supported.acceleration}
-                disabled={busy || !canManage}
+                disabled={controlsDisabled}
                 onValueChange={(value) => {
                   if (value)
                     void run("Could not change hardware", () =>
@@ -611,7 +642,7 @@ function EnvironmentModelsSection(props: {
             control={
               <Select
                 value={supported.modelUnloadTimeout}
-                disabled={busy || !canManage}
+                disabled={controlsDisabled}
                 onValueChange={(value) => {
                   if (value)
                     void run("Could not change unload timing", () =>
@@ -675,11 +706,18 @@ function EnvironmentModelsSection(props: {
             {sortedModels.map((model) => (
               <ModelCard
                 key={model.id}
-                model={model}
-                busy={busy || !canManage}
+                model={
+                  model.id === requestedDownload && model.state === "downloadable"
+                    ? { ...model, state: "downloading" }
+                    : model
+                }
+                busy={controlsDisabled}
+                canCancel={canManage && !busy}
                 onDownload={() =>
-                  void run("Could not download the model", () =>
-                    runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                  void run(
+                    "Could not download the model",
+                    () => runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                    model.id,
                   )
                 }
                 onSelect={() =>

@@ -41,6 +41,13 @@ import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent"
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
+const INITIAL_SETUP = {
+  open: false,
+  step: 0,
+  model: null as EnvironmentSpeechModel | null,
+  downloading: false,
+  error: null as string | null,
+};
 
 // Every mounted editor shares one status probe per destination; starting a recording refreshes it.
 const statusProbes = new WeakMap<PreparedConnection, Promise<EnvironmentSpeechStatus>>();
@@ -133,30 +140,30 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly prepared: PreparedConnection;
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
-  const [controllerState, setControllerState] = useState({ prepared, value: INITIAL_STATE });
+  const [controllerState, setControllerState] = useState({
+    prepared,
+    grantId,
+    value: INITIAL_STATE,
+  });
   const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
-  const [setup, setSetup] = useState({
-    open: false,
-    step: 0,
-    model: null as EnvironmentSpeechModel | null,
-    downloading: false,
-    error: null as string | null,
-  });
+  const [setup, setSetup] = useState(INITIAL_SETUP);
   const [previousOwner, setPreviousOwner] = useState({
     key: input.ownerKey,
     disabled: input.disabled,
   });
-  if (controllerState.prepared !== prepared) {
-    setControllerState({ prepared, value: INITIAL_STATE });
+  if (controllerState.prepared !== prepared || controllerState.grantId !== grantId) {
+    setControllerState({ prepared, grantId, value: INITIAL_STATE });
+    setSetup(INITIAL_SETUP);
+    setQueuedStart(null);
     setPreview(null);
     setLevel(0);
   }
   if (previousOwner.key !== input.ownerKey || previousOwner.disabled !== input.disabled) {
     setPreviousOwner({ key: input.ownerKey, disabled: input.disabled });
     setQueuedStart(null);
-    setSetup((current) => (current.open ? { ...current, open: false } : current));
+    setSetup(INITIAL_SETUP);
   }
   const state: VoiceInputState =
     queuedStart === prepared && prepared
@@ -323,7 +330,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onStateChange: (value) => {
         if (disposed) return;
         if (value.phase === "error") pendingSubmissionRef.current = null;
-        setControllerState({ prepared, value });
+        setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
     });
@@ -449,7 +456,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     if (latestStatus.state === "missing-model") {
-      setSetup({ open: true, step: 0, model: null, downloading: false, error: null });
+      setSetup({ ...INITIAL_SETUP, open: true });
       return;
     }
     setLevel(0);
