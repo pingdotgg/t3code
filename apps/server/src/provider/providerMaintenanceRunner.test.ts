@@ -976,6 +976,12 @@ describe("providerMaintenanceRunner", () => {
 
 it.effect.each([
   {
+    mode: "default-precurrent",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
     mode: "default",
     version: "1.14.19",
     installation: { installedVersion: "1.14.20" },
@@ -1036,7 +1042,11 @@ it.effect.each([
           ...registry,
           refreshInstance: () =>
             Ref.updateAndGet(providersRef, (providers) =>
-              providers.map((provider) => ({ ...provider, checkedAt: "2026-04-10T00:00:01.000Z" })),
+              providers.map((provider) => ({
+                ...provider,
+                ...(mode === "default-precurrent" ? installation : {}),
+                checkedAt: "2026-04-10T00:00:01.000Z",
+              })),
             ),
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
           refreshAfterUpdate: () =>
@@ -1065,13 +1075,16 @@ it.effect.each([
         ...(mode.startsWith("default") ? {} : { targetVersion: "1.14.20" }),
       });
 
-      assert.deepStrictEqual(calls, [
-        `npm install -g opencode-ai@${mode.startsWith("default") ? "latest" : "1.14.20"}`,
-      ]);
+      assert.deepStrictEqual(
+        calls,
+        mode === "default-precurrent"
+          ? []
+          : [`npm install -g opencode-ai@${mode.startsWith("default") ? "latest" : "1.14.20"}`],
+      );
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
-      if (mode === "default" || mode === "targeted") {
+      if (mode === "default" || mode === "default-precurrent" || mode === "targeted") {
         assert.strictEqual(
           provider.updateState?.message,
           "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.",
@@ -1079,6 +1092,7 @@ it.effect.each([
       }
       assert.strictEqual(provider.version, version);
       assert.strictEqual("installedVersion" in provider, mode !== "legacy");
+      if (mode === "default-precurrent") return;
       assert.strictEqual(
         provider.versionAdvisory?.status,
         mode.endsWith("unknown") ? "unknown" : "current",

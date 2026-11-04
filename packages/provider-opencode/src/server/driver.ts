@@ -256,7 +256,13 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(Path.Path, pathService),
       );
     const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
-      maintenanceFor(runtimeProbe.get),
+      maintenanceFor(
+        isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+          ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+            )
+          : runtimeProbe.get,
+      ),
     );
     const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
       !effectiveConfig.enabled
