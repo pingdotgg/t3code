@@ -163,6 +163,30 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("keeps U+2028 and U+2029 inside a message instead of splitting it", () =>
+    Effect.gen(function* () {
+      const { input, written, requests, bridge } = makeHarness(() =>
+        Response.json({ jsonrpc: "2.0", id: 4, result: { ok: true } }),
+      );
+      const fiber = yield* Effect.forkChild(bridge);
+      // JSON.stringify leaves both separators unescaped, as MCP stdio clients send them.
+      const message = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: "a\u2028b\u2029c" } },
+      });
+
+      input.end(`${message}\n`);
+      yield* Fiber.join(fiber);
+
+      expect(requests.map((request) => request.body)).toEqual([message]);
+      expect(written.map((chunk) => JSON.parse(chunk))).toEqual([
+        { jsonrpc: "2.0", id: 4, result: { ok: true } },
+      ]);
+    }),
+  );
+
   it.effect("forwards SSE messages before the HTTP response closes", () =>
     Effect.gen(function* () {
       let resolveResponseController!: (
