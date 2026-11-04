@@ -1,5 +1,6 @@
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
-import { createContext, use, type ReactNode } from "react";
+import { createContext, use } from "react";
+import type { InspectorContent } from "./inspector-panes";
 import type {
   WorkspaceDetail,
   WorkspaceDetailSheet,
@@ -22,7 +23,7 @@ interface AdaptiveWorkspaceContextValue {
   /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly registerWorkspaceInspector: (
-    render: () => ReactNode,
+    content: InspectorContent,
     routeKey: string | undefined,
     revealKey?: string,
   ) => () => void;

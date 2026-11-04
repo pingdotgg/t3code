@@ -1,13 +1,14 @@
-import { createContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FormSheet } from "react-native-screens";
 import { useResolveClassNames } from "uniwind";
 
-import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
+import { InspectorPanes } from "./inspector-host";
+import type { InspectorContent } from "./inspector-panes";
 
 /**
  * Closes the inspector sheet around the inspector, then runs `then` once it is gone: a route
@@ -15,11 +16,11 @@ import { formSheetDetents } from "../../native/sheet-surface";
  */
 export const InspectorSheetContext = createContext<((then?: () => void) => void) | null>(null);
 
-/** The inspector where the window has no column for it. Its content draws its own bar. */
+/** The inspector where the window has no column for it. Its panes draw their own bars. */
 export function WorkspaceInspectorSheet(props: {
   readonly open: boolean;
   readonly onClose: () => void;
-  readonly children: ReactNode;
+  readonly content: InspectorContent | undefined;
 }) {
   const containerStyle = useResolveClassNames(Platform.OS === "android" ? "bg-header" : "bg-sheet");
   const insets = useSafeAreaInsets();
@@ -77,13 +78,7 @@ export function WorkspaceInspectorSheet(props: {
                   Platform.OS === "android" ? "absolute inset-0 bg-header pt-3" : "flex-1 bg-sheet"
                 }
               >
-                <RenderErrorBoundary
-                  renderFallback={(fallback) => (
-                    <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
-                  )}
-                >
-                  {props.children}
-                </RenderErrorBoundary>
+                <InspectorPanes content={props.content} onClose={() => close()} />
                 {Platform.OS === "android" ? (
                   <View
                     pointerEvents="none"

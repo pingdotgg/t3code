@@ -1,9 +1,10 @@
-import { type RefObject, useRef, useState } from "react";
+import { type RefObject, use, useRef, useState } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
+import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
@@ -69,8 +70,15 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const { themeVariables } = useAppearancePreferences();
   const inWorkspace = useHasWorkspaceAppBar();
   const sidebarToggle = useSidebarToggle();
+  const closeInspector = use(InspectorCloseContext);
   const inline = search?.mode === "inline";
   const searching = searchState?.searching === true;
+  const actions = props.refresh
+    ? [
+        ...(props.actions ?? []),
+        { ...props.refresh, icon: "arrow.clockwise" as const, overflowOnly: true },
+      ]
+    : props.actions;
   const openSearch = () => searchState?.open();
   const closeSearch = () => searchState?.close();
 
@@ -177,24 +185,22 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
                 icon: "magnifyingglass",
                 onPress: openSearch,
               },
-              ...(search.refreshInToolbar && search.onRefresh
-                ? [
-                    {
-                      accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
-                      icon: "arrow.clockwise" as const,
-                      onPress: search.onRefresh,
-                    },
-                  ]
-                : []),
-              ...(props.actions ?? []),
+              ...(actions ?? []),
             ]
-          : props.actions
+          : actions
       }
       trailing={
-        menuView?.length || props.trailing ? (
+        menuView?.length || props.trailing || closeInspector ? (
           <>
             {menuView}
             {props.trailing}
+            {closeInspector ? (
+              <AndroidHeaderIconButton
+                accessibilityLabel="Close inspector"
+                icon="xmark"
+                onPress={closeInspector}
+              />
+            ) : null}
           </>
         ) : undefined
       }

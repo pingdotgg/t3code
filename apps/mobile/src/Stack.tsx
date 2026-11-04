@@ -11,10 +11,7 @@ import {
   StackActions,
   useNavigation,
 } from "@react-navigation/native";
-import {
-  createNativeStackScreen,
-  type NativeStackNavigationOptions,
-} from "@react-navigation/native-stack";
+import { createNativeStackScreen } from "@react-navigation/native-stack";
 import type { ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
 import { useResolveClassNames } from "uniwind";
@@ -141,32 +138,11 @@ import {
   SettingsLegalDocumentCloseHeaderButton,
   SettingsLegalDocumentExternalHeaderButton,
 } from "./features/settings/components/SettingsLegalDocumentRouteScreen";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
+import { GLASS_HEADER_OPTIONS, type AppScreenOptions } from "./native/glass-header-options";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
-import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { workspaceDetailRouter } from "./features/workspace/workspace-detail-selection";
-
-const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-
-type AppScreenOptions = NativeStackNavigationOptions & {
-  readonly unstable_navigationItemStyle?: "editor";
-  readonly unstable_headerMinimizationBehavior?: "onScrollUp" | "never";
-};
-
-const GLASS_HEADER_OPTIONS: AppScreenOptions = {
-  headerBackButtonDisplayMode: "minimal",
-  headerBackTitle: "",
-  headerLargeTitle: false,
-  headerShadowVisible: false,
-  headerShown: true,
-  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
-  headerTitleStyle: { fontSize: 18, fontWeight: "800" },
-  headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
-  scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
-  unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
-};
 
 // Hiding Android's native header after mount can leave detail panes measured short.
 // These screens render their own Material toolbar, so hide it from the first layout.

@@ -20,8 +20,8 @@ screen never asks which platform or window width it is on.
    - _Medium_ (600–720pt wide): the sidebar sits beside a list and floats over a page.
    - _Compact_ (under 600pt either way): the sidebar is the root, and pages push.
    - Where the inspector column does not fit, the inspector is a sheet.
-3. **Feature screens.** A screen places content by role. It renders its page and declares side
-   content with `<Inspector>`, and asks for it with `showInspector()`. The shell decides
+3. **Feature screens.** A screen places content by role. It renders its page and declares its
+   inspector panes with `<Inspector>`, and asks for them with `showInspector()`. The shell decides
    between column and sheet. Choosing a route or a component by width or platform here is the bug
    this structure exists to prevent.
 4. **Design system.** Every pane has an `AppBar` with the same contract as a full screen.
@@ -43,5 +43,8 @@ Platform splits live in layers 1, 2 and 4, as `.ios` and `.android` files.
   must also accept `usePaneRole() === "sidebar"`.
 - Modals and full-screen pages are presented over the columns and render with no pane role, so
   they get no column chrome.
+- On iOS each inspector pane is a native screen of its own, and only the active one is attached.
+  A pane hidden with opacity still has its native bar, toolbar and scroll view in the window,
+  and UIKit shows them over the visible pane.
 - A route opened from the inspector sheet must wait for the sheet to close, through
   `InspectorSheetContext`. Presenting over a closing sheet races its dismissal on iOS.

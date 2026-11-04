@@ -82,6 +82,7 @@ import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 import { WorkspaceInspectorSheet } from "./workspace-inspector-sheet";
+import type { InspectorContent } from "./inspector-panes";
 import {
   WorkspaceContentWidthContext,
   WorkspaceSettledContentWidthContext,
@@ -112,24 +113,31 @@ import { WorkspaceThreadSidebar } from "../workspace/WorkspaceThreadSidebar";
 export { useAdaptiveWorkspaceLayout };
 
 /**
- * Shows its children in the workspace's inspector column while this screen is focused. Register on
- * focus events because frozen blurred screens may never clean up.
+ * Shows these panes in the workspace's inspector while this screen is focused. Register on focus
+ * events because frozen blurred screens may never clean up.
  */
 export function Inspector(props: {
-  readonly children: ReactNode;
+  readonly content: InspectorContent;
   /** Opens the column the first time this key registers while its route stays on the stack. */
   readonly revealKey?: string;
 }) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
-  const render = () => (
-    <NavigationContext.Provider value={navigation}>
-      <NavigationRouteContext.Provider value={route}>
-        {props.children}
-      </NavigationRouteContext.Provider>
-    </NavigationContext.Provider>
-  );
+  const content: InspectorContent = {
+    ...props.content,
+    resetKeys: [route?.key, ...(props.content.resetKeys ?? [])],
+    panes: props.content.panes.map((pane) => ({
+      ...pane,
+      render: () => (
+        <NavigationContext.Provider value={navigation}>
+          <NavigationRouteContext.Provider value={route}>
+            {pane.render()}
+          </NavigationRouteContext.Provider>
+        </NavigationContext.Provider>
+      ),
+    })),
+  };
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
 
@@ -138,7 +146,7 @@ export function Inspector(props: {
       deactivateRef.current?.();
       return;
     }
-    deactivateRef.current = registerWorkspaceInspector(render, route?.key, props.revealKey);
+    deactivateRef.current = registerWorkspaceInspector(content, route?.key, props.revealKey);
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
@@ -171,7 +179,7 @@ export function Inspector(props: {
       syncRegistration();
     }
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed column content replaces its existing native workspace registration.
-  }, [props.children, props.revealKey]);
+  }, [props.content, props.revealKey]);
   return null;
 }
 
@@ -350,7 +358,7 @@ function AdaptiveWorkspaceLayoutContent(
     ],
   );
   const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly render: () => ReactNode;
+    readonly content: InspectorContent;
     readonly active: boolean;
     readonly routeKey: string | undefined;
   } | null>(null);
@@ -393,13 +401,13 @@ function AdaptiveWorkspaceLayoutContent(
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
   const registerWorkspaceInspector = (
-    render: () => ReactNode,
+    content: InspectorContent,
     routeKey: string | undefined,
     revealKey?: string,
   ) => {
     const owner = Symbol("workspace-inspector");
     workspaceInspectorOwner.current = owner;
-    setWorkspaceInspector({ render, active: true, routeKey });
+    setWorkspaceInspector({ content, active: true, routeKey });
     if (
       routeKey !== undefined &&
       revealKey !== undefined &&
@@ -828,9 +836,11 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const inspectorSheet = (
-    <WorkspaceInspectorSheet open={inspectorSheetOpen} onClose={dismissInspectorSheet}>
-      {workspaceInspector?.render()}
-    </WorkspaceInspectorSheet>
+    <WorkspaceInspectorSheet
+      open={inspectorSheetOpen}
+      onClose={dismissInspectorSheet}
+      content={workspaceInspector?.content}
+    />
   );
   if (nativeWorkspace) {
     return (
@@ -842,7 +852,7 @@ function AdaptiveWorkspaceLayoutContent(
           <NativeWorkspaceInspectorContext
             value={{
               // Without a column the sheet shows it; the hidden native column must not mount it too.
-              render: fileInspector.supported ? workspaceInspector?.render : undefined,
+              content: fileInspector.supported ? workspaceInspector?.content : undefined,
               visible: inspectorColumnTargetWidth > 0,
             }}
           >
@@ -999,12 +1009,12 @@ function AdaptiveWorkspaceLayoutContent(
       ) : null}
       <PaneContext value="inspector">
         <WorkspaceInspectorPane
-          pathname={props.pathname}
           renderedInspectorWidth={renderedInspectorWidth}
           active={workspaceInspector?.active ?? false}
           panes={panes}
-          renderInspector={workspaceInspector?.render}
+          content={workspaceInspector?.content}
           setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
+          onClose={() => setFileInspectorPreferredVisible(false)}
           onClosed={handleWorkspaceInspectorClosed}
         />
       </PaneContext>

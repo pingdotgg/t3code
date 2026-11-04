@@ -57,9 +57,6 @@ export interface AppBarSearch {
   readonly compactPlaceholder?: string;
   readonly closeAccessibilityLabel?: string;
   readonly clearAccessibilityLabel?: string;
-  readonly onRefresh?: () => void;
-  readonly refreshAccessibilityLabel?: string;
-  readonly refreshInToolbar?: boolean;
   /** Controlled open state. The owner then also handles back and the keyboard shortcut. */
   readonly active?: boolean;
   readonly onOpen?: () => void;
@@ -72,6 +69,8 @@ export interface AppBarProps {
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AppBarAction>;
+  /** Pull-to-refresh is the gesture on both platforms; Android also lists this in the overflow menu. */
+  readonly refresh?: Pick<AppBarAction, "accessibilityLabel" | "disabled" | "onPress">;
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
   readonly onBack?: () => void;
