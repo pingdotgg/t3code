@@ -47,6 +47,7 @@ const decodeRecommendedUpdates = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Array(
       Schema.Struct({
+        Identifier: Schema.optionalKey(Schema.String),
         "Display Name": Schema.optionalKey(Schema.String),
         "Display Version": Schema.optionalKey(Schema.String),
       }),
@@ -56,8 +57,10 @@ const decodeRecommendedUpdates = Schema.decodeUnknownOption(
 
 /** `RecommendedUpdates` from com.apple.SoftwareUpdate.plist, as `plutil -extract ... json`. */
 export function parseDarwinRecommendedUpdates(json: string): OsUpdates | undefined {
-  const entries = Option.getOrUndefined(decodeRecommendedUpdates(json));
-  if (!entries) return undefined;
+  const decoded = Option.getOrUndefined(decodeRecommendedUpdates(json));
+  if (!decoded) return undefined;
+  // Major OS upgrades are optional, as Ubuntu's count leaves out release upgrades.
+  const entries = decoded.filter(({ Identifier }) => !Identifier?.endsWith("_major"));
   const names = entries.flatMap(({ "Display Name": name, "Display Version": version }) => {
     if (!name) return [];
     return [version && !name.endsWith(version) ? `${name} ${version}` : name];
@@ -141,7 +144,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     Effect.option,
   );
 
-  const sample = Effect.fn("HostResources.sample")(function* () {
+  const sampleCpuAndMemory = Effect.gen(function* () {
     const previousCpu = readCpu();
     yield* Effect.sleep("200 millis");
     const cpu = readCpu();
@@ -169,15 +172,24 @@ const make = Effect.fn("makeHostResources")(function* () {
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
-    const disk = yield* readDisk;
     return {
-      sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount: cpu.count,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
+    };
+  });
+
+  const sample = Effect.fn("HostResources.sample")(function* () {
+    const [cpuAndMemory, disk, osUpdates] = yield* Effect.all(
+      [sampleCpuAndMemory, readDisk, Cache.get(osUpdatesCache, "host")],
+      { concurrency: "unbounded" },
+    );
+    return {
+      sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
+      ...cpuAndMemory,
       ...(Option.isSome(disk) ? { disk: disk.value } : {}),
-      ...(yield* Cache.get(osUpdatesCache, "host")),
+      ...osUpdates,
     };
   });
 

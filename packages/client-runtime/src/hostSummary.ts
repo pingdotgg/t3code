@@ -12,9 +12,12 @@ export function formatHostBytes(bytes: number): string {
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+/** Under 10% free, capped at 20 GB so a large disk with plenty left stays calm. */
 export function isHostDiskLow(snapshot: HostResourcesSnapshot): boolean {
   const disk = snapshot.disk;
-  return disk !== undefined && disk.totalBytes > 0 && disk.availableBytes / disk.totalBytes < 0.1;
+  return (
+    disk !== undefined && disk.availableBytes < Math.min(disk.totalBytes * 0.1, 20 * 1024 ** 3)
+  );
 }
 
 /** One line for pickers and lists: "11 GB disk free · 9.4 GB RAM free · 3 updates". */

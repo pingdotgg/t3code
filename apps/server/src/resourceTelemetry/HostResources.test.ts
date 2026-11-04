@@ -5,11 +5,22 @@ import { parseDarwinRecommendedUpdates, parseUpdateNotifier } from "./HostResour
 describe("parseDarwinRecommendedUpdates", () => {
   it.each([
     {
-      name: "names each update without repeating a version the name already carries",
+      name: "counts updates but not optional major OS upgrades",
       json: JSON.stringify([
         { "Display Name": "Safari", "Display Version": "27.2", Identifier: "Safari27.2TahoeAuto" },
-        { "Display Name": "macOS Tahoe 26.7.2", "Display Version": "26.7.2" },
-        { MobileSoftwareUpdate: true },
+        {
+          "Display Name": "macOS Tahoe 26.7.2",
+          "Display Version": "26.7.2",
+          Identifier: "MSU_UPDATE_25G332_patch_26.7.2_minor",
+          MobileSoftwareUpdate: true,
+        },
+        {
+          "Display Name": "macOS 27.2",
+          "Display Version": "27.2",
+          Identifier: "MSU_UPDATE_26B123_patch_27.2_major",
+          MobileSoftwareUpdate: true,
+        },
+        { "Display Version": "1.0", Identifier: "Unnamed" },
       ]),
       expected: { available: 3, names: ["Safari 27.2", "macOS Tahoe 26.7.2"] },
     },

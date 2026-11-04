@@ -385,9 +385,15 @@ const RunContextSelector = memo(function RunContextSelector({
                         key={target.environmentId}
                         onClick={() => onAddToMachine(target.environmentId)}
                       >
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <EnvironmentMachineIcon kind={target.machine} className="size-3" />
-                          <span className="min-w-0 truncate">{target.label}</span>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <EnvironmentMachineIcon kind={target.machine} className="size-3" />
+                            <span className="min-w-0 truncate">{target.label}</span>
+                          </span>
+                          <EnvironmentHostSummary
+                            environmentId={target.environmentId}
+                            className="ps-4.5 text-muted-foreground text-xs"
+                          />
                         </span>
                       </MenuItem>
                     ))}
