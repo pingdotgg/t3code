@@ -297,6 +297,38 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
   ),
 );
 
+it.effect.each([
+  { case: "a readable rule list", errors: undefined, readable: true },
+  { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
+  { case: "a reply without a rule list", response: {}, readable: false },
+])("reads Claude's permission rules only when no settings file was skipped: $case", (testCase) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const rules = [{ behavior: "deny" as const, rule: "mcp__probe__redeploy" }];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            close: vi.fn(),
+            request: async () => ({
+              response:
+                "response" in testCase
+                  ? testCase.response
+                  : { state: { rules, errors: testCase.errors } },
+            }),
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      const exit = yield* Effect.exit(session.listPermissionRules);
+      if (testCase.readable) assert.deepEqual(exit, Exit.succeed(rules));
+      else assert.isTrue(Exit.isFailure(exit));
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
 it.effect.each([true, false])("only retries after confirmed process exit: %s", (exits) =>
   Effect.scoped(
     Effect.gen(function* () {
