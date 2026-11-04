@@ -81,7 +81,11 @@ import { isElectron } from "~/env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
+import {
+  PanelLayoutControls,
+  RightPanelMaximizeControl,
+  WindowControlsDivider,
+} from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -1131,6 +1135,7 @@ export function PullRequestsPage() {
         />
       ) : null}
       {panelToggleControls}
+      <WindowControlsDivider />
     </div>
   );
   const carriedToNothing =

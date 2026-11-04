@@ -161,6 +161,19 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   );
 });
 
+/**
+ * Marks where the app's controls end and the native window controls begin. Linux and Windows draw
+ * a bare close button right after the right panel toggle, so it reads as "close this panel".
+ */
+export function WindowControlsDivider() {
+  return (
+    <span
+      aria-hidden
+      className="mx-1.5 hidden h-5 w-px shrink-0 bg-muted-foreground/40 wco:block"
+    />
+  );
+}
+
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   return (
@@ -209,6 +222,7 @@ export function WorkspaceTitlebarControls(props: {
         </span>
       ) : null}
       <div className="pointer-events-auto flex h-full items-center">{props.children}</div>
+      <WindowControlsDivider />
     </div>
   );
 }
