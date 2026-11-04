@@ -116,6 +116,8 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildPullRequestCommentContext,
+  buildPullRequestReferenceContext,
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
@@ -138,6 +140,7 @@ import {
   isPullRequestConflicting,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
+  type PullRequestChatSubject,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
   stripPullRequestHandoffReferences,
@@ -1051,6 +1054,47 @@ export function PullRequestDetailPanel({
     );
   };
 
+  /**
+   * Brings a remark into the composer beside this panel, with the pull request it belongs to,
+   * and nothing else: what to ask about it is the reader's to write. A remark on a line travels
+   * as its whole conversation, the way fixing one does.
+   */
+  const addCommentToChat = (subject: PullRequestChatSubject) => {
+    if (!detail || attachTarget === null) return;
+    const thread =
+      subject.kind === "comment"
+        ? detail.reviewThreads.find((candidate) =>
+            candidate.comments.some((comment) => comment.id === subject.comment.id),
+          )
+        : undefined;
+    const comment = buildPullRequestCommentContext(
+      detail.number,
+      thread === undefined ? subject : { kind: "thread", thread },
+    );
+    if (comment === null) return;
+    const store = useComposerDraftStore.getState();
+    // One reference to the pull request is enough, whichever action put it there.
+    const hasPullRequest = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
+      (existing) => existing.pullRequest?.number === detail.number,
+    );
+    if (!hasPullRequest) {
+      store.addReviewComment(
+        attachTarget,
+        buildPullRequestReferenceContext({
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          isDraft: detail.isDraft,
+        }),
+      );
+    }
+    store.addReviewComment(attachTarget, comment);
+    toastManager.add({ type: "success", title: "Added to the composer" });
+  };
+
   const startCheckout = (mode: "worktree" | "local") => {
     if (!handoffSummary) return;
     void startHandoff(`checkout:${mode}`, null, mode);
@@ -1751,6 +1795,7 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />
@@ -1807,6 +1852,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     order={timelineOrder}
                     onOpenCommit={openCommit}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
                   />
                 )}
@@ -1830,6 +1876,7 @@ export function PullRequestDetailPanel({
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}

@@ -239,10 +239,12 @@ export function threadPullRequestPanelTarget(thread: {
 }
 
 export function pullRequestHandoffLabels(inThisThread: boolean) {
+  // Beside a composer the per-comment buttons share their header with Add to chat, and where
+  // the fix lands goes without saying.
   return inThisThread
     ? {
-        fixFinding: "Fix in this thread",
-        fixCheck: "Fix in this thread",
+        fixFinding: "Fix",
+        fixCheck: "Fix",
         fixFindings: "Fix findings in this thread",
       }
     : {
@@ -652,6 +654,61 @@ export function pagePullRequestConversationItems(
   return { shown, hidden: items.length - shown.length };
 }
 
+const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
+// A backtick fence's info string cannot hold a backtick, or "```x```" opening a line would read
+// as a fence rather than as inline code.
+const FENCE_OPEN = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/u;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u;
+
+/**
+ * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
+ * bookkeeping would otherwise use up the bound before the remark got any of it. Comments inside
+ * a code fence are source the remark is showing, so they stay; a fence inside a comment is
+ * hidden with the rest of it. Null for a body with no words.
+ */
+function readableBody(body: string): string | null {
+  if (visibleBody(body) === null) return null;
+  const kept: string[] = [];
+  let fence: string | null = null;
+  let inComment = false;
+  // Hosts pass bodies on with whatever line endings they were written with, and a `\r` left on a
+  // closing fence would hold the fence open over everything after it.
+  for (const line of body.split(/\r\n|\r|\n/u)) {
+    if (fence !== null) {
+      kept.push(line);
+      const closing = FENCE_CLOSE.exec(line)?.[1];
+      if (closing !== undefined && closing[0] === fence[0] && closing.length >= fence.length) {
+        fence = null;
+      }
+      continue;
+    }
+    let rest = line;
+    if (inComment) {
+      const end = rest.indexOf("-->");
+      if (end === -1) continue;
+      rest = rest.slice(end + 3);
+      inComment = false;
+    } else {
+      const opening = FENCE_OPEN.exec(line);
+      if (opening !== null) {
+        fence = opening[1] ?? opening[2] ?? null;
+        kept.push(line);
+        continue;
+      }
+    }
+    rest = rest.replace(HTML_COMMENT, "");
+    const unclosed = rest.indexOf("<!--");
+    if (unclosed !== -1) {
+      rest = rest.slice(0, unclosed);
+      inComment = true;
+    }
+    // A line that was all comment is dropped rather than left as a blank one.
+    if (rest.trim() === "" && line.trim() !== "") continue;
+    kept.push(rest);
+  }
+  return kept.join("\n").trim();
+}
+
 /**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
@@ -795,7 +852,7 @@ function reviewThreadContext(
     text: bounded(
       thread.comments
         .flatMap((comment) => {
-          const body = visibleBody(comment.body);
+          const body = readableBody(comment.body);
           return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
         })
         .join("\n"),
@@ -1080,6 +1137,44 @@ export function buildPullRequestReferenceContext(
   const comment = pullRequestContextComment(input, []);
   // Use URLs because repositories can share pull request numbers.
   return { ...comment, id: `pr-reference:${input.url}` };
+}
+
+/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
+export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+
+/**
+ * A review conversation or remark brought into the chat to talk about, not to fix. The composer
+ * is left alone for the reader's own question. Like a composer reference it is the reader's chip:
+ * it sits outside the `pull-request-` namespace a hand-off sweeps, so several stack and a later
+ * hand-off leaves them in place. Null for a remark, or a whole conversation, with no words in it.
+ */
+export function buildPullRequestCommentContext(
+  pullRequestNumber: number,
+  subject: PullRequestChatSubject,
+): ReviewCommentContext | null {
+  if (subject.kind === "thread") {
+    const context = reviewThreadContext(subject.thread, pullRequestNumber);
+    return context.text === "" ? null : { ...context, id: `pr-comment:${subject.thread.id}` };
+  }
+  const comment = subject.comment;
+  const body = readableBody(comment.body);
+  if (body === null) return null;
+  const author = comment.author?.login ?? "ghost";
+  return {
+    id: `pr-comment:${comment.id}`,
+    sectionId: `pull-request:${pullRequestNumber}`,
+    sectionTitle: `PR #${pullRequestNumber} conversation`,
+    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
+    filePath: comment.path ?? `@${author}`,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "comment",
+    text: bounded(`${author}: ${body}`),
+    diff: "",
+    ...(comment.path === null
+      ? {}
+      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+  };
 }
 
 const ANSWER_INSTRUCTIONS = [
