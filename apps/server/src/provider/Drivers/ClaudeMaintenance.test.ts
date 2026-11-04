@@ -212,6 +212,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
         Effect.provideService(HttpClient.HttpClient, client),
       );
       const maintenance = yield* resolve();
+      expect(maintenance.releaseChannel).toBe(row.npm ? undefined : row.channel);
       const versions = yield* ProviderLatestVersions.make();
       const enrich = enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenance).pipe(
         Effect.provideService(HttpClient.HttpClient, client),

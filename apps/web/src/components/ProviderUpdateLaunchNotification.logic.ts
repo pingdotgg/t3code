@@ -85,9 +85,12 @@ function getProviderUpdatedTitle(provider: Pick<ServerProvider, "driver" | "vers
     : `${providerName} updated`;
 }
 
-function getProviderUpdatedDescription(providerCount: number): string {
+function getProviderUpdatedDescription(
+  providerCount: number,
+  message: string | null | undefined,
+): string {
   return providerCount === 1
-    ? "New sessions will use the updated provider."
+    ? (message ?? "New sessions will use the updated provider.")
     : "New sessions will use the updated providers.";
 }
 
@@ -200,7 +203,8 @@ export interface ProviderUpdateRun {
 export function getProviderUpdateRunOutcome(
   run: ProviderUpdateRun,
 ):
-  | { readonly status: "interrupted" | "updated" }
+  | { readonly status: "interrupted" }
+  | { readonly status: "updated"; readonly message: string | null }
   | { readonly status: "failed"; readonly line: string } {
   if (isAtomCommandInterrupted(run.result)) return { status: "interrupted" };
   const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
@@ -215,7 +219,7 @@ export function getProviderUpdateRunOutcome(
     (provider) => provider.instanceId === run.instanceId,
   )?.updateState;
   return updateState?.status === "succeeded"
-    ? { status: "updated" }
+    ? { status: "updated", message: updateState.message }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
@@ -240,7 +244,10 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
     return {
       type: "success",
       title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
-      description: getProviderUpdatedDescription(settled.length),
+      description: getProviderUpdatedDescription(
+        settled.length,
+        settled[0]?.status === "updated" ? settled[0].message : null,
+      ),
     };
   }
   return {
@@ -398,7 +405,10 @@ export function getProviderUpdateSidebarPillView(
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider)
           : `${succeededProviders.length} providers updated`,
-      description: getProviderUpdatedDescription(succeededProviders.length),
+      description: getProviderUpdatedDescription(
+        succeededProviders.length,
+        succeededProvider.updateState?.message,
+      ),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });
   }

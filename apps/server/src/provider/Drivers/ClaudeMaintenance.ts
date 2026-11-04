@@ -84,6 +84,7 @@ const resolveClaudeMaintenance = Effect.fn("ClaudeMaintenance.resolve")(function
     ...capabilities,
     latestVersion: null,
     latestVersionCacheKey: url,
+    releaseChannel: channel,
     lookupLatestVersion: client.get(url).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.text),

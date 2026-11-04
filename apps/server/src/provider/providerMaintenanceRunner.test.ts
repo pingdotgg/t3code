@@ -66,13 +66,6 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
   });
 }
 
-// `releaseChannel` is not on ProviderMaintenanceCapabilities yet; the cast goes once it lands.
-function withStableReleaseChannel(
-  capabilities: ProviderMaintenanceCapabilities,
-): ProviderMaintenanceCapabilities {
-  return { ...capabilities, releaseChannel: "stable" } as ProviderMaintenanceCapabilities;
-}
-
 const baseProvider: ServerProvider = {
   instanceId: CODEX_INSTANCE_ID,
   driver: CODEX_DRIVER,
@@ -325,7 +318,7 @@ describe("providerMaintenanceRunner", () => {
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-          Effect.succeed(withStableReleaseChannel(lifecycleFor(provider))),
+          Effect.succeed({ ...lifecycleFor(provider), releaseChannel: "stable" }),
       });
 
       const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
@@ -372,17 +365,16 @@ describe("providerMaintenanceRunner", () => {
             ),
           ),
         getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            withStableReleaseChannel(
-              makeProviderMaintenanceCapabilities({
-                provider: CODEX_DRIVER,
-                packageName: "@anthropic-ai/claude-code",
-                updateExecutable: "claude",
-                updateArgs: ["update"],
-                updateLockKey: "claudeAgent-native",
-              }),
-            ),
-          ),
+          Effect.succeed({
+            ...makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@anthropic-ai/claude-code",
+              updateExecutable: "claude",
+              updateArgs: ["update"],
+              updateLockKey: "claudeAgent-native",
+            }),
+            releaseChannel: "stable",
+          }),
       });
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);

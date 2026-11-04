@@ -14,6 +14,8 @@ export interface ProviderMaintenanceCapabilities {
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
   /** Separates installer release channels that share an update command. */
   readonly latestVersionCacheKey?: string;
+  /** Installer release channel the update command follows; named in update results. */
+  readonly releaseChannel?: string;
   readonly compareVersions?: (current: string, latest: string) => number;
   /** Resolved executable path for advisories when no update command is proven. */
   readonly installPath?: string;

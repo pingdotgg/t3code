@@ -525,7 +525,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     status: "succeeded",
                     startedAt,
                     finishedAt: yield* nowIso,
-                    message: "Already up to date.",
+                    message: fresh.releaseChannel
+                      ? `Already up to date on the ${fresh.releaseChannel} release channel.`
+                      : "Already up to date.",
                   }),
                 );
               }
@@ -598,7 +600,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   ? "Update command completed, but T3 Code could not verify the provider version."
                   : stillOutdated
                     ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                    : fresh.releaseChannel
+                      ? `Provider updated from the ${fresh.releaseChannel} release channel.`
+                      : "Provider updated.",
                 output: commandOutput(result),
               }),
             );
