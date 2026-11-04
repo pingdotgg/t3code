@@ -2379,7 +2379,7 @@ const make = Effect.gen(function* () {
       };
     }),
     usageLimits: Effect.fn("OrchestratorMcpService.usageLimits")(function* (scope) {
-      yield* loadCaller(scope, false);
+      yield* requireCapability(scope);
       const providers = (yield* loadProviders).filter((provider) => provider.enabled);
       const sources = yield* Option.match(usageLimitSources, {
         onNone: () => Effect.succeed([]),

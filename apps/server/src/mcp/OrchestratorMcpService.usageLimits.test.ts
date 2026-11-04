@@ -1,9 +1,11 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   UsageLimitSourceId,
   type ServerProvider,
   type UsageLimitSourceSnapshot,
@@ -87,6 +89,7 @@ const dependencies = (
 ) =>
   Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     ServerSettings.layerTest(),
     Layer.mock(ThreadManagementService.ThreadManagementService)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
@@ -134,7 +137,14 @@ it.effect("aggregates provider drivers, preserves probe timestamps and hides cre
       Effect.provide(layer),
     );
 
-    const result = yield* service.usageLimits(scope(new Set(["orchestration"])));
+    const result = yield* service.usageLimits({
+      ...scope(new Set(["orchestration"])),
+      thread: {
+        threadId: ThreadId.make("usage-limits-thread"),
+        providerSessionId: "usage-limits-session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+    });
 
     expect(result.providers.map((account) => account.driver)).toEqual([
       "codex",
