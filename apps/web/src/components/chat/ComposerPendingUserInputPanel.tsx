@@ -1,4 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useLocation } from "@tanstack/react-router";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -11,6 +12,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
+import { isAppModalPage } from "../sidebar/mainAppLocation";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
@@ -119,9 +121,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setOptimisticSingleSelect(null);
   }
 
-  const visibleQuestionId = isCollapsed ? undefined : activeQuestion?.id;
+  const coveredByAppModal = useLocation({
+    select: (location) => isAppModalPage(location.pathname),
+  });
+  const visibleQuestionId = isCollapsed || coveredByAppModal ? undefined : activeQuestion?.id;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question's options are shown: on mount, question change, or expand
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question's options are shown: on mount, question change, expand, or closing Settings/Usage over the still-mounted chat
   useEffect(() => {
     questionShownRef.current =
       visibleQuestionId === undefined

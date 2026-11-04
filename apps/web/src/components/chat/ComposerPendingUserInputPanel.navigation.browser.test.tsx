@@ -398,3 +398,25 @@ it("answers at once when a focused option is activated from the keyboard", async
   await userEvent.keyboard("{Enter}");
   expect(onToggleOption).toHaveBeenCalledExactlyOnceWith("question-0", "Incremental");
 });
+
+it("ignores a click that lands on an option as closing Settings reveals the question", async () => {
+  using _timers = fakeTimers();
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <AnsweringPanel
+      questions={prompt.questions.slice(0, 1)}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+    />,
+    { router: "/settings" },
+  );
+  await advanceClock(1_000);
+  await act(() => screen.router!.navigate({ to: "/" }));
+
+  await userEvent.click(screen.getByRole("button", { name: /Incremental/ }));
+  await advanceClock(1_000);
+  expect(
+    onToggleOption,
+    "a click right after closing Settings selected an option",
+  ).not.toHaveBeenCalled();
+});
