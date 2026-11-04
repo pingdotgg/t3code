@@ -71,7 +71,7 @@ function watchInteraction(resume: () => void): () => void {
 }
 
 export function useLiveRefresh(
-  refresh: (() => void) | null,
+  refresh: (() => void | Promise<unknown>) | null,
   options: {
     readonly enabled?: boolean;
     readonly key?: string;
@@ -96,7 +96,7 @@ export function useLiveRefresh(
   const runRefresh = useEffectEvent((viewId: string, now: number) => {
     if (refresh === null) return;
     lastRefreshedAtByView.set(viewId, now);
-    refresh();
+    return refresh();
   });
   const fallbackViewId = useId();
   const viewId = key ?? fallbackViewId;
@@ -104,7 +104,23 @@ export function useLiveRefresh(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh interval tied to page visibility and user interaction listeners
   useEffect(() => {
     if (!enabled) return;
-    const read = (now: number) => runRefresh(viewId, now);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let disposed = false;
+    let pending = false;
+    const read = (now: number) => {
+      if (refreshWhileIdle && pending) return;
+      const result = runRefresh(viewId, now);
+      if (!refreshWhileIdle) return;
+      pending = true;
+      clearInterval(timer);
+      const completed = () => {
+        pending = false;
+        if (disposed) return;
+        lastRefreshedAtByView.set(viewId, Date.now());
+        syncTimer();
+      };
+      void Promise.resolve(result).then(completed, completed);
+    };
     const visible = () => document.visibilityState === "visible";
     const onArrival = () => {
       const now = Date.now();
@@ -129,13 +145,17 @@ export function useLiveRefresh(
         })
       ) {
         read(now);
-      }
+      } else if (refreshWhileIdle) syncTimer();
     };
 
-    let timer: ReturnType<typeof setInterval> | undefined;
     const syncTimer = () => {
       clearInterval(timer);
-      timer = visible() && intervalMs !== null ? setInterval(onInterval, intervalMs) : undefined;
+      timer =
+        visible() && intervalMs !== null && !pending
+          ? refreshWhileIdle
+            ? setTimeout(onInterval, intervalMs)
+            : setInterval(onInterval, intervalMs)
+          : undefined;
     };
     const onVisibilityChange = () => {
       onArrival();
@@ -157,6 +177,7 @@ export function useLiveRefresh(
     window.addEventListener("focus", onArrival);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      disposed = true;
       clearInterval(timer);
       window.removeEventListener("focus", onArrival);
       document.removeEventListener("visibilitychange", onVisibilityChange);

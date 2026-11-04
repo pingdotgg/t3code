@@ -42,15 +42,31 @@ export async function refreshEnvironmentLimits(
 // one every few minutes per environment.
 const limitsAutoRefreshAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
-    const refresh = () => {
-      void refreshEnvironmentLimits(get.registry, environmentId, { automatic: true });
+    let disposed = false;
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      if (!isAppActive() || pending || disposed) return;
+      pending = true;
+      clearTimeout(timer);
+      try {
+        await refreshEnvironmentLimits(get.registry, environmentId, { automatic: true });
+      } finally {
+        pending = false;
+        if (!disposed)
+          timer = setTimeout(() => {
+            void refresh();
+          }, 5 * 60_000);
+      }
     };
-    refresh();
-    const unsubscribe = subscribeAppState(refresh);
-    const timer = setInterval(refresh, 5 * 60_000);
+    void refresh();
+    const unsubscribe = subscribeAppState(() => {
+      void refresh();
+    });
     get.addFinalizer(() => {
+      disposed = true;
       unsubscribe();
-      clearInterval(timer);
+      clearTimeout(timer);
     });
   }).pipe(Atom.withLabel(`mobile:limits-auto-refresh:${environmentId}`)),
 );

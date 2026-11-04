@@ -4,22 +4,45 @@ import { act, fakeTimers, render } from "../../test/render";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "./useLiveRefresh";
 
 function Probe(props: {
-  readonly refresh: () => void;
+  readonly refresh: () => void | Promise<unknown>;
   readonly viewKey: string;
   readonly enabled?: boolean;
   readonly intervalMs?: number | null;
   readonly refreshOnShow?: boolean;
+  readonly refreshWhileIdle?: boolean;
 }) {
   useLiveRefresh(props.refresh, {
     key: props.viewKey,
     enabled: props.enabled ?? true,
     ...(props.intervalMs !== undefined ? { intervalMs: props.intervalMs } : {}),
+    refreshWhileIdle: props.refreshWhileIdle ?? false,
     ...(props.refreshOnShow !== undefined ? { refreshOnShow: props.refreshOnShow } : {}),
   });
   return null;
 }
 
 describe("useLiveRefresh", () => {
+  it("schedules usage intervals after a slow refresh completes", async () => {
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const refresh = vi.fn().mockReturnValueOnce(pending);
+    using _timers = fakeTimers({ now: 3_000_000 });
+    // A bare hook probe; nothing here navigates.
+    await using _screen = await render(
+      <Probe refresh={refresh} viewKey="slow-usage" refreshOnShow refreshWhileIdle />,
+      { router: false },
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTime(1000));
+    await act(() => complete());
+    await act(() => vi.advanceTimersByTime(299_000));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTime(1000));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
   it.each([true, false])(
     "refreshes a hidden mount on arrival with refreshOnShow=%s",
     async (refreshOnShow) => {

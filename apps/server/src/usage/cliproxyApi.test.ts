@@ -220,12 +220,16 @@ describe("CLIProxyAPI built-in management API", () => {
         expect(first.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
           25, 25,
         ]);
-        yield* api.readAccounts(config, ["claudeAgent"]);
+        yield* TestClock.adjust("1 minute");
+        const cached = yield* api.readAccounts(config, ["claudeAgent"]);
+        expect(cached.map((account) => account.usageLimits.checkedAt)).toEqual(
+          first.map((account) => account.usageLimits.checkedAt),
+        );
         expect(
           test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
         ).toHaveLength(2);
         limited = true;
-        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("4 minutes");
         const stale = yield* api.readAccounts(config, ["claudeAgent"]);
         expect(stale.map((account) => account.usageLimits)).toEqual(
           first.map((account) => ({ ...account.usageLimits, stale: true })),

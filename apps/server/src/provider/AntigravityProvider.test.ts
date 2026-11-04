@@ -374,7 +374,13 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("publishes session metadata and native commands without another health probe", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        let usageReads = 0;
+        const harness = yield* makeHarness({
+          probeUsage: Effect.sync(() => {
+            usageReads++;
+            return { checkedAt: "2026-01-01T00:00:00.000Z", windows: [] };
+          }),
+        });
         yield* harness.initialize;
         const nextReady = yield* Stream.toPull(
           harness.provider.snapshot.streamChanges.pipe(
@@ -392,6 +398,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           auth: { status: "authenticated", type: "oauth-personal" },
           supportsTextGeneration: true,
         });
+        expect(snapshot.usageLimits?.unavailable?.reason).toBe("probeFailed");
+        expect(usageReads).toBe(0);
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
@@ -718,7 +726,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           };
           const usage = yield* Ref.make(limits);
           const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
-          const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+          const published = yield* harness.nextPublish(
+            (snapshot) =>
+              snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+          );
           yield* harness.initialize;
           expect((yield* published)?.usageLimits).toEqual(limits);
           // The second health check is the one the failed background read triggers.
@@ -805,14 +816,17 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             Effect.andThen(Deferred.await(readResult)),
           ),
         });
-        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        const published = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+        );
         yield* harness.initialize;
         yield* Deferred.await(readStarted);
         yield* harness.provider.onSessionStarted(started, "/workspace");
         yield* harness.provider.onSessionStarted(started, "/other");
         const ready = yield* harness.provider.snapshot.getSnapshot;
         expect(ready).toMatchObject({ status: "ready", auth: { status: "authenticated" } });
-        expect(ready.usageLimits).toBeUndefined();
+        expect(ready.usageLimits?.unavailable?.reason).toBe("probeFailed");
         expect(yield* Ref.get(reads)).toBe(1);
         const limits = {
           checkedAt: "2026-10-09T12:00:00.000Z",
@@ -838,7 +852,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           Deferred.succeed(oldReadStarted, undefined).pipe(Effect.andThen(Effect.never)),
         );
         const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
-        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        const published = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.usageLimits !== undefined && snapshot.usageLimits.unavailable === undefined,
+        );
         yield* harness.initialize;
         yield* Deferred.await(oldReadStarted);
         yield* Ref.set(usage, Effect.succeed(newLimits));
@@ -853,7 +870,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         } satisfies ServerProviderUsageLimits;
         yield* Ref.set(usage, Effect.succeed(failed));
         const republished = yield* harness.nextPublish(
-          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "probeFailed",
+          (snapshot) => snapshot.usageLimits?.checkedAt === failed.checkedAt,
         );
         yield* harness.provider.onSignedIn;
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();

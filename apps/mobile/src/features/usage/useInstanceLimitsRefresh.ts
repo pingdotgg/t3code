@@ -17,28 +17,42 @@ export function useInstanceLimitsRefresh(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- quota demand follows the native panel and app lifecycle
   useEffect(() => {
     if (!visible || !focused) return;
+    let disposed = false;
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
-      if (!isAppActive()) return;
-      void runAtomCommand(
-        registry,
-        serverEnvironment.refreshProviders,
-        { environmentId, input: { instanceId, usage: true } },
-        { reportFailure: false },
-      );
-      if (driver)
-        void runAtomCommand(
+      if (!isAppActive() || pending || disposed) return;
+      pending = true;
+      clearTimeout(timer);
+      const completed = () => {
+        pending = false;
+        if (!disposed) timer = setTimeout(refresh, 5 * 60_000);
+      };
+      void Promise.all([
+        runAtomCommand(
           registry,
           serverEnvironment.refreshProviders,
-          { environmentId, input: { usageSources: true, usageProviders: [driver] } },
+          { environmentId, input: { instanceId, usage: true } },
           { reportFailure: false },
-        );
+        ),
+        driver
+          ? runAtomCommand(
+              registry,
+              serverEnvironment.refreshProviders,
+              { environmentId, input: { usageSources: true, usageProviders: [driver] } },
+              { reportFailure: false },
+            )
+          : undefined,
+      ]).then(completed, completed);
     };
-    refresh();
-    const unsubscribe = subscribeAppState(refresh);
-    const timer = setInterval(refresh, 5 * 60_000);
+    void refresh();
+    const unsubscribe = subscribeAppState(() => {
+      void refresh();
+    });
     return () => {
+      disposed = true;
       unsubscribe();
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [registry, environmentId, instanceId, driver, visible, focused]);
 }

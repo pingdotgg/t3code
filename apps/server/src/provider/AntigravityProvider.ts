@@ -1,4 +1,7 @@
-import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsagePolling,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -180,6 +183,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const authUncheckedMessage = usesCredentials
     ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
     : AUTH_UNCHECKED_MESSAGE;
+  const pendingUsage = (checkedAt: string) =>
+    options.probeUsage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : undefined;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({
@@ -197,6 +204,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         version: null,
         status: "warning",
         auth: { status: "unknown", ...(options.auth ? { type: options.auth.type } : {}) },
+        ...(options.probeUsage ? { usageLimits: pendingUsage(checkedAt)! } : {}),
         message: settings.enabled
           ? "Checking Antigravity availability."
           : "Antigravity is disabled in T3 Code settings.",
@@ -386,6 +394,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           installed: true,
           status: "ready",
           version: started.initializeResult.agentInfo?.version || draft.version,
+          usageLimits: draft.usageLimits ?? pendingUsage(updatedAt),
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",

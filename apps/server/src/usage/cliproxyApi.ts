@@ -320,6 +320,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
           () => new UsageLimitSourceError({ detail: "Could not read the usage request." }),
         ),
         Effect.flatMap(({ hub, account, url }) => apiCallUncached(hub, account, url)),
+        Effect.flatMap((body) =>
+          Effect.map(DateTime.now, (now) => ({ body, checkedAt: DateTime.formatIso(now) })),
+        ),
       ),
     { capacity: 128, timeToLive: () => Duration.minutes(5) },
   );
@@ -330,7 +333,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     data?: unknown,
   ) {
     if (data !== undefined) return yield* apiCallUncached(hub, account, url, data);
-    return yield* Cache.get(usageCache, yield* encodeJson({ hub, account, url }));
+    return (yield* Cache.get(usageCache, yield* encodeJson({ hub, account, url }))).body;
   });
 
   const lastGoodLimits = new Map<string, ServerProviderUsageLimits>();
@@ -350,7 +353,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage");
+        const { body, checkedAt } = yield* Cache.get(
+          usageCache,
+          yield* encodeJson({ hub, account, url: "https://api.anthropic.com/api/oauth/usage" }),
+        );
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -382,7 +388,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }).limits,
         };
       }
-      const body = yield* apiCall(hub, account, `${CODEX_BASE}/usage`);
+      const { body, checkedAt } = yield* Cache.get(
+        usageCache,
+        yield* encodeJson({ hub, account, url: `${CODEX_BASE}/usage` }),
+      );
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
         window

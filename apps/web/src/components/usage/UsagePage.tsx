@@ -354,7 +354,7 @@ export function UsagePage() {
     .sort()
     .join(",");
   const autoRefreshLimits = useEffectEvent(() => {
-    void refreshLimits();
+    return refreshLimits();
   });
   useLiveRefresh(() => autoRefreshLimits(), {
     enabled: showingLimits && connectedLimitsEnvironments !== "",

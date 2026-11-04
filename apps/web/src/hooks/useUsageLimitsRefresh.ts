@@ -16,9 +16,14 @@ export function useUsageLimitsRefresh(
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
   useLiveRefresh(
     () => {
-      if (instanceId !== null) void refresh({ environmentId, input: { instanceId, usage: true } });
-      if (driver)
-        void refresh({ environmentId, input: { usageSources: true, usageProviders: [driver] } });
+      return Promise.all([
+        instanceId !== null
+          ? refresh({ environmentId, input: { instanceId, usage: true } })
+          : undefined,
+        driver
+          ? refresh({ environmentId, input: { usageSources: true, usageProviders: [driver] } })
+          : undefined,
+      ]);
     },
     {
       enabled: enabled && connected && instanceId !== null,
