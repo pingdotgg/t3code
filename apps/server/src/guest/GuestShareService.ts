@@ -26,6 +26,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -39,6 +40,7 @@ import {
   base64UrlEncode,
   signPayload,
   timingSafeEqualBase64Url,
+  verifyPayloadSignature,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -143,10 +145,9 @@ const decodeSessionClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Ses
 
 /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
 const inviteSignature = (shareId: string, key: Uint8Array) =>
-  base64UrlEncode(
-    Buffer.from(signPayload(`guest-invite:${shareId}`, key), "base64url").subarray(
-      0,
-      INVITE_SIGNATURE_BYTES,
+  signPayload(`guest-invite:${shareId}`, key).pipe(
+    Effect.map((signature) =>
+      base64UrlEncode(Buffer.from(signature, "base64url").subarray(0, INVITE_SIGNATURE_BYTES)),
     ),
   );
 
@@ -242,6 +243,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const analytics = yield* AnalyticsService.AnalyticsService;
+  const mac = yield* Mac.Mac;
   const signingKey = yield* Effect.cached(
     secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
   );
@@ -251,12 +253,19 @@ const make = Effect.gen(function* () {
   // `<shareId>.<signature>` and the thread is looked up by share id; a session token carries
   // signed claims.
   const signInvite = (shareId: GuestShareId) =>
-    Effect.map(signingKey, (key) => `${shareId}.${inviteSignature(shareId, key)}`);
-  const signSession = (claims: SessionClaims) =>
-    Effect.map(signingKey, (key) => {
-      const payload = base64UrlEncode(JSON.stringify(claims));
-      return `${payload}.${signPayload(payload, key)}`;
-    });
+    signingKey.pipe(
+      Effect.flatMap((key) => inviteSignature(shareId, key)),
+      Effect.map((signature) => `${shareId}.${signature}`),
+      Effect.provideService(Mac.Mac, mac),
+    );
+  const signSession = (claims: SessionClaims) => {
+    const payload = base64UrlEncode(JSON.stringify(claims));
+    return signingKey.pipe(
+      Effect.flatMap((key) => signPayload(payload, key)),
+      Effect.map((signature) => `${payload}.${signature}`),
+      Effect.provideService(Mac.Mac, mac),
+    );
+  };
   const splitToken = (token: string) => {
     const [payload, signature, extra] = token.split(".");
     return payload && signature && extra === undefined ? { payload, signature } : null;
@@ -265,7 +274,10 @@ const make = Effect.gen(function* () {
     const parts = splitToken(token);
     if (parts === null) return Option.none<SessionClaims>();
     const key = yield* signingKey;
-    if (!timingSafeEqualBase64Url(parts.signature, inviteSignature(parts.payload, key))) {
+    const expected = yield* inviteSignature(parts.payload, key).pipe(
+      Effect.provideService(Mac.Mac, mac),
+    );
+    if (!timingSafeEqualBase64Url(parts.signature, expected)) {
       return Option.none<SessionClaims>();
     }
     const shareId = GuestShareId.make(parts.payload);
@@ -276,15 +288,20 @@ const make = Effect.gen(function* () {
       ? Option.none<SessionClaims>()
       : Option.some<SessionClaims>({ kind: "session", threadId, shareId });
   });
-  const verifySession = (token: string) =>
-    Effect.map(signingKey, (key) => {
-      const parts = splitToken(token);
-      if (parts === null) return Option.none<SessionClaims>();
-      if (!timingSafeEqualBase64Url(parts.signature, signPayload(parts.payload, key))) {
-        return Option.none<SessionClaims>();
-      }
-      return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
-    });
+  // Untraced: runs on every guest request, like the Effect.map it replaced.
+  const verifySession = Effect.fnUntraced(function* (token: string) {
+    const key = yield* signingKey;
+    const parts = splitToken(token);
+    if (parts === null) return Option.none<SessionClaims>();
+    if (
+      !(yield* verifyPayloadSignature(parts.payload, parts.signature, key).pipe(
+        Effect.provideService(Mac.Mac, mac),
+      ))
+    ) {
+      return Option.none<SessionClaims>();
+    }
+    return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
+  });
 
   const connectHostname = managedEndpoint.inspectConnector.pipe(
     Effect.map((facts) => facts?.hostname ?? null),

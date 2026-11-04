@@ -1,5 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPublicKey.
-import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
   EnvironmentAuthenticatedPrincipal,
@@ -45,6 +43,7 @@ import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
+import * as Jwk from "effect/jose/Jwk";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -339,14 +338,9 @@ export function consumeCloudReplayGuards(input: {
 function validateCloudMintPublicKey(
   publicKey: string,
 ): Effect.Effect<void, CloudLinkRelayConfigInvalidError> {
-  const invalid = new CloudLinkRelayConfigInvalidError({ field: "cloudMintPublicKey" });
-  return Effect.try({
-    try: () => NodeCrypto.createPublicKey(publicKey.replace(/\\n/g, "\n")),
-    catch: () => invalid,
-  }).pipe(
-    Effect.flatMap((key) =>
-      key.asymmetricKeyType === "ed25519" ? Effect.void : Effect.fail(invalid),
-    ),
+  return Jwk.importSpki(publicKey.replace(/\\n/g, "\n"), "EdDSA").pipe(
+    Effect.asVoid,
+    Effect.mapError(() => new CloudLinkRelayConfigInvalidError({ field: "cloudMintPublicKey" })),
   );
 }
 
@@ -587,7 +581,9 @@ const make = Effect.gen(function* () {
     requestUrl: string,
     allowNonLoopbackRequestHost = false,
   ) {
-    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets).pipe(
+      Effect.provideService(Signature.Signature, signature),
+    );
     if (
       !isSupportedLinkProviderKind(request) ||
       !isAllowedEndpointOrigin({
@@ -929,7 +925,9 @@ const make = Effect.gen(function* () {
   const makeManagedTunnelRecoveryProof = Effect.fn(
     "environment.cloud.makeManagedTunnelRecoveryProof",
   )(function* (input: ManagedTunnelRecoveryProofInput) {
-    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets).pipe(
+      Effect.provideService(Signature.Signature, signature),
+    );
     const configuredIssuer = yield* secrets.get(RELAY_ISSUER_SECRET);
     const now = yield* DateTime.now;
     const issuedAt = Math.floor(now.epochMilliseconds / 1_000);
@@ -1483,7 +1481,9 @@ const make = Effect.gen(function* () {
         return yield* new CloudLinkProofReplayedError({ request: "health" });
       }
 
-      const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+      const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets).pipe(
+        Effect.provideService(Signature.Signature, signature),
+      );
       const descriptor = yield* environment.getDescriptor;
       const responseExpiresAt = DateTime.add(now, { minutes: 5 });
       const responsePayload = {
@@ -1587,7 +1587,9 @@ const make = Effect.gen(function* () {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
 
-      const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+      const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets).pipe(
+        Effect.provideService(Signature.Signature, signature),
+      );
       const issued = yield* environmentAuth.createPairingLink({
         scopes: AuthStandardClientScopes,
         subject: "cloud-connect",

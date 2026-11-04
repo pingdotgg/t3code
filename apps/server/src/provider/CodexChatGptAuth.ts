@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - OAuth loopback listener and PKCE use Node APIs.
-import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off - OAuth loopback listener uses Node APIs.
 import * as NodeHttp from "node:http";
 import {
   ProviderSetupError,
@@ -19,6 +18,7 @@ import * as Signature from "effect/crypto/Signature";
 import * as JoseError from "effect/jose/JoseError";
 import * as Jwks from "effect/jose/Jwks";
 import * as Jwt from "effect/jose/Jwt";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import { codexAuthCallbackPage, codexAuthReturnUrl } from "./CodexAuthCallbackPage.ts";
@@ -527,12 +527,14 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     const selectedTokens = (yield* readSessions).sessions.find(
       (session) => session.clientId === selectedClientId,
     );
-    const state = NodeCrypto.randomBytes(32).toString("base64url");
-    const nonce = NodeCrypto.randomBytes(32).toString("base64url");
-    const verifier = NodeCrypto.randomBytes(64).toString("base64url");
+    const randomToken = (size: number) =>
+      random.randomBytes(size).pipe(Effect.map(Base64Url.encode));
+    const state = yield* randomToken(32);
+    const nonce = yield* randomToken(32);
+    const verifier = yield* randomToken(64);
     const returnUrl =
       codexAuthReturnUrl(context.returnUrl) ?? codexAuthReturnUrl(options.defaultReturnUrl);
-    const pageNonce = NodeCrypto.randomBytes(24).toString("base64url");
+    const pageNonce = yield* randomToken(24);
     const callback = Promise.withResolvers<{ url: URL; response?: NodeHttp.ServerResponse }>();
     const clientCallback = context.callbackMode === "client";
     let used = false;
@@ -575,9 +577,14 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       return yield* failure("callback", "Could not start the local sign-in callback.");
     // Only the port may vary between attempts; token exchange uses this exact URI.
     const port =
-      address && typeof address !== "string" ? address.port : NodeCrypto.randomInt(49_152, 65_536);
+      address && typeof address !== "string"
+        ? address.port
+        : yield* random.intBetween(49_152, 65_536, { halfOpen: true });
     const redirectUri = `http://127.0.0.1:${port}/auth/callback`;
     const idTokenHint = selectedTokens?.idToken ?? options.reconnectProfile?.idTokenHint;
+    const codeChallenge = Base64Url.encode(
+      yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)),
+    );
     const url = new URL(endpoints.authorization_endpoint);
     url.search = new URLSearchParams({
       client_id: registeredClientId ?? "dynamic_agent_client",
@@ -599,7 +606,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       state,
       nonce,
       code_challenge_method: "S256",
-      code_challenge: NodeCrypto.createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge: codeChallenge,
     }).toString();
     yield* context.setInteraction(
       {
