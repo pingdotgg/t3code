@@ -1,4 +1,5 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -141,6 +142,14 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
+  const dated = (cwd: string, maxAge: Duration.Duration) => (pullRequest: AzureDevOpsPullRequest) =>
+    cli.activityAt({ cwd, pullRequest, maxAge }).pipe(
+      Effect.map((updatedAt) => ({
+        ...pullRequest,
+        updatedAt: updatedAt ?? pullRequest.updatedAt,
+      })),
+    );
+
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
@@ -265,13 +274,22 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({
-            items: batch.items.map(toChangeRequest),
-            truncated: batch.truncated,
-            cursorAdvance: batch.cursorAdvance,
-            // Azure's ordering is stable across offset-based pages.
-            continues: true,
-          })),
+          Effect.flatMap((batch) =>
+            // Only the rows handed over are dated; the CLI bounds how many reads run at once.
+            Effect.forEach(
+              batch.items,
+              dated(input.cwd, AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE),
+              { concurrency: "unbounded" },
+            ).pipe(
+              Effect.map((items) => ({
+                items: items.map(toChangeRequest),
+                truncated: batch.truncated,
+                cursorAdvance: batch.cursorAdvance,
+                // Azure's ordering is stable across offset-based pages.
+                continues: true,
+              })),
+            ),
+          ),
         ),
 
     getChangeRequestPreview: (input) =>
@@ -291,6 +309,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
+        Effect.flatMap(dated(input.cwd, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)),
         Effect.map((pullRequest): ProviderChangeRequestSummary => ({
           number: pullRequest.number,
           title: pullRequest.title,
@@ -309,28 +328,30 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
-        const location = pullRequest.location;
-        const iterations =
-          location === null
-            ? []
-            : yield* cli
-                .listIterations({ cwd: input.cwd, location, number: input.number })
-                .pipe(Effect.orElseSucceed(() => []));
+        const read = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const location = read.location;
+        const pushes = Effect.gen(function* () {
+          if (location === null) return { iterations: [], changedFiles: 0 };
+          const iterations = yield* cli
+            .listIterations({ cwd: input.cwd, location, number: input.number })
+            .pipe(Effect.orElseSucceed(() => []));
+          const changedFiles = yield* listLatestChanges({
+            cwd: input.cwd,
+            location,
+            number: input.number,
+            iterations,
+          }).pipe(
+            Effect.map((listed) => listed.changes.length),
+            Effect.orElseSucceed(() => 0),
+          );
+          return { iterations, changedFiles };
+        });
+        const [{ iterations, changedFiles }, pullRequest] = yield* Effect.all(
+          [pushes, dated(input.cwd, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
+          { concurrency: "unbounded" },
+        );
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
-        const changedFiles =
-          location === null
-            ? 0
-            : yield* listLatestChanges({
-                cwd: input.cwd,
-                location,
-                number: input.number,
-                iterations,
-              }).pipe(
-                Effect.map((listed) => listed.changes.length),
-                Effect.orElseSucceed(() => 0),
-              );
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,

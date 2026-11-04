@@ -1,11 +1,20 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
+import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>();
 
@@ -105,23 +114,132 @@ function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
   });
 }
 
+const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
+
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedRun.mockReset();
 });
+
+/** Both providers over one process, as the driver composes them. */
+const driverServices = AzureDevOpsPullRequestCli.layer.pipe(
+  Layer.provideMerge(AzureDevOpsCli.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      TestSourceControlHost.layer({ process: { run: mockedRun } }),
+      NodeServices.layer,
+    ),
+  ),
+);
+
+it.effect("dates an old pull request by its latest push or comment, the same on every reader", () =>
+  Effect.gen(function* () {
+    const pushedAt = "2026-07-10T12:00:00+02:00";
+    const thread = (id: number, at: string, content: string, commentType = "text") => ({
+      id,
+      publishedDate: at,
+      lastUpdatedDate: at,
+      comments: [{ id: 1, content, commentType, publishedDate: at, lastUpdatedDate: at }],
+    });
+    const refUpdate = (at: string) =>
+      thread(1, at, "The reference refs/heads/feat/page was updated.", "system");
+    const comment = (at: string) => thread(2, at, "Looks good.");
+    let shown = {
+      ...pullRequestRow,
+      creationDate: "2026-06-01T00:00:00Z",
+      lastMergeSourceCommit: { commitId: "a".repeat(40) },
+    };
+    let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
+    const threadsAsked = yield* Deferred.make<void>();
+    const threadsAnswer = yield* Deferred.make<void>();
+    mockedRun.mockImplementation(({ args }) => {
+      if (args.includes("pullRequestThreads")) {
+        return Deferred.succeed(threadsAsked, undefined).pipe(
+          Effect.andThen(Deferred.await(threadsAnswer)),
+          Effect.as(output(threads)),
+        );
+      }
+      if (args.includes("pullRequestIterations")) {
+        const pushed = { ...oneIteration.value[0], createdDate: pushedAt, updatedDate: pushedAt };
+        return Effect.succeed(output(json({ value: [pushed] })));
+      }
+      if (args.includes("pullRequestIterationChanges")) {
+        return Effect.succeed(output(json({ changeEntries: [] })));
+      }
+      return Effect.succeed(output(JSON.stringify(args.includes("list") ? [shown] : shown)));
+    });
+    const threadReads = () =>
+      mockedRun.mock.calls.filter(([call]) => call.args.includes("pullRequestThreads")).length;
+
+    const provider = yield* AzureDevOpsPullRequestProvider.make;
+    const sourceControl = yield* AzureDevOpsSourceControlProvider.make;
+    const input = { cwd: "/w", repository: "platform/web", host: "dev.azure.com", number: 42 };
+    const summary = provider.getChangeRequestSummary!(input).pipe(
+      Effect.map((read) => read.updatedAt),
+    );
+    const reading = yield* Effect.forkChild(
+      Effect.all(
+        {
+          listed: provider
+            .listChangeRequests({
+              ...input,
+              state: "open",
+              involvement: "all",
+              viewer: "bilal@acme.dev",
+              limit: 10,
+            })
+            .pipe(Effect.map((page) => page.items.map((item) => item.updatedAt))),
+          summary,
+          detail: provider.getChangeRequest(input).pipe(Effect.map((read) => read.updatedAt)),
+          branch: sourceControl
+            .getChangeRequest({ cwd: "/w", reference: "42" })
+            .pipe(Effect.map((read) => Option.map(read.updatedAt, DateTime.formatIso))),
+        },
+        { concurrency: "unbounded" },
+      ),
+    );
+    yield* Effect.raceFirst(Deferred.await(threadsAsked), Fiber.await(reading));
+    yield* Deferred.succeed(threadsAnswer, undefined);
+
+    const edited = "2026-07-10T10:30:00.123Z";
+    expect(yield* Fiber.join(reading)).toEqual({
+      listed: [edited],
+      summary: edited,
+      detail: edited,
+      branch: Option.some(edited),
+    });
+    expect(threadReads()).toBe(1);
+    // Asking for the conversation itself always reads it, and the read dates the row as well.
+    const activity = yield* provider.getChangeRequestActivity(input);
+    expect(activity.comments.map((entry) => entry.body)).toEqual(["Looks good."]);
+    expect(threadReads()).toBe(2);
+
+    threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T11:00:00Z")] });
+    expect(yield* summary).toBe(edited);
+    yield* TestClock.adjust("61 seconds");
+    expect(yield* summary).toBe("2026-07-10T11:00:00.000Z");
+    expect(threadReads()).toBe(3);
+
+    shown = { ...shown, lastMergeSourceCommit: { commitId: "c".repeat(40) } };
+    threads = json({ value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:00:00Z")] });
+    expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
+    expect(threadReads()).toBe(4);
+
+    threads = "not json";
+    yield* TestClock.adjust("61 seconds");
+    expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
+    expect(threadReads()).toBe(5);
+  }).pipe(Effect.provide(driverServices)),
+);
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
   it.effect("reports the latest pushed source commit even while the trial merge is stale", () =>
     Effect.gen(function* () {
       const previousHead = "a".repeat(40);
       const latestHead = "c".repeat(40);
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
-          ),
-        )
-        .mockReturnValueOnce(
-          Effect.succeed(
+      mockedExecute.mockImplementation(({ args }) => {
+        if (args.includes("pullRequestIterations")) {
+          return Effect.succeed(
             output(
               json({
                 value: [
@@ -134,9 +252,16 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
                 ],
               }),
             ),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))));
+          );
+        }
+        if (args.includes("pullRequestIterationChanges")) {
+          return Effect.succeed(output(json({ changeEntries: [] })));
+        }
+        if (args.includes("pullRequestThreads")) return Effect.succeed(output(json({ value: [] })));
+        return Effect.succeed(
+          output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
+        );
+      });
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -146,8 +271,11 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       expect(detail.headSha).toBe(latestHead);
-      expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      const changes = mockedExecute.mock.calls.find(([call]) =>
+        call.args.includes("pullRequestIterationChanges"),
+      );
+      expect(changes?.[0].args).toContain("iterationId=2");
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
     }),
   );
 

@@ -37,6 +37,7 @@ const PULL_REQUEST = {
   reviewers: [],
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,
+  revision: "open ready head",
 };
 
 function change(
@@ -70,6 +71,7 @@ const readSlice = (input: {
       Effect.provide(
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
           getPullRequest: () => Effect.succeed(PULL_REQUEST),
+          activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
           listIterations: () => Effect.succeed([ITERATION]),
           listIterationChanges: () =>
             Effect.succeed({
@@ -129,6 +131,7 @@ describe("getChangeRequest", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
             listIterations: () =>
               Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
@@ -163,6 +166,7 @@ describe("getChangeRequest", () => {
           Effect.provide(
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
               listIterations: () =>
                 state === "missing"
                   ? Effect.succeed([])
@@ -200,6 +204,7 @@ describe("getDiff reads", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
             listIterations: () => Effect.succeed([ITERATION]),
             listIterationChanges: () =>
               Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),

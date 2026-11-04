@@ -81,16 +81,18 @@ describe("decodePullRequestListJson", () => {
     expect(batch.items[0]?.mergeability).toBe(expected);
   });
 
-  it("stands the closing time in for a last-touched time Azure does not keep", () => {
+  it.each([
+    ["closing", "2026-07-05T02:00:00+02:00", "2026-07-05T00:00:00.000Z"],
+    ["opening, past a closing it cannot read,", "soon", "2026-07-01T00:00:00.000Z"],
+  ])("stands the %s time in until the threads and pushes say later", (_, closedDate, updatedAt) => {
     const batch = expectSuccess(
-      decodePullRequestListJson(
-        asJson([pullRequest({ status: "completed", closedDate: "2026-07-05T00:00:00Z" })]),
-      ),
+      decodePullRequestListJson(asJson([pullRequest({ status: "completed", closedDate })])),
     );
 
     expect(batch.items[0]).toMatchObject({
       createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-05T00:00:00Z",
+      updatedAt,
+      closedAt: closedDate,
     });
   });
 
@@ -169,18 +171,21 @@ describe("decodePullRequestJson", () => {
 
 describe("decodeThreadsJson", () => {
   it("takes every real comment of every thread, oldest first", () => {
-    const comments = expectSuccess(
+    const { comments, activityAt } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
             {
               id: 2,
+              publishedDate: "2026-07-03T00:00:00Z",
+              lastUpdatedDate: "2026-07-04T00:00:00Z",
               comments: [
                 {
                   id: 1,
-                  content: "Second remark.",
+                  content: "Second remark, edited.",
                   author: { displayName: "Julius", uniqueName: "julius@acme.dev" },
                   publishedDate: "2026-07-03T00:00:00Z",
+                  lastUpdatedDate: "2026-07-04T00:00:00Z",
                 },
               ],
             },
@@ -201,15 +206,19 @@ describe("decodeThreadsJson", () => {
       ),
     );
 
-    expect(comments.map((comment) => comment.body)).toEqual(["First remark.", "Second remark."]);
+    expect(comments.map((comment) => comment.body)).toEqual([
+      "First remark.",
+      "Second remark, edited.",
+    ]);
     expect(comments[0]).toMatchObject({
       kind: "issue-comment",
       author: { login: "bilal@acme.dev" },
     });
+    expect(activityAt).toBe("2026-07-04T00:00:00.000Z");
   });
 
   it("reads a thread pinned to a file as a review comment on the path its diff uses", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -227,7 +236,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("keeps the replies under a thread, which are as much of the conversation", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -248,20 +257,40 @@ describe("decodeThreadsJson", () => {
     expect(comments.map((comment) => comment.id)).toEqual(["4:1", "4:2", "4:3"]);
   });
 
-  it("drops deleted threads and threads with nothing to show", () => {
-    const comments = expectSuccess(
+  it("drops deleted threads and threads with nothing to show, but not when they last moved", () => {
+    const { comments, activityAt } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
             {
               id: 1,
               isDeleted: true,
+              lastUpdatedDate: "2026-07-06T09:00:00.5+02:00",
               comments: [{ id: 1, content: "gone", publishedDate: "2026-07-02T00:00:00Z" }],
             },
-            { id: 2, comments: [] },
+            { id: 2, publishedDate: "2026-07-06T07:00:00Z", lastUpdatedDate: null, comments: [] },
             {
               id: 3,
-              comments: [{ id: 1, content: "   ", publishedDate: "2026-07-02T00:00:00Z" }],
+              comments: [
+                {
+                  id: 1,
+                  content: "   ",
+                  publishedDate: "2026-07-02T00:00:00Z",
+                  lastUpdatedDate: "2026-07-06T07:00:00.25Z",
+                },
+              ],
+            },
+            {
+              id: 4,
+              lastUpdatedDate: "yesterday",
+              comments: [
+                {
+                  id: 1,
+                  content: "The reference refs/heads/feat/page was updated.",
+                  commentType: "system",
+                  publishedDate: "2026-07-06T07:00:00.4999999Z",
+                },
+              ],
             },
           ],
         }),
@@ -269,6 +298,7 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments).toEqual([]);
+    expect(activityAt).toBe("2026-07-06T07:00:00.500Z");
   });
 });
 
@@ -281,7 +311,7 @@ describe("decodeIterationsJson", () => {
   });
 
   it("reads every push in order, oldest first", () => {
-    const iterations = expectSuccess(
+    const { iterations } = expectSuccess(
       decodeIterationsJson(
         asJson({ value: [iteration(2, "bbb", "base"), iteration(1, "aaa", "base")] }),
       ),
@@ -291,16 +321,25 @@ describe("decodeIterationsJson", () => {
     expect(iterations.at(-1)).toEqual({ id: 2, headCommit: "bbb", mergeBaseCommit: "base" });
   });
 
-  it("skips a push Azure could not place both ends of", () => {
-    const iterations = expectSuccess(
+  it("skips a push Azure could not place both ends of, but still counts when it landed", () => {
+    const { iterations, activityAt } = expectSuccess(
       decodeIterationsJson(
         asJson({
-          value: [{ id: 1, sourceRefCommit: { commitId: "aaa" } }, iteration(2, "bbb", "base")],
+          value: [
+            { ...iteration(2, "bbb", "base"), createdDate: "2026-07-08T00:00:00Z" },
+            {
+              id: 3,
+              sourceRefCommit: { commitId: "ccc" },
+              createdDate: "2026-07-09T01:00:00+01:00",
+              updatedDate: "later",
+            },
+          ],
         }),
       ),
     );
 
     expect(iterations.map((entry) => entry.id)).toEqual([2]);
+    expect(activityAt).toBe("2026-07-09T00:00:00.000Z");
   });
 });
 
@@ -435,7 +474,7 @@ describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
-    ).toEqual([]);
+    ).toEqual({ comments: [], activityAt: null });
 
     expect(
       expectSuccess(
@@ -452,7 +491,7 @@ describe("what az devops invoke answers with", () => {
             ],
           }),
         ),
-      ),
+      ).iterations,
     ).toEqual([
       {
         id: 1,
