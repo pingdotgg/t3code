@@ -308,6 +308,11 @@ describe("publicProxy", () => {
       ["another successful status", "HTTP/1.1 201 Created\r\n\r\n", 0],
       ["informational response", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n", 0],
       [
+        "informational then refusal",
+        "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 403 Forbidden\r\n\r\n",
+        5,
+      ],
+      [
         "oversized informational headers",
         `${`HTTP/1.1 103 Early Hints\r\nX: ${"x".repeat(9 * 1024)}\r\n\r\n`.repeat(2)}HTTP/1.1 200 OK\r\n\r\n`,
         5,
