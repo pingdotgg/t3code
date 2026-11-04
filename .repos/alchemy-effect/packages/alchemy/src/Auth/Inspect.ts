@@ -7,7 +7,7 @@ import {
   type AuthProviders,
   type ProviderDetailLine,
 } from "./AuthProvider.ts";
-import type { ProviderConfig } from "./Profile.ts";
+import { ProfileStore, reloadProviderConfig, type ProviderConfig } from "./Profile.ts";
 
 /**
  * What a connected provider looks like right now. Establishing this means
@@ -19,12 +19,7 @@ export interface ProviderConnection {
   readonly name: string;
   /** How credentials were supplied (`oauth`, `api-token`, …). */
   readonly method: string;
-  readonly status:
-    | "connected"
-    | "needs-reauth"
-    | "needs-reconfigure"
-    | "invalid"
-    | "unavailable";
+  readonly status: "connected" | "needs-reauth" | "needs-reconfigure" | "invalid" | "unavailable";
   readonly details: ReadonlyArray<ProviderDetailLine>;
   /** Present whenever `status` is anything but `connected`. */
   readonly diagnostic?: {
@@ -71,7 +66,7 @@ export const inspectProvider = Effect.fn("inspectProvider")(function* (
       diagnostic: {
         severity: "warning",
         code: "provider.unregistered",
-        message: `Provider '${name}' is not registered.`,
+        message: `Provider '${name}' is not registered. Install the package that provides it.`,
       },
     } satisfies ProviderConnection;
   }
@@ -95,17 +90,12 @@ export const inspectProvider = Effect.fn("inspectProvider")(function* (
 
   const decoded = yield* Effect.result(provider.decodeConfig(profile, config));
   if (Result.isFailure(decoded)) {
-    return broken(
-      name,
-      method,
-      "error",
-      "provider.invalid-config",
-      decoded.failure.message,
-    );
+    return broken(name, method, "error", "provider.invalid-config", decoded.failure.message);
   }
 
+  const store = yield* ProfileStore;
   const details = yield* Effect.result(
-    provider.details(profile, decoded.success, updateConfig),
+    provider.details(profile, reloadProviderConfig(store, provider, profile), updateConfig),
   );
   if (Result.isSuccess(details)) {
     return {

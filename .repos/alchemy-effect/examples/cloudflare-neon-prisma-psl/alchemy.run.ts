@@ -1,21 +1,16 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
-import * as Prisma from "alchemy/Prisma";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
 import Api from "./src/Api.ts";
 import { Hyperdrive, NeonDb } from "./src/Db.ts";
 
 export default Alchemy.Stack(
   "CloudflareNeonPrismaPslExample",
   {
-    providers: Layer.mergeAll(
-      Cloudflare.providers(),
-      Prisma.providers(),
-      Neon.providers(),
-    ),
+    providers: Layer.mergeAll(Cloudflare.providers(), Prisma.providers(), Neon.providers()),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {

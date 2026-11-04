@@ -1,7 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
- * Vendored from `@astrojs/cloudflare` v14.1.3 (`src/utils/headers.ts`).
+ * Vendored from `@astrojs/cloudflare` v14.4.2 (`src/utils/headers.ts`).
  *
  * Build-side `_headers` synthesis: injects an immutable `Cache-Control`
  * rule for Astro's content-hashed assets directory (`_astro/` by default)
@@ -39,10 +39,7 @@ function cfHeadersPatternToRegex(pattern: string): RegExp {
  * Whether an existing `_headers` file already sets (or explicitly detaches)
  * `Cache-Control` on a rule matching `path`.
  */
-export function headersFileHasCacheControlForPath(
-  content: string,
-  path: string,
-): boolean {
+export function headersFileHasCacheControlForPath(content: string, path: string): boolean {
   let matchesCurrentSection = false;
   for (const rawLine of content.split("\n")) {
     const trimmed = rawLine.trim();
@@ -101,11 +98,7 @@ export async function buildAssetsHeadersContent(
 
   const cacheBlock = `${assetsPattern}\n  Cache-Control: public, max-age=31536000, immutable\n`;
   const normalizedExisting =
-    existingHeaders && !existingHeaders.endsWith("\n")
-      ? existingHeaders + "\n"
-      : existingHeaders;
-  const content = normalizedExisting
-    ? `${cacheBlock}\n${normalizedExisting}`
-    : cacheBlock;
+    existingHeaders && !existingHeaders.endsWith("\n") ? existingHeaders + "\n" : existingHeaders;
+  const content = normalizedExisting ? `${cacheBlock}\n${normalizedExisting}` : cacheBlock;
   return { content, assetsPattern };
 }
