@@ -33,19 +33,25 @@ function copy(): string {
 describe("StyledDiffCodeView", () => {
   it("copies every line of a file after select all, including rows the virtualizer dropped", async () => {
     const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
+    const container = document.createElement("div");
+    container.style.width = "800px";
+    container.style.height = "300px";
     await using _screen = await render(
       <StyledDiffCodeView
         viewerRef={viewerRef}
-        style={{ height: 300, overflow: "auto" }}
+        style={{ width: "100%", height: "100%", overflow: "auto" }}
         items={[{ id: "big", type: "diff", fileDiff }]}
       />,
+      { container },
     );
-    const root = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element.shadowRoot;
-    await vi.waitFor(() => expect(root()?.querySelector("[data-line]")).toBeTruthy());
-    const rows = root()!.querySelectorAll("[data-line]");
+    const renderedItem = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element;
+    await vi.waitFor(() => expect(renderedItem()).toBeTruthy());
+    const rows = renderedItem()!.shadowRoot?.querySelectorAll("[data-line]") ?? [];
     expect(rows.length).toBeLessThan(LINE_COUNT);
 
-    rows[1]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+    renderedItem()!.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, composed: true }),
+    );
     const selectAll = new KeyboardEvent("keydown", {
       key: "ф",
       code: "KeyA",
