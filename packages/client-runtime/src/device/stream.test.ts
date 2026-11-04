@@ -212,19 +212,19 @@ describe("native device stream transport", () => {
     press("Backquote", "²");
     expect(take()).toEqual(["down 35", "up 35"]);
 
-    // Shortcuts keep their modifiers and use the letter on the key.
+    // Shortcuts keep their modifiers and use the letter on the key. Ctrl is Command on iOS.
     client.sendKey(keyEvent("ShiftLeft", "Shift", { shiftKey: true }), "down");
     press("ArrowLeft", "ArrowLeft", { shiftKey: true });
     expect(take()).toEqual(["down e1", "down 50", "up 50"]);
     press("KeyQ", "a", { ctrlKey: true, shiftKey: true });
-    expect(take()).toEqual(["down e0", "down 4", "up 4"]);
+    expect(take()).toEqual(["down e3", "down 4", "up 4"]);
     client.sendKey(keyEvent("ShiftLeft", "Shift", { ctrlKey: true }), "up");
     expect(take()).toEqual(["up e1"]);
     client.sendKey(keyEvent("ControlLeft", "Control"), "up");
-    expect(take()).toEqual(["up e0"]);
+    expect(take()).toEqual(["up e3"]);
     press("KeyH", "h", ctrlAlt);
     client.sendKey(keyEvent("AltLeft", "Alt"), "up");
-    expect(take()).toEqual(["down e0", "down e2", "down b", "up b", "up e0", "up e2"]);
+    expect(take()).toEqual(["down e3", "down e2", "down b", "up b", "up e3", "up e2"]);
 
     // Mac Option characters and Ctrl+Option shortcuts.
     vi.stubGlobal("navigator", { platform: "MacIntel" });

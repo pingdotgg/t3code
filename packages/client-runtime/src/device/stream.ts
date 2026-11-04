@@ -394,6 +394,13 @@ const IOS_MODIFIER_USAGES = [
   ["altKey", 0xe2],
   ["metaKey", 0xe3],
 ] as const;
+// Windows and Linux shortcuts such as Ctrl+A use Ctrl where iOS uses Command.
+const IOS_MODIFIER_USAGES_FROM_PC = [
+  ["shiftKey", 0xe1],
+  ["ctrlKey", 0xe3],
+  ["altKey", 0xe2],
+  ["metaKey", 0xe0],
+] as const;
 
 // iOS takes the Option keys and accent keys of the macOS US layout.
 const US_OPTION_CHARACTERS: ReadonlyMap<string, string> = new Map(
@@ -530,7 +537,10 @@ export function createDeviceStreamClient(
   const sendIosKey = (type: "down" | "up", usage: number) =>
     send(taggedJson(IOS_MSG_KEY, { type, usage }));
   const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
-    for (const [flag, usage] of IOS_MODIFIER_USAGES) {
+    const usages = isMacPlatform(globalThis.navigator?.platform ?? "")
+      ? IOS_MODIFIER_USAGES
+      : IOS_MODIFIER_USAGES_FROM_PC;
+    for (const [flag, usage] of usages) {
       const wanted = event?.[flag] === true;
       if (wanted === iosHeldModifiers.has(usage) || (wanted && phase === "up")) continue;
       if (wanted) iosHeldModifiers.add(usage);
