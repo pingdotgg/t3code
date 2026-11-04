@@ -30,10 +30,18 @@ const FOLLOW_UP =
   ':codex-followup[Prepare print version]{prompt="Prepare the document for printing."}';
 const ARTIFACT_TEMPLATE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+// OpenAI web-search citation markers: U+E200 opens, U+E202 separates fields, U+E201 closes.
+const WEB_CITATION_MARKDOWN =
+  "Prices rose 3%. \uE200cite\uE202turn816200view0\uE201 Rates held. \uE200cite\uE202turn0search0\uE202turn0search3\uE201";
+const WEB_CITATION_MARKER = /[\uE200-\uE202]|turn\d+(?:view|search)\d+/u;
 
 function parse(markdown: string): TestNode {
   const processor = unified().use(remarkParse).use(remarkCodexDirectives);
   return processor.runSync(processor.parse(markdown), { value: markdown }) as TestNode;
+}
+
+function textContent(node: TestNode): string {
+  return node.value ?? (node.children ?? []).map(textContent).join("");
 }
 
 function parseOrdinaryMarkdown(markdown: string): TestNode {
@@ -72,6 +80,14 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
+  it("does not display web citation markers", () => {
+    const text = textContent(parse(WEB_CITATION_MARKDOWN));
+
+    expect(text).toContain("Prices rose 3%.");
+    expect(text).toContain("Rates held.");
+    expect(text).not.toMatch(WEB_CITATION_MARKER);
+  });
+
   it.each([
     "Meeting at 10:30",
     ":::note\ncontent\n:::",
@@ -105,6 +121,19 @@ describe.each([
 
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+  });
+});
+
+describe.each([
+  { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
+  { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
+])("$name web citation markers", ({ render }) => {
+  it("leaves the markers out of the rendered Markdown", () => {
+    const markdown = render(WEB_CITATION_MARKDOWN);
+
+    expect(markdown).toContain("Prices rose 3%.");
+    expect(markdown).toContain("Rates held.");
+    expect(markdown).not.toMatch(WEB_CITATION_MARKER);
   });
 });
 
