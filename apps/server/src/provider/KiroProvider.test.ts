@@ -1,13 +1,18 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { KiroSettings } from "@t3tools/provider-kiro/settings";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   checkKiroProviderStatus,
@@ -21,18 +26,25 @@ const settings = Schema.decodeSync(KiroSettings)({ enabled: true });
 interface CliOutput {
   readonly stdout: string;
   readonly code: number;
+  /** Holds stdout and the exit back this long, like a CLI slow to answer. */
+  readonly delay?: Duration.Input;
 }
 
 function processHandle(output: CliOutput) {
+  const answered = Effect.sleep(output.delay ?? 0);
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_002),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(output.code)),
+    exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(output.code)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout:
-      output.stdout.length === 0 ? Stream.empty : Stream.succeed(encoder.encode(output.stdout)),
+    stdout: Stream.unwrap(
+      Effect.as(
+        answered,
+        output.stdout.length === 0 ? Stream.empty : Stream.succeed(encoder.encode(output.stdout)),
+      ),
+    ),
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -118,9 +130,38 @@ const check = (
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, cli.spawner),
     );
     return { snapshot, invoked: cli.invoked };
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("KiroProvider", () => {
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      delay: "6 seconds",
+      status: "ready",
+      version: "2.27.0",
+      message: undefined,
+    },
+    {
+      label: "never answers",
+      delay: "Infinity",
+      status: "error",
+      version: null,
+      message: "Failed to run `kiro-cli --version`.",
+    },
+  ] as const)("gives `kiro-cli --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const fiber = yield* check({
+        "--version": { stdout: "kiro-cli 2.27.0\n", code: 0, delay: row.delay },
+        "whoami --format json": { stdout: '{"accountType":"ApiKey","email":null}\n', code: 0 },
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      const { snapshot } = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, row.status);
+      assert.equal(snapshot.version, row.version);
+      assert.equal(snapshot.message, row.message);
+    }),
+  );
+
   it.effect("reports a CLI whose version probe exits nonzero as failing to run", () =>
     Effect.gen(function* () {
       const { snapshot, invoked } = yield* check({

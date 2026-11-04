@@ -1,6 +1,6 @@
+import * as Hetzner from "@alchemy.run/hetzner";
+import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
-import * as Neon from "alchemy/Neon";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
