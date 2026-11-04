@@ -125,7 +125,11 @@ describe("extractTerminalLinks", () => {
     String.raw`żółć\main.ts:12`,
     "src/cafe\u0301.ts:12",
     "src/𐐀.ts:12",
-  ])("keeps the complete Unicode relative path %s", (text) => {
+    "src/app/[id]/page.tsx:3:10",
+    "src/routes/(app)/+page.svelte:12:4",
+    "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
+    "app/routes/posts.$id.tsx:5",
+  ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },
     ]);
