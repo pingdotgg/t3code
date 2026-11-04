@@ -1,5 +1,10 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_LABEL_CHANGE_LIMIT,
+  type EnvironmentId,
+  type PullRequestLabelCandidate,
+  type PullRequestRef,
+} from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -48,11 +53,16 @@ export function PullRequestLabelPicker({
   ) => {
     if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
-    const result = await setLabels({
-      environmentId,
-      input: { ...reference, labels: names, applied },
-    });
-    if (result._tag === "Failure") {
+    for (let start = 0; start < names.length; start += PULL_REQUEST_LABEL_CHANGE_LIMIT) {
+      const result = await setLabels({
+        environmentId,
+        input: {
+          ...reference,
+          labels: names.slice(start, start + PULL_REQUEST_LABEL_CHANGE_LIMIT),
+          applied,
+        },
+      });
+      if (result._tag !== "Failure") continue;
       toastManager.add({
         type: "error",
         title: `Could not ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,

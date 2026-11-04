@@ -101,6 +101,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     return false;
   };
   const draft = useSelectionDraft({
+    allowed,
     candidates: result.data?.candidates ?? [],
     candidateKey: (candidate) => `${candidate.kind}:${candidate.id}`,
     isSelected: (candidate) => candidate.isRequested,

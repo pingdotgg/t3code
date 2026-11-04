@@ -848,9 +848,14 @@ export const PullRequestReviewerRequestInput = Schema.Struct({
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
+export const PULL_REQUEST_LABEL_CHANGE_LIMIT = 25;
+
 export const PullRequestLabelChangeInput = Schema.Struct({
   ...PullRequestRef.fields,
-  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  labels: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PULL_REQUEST_LABEL_CHANGE_LIMIT),
+  ),
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;

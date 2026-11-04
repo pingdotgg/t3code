@@ -8,6 +8,8 @@ import { useEffect, useEffectEvent, useState } from "react";
 
 /** Picks stay local while the sheet is open and go to the host once, when it closes. */
 export function useSelectionDraft<T>(input: {
+  // Losing write access with the sheet open drops the picks, as the web picker does.
+  readonly allowed: boolean;
   readonly candidates: ReadonlyArray<T>;
   readonly candidateKey: (candidate: T) => string;
   readonly isSelected: (candidate: T) => boolean;
@@ -24,6 +26,7 @@ export function useSelectionDraft<T>(input: {
     candidate,
   }));
   const send = useEffectEvent(() => {
+    if (!input.allowed) return;
     const changes = draftChanges(draft, selections);
     if (changes.add.length === 0 && changes.remove.length === 0) return;
     void input.commit({

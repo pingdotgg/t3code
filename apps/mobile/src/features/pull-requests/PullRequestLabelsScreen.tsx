@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { PullRequestLabelCandidate } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_LABEL_CHANGE_LIMIT,
+  type PullRequestLabelCandidate,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { FlatList, Platform, View } from "react-native";
@@ -56,11 +59,16 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   ) => {
     if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
-    const response = await setLabels({
-      ...target,
-      input: { ...target.input, labels: names, applied },
-    });
-    if (AsyncResult.isFailure(response)) {
+    for (let start = 0; start < names.length; start += PULL_REQUEST_LABEL_CHANGE_LIMIT) {
+      const response = await setLabels({
+        ...target,
+        input: {
+          ...target.input,
+          labels: names.slice(start, start + PULL_REQUEST_LABEL_CHANGE_LIMIT),
+          applied,
+        },
+      });
+      if (!AsyncResult.isFailure(response)) continue;
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
         `Couldn't ${applied ? "add" : "remove"} ${names.join(", ")}${skipped.length > 0 ? ` or remove ${skipped.map((label) => label.name).join(", ")}` : ""}`,
@@ -71,6 +79,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     return true;
   };
   const draft = useSelectionDraft({
+    allowed,
     candidates: result.data?.candidates ?? [],
     candidateKey: (candidate) => candidate.name,
     isSelected: (candidate) => candidate.isApplied,
