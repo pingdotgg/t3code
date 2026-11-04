@@ -119,7 +119,8 @@ describe("tool text output formatting", () => {
     '{"id":1234567890123456789,"name":"x"}',
     '{"id":1}\n{"id":-9007199254740993}',
     '{"id":9.007199254740993e15}',
-  ])("keeps %j as returned instead of rounding integers beyond 2^53", (text) => {
+    '{"id":1e309}',
+  ])("keeps %j as returned when parsing would change a number", (text) => {
     expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
   });
 
