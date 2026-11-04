@@ -443,6 +443,28 @@ describe("server browser click", () => {
     });
     expect(clicks).toHaveLength(1);
   });
+
+  it("gives up on a target the page keeps replacing once the timeout passes", async () => {
+    const clicks: Array<unknown> = [];
+    const detached = new Error(
+      "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+    );
+    const page = {
+      locator: () => ({
+        scrollIntoViewIfNeeded: async () => {
+          throw detached;
+        },
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+      }),
+    } as unknown as Page;
+
+    await expect(ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 1 })).rejects.toBe(
+      detached,
+    );
+    expect(clicks).toHaveLength(0);
+  });
 });
 
 describe("server browser net errors", () => {
