@@ -251,7 +251,7 @@ it.each([false, true])(
     const toggle = screen.getByRole("button", { name: `Expand ${path}`, exact: true });
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);
-    act(() =>
+    await act(() =>
       context.registry.set(
         context.patch,
         AsyncResult.success({

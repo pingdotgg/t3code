@@ -71,9 +71,9 @@ are down, and **Toggle** always needs a second press. Change the chord itself in
   default. Turn it off to keep raw audio; long recordings can still be split at
   pauses. The chosen environment downloads a small Silero helper alongside speech
   models, whether installed through setup or Voice settings. If the helper is
-  missing, the next recording retries its download; if unavailable, transcription
-  uses raw audio instead. This preference does not enable audio consent or reduce
-  the audio sent to that environment.
+  unavailable, transcription uses raw audio. Recordings can retry the download
+  after ten minutes; installing a model retries it immediately. This preference
+  does not enable audio consent or reduce the audio sent to that environment.
 - **Remove filler words** drops hesitation sounds from finished transcripts.
 
 Language and these preferences travel with each recording to the chosen
