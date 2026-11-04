@@ -139,7 +139,7 @@ export function ThreadDetailsCard({
             : details.reason === "outside-press"
               ? details.event.target
               : null;
-        if (!open && target instanceof Element && target.closest("[data-thread-find-bar]")) {
+        if (!open && target instanceof Element && target.closest("[data-find-bar]")) {
           details.cancel();
           return;
         }

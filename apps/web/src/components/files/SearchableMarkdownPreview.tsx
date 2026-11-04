@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
-import { ThreadFindBar } from "../chat/ThreadFindBar";
+import { FindBar } from "../FindBar";
 import { MarkdownFindContext } from "../chat/markdownFindContext";
 import { ScrollArea } from "../ui/scroll-area";
 import { createMarkdownFind } from "./markdownFind";
@@ -87,7 +87,7 @@ export function SearchableMarkdownPreview({ children }: { readonly children: Rea
         }
       }}
     >
-      <ThreadFindBar
+      <FindBar
         label="Find in file"
         open={open}
         query={query}

@@ -35,7 +35,7 @@ export function ChatCanvas({
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
     const findBar =
-      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-find-bar]") : null;
     const measure = () => {
       const canvasBounds = element.getBoundingClientRect();
       const findBarBounds = findBar?.getBoundingClientRect();
