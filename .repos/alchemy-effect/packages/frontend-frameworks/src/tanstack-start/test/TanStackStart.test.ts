@@ -25,9 +25,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("readTanStackStartOutput", () => {
@@ -54,10 +52,7 @@ describe("readTanStackStartOutput", () => {
           path.join(serverDir, "server.js"),
           "export default { fetch() {} };",
         );
-        yield* fs.writeFileString(
-          path.join(clientDir, "robots.txt"),
-          "User-agent: *\n",
-        );
+        yield* fs.writeFileString(path.join(clientDir, "robots.txt"), "User-agent: *\n");
         return yield* readTanStackStartOutput({ dir, serverDir, clientDir });
       }),
     );
@@ -111,14 +106,8 @@ describe("readTanStackStartOutput", () => {
         });
         const serverDir = path.join(dir, "server");
         yield* fs.makeDirectory(serverDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "one.js"),
-          "export const a = 1;",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "two.js"),
-          "export const b = 1;",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "one.js"), "export const a = 1;");
+        yield* fs.writeFileString(path.join(serverDir, "two.js"), "export const b = 1;");
         return yield* readTanStackStartOutput({
           dir,
           serverDir,
@@ -153,12 +142,9 @@ describe("readTanStackStartOutput", () => {
 
 describe("selectServerEntryName", () => {
   it("prefers the expected name over a lone sibling", () => {
-    expect(
-      selectServerEntryName(
-        ["server/server.js", "server/other.js"],
-        "server/server.js",
-      ),
-    ).toBe("server/server.js");
+    expect(selectServerEntryName(["server/server.js", "server/other.js"], "server/server.js")).toBe(
+      "server/server.js",
+    );
   });
 
   it("ignores nested chunks when counting top-level modules", () => {
@@ -206,9 +192,7 @@ describe("generateLambdaEntry", () => {
       serverEntryFileName: SERVER_ENTRY_FILE_NAME,
     });
     expect(source).toContain(`import * as serverEntry from "./server.js"`);
-    expect(source).toContain(
-      `import { toLambdaHandler } from "./${LAMBDA_ADAPTER_FILE_NAME}"`,
-    );
+    expect(source).toContain(`import { toLambdaHandler } from "./${LAMBDA_ADAPTER_FILE_NAME}"`);
     expect(source).toContain("export const handler = toLambdaHandler(");
     // A custom server entry may default-export the bare fetch function.
     expect(source).toContain('typeof entry === "function"');
@@ -279,9 +263,7 @@ describe("finish", () => {
     expect(names).toContain("server/package.json");
     expect(names).toContain(`server/${LAMBDA_ADAPTER_FILE_NAME}`);
     expect(names).toContain(`server/${SERVER_ENTRY_FILE_NAME}`);
-    const manifest = output.serverModules?.find(
-      (module) => module.name === "server/package.json",
-    );
+    const manifest = output.serverModules?.find((module) => module.name === "server/package.json");
     expect(String(manifest?.content)).toContain('"type":"module"');
   });
 
@@ -307,9 +289,7 @@ describe("finish", () => {
 
 describe("make", () => {
   it("defaults to this package's AWS deploy target", () => {
-    expect(DEFAULT_TARGET_SPECIFIER).toBe(
-      "@alchemy.run/frontend-frameworks/tanstack-start/aws",
-    );
+    expect(DEFAULT_TARGET_SPECIFIER).toBe("@alchemy.run/frontend-frameworks/tanstack-start/aws");
   });
 
   it("build fails with a descriptive FrameworkError outside a Vite project", async () => {
@@ -321,9 +301,7 @@ describe("make", () => {
           root: "/tmp/does-not-matter",
           target: finishOnly(makeAwsTarget()),
         });
-        return yield* Effect.result(
-          framework.build({ root: "/tmp/does-not-matter" }),
-        );
+        return yield* Effect.result(framework.build({ root: "/tmp/does-not-matter" }));
       }),
     );
     expect(result._tag).toBe("Failure");
@@ -342,9 +320,7 @@ describe("make", () => {
 
 describe("fromHarnessOptions", () => {
   it("forwards the harness's outDir override", () => {
-    expect(
-      fromHarnessOptions({ tanstackStart: { outDir: "build" } }).outDir,
-    ).toBe("build");
+    expect(fromHarnessOptions({ tanstackStart: { outDir: "build" } }).outDir).toBe("build");
     expect(fromHarnessOptions({}).outDir).toBeUndefined();
   });
 });

@@ -1042,6 +1042,100 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect.each([
+    { shape: "v1", deleteCapability: {} },
+    { shape: "v2", deleteCapability: {} },
+    { shape: "v2", deleteCapability: undefined },
+    { shape: "v2", deleteCapability: null },
+  ])(
+    "gates session/delete for $shape with delete=$deleteCapability",
+    ({ shape, deleteCapability }) =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const scope = yield* Scope.make();
+        const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+        const deleteSession = acp.agent.deleteSession({ sessionId: "kiro-session-1" });
+
+        const initializeFiber = yield* acp.agent
+          .initialize({
+            protocolVersion: 1,
+            clientCapabilities: {
+              fs: { readTextFile: false, writeTextFile: false },
+              terminal: false,
+            },
+            clientInfo: { name: "effect-acp-test", version: "0.0.0" },
+          })
+          .pipe(Effect.forkScoped);
+        const initializeRequest = yield* Queue.take(output).pipe(
+          Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+        );
+        yield* Queue.offer(
+          input,
+          shape === "v1"
+            ? yield* encodeJsonl(InitializeResponseV1, {
+                jsonrpc: "2.0",
+                id: initializeRequest.id,
+                result: {
+                  protocolVersion: 1,
+                  agentInfo: { name: "kiro-acp", version: "0.0.0" },
+                  agentCapabilities: {
+                    sessionCapabilities: { list: {}, resume: {}, close: {}, delete: {} },
+                  },
+                },
+              })
+            : yield* encodeJsonl(InitializeResponse, {
+                jsonrpc: "2.0",
+                id: initializeRequest.id,
+                result: {
+                  protocolVersion: 2,
+                  info: { name: "v2-agent", version: "0.0.0" },
+                  capabilities: {
+                    session: deleteCapability === undefined ? {} : { delete: deleteCapability },
+                  },
+                },
+              }),
+        );
+        yield* Fiber.join(initializeFiber);
+
+        const deleteFailed = yield* Deferred.make<AcpError.AcpError>();
+        const deleteFiber = yield* deleteSession.pipe(
+          Effect.tapError((error) => Deferred.succeed(deleteFailed, error)),
+          Effect.forkScoped,
+        );
+        const outcome = yield* Effect.raceFirst(
+          Queue.take(output).pipe(Effect.map((line) => ({ line }))),
+          Deferred.await(deleteFailed).pipe(Effect.map((error) => ({ error }))),
+        );
+        if ("error" in outcome) {
+          if (deleteCapability != null) {
+            return yield* outcome.error;
+          }
+          assert.equal(outcome.error._tag, "AcpRequestError");
+          assert.equal(
+            outcome.error._tag === "AcpRequestError" ? outcome.error.code : undefined,
+            -32601,
+          );
+          yield* Scope.close(scope, Exit.void);
+          return;
+        }
+        assert.exists(deleteCapability, "session/delete reached transport without its capability");
+        const deleteRequest = yield* Schema.decodeEffect(
+          Schema.fromJsonString(jsonRpcRequest("session/delete", AcpSchemaV1.DeleteSessionRequest)),
+        )(outcome.line);
+        assert.equal(deleteRequest.params.sessionId, "kiro-session-1");
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+            jsonrpc: "2.0",
+            id: deleteRequest.id,
+            result: {},
+          }),
+        );
+        assert.deepEqual(yield* Fiber.join(deleteFiber), {});
+        yield* Scope.close(scope, Exit.void);
+      }),
+  );
+
   it.effect("preserves exact ids for parallel requests with identical payloads", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();

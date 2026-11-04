@@ -5,9 +5,6 @@ import * as Context from "effect/Context";
  * `Options`/`Vite`/`Framework` can depend on it without importing `Runtime`
  * (which imports them back — an ESM cycle that breaks eager evaluation).
  */
-export const Cwd = Context.Reference(
-  "@alchemy.run/cloudflare-test-tools/e2e/Cwd",
-  {
-    defaultValue: () => process.cwd(),
-  },
-);
+export const Cwd = Context.Reference("@alchemy.run/cloudflare-test-tools/e2e/Cwd", {
+  defaultValue: () => process.cwd(),
+});

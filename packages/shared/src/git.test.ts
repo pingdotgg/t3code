@@ -7,8 +7,8 @@ import {
   formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
-  isTemporaryWorktreeBranch,
   isBareGitConfig,
+  isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseOriginUrlFromGitConfig,
   resolveAutoFeatureBranchName,
@@ -105,6 +105,13 @@ describe("isBareGitConfig", () => {
     }
     expect(isBareGitConfig("[core]\nbare = 2\nbare = 0\n")).toBe(false);
     expect(isBareGitConfig("[core]\nbare = false\nbare = -2\n")).toBe(true);
+  });
+
+  it("reads continued bare values after comments and at end of input", () => {
+    const config = ["[core] bare = false # ignored backslash \\", 'bare = "tr\\', 'ue"'].join("\n");
+
+    expect(isBareGitConfig(config)).toBe(true);
+    expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
   });
 });
 
@@ -311,6 +318,12 @@ describe("sanitizeFeatureBranchName", () => {
     ["fix///", "feature/fix"],
   ])("keeps the fallback for unprefixed input %s", (input, expected) => {
     expect(sanitizeFeatureBranchName(input)).toBe(expected);
+  });
+
+  it("keeps accented letters as their plain letters", () => {
+    expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
+      "fix/anadir-validacion-del-cafe",
+    );
   });
 });
 
