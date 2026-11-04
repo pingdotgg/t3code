@@ -34,14 +34,17 @@ describe("detectPullRequestMention", () => {
 });
 
 describe("insertPullRequestMention", () => {
-  it("replaces the partial login and adds a space", () => {
-    const text = "thanks @ju";
-    const trigger = detectPullRequestMention(text, text.length)!;
-    expect(insertPullRequestMention(text, trigger, "julius")).toEqual({
-      text: "thanks @julius ",
-      cursor: "thanks @julius ".length,
-    });
-  });
+  it.each(["", "\nnext line", "\r\nnext line"])(
+    "replaces the partial login and adds a space before %j",
+    (suffix) => {
+      const text = `thanks @ju${suffix}`;
+      const trigger = detectPullRequestMention(text, "thanks @ju".length)!;
+      expect(insertPullRequestMention(text, trigger, "julius")).toEqual({
+        text: `thanks @julius ${suffix}`,
+        cursor: "thanks @julius ".length,
+      });
+    },
+  );
 
   it("reuses the space that already follows and moves past it", () => {
     const text = "@ju please look";

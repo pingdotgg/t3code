@@ -29,7 +29,7 @@ export function insertPullRequestMention(
   trigger: PullRequestMentionTrigger,
   login: string,
 ): { text: string; cursor: number } {
-  const followedBySpace = /\s/.test(text[trigger.rangeEnd] ?? "");
+  const followedBySpace = /[ \t]/.test(text[trigger.rangeEnd] ?? "");
   if (!followedBySpace) {
     return replaceTextRange(text, trigger.rangeStart, trigger.rangeEnd, `@${login} `);
   }
