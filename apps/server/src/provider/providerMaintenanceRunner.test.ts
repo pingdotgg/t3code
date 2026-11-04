@@ -27,6 +27,7 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -258,6 +259,8 @@ const makeTestRunner = (
               refreshInBackground: Effect.void,
             }),
             latestVersions,
+            // Layers memoize by reference, so a test that provides the gate shares it.
+            ProviderInstallationGate.layer,
           ),
         ),
       ),
@@ -908,12 +911,152 @@ describe("providerMaintenanceRunner", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          ProviderInstallationGate.layer,
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner(() => ({
             exitCode: Deferred.succeed(updateStarted, undefined).pipe(
               Effect.andThen(Effect.sleep("1 minute")),
               Effect.andThen(Effect.sync(() => log.push("update command exited"))),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
+        ),
+      ),
+    );
+  });
+
+  it.effect("holds every instance that shares the updated installation", () => {
+    const CODEX_WORK_INSTANCE_ID = ProviderInstanceId.make("codex_work");
+    const updateStarted = Deferred.makeUnsafe<void>();
+    const log: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(
+        [
+          baseProvider,
+          { ...baseProvider, instanceId: CODEX_WORK_INSTANCE_ID },
+          baseOpenCodeProvider,
+        ],
+        { installedVersionAfterUpdate: "1.0.0" },
+      );
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) => {
+          const capabilities = lifecycleFor(provider);
+          return Effect.succeed(
+            provider === OPENCODE_DRIVER
+              ? {
+                  ...capabilities,
+                  update: { ...capabilities.update!, lockKey: "npm-global:/other" },
+                }
+              : capabilities,
+          );
+        },
+      });
+      const gate = yield* ProviderInstallationGate.ProviderInstallationGate;
+
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(updateStarted);
+      const shared = yield* gate
+        .execute(
+          CODEX_WORK_INSTANCE_ID,
+          Effect.sync(() => log.push("shared installation ran")),
+        )
+        .pipe(Effect.forkScoped);
+      const other = yield* gate
+        .execute(
+          OPENCODE_INSTANCE_ID,
+          Effect.sync(() => log.push("other installation ran")),
+        )
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(update);
+      yield* Fiber.join(shared);
+      yield* Fiber.join(other);
+
+      assert.deepStrictEqual(log, [
+        "other installation ran",
+        "update command exited",
+        "shared installation ran",
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProviderInstallationGate.layer,
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(updateStarted, undefined).pipe(
+              Effect.andThen(Effect.sleep("1 minute")),
+              Effect.andThen(Effect.sync(() => log.push("update command exited"))),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
+        ),
+      ),
+    );
+  });
+
+  it.effect("runs the installer after in-flight provider work and before later work", () => {
+    const executionStarted = Deferred.makeUnsafe<void>();
+    const updateRunning = Deferred.makeUnsafe<void>();
+    const log: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider, {
+        installedVersionAfterUpdate: "1.0.0",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        setProviderMaintenanceActionState: (input) =>
+          registry
+            .setProviderMaintenanceActionState(input)
+            .pipe(
+              Effect.tap(() =>
+                input.state?.message?.startsWith("Running ")
+                  ? Deferred.succeed(updateRunning, undefined)
+                  : Effect.void,
+              ),
+            ),
+      });
+      const gate = yield* ProviderInstallationGate.ProviderInstallationGate;
+
+      const inFlight = yield* gate
+        .execute(
+          CODEX_INSTANCE_ID,
+          Deferred.succeed(executionStarted, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 minute")),
+            Effect.andThen(Effect.sync(() => log.push("in-flight work finished"))),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(executionStarted);
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(updateRunning);
+      const later = yield* gate
+        .execute(
+          CODEX_INSTANCE_ID,
+          Effect.sync(() => log.push("later work ran")),
+        )
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(inFlight);
+      const result = yield* Fiber.join(update);
+      yield* Fiber.join(later);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.deepStrictEqual(log, [
+        "in-flight work finished",
+        "update command exited",
+        "later work ran",
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProviderInstallationGate.layer,
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Effect.sync(() => log.push("update command exited")).pipe(
               Effect.as(ChildProcessSpawner.ExitCode(0)),
             ),
           })),
