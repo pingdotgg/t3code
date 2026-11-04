@@ -1073,25 +1073,21 @@ export function PullRequestDetailPanel({
     );
     if (comment === null) return;
     const store = useComposerDraftStore.getState();
-    // One reference to the pull request is enough, whichever action put it there. Matched by
-    // URL, as references are, because two repositories can share a number.
-    const hasPullRequest = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
-      (existing) => existing.pullRequest?.url === detail.url,
+    const reference = buildPullRequestReferenceContext({
+      number: detail.number,
+      title: detail.title,
+      url: detail.url,
+      headBranch: detail.headBranch,
+      baseBranch: detail.baseBranch,
+      state: detail.state,
+      isDraft: detail.isDraft,
+    });
+    // Only the reader's own reference counts: a hand-off's context chip is swept by the next
+    // hand-off, which would leave the remark without its pull request.
+    const hasReference = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
+      (existing) => existing.id === reference.id,
     );
-    if (!hasPullRequest) {
-      store.addReviewComment(
-        attachTarget,
-        buildPullRequestReferenceContext({
-          number: detail.number,
-          title: detail.title,
-          url: detail.url,
-          headBranch: detail.headBranch,
-          baseBranch: detail.baseBranch,
-          state: detail.state,
-          isDraft: detail.isDraft,
-        }),
-      );
-    }
+    if (!hasReference) store.addReviewComment(attachTarget, reference);
     store.addReviewComment(attachTarget, comment);
     toastManager.add({ type: "success", title: "Added to the composer" });
   };
