@@ -190,14 +190,17 @@ describe("hosted thread links", () => {
     },
   );
 
-  it("shields a cross-boundary span and still processes the following live link", () => {
-    const shielded = "[before ``](https://example.com) https://app.t3.codes/threads/one/hidden``";
-    const markdown = `${shielded} https://app.t3.codes/threads/one/live`;
-    expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "live")]);
-    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
-      `${shielded} [Title](t3-thread://v2/one/live)`,
-    );
-  });
+  it.each(["before ``", "before ` and ``"])(
+    "shields a cross-boundary span after label %s and processes the following live link",
+    (label) => {
+      const shielded = `[${label}](https://example.com) https://app.t3.codes/threads/one/hidden\`\``;
+      const markdown = `${shielded} https://app.t3.codes/threads/one/live`;
+      expect(threadLinkRefs(markdown, local)).toEqual([ref("one", "live")]);
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+        `${shielded} [Title](t3-thread://v2/one/live)`,
+      );
+    },
+  );
 
   it("does not consume a code span's opening backtick as an ordinary link label", () => {
     const markdown = "[before `](https://example.com) https://app.t3.codes/threads/one/same`";
@@ -205,7 +208,7 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs(markdown, local)).toEqual([]);
   });
 
-  it.each(['"title"', "'title'", "(title)"])(
+  it.each(['"title"', "'title'", "(title)", '"see [notes]"', "'see [notes]'", "(see [notes])"])(
     "leaves a link with Markdown title %s intact",
     (title) => {
       for (const label of ["label", "label `code`"]) {

@@ -12,15 +12,18 @@ const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
-// Neither part may hold `[`, which keeps the scan linear: no match attempt runs past the next `[`.
+// Labels and destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"[^"[\n]*"|'[^'[\n]*'|\([^()[\n]*\)))?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^[\]\n]*)\]\((?<href>[^\s)[]*)(?<title>\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
 // Pair equal-length backtick runs once, then skip complete spans. Each label is scanned
 // linearly; a rejected label resumes at its unmatched opener so code outside it stays shielded.
-function unmatchedLabelBacktick(label: string): number | undefined {
+function unmatchedLabelBacktick(
+  label: string,
+  hasCloser: (position: number) => boolean,
+): number | undefined {
   const runs = [...label.matchAll(/`+/g)];
   const next = new Map<number, number>();
   const closing: Array<number | undefined> = [];
@@ -31,8 +34,10 @@ function unmatchedLabelBacktick(label: string): number | undefined {
   }
   for (let index = 0; index < runs.length;) {
     const end = closing[index];
-    if (end === undefined) return runs[index]!.index;
-    index = end + 1;
+    if (end === undefined) {
+      if (hasCloser(runs[index]!.index)) return runs[index]!.index;
+      index++;
+    } else index = end + 1;
   }
   return undefined;
 }
@@ -42,8 +47,8 @@ function* threadLinkMatches(markdown: string) {
   let spanOpeners: Set<number> | undefined;
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
     const label = match.groups?.label;
-    const unmatched = label === undefined ? undefined : unmatchedLabelBacktick(label);
-    if (unmatched !== undefined) {
+    const labelStart = match.index + 1;
+    const hasCloser = (position: number) => {
       // Index possible closers once; a backtick without one is literal Markdown text.
       if (spanOpeners === undefined) {
         spanOpeners = new Set<number>();
@@ -58,11 +63,12 @@ function* threadLinkMatches(markdown: string) {
           }
         }
       }
-      const opener = match.index + 1 + unmatched;
-      if (spanOpeners.has(opener)) {
-        pattern.lastIndex = opener;
-        continue;
-      }
+      return spanOpeners.has(labelStart + position);
+    };
+    const unmatched = label === undefined ? undefined : unmatchedLabelBacktick(label, hasCloser);
+    if (unmatched !== undefined) {
+      pattern.lastIndex = labelStart + unmatched;
+      continue;
     }
     yield match;
   }
