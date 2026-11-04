@@ -614,6 +614,8 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkHover).not.toHaveBeenCalled();
 
     harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/first.ts");
+    onLinkHover.mockClear();
     for (let index = 0; index < 100; index++) {
       surface.write(`\r\x1b[2Ksrc/file-${index}.ts`);
       harness.flushFrame();
@@ -627,7 +629,40 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([["src/file-99.ts"]]);
     onLinkHover.mockClear();
 
-    for (const cancel of [
+    harness.pointer("pointerleave", 5, 0);
+    surface.write("\r\x1b[2Ksrc/recent.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(150);
+    harness.pointer("pointermove", 5, 0);
+    vi.advanceTimersByTime(99);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/recent.ts");
+    onLinkHover.mockClear();
+
+    harness.pointer("pointerleave", 5, 0);
+    surface.write("\r\x1b[2Ksrc/still.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    surface.write("\x1b[2;1Hother output");
+    harness.flushFrame();
+    harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/still.ts");
+    onLinkHover.mockClear();
+
+    surface.write("\x1b[H\x1b[2Ksrc/move.ts");
+    harness.flushFrame();
+    harness.pointer("pointermove", 45, 0);
+    vi.advanceTimersByTime(150);
+    surface.write("\r\x1b[2K src/move.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(249);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/move.ts");
+    onLinkHover.mockClear();
+
+    for (const [index, cancel] of [
       () => {
         surface.write("\r\x1b[2Kplain text");
         harness.flushFrame();
@@ -635,9 +670,9 @@ describe("GhosttyTerminalSurface visibility", () => {
       () => harness.pointer("pointerleave", 5, 0),
       () => surface.setVisible(false),
       () => surface.dispose(),
-    ]) {
+    ].entries()) {
       surface.setVisible(true);
-      surface.write("\r\x1b[2Ksrc/next.ts");
+      surface.write(`\x1b[H\x1b[2Ksrc/next-${index}.ts`);
       harness.flushFrame();
       harness.pointer("pointermove", 5, 0);
       cancel();

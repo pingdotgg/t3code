@@ -527,7 +527,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
   readonly validateLink?: (text: string) => Promise<boolean>;
-  /** Reports a candidate after 250 ms under the pointer, or null when it changes or leaves. */
+  /** Reports hovered candidates once their rendered text is stable for 250 ms; null cancels. */
   readonly onLinkHover?: (text: string | null) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
@@ -598,8 +598,12 @@ export class GhosttyTerminalSurface {
   } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
-  private linkHoverText: string | null = null;
+  private linkHoverCandidate: TerminalLinkWithRange | null = null;
   private linkHoverTimer: number | null = null;
+  private linkRowStability: Array<{
+    row: GhosttySnapshot["rowData"][number];
+    changedAt: number;
+  }> = [];
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
@@ -750,6 +754,7 @@ export class GhosttyTerminalSurface {
     if (!visible) {
       this.linkActivationRequestId += 1;
       this.clearHoveredLink();
+      this.linkRowStability = [];
       this.cancelRender();
       this.setSelectionAutoscroll(0);
       return;
@@ -1601,24 +1606,57 @@ export class GhosttyTerminalSurface {
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
     const link = pointer ? this.findLinkAt(pointer.x, pointer.y) : null;
-    this.updateLinkHover(link?.text ?? null);
+    this.updateLinkHover(link);
     this.setHoveredLink(link && this.options.canActivateLink?.(link.text) !== false ? link : null);
   }
 
-  private updateLinkHover(text: string | null): void {
-    if (!this.options.onLinkHover || text === this.linkHoverText) return;
-    this.linkHoverText = text;
+  private updateLinkHover(link: TerminalLinkWithRange | null): void {
+    if (!this.options.onLinkHover) return;
+    if (link ? isSameTerminalLink(link, this.linkHoverCandidate) : this.linkHoverCandidate === null)
+      return;
+    this.linkHoverCandidate = link;
     if (this.linkHoverTimer !== null) {
       window.clearTimeout(this.linkHoverTimer);
       this.linkHoverTimer = null;
     }
     this.options.onLinkHover(null);
-    if (text !== null) {
+    if (link !== null) {
+      const now = performance.now();
+      let changedAt = 0;
+      for (let y = link.range.start.y; y <= link.range.end.y; y++) {
+        changedAt = Math.max(changedAt, this.linkRowStability[y]?.changedAt ?? now);
+      }
+      const delay = Math.max(0, TERMINAL_LINK_HOVER_DELAY_MS - (now - changedAt));
+      if (delay === 0) {
+        this.options.onLinkHover(link.text);
+        return;
+      }
       this.linkHoverTimer = window.setTimeout(() => {
         this.linkHoverTimer = null;
-        this.options.onLinkHover?.(text);
-      }, TERMINAL_LINK_HOVER_DELAY_MS);
+        this.options.onLinkHover?.(link.text);
+      }, delay);
     }
+  }
+
+  private updateLinkRowStability(reset: boolean): void {
+    if (!this.options.onLinkHover || !this.snapshot) return;
+    if (reset) {
+      this.updateLinkHover(null);
+      this.linkRowStability = [];
+    }
+    const now = performance.now();
+    this.snapshot.rowData.forEach((row, y) => {
+      const previous = this.linkRowStability[y]?.row;
+      if (
+        !previous ||
+        previous.text !== row.text ||
+        previous.cells.length !== row.cells.length ||
+        previous.isWrapContinuation !== row.isWrapContinuation ||
+        previous.wrapsToNext !== row.wrapsToNext
+      )
+        this.linkRowStability[y] = { row, changedAt: now };
+    });
+    this.linkRowStability.length = this.snapshot.rows;
   }
 
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
@@ -2024,10 +2062,12 @@ export class GhosttyTerminalSurface {
       this.metrics.height,
       anchorBottom,
     );
+    const geometryChanged = canvasConfiguration !== null || nextOriginY !== this.originY;
     if (nextOriginY !== this.originY) {
       this.originY = nextOriginY;
       this.forceFullRender = true;
     }
+    this.updateLinkRowStability(geometryChanged);
     this.refreshHoveredLink();
     renderGhosttySnapshot({
       context: this.context,
