@@ -12,7 +12,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
   OrchestratorMcpFailure,
@@ -196,6 +196,7 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
+  const sessionOwners = new Map<string, string>();
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
@@ -229,16 +230,32 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
+    const sessionId = request.headers["mcp-session-id"];
+    if (sessionId !== undefined && sessionOwners.get(sessionId) !== invocation.requestNamespace)
+      return HttpServerResponse.jsonUnsafe({ error: "unknown_mcp_session" }, { status: 404 });
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    const namespace = invocation.requestNamespace;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
         linkedEnvironments,
       }),
+      Effect.tap(() =>
+        HttpEffect.appendPreResponseHandler((_request, response) =>
+          Effect.sync(() => {
+            const issuedSession = response.headers["mcp-session-id"];
+            if (issuedSession !== undefined && !sessionOwners.has(issuedSession))
+              sessionOwners.set(issuedSession, namespace);
+            if (request.method === "DELETE" && sessionId !== undefined && response.status === 204)
+              sessionOwners.delete(sessionId);
+            return response;
+          }),
+        ),
+      ),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
