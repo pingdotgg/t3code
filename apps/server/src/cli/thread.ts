@@ -332,7 +332,10 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
 
   const containing = deepestContaining(target);
   if (containing !== undefined) return containing;
-  const listed = yield* listGitCheckouts(target).pipe(
+  const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
+  const gitDirectory =
+    Option.isSome(targetInfo) && targetInfo.value.type === "File" ? path.dirname(target) : target;
+  const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
     Effect.provide(ProcessRunner.layer),
   );

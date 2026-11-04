@@ -225,14 +225,16 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     const resolveFrom = (
       projects: ReadonlyArray<ReturnType<typeof project>>,
       workingDirectory: string,
+      identifier = ".",
     ) =>
       resolveProject(
         scriptedTools({ t3_project_list: [{ projects, nextCursor: null }] }).tools,
-        ".",
+        identifier,
       ).pipe(Effect.provideService(HostProcess.WorkingDirectory, workingDirectory));
 
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
+    assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "pkg/index.ts"), sample);
     assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
     const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
