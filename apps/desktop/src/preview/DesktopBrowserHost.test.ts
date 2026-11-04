@@ -947,7 +947,7 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("tells a download the person clicked from one the agent's input started", () =>
+  it.effect("tells a person's action from one the agent's input started", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -960,7 +960,7 @@ describe("DesktopBrowserHost", () => {
           message: encodeJson({ id: 1, method: "DOM.getDocument", params: {} }),
         }),
       );
-      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(true);
+      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(false);
       yield* host.handleCommandLine(
         encodeJson({
           type: "cdp",
@@ -972,7 +972,7 @@ describe("DesktopBrowserHost", () => {
           }),
         }),
       );
-      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
+      expect(host.agentActedRecently(debuggee.tab.webContents)).toBe(true);
     }),
   );
 
