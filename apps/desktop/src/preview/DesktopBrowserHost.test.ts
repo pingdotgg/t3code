@@ -41,6 +41,7 @@ const makeDebuggee = (
   const pending: Array<() => void> = [];
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
+  const methods: Array<string> = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
   const debuggee = Object.assign(emitter, {
@@ -65,6 +66,7 @@ const makeDebuggee = (
           return;
         }
         sent.push(params?.id);
+        methods.push(method);
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
       }),
@@ -83,6 +85,8 @@ const makeDebuggee = (
     navigate: () => webContents.emit("did-navigate"),
     /** Ids of the commands the debugger received, in order. */
     sent,
+    /** Methods of the same commands, in order. */
+    methods,
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
@@ -909,6 +913,69 @@ describe("DesktopBrowserHost", () => {
       });
       yield* settle;
       expect(painting).toEqual([true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a guest's one screencast running until its last streaming session stops", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const nativeStops = () =>
+        debuggee.methods.filter((method) => method === "Page.stopScreencast").length;
+
+      // A viewer and a recording share Chromium's single screencast for the guest.
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      debuggee.release();
+      yield* raw({ id: 5, method: "Page.stopScreencast", sessionId: "t3-preview-page-1" });
+      yield* settle;
+      expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
+
+      yield* raw({ id: 6, method: "Page.stopScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      expect(nativeStops()).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a guest's screencast once its last streaming session detaches", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      const nativeStops = () =>
+        debuggee.methods.filter((method) => method === "Page.stopScreencast").length;
+
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* raw({ id: 2, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)]).toEqual([1, 2]);
+      yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({ id: 4, method: "Page.startScreencast", sessionId: "t3-preview-page-2" });
+      yield* settle;
+      debuggee.release();
+      yield* raw({ id: 5, method: "Page.stopScreencast", sessionId: "t3-preview-page-1" });
+      yield* settle;
+      expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
+
+      // The last streamer goes without stopping, such as a viewer that closed.
+      yield* raw({
+        id: 6,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-2" },
+      });
+      expect(yield* Queue.take(replies)).toBe(6);
+      yield* settle;
+      expect(nativeStops()).toBe(1);
     }).pipe(Effect.scoped),
   );
 
