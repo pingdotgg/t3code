@@ -6,6 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { MediaActions } from "../media/MediaActions";
+import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 const PIXEL =
@@ -31,9 +32,18 @@ function MediaOpener() {
   };
   return (
     <>
-      <MediaActions source={source}>
-        <img src={PIXEL} alt="repro shot" width={40} height={40} onClick={() => setOpen(true)} />
-      </MediaActions>
+      <TooltipScrollDismissArea data-testid="timeline" className="mt-16 h-80 overflow-y-auto">
+        <MediaActions source={source}>
+          <img
+            src={PIXEL}
+            alt="repro shot"
+            width={200}
+            height={200}
+            onClick={() => setOpen(true)}
+          />
+        </MediaActions>
+        <div className="h-[600px]" />
+      </TooltipScrollDismissArea>
       {open ? (
         <ExpandedImageDialog
           preview={{ images: [{ src: PIXEL, name: "shot.png", actionsSource: source }], index: 0 }}
@@ -119,6 +129,21 @@ describe("ExpandedImageDialog", () => {
       opener.element().matches(":focus-visible"),
       "focus returned to a mouse-opened image is :focus-visible",
     ).toBe(false);
+    await expect.element(screen.getByText("/work/shot.png")).not.toBeInTheDocument();
+  });
+
+  it("a hovered image's path tooltip closes on scroll after its mouse-opened preview closes", async () => {
+    // The dialog renders no links and reads no route.
+    await using screen = await render(<MediaOpener />, { router: false });
+
+    const opener = screen.getByRole("img", { name: "repro shot" });
+    await userEvent.click(opener);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(opener).toHaveFocus();
+    await userEvent.hover(opener);
+    await expect.element(screen.getByText("/work/shot.png")).toBeVisible();
+
+    screen.getByTestId("timeline").element().scrollTop = 20;
     await expect.element(screen.getByText("/work/shot.png")).not.toBeInTheDocument();
   });
 });
