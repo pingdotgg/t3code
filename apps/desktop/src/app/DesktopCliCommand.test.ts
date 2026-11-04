@@ -72,6 +72,8 @@ const fakePowerShell = (initial: string) => {
     writes: 0,
     wslCalls: 0,
     wslFail: false,
+    wslErrorOutput: "",
+    wslEnv: {} as Record<string, string>,
     wslOutput: "/home/test/.local/bin/t3\nUbuntu\n",
     wslArgs: [] as Array<ReadonlyArray<string>>,
   };
@@ -85,12 +87,15 @@ const fakePowerShell = (initial: string) => {
       let exitCode = 0;
       let stdout = "";
       if (executable === "wsl.exe") {
+        registry.wslEnv = env;
         registry.wslCalls += 1;
         registry.wslArgs.push(
           (command as unknown as { readonly args: ReadonlyArray<string> }).args,
         );
-        if (registry.wslFail) exitCode = 1;
-        else stdout = registry.wslOutput;
+        if (registry.wslFail) {
+          exitCode = 1;
+          stdout = registry.wslErrorOutput;
+        } else stdout = registry.wslOutput;
       } else if (env.T3_SET === "1") {
         registry.path = env.T3_PATH ?? "";
         registry.writes += 1;
@@ -356,6 +361,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           wslStatusUnavailable: false,
         });
         expect(registry.wslCalls).toBe(2);
+        expect(registry.wslEnv.WSL_UTF8).toBe("1");
 
         registry.wslFail = true;
         expect(yield* command.state).toMatchObject({
@@ -365,6 +371,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         expect((yield* Effect.flip(command.uninstallWsl)).message).toContain(
           "Could not run WSL in Ubuntu",
         );
+        registry.wslErrorOutput = "No distribution found.";
+        expect((yield* Effect.flip(command.uninstallWsl)).message).toContain(
+          "No distribution found.",
+        );
+        registry.wslErrorOutput = "";
         registry.wslFail = false;
 
         registry.wslOutput = "NONE\n";
@@ -381,9 +392,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         );
         const removed = yield* reconfigured.uninstallWsl;
         expect(removed.wslInstalledPath).toBeNull();
-        expect(registry.wslCalls).toBe(6);
+        expect(registry.wslCalls).toBe(7);
         expect(registry.wslArgs[0]).toEqual(["--exec", "sh", "-s"]);
-        expect(registry.wslArgs[5]).toEqual(["--distribution", "Ubuntu", "--exec", "sh", "-s"]);
+        expect(registry.wslArgs[6]).toEqual(["--distribution", "Ubuntu", "--exec", "sh", "-s"]);
       }).pipe(Effect.scoped),
   );
 });

@@ -70,14 +70,30 @@ const fakeAppImage = (canMount = true) => {
 
 describe("renderCliShim", () => {
   it("forwards WSL distro and Linux cwd to the Windows desktop CLI", () => {
-    const script = renderWslCliShim("/mnt/c/Users/test/.t3/bin/t3.cmd");
-    expect(script).toContain("Usage: t3 app [project-directory]");
-    expect(script).toContain('workspace_root=$(CDPATH= cd -- "${project:-.}" && pwd)');
-    expect(script).toContain('T3CODE_WSL_DISTRO="${WSL_DISTRO_NAME:?Run this command inside WSL}"');
-    expect(script).toContain('T3CODE_WSL_WORKSPACE_ROOT="$workspace_root"');
-    expect(script).toContain("unset T3CODE_HOME T3CODE_WSL_WORKSPACE_ROOT T3CODE_WSL_BASE_DIR");
-    expect(script).toContain("T3CODE_WSL_WORKSPACE_ROOT/w");
-    expect(script).toContain("exec powershell.exe -NoProfile -NonInteractive -EncodedCommand");
+    const root = tempRoot();
+    const bin = NodePath.join(root, "bin");
+    const project = NodePath.join(root, "project with spaces");
+    NodeFS.mkdirSync(project);
+    writeExecutable(NodePath.join(bin, "wslpath"), '#!/bin/sh\nprintf "%s\\n" "$2"\n');
+    writeExecutable(
+      NodePath.join(bin, "powershell.exe"),
+      '#!/bin/sh\nprintf "%s\\n" "$T3CODE_WSL_DISTRO" "$T3CODE_WSL_WORKSPACE_ROOT" "$T3CODE_WSL_BASE_DIR" "${T3CODE_HOME-unset}" "$WSLENV"\n',
+    );
+    const shim = NodePath.join(root, "t3");
+    writeExecutable(shim, renderWslCliShim("C:\\Users\\test\\t3.cmd"));
+    const env = {
+      PATH: `${bin}:${process.env.PATH}`,
+      WSL_DISTRO_NAME: "Ubuntu",
+      T3CODE_HOME: "/linux-home",
+    };
+    const result = run(shim, ["app", project, "--base-dir", project], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout.split("\n").slice(0, 4)).toEqual(["Ubuntu", project, project, "unset"]);
+    expect(result.stdout).toContain("T3CODE_WSL_WORKSPACE_ROOT/w");
+    expect(run(shim, ["app", `--base-dir=${project}`, "--", project], env).status).toBe(0);
+    expect(run(shim, ["app", "--help"], env).status).toBe(0);
+    expect(run(shim, ["app", project, project], env).status).toBe(2);
+    expect(run(shim, ["app", "--base-dir"], env).status).toBe(2);
   });
 
   it("only replaces or removes its own WSL command shim", () => {
@@ -90,15 +106,25 @@ describe("renderCliShim", () => {
       windowsCliPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
     });
 
-    expect(install).toContain(
-      'if [ -L "$target" ] || { [ -e "$target" ] && ! grep -Fq "$marker" "$target"; }',
-    );
-    expect(install).toContain("exit 73");
-    expect(install).toContain("existing=$(command -v t3 || :)");
-    expect(install).toContain('chmod 755 "$target"');
-    expect(uninstall).toContain(
-      'if [ -f "$target" ] && grep -Fq "$marker" "$target"; then rm "$target"; fi',
-    );
+    const root = tempRoot();
+    const target = NodePath.join(root, ".local", "bin", "t3");
+    NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
+    const execute = (script: string) =>
+      NodeChildProcess.spawnSync("sh", ["-c", script], {
+        encoding: "utf8",
+        env: { HOME: root, PATH: "/usr/bin:/bin", WSL_DISTRO_NAME: "Ubuntu" },
+      });
+    NodeFS.writeFileSync(target, "other command\n");
+    expect(execute(install).status).toBe(73);
+    expect(execute(uninstall).status).toBe(0);
+    expect(NodeFS.readFileSync(target, "utf8")).toBe("other command\n");
+    NodeFS.unlinkSync(target);
+    NodeFS.symlinkSync(NodePath.join(root, "missing"), target);
+    expect(execute(install).status).toBe(73);
+    NodeFS.unlinkSync(target);
+    expect(execute(install).status).toBe(0);
+    expect(execute(uninstall).status).toBe(0);
+    expect(NodeFS.existsSync(target)).toBe(false);
   });
 
   it("extracts the AppImage where it cannot be mounted", () => {

@@ -94,6 +94,8 @@ export const make = Effect.gen(function* () {
               stdout: "pipe",
               stderr: "pipe",
               killSignal: "SIGTERM",
+              env: { WSL_UTF8: "1" },
+              extendEnv: true,
             }),
           )
           .pipe(Effect.mapError((error) => fail(error.message)));
@@ -108,6 +110,7 @@ export const make = Effect.gen(function* () {
         if (Number(exitCode) !== 0) {
           return yield* fail(
             stderr.trim() ||
+              stdout.trim() ||
               `Could not run WSL${distro ? ` in ${distro}` : ""}. Check that the distro is available.`,
           );
         }
