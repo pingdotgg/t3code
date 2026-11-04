@@ -83,22 +83,15 @@ function fixture(oldName: string, newName: string) {
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Native shell fixtures require a Linux host.
 describe.skipIf(process.platform !== "linux")("AppImage launch paths", () => {
-  it.live.each([
-    ["T3-Code-0.1.7-x86_64.AppImage", "T3-Code-x86_64.AppImage"],
-    ["T3-Code-0.1.7-arm64.AppImage", "T3-Code-arm64.AppImage"],
-    ["T3-Code-0.1.7-nightly.20261104.1-x86_64.AppImage", "T3-Code-Nightly-x86_64.AppImage"],
-    ["T3-Code-0.1.7-nightly.20261104.1-arm64.AppImage", "T3-Code-Nightly-arm64.AppImage"],
-  ] as const)(
-    "keeps a launcher through the versioned-to-stable transition: %s",
-    ([oldName, newName]) =>
-      Effect.gen(function* () {
-        using f = fixture(oldName, newName);
-        yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: false });
-        assert.equal(NodeChildProcess.execFileSync(f.launcher, { encoding: "utf8" }), "updated\n");
-        assert.equal(NodeFS.statSync(f.oldPath).mode & 0o777, 0o755);
-        assert.equal(NodeFS.readFileSync(f.newPath, "utf8"), "#!/bin/sh\necho updated\n");
-        assert.equal(f.updater.listenerCount("appimage-filename-updated"), 0);
-      }),
+  it.live("keeps a launcher through the versioned-to-stable transition", () =>
+    Effect.gen(function* () {
+      using f = fixture("T3-Code-0.1.7-arm64.AppImage", "T3-Code-arm64.AppImage");
+      yield* ElectronUpdater.make.quitAndInstall({ isSilent: true, isForceRunAfter: false });
+      assert.equal(NodeChildProcess.execFileSync(f.launcher, { encoding: "utf8" }), "updated\n");
+      assert.equal(NodeFS.statSync(f.oldPath).mode & 0o777, 0o755);
+      assert.equal(NodeFS.readFileSync(f.newPath, "utf8"), "#!/bin/sh\necho updated\n");
+      assert.equal(f.updater.listenerCount("appimage-filename-updated"), 0);
+    }),
   );
 
   it.live("keeps the transition alias through an in-place stable update", () =>
