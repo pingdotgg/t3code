@@ -3,11 +3,13 @@ import {
   EnvironmentId,
   MessageId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -18,6 +20,18 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useTimelineVisibleTurnItems: (() => state.visibleTurnItems) as never,
+}));
+
+vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: "about:blank",
+    expiresAt: Date.now() + 60 * 60_000,
+  }),
+}));
+vi.mock(import("~/assets/assetUrls"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAssetUrlRefresh: () => async () => "about:blank",
 }));
 
 import { render } from "../../../test/render";
@@ -109,6 +123,45 @@ it("offers no fork on a side chat's finished reply", async () => {
   await expect
     .element(screen.getByRole("button", { name: "Fork from this response" }))
     .not.toBeInTheDocument();
+});
+
+it("shows an HTML card from a side chat's reply inline, with full screen", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture("Here is how it moves.");
+  const reply = fixture.visibleTurnItems.find(
+    (row) => row.item.type === "assistant_message" && row.item.runId === fixture.historyRunId,
+  )!;
+  state.visibleTurnItems = [
+    ...fixture.visibleTurnItems.slice(0, 2),
+    {
+      ...reply,
+      sourceItemId: TurnItemId.make("html-card"),
+      item: {
+        ...reply.item,
+        id: TurnItemId.make("html-card"),
+        ordinal: 2,
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__html_render",
+        input: { title: "Pendulum", height: 240 },
+        output: {
+          structuredContent: {
+            htmlRender: { attachmentId: "render-pendulum.html", title: "Pendulum", height: 240 },
+          },
+          content: [],
+        },
+      },
+    },
+    ...fixture.visibleTurnItems.slice(2),
+  ];
+
+  await using screen = await render(<SideChatTimeline {...timelineProps(fixture, "html")} />, {
+    container: timelineContainer(),
+  });
+
+  await expect.element(screen.getByTitle("Pendulum")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
+  // The viewer portals outside the test container.
+  await expect.element(page.getByRole("dialog")).toBeVisible();
 });
 
 it("keeps a reader's position while a side chat reply streams", async () => {
