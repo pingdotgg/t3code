@@ -14,7 +14,9 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import type { ReactNode } from "react";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "../../lib/contextWindow";
@@ -22,8 +24,13 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { ContextWindowMeter, ContextWindowSegments } from "./ContextWindowMeter";
+import { ContextWindowSegments } from "./ContextWindowMeter";
+import {
+  contextWindowSegments,
+  formatContextWindowCompactionMessage,
+} from "./ContextWindowMeter.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
@@ -86,6 +93,11 @@ export function ThreadDetailsContext({
   readonly compactDisabled?: boolean | undefined;
   readonly compactDisabledReason?: string | null | undefined;
 }) {
+  const [collapsed, setCollapsed] = useLocalStorage(
+    "thread-details:collapsed:Context breakdown",
+    true,
+    Schema.Boolean,
+  );
   if (!usage) {
     return (
       <ThreadDetailsSection title="Context window" variant="usage">
@@ -108,41 +120,76 @@ export function ThreadDetailsContext({
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <div className={cn(USAGE_ROW_CLASS, "h-8")}>
-        <ContextWindowMeter
-          usage={usage}
-          side="left"
-          onCompact={onCompact}
-          compactDisabled={compactDisabled}
-          compactDisabledReason={compactDisabledReason}
-          trigger={
-            <ThreadDetailsControl
-              part="usage"
-              aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
-            >
-              <GaugeIcon className="size-4 shrink-0" />
-              <span className="flex h-6 items-center text-foreground">Context</span>
-              {used !== null ? <ContextWindowSegments usage={usage} /> : <span />}
-              <span className="text-end tabular-nums text-muted-foreground">
-                {used !== null ? `${Math.round(used)}%` : ""}
-              </span>
-            </ThreadDetailsControl>
-          }
-        />
-        <span className="flex justify-end">
-          {onCompact ? (
-            <Button
-              size="icon-xs"
-              variant="secondary"
-              aria-label="Compact context"
-              disabled={compactDisabled}
-              onClick={onCompact}
-            >
-              <Minimize2Icon className="size-[13px]" />
-            </Button>
-          ) : null}
-        </span>
-      </div>
+      <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
+        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
+          <CollapsibleTrigger
+            render={<ThreadDetailsControl part="usage" />}
+            aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
+          >
+            <GaugeIcon className="size-4 shrink-0" />
+            <span className="flex h-6 items-center text-foreground">Context</span>
+            {used !== null ? <ContextWindowSegments usage={usage} minSegmentWidth={2} /> : <span />}
+            <span className="text-end tabular-nums text-muted-foreground">
+              {used !== null ? `${Math.round(used)}%` : ""}
+            </span>
+          </CollapsibleTrigger>
+          <span className="flex">
+            {onCompact ? (
+              <Button
+                size="icon-xs"
+                variant="secondary"
+                aria-label="Compact context"
+                disabled={compactDisabled}
+                onClick={onCompact}
+              >
+                <Minimize2Icon className="size-[13px]" />
+              </Button>
+            ) : null}
+          </span>
+        </div>
+        <CollapsiblePanel>
+          <div className="px-0.5 pb-0.5">
+            <div className="surface-composer rounded-lg p-0.5">
+              <dl className="text-meta">
+                {contextWindowSegments(usage).map((segment) => (
+                  <div
+                    key={segment.label}
+                    className="flex h-8 items-center justify-between gap-2 px-2.5"
+                  >
+                    <dt className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden
+                        className={cn("size-2 shrink-0 rounded-xs", segment.color)}
+                      />
+                      {segment.label}
+                    </dt>
+                    <dd className="text-caption tabular-nums text-muted-foreground">
+                      {segment.tokens.toLocaleString("en-US")}
+                    </dd>
+                  </div>
+                ))}
+                <div className="flex min-h-8 items-center justify-between gap-2 px-2.5">
+                  <dt>{maxTokens !== null ? "Used / max" : "Used"}</dt>
+                  <dd className="text-caption tabular-nums text-muted-foreground">
+                    {usage.usedTokens.toLocaleString("en-US")}
+                    {maxTokens !== null ? ` / ${maxTokens.toLocaleString("en-US")}` : null}
+                  </dd>
+                </div>
+              </dl>
+              {usage.compactsAutomatically ? (
+                <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
+                  {formatContextWindowCompactionMessage(null, usage.autoCompactThreshold)}
+                </p>
+              ) : null}
+              {compactDisabled && compactDisabledReason ? (
+                <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
+                  {compactDisabledReason}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
     </ThreadDetailsSection>
   );
 }
