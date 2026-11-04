@@ -58,7 +58,8 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
       runner,
       `require(${JSON.stringify(helper)}).generatePreparedServerCache(${JSON.stringify(resources)}).then(()=>process.exit(0),e=>{console.error(e);process.exit(1)})`,
     );
-    result = spawnSync(executable, [runner], { env, encoding: "utf8", timeout: 120000 });
+    // x64 builds run under Rosetta on arm64 runners and can take over 2 minutes here.
+    result = spawnSync(executable, [runner], { env, encoding: "utf8", timeout: 600000 });
   } finally {
     fs.rmSync(state, { recursive: true, force: true });
   }
