@@ -119,14 +119,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setOptimisticSingleSelect(null);
   }
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question is shown and clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
+  const visibleQuestionId = isCollapsed ? undefined : activeQuestion?.id;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question's options are shown: on mount, question change, or expand
   useEffect(() => {
-    if (
-      activeQuestion?.id !== undefined &&
-      questionShownRef.current?.questionId !== activeQuestion.id
-    ) {
-      questionShownRef.current = { questionId: activeQuestion.id, at: performance.now() };
-    }
+    questionShownRef.current =
+      visibleQuestionId === undefined
+        ? null
+        : { questionId: visibleQuestionId, at: performance.now() };
+  }, [visibleQuestionId]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
+  useEffect(() => {
     const clearAutoAdvance = () => {
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);

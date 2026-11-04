@@ -359,3 +359,26 @@ it("ignores a click that lands on the next question's option as auto-advance swa
   ).not.toHaveBeenCalled();
   expect(onAdvance, "a click 0 ms after question 2 appeared submitted it").toHaveBeenCalledOnce();
 });
+
+it("ignores a click that lands on an option as expanding the collapsed question reveals it", async () => {
+  using _timers = fakeTimers();
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <AnsweringPanel
+      questions={prompt.questions.slice(0, 1)}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+    />,
+  );
+  const toggle = screen.getByTitle("Hide the question and its options");
+  await userEvent.click(toggle);
+  await advanceClock(1_000);
+  await userEvent.click(screen.getByTitle("Show the question and its options"));
+
+  await userEvent.click(screen.getByRole("button", { name: /Incremental/ }));
+  await advanceClock(1_000);
+  expect(
+    onToggleOption,
+    "a click 0 ms after expanding the question selected an option",
+  ).not.toHaveBeenCalled();
+});
