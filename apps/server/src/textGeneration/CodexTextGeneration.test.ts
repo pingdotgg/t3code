@@ -164,6 +164,7 @@ function withFakeCodexEnv<A, E, R>(
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
     defaultModel?: string;
+    customModels?: ReadonlyArray<string>;
     managedRuntime?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -172,7 +173,11 @@ function withFakeCodexEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
-    const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
+    const config = decodeCodexSettings({
+      binaryPath: codexPath,
+      launchArgs: input.launchArgs,
+      customModels: input.customModels,
+    });
     const textGeneration = yield* makeCodexTextGeneration(
       config,
       input.environment === undefined ? undefined : { ...process.env, ...input.environment },
@@ -289,6 +294,29 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             { id: "reasoningEffort", value: "none" },
             { id: "serviceTier", value: "priority" },
           ]),
+        }),
+    ),
+  );
+
+  it.effect("sends a configured custom model the managed snapshot leaves out", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra", "gpt-5.6-luna"],
+        defaultModel: "gpt-6-astra",
+        customModels: ["gpt-5.6-luna-preview"],
+        managedRuntime: true,
+        requireArg: '--model gpt-5.6-luna-preview --config model_reasoning_effort="high"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-5.6-luna-preview",
+            [{ id: "reasoningEffort", value: "high" }],
+          ),
         }),
     ),
   );

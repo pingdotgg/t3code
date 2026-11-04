@@ -24,7 +24,11 @@ import {
   normalizeCliError,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  codexModelFamily,
+  getModelSelectionStringOptionValue,
+  readCustomModelEntries,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -250,6 +254,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const requestedFamily = codexModelFamily(requestedModel);
       const matchedModel =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
+        // Managed snapshots omit configured custom models; send those as requested.
+        readCustomModelEntries(codexConfig.customModels).find(
+          (entry) => entry.slug === requestedModel,
+        )?.slug ??
         listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
       const model =
         matchedModel ??
