@@ -1,4 +1,9 @@
-import { compareEngineVersions, modelFile, type CatalogData } from "@handy-computer/models";
+import {
+  canonicalLanguage,
+  compareEngineVersions,
+  modelFile,
+  type CatalogData,
+} from "@handy-computer/models";
 import { format } from "vite-plus/fmt";
 
 // ASR architectures registered in transcribe.cpp v0.4.1's src/transcribe-arch.cpp.
@@ -78,7 +83,8 @@ export function generateSpeechCatalog(
         size: file.size,
         sha256: file.sha256,
         license: model.license,
-        languages: [...model.languages],
+        // T3 selects base languages; the engine's prompt dictionary accepts their short aliases.
+        languages: [...new Set(model.languages.map(canonicalLanguage))],
         recommended: RECOMMENDED.has(model.id),
         supportsStreaming: model.capabilities.streaming,
         supportsLanguageDetection: model.capabilities.languageDetection,
