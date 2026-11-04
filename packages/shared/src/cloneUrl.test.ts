@@ -154,6 +154,9 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("https://[2001:db8::1]:8443/a/b.git", "https")).toBe(
       "https://[2001:db8::1]:8443/a/b.git",
     );
+    expect(cloneUrlForProtocol("git@host.example:/srv/repo.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("git@[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
   });
