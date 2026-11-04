@@ -1,4 +1,5 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -1113,19 +1114,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads merge and label permissions without reading the trigger jobs", () =>
+  it.effect.each([
+    {
+      answer: JSON.stringify({
+        data: { project: { mergeRequest: { userPermissions: { adminMergeRequest: true } } } },
+      }),
+      expected: true,
+    },
+    { answer: JSON.stringify({ errors: [{ message: "Field unknown" }] }), expected: false },
+  ])("reads merge and label permissions without reading the trigger jobs", ({ answer, expected }) =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(({ args }) =>
         Effect.succeed(
           output(
             args[1] === "graphql"
-              ? JSON.stringify({
-                  data: {
-                    project: {
-                      mergeRequest: { userPermissions: { adminMergeRequest: true } },
-                    },
-                  },
-                })
+              ? answer
               : mergeRequestJson({
                   head_pipeline: { id: 31, project_id: 12, status: "success" },
                   user: { can_merge: false },
@@ -1143,7 +1146,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect(detail.viewerCanMerge).toBe(false);
-      expect(detail.viewerCanEditLabels).toBe(true);
+      expect(detail.viewerCanEditLabels).toBe(expected);
       expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
@@ -1188,11 +1191,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
           output(
             args.includes("PUT")
               ? "{}"
-              : JSON.stringify([
-                  { name: "bug", color: null },
-                  { name: "docs", color: null },
-                  { name: "docs-site", color: null },
-                ]),
+              : JSON.stringify({
+                  name: decodeURIComponent(args[1]?.split("/labels/")[1]?.split("?")[0] ?? ""),
+                  color: null,
+                }),
           ),
         ),
       );
@@ -1210,13 +1212,28 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.isDefined(write);
       expect(write.args[1]).toBe("projects/acme%2Fweb/merge_requests/7");
       expect(JSON.parse(write.stdin ?? "")).toEqual({ add_labels: "bug,docs" });
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/labels/bug?include_ancestor_groups=true");
     }),
   );
 
   it.effect("refuses to add a label the project lacks, since GitLab would create it", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(() =>
-        Effect.succeed(output(JSON.stringify([{ name: "bugfix", color: null }]))),
+        Effect.fail(
+          new GitLabCli.GitLabCliCommandError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/w",
+            cause: new VcsProcessExitError({
+              operation: "GitLabCli.execute",
+              command: "glab",
+              cwd: "/w",
+              exitCode: 1,
+              detail: "404 Label Not Found",
+              failureKind: "not-found",
+            }),
+          }),
+        ),
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
@@ -1225,7 +1242,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         .pipe(Effect.flip);
 
       expect(result).toMatchObject({ _tag: "GitLabUnknownLabelError", labels: ["bug"] });
-      expect(argsOfCall(0)[1]).toContain("search=bug");
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/labels/bug?include_ancestor_groups=true");
       expect(mockedExecute.mock.calls.some(([call]) => call.args.includes("PUT"))).toBe(false);
     }),
   );

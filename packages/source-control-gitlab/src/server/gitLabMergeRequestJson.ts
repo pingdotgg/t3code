@@ -485,6 +485,11 @@ const RawLabelSchema = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
+const decodeLabel = decodeJsonResult(RawLabelSchema);
+
+export function decodeLabelNameJson(raw: string): Result.Result<string | null, DecodeFailure> {
+  return Result.map(decodeLabel(raw), (label) => trimmed(label.name));
+}
 
 export interface GitLabProjectLabel extends PullRequestLabel {
   readonly description: string | null;

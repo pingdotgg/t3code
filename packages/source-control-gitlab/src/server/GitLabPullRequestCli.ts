@@ -36,6 +36,7 @@ import {
   decodeCommitsJson,
   decodeDiffRefsJson,
   decodeDiscussionsJson,
+  decodeLabelNameJson,
   decodeLabelPermissionJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -1240,6 +1241,30 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const labelPermission = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "getLabelPermission",
+      query: LABEL_PERMISSION_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iid: String(input.number) },
+      decode: decodeLabelPermissionJson,
+    }).pipe(
+      // The answer gates one optional control; an unusable CLI or account still surfaces.
+      Effect.catchIf(
+        (cause) =>
+          cause._tag !== "GitLabCliUnavailableError" &&
+          cause._tag !== "GitLabCliAuthenticationError" &&
+          cause._tag !== "GitLabCliRateLimitError",
+        () => Effect.succeed(false),
+      ),
+    );
+
   const mergeRequestStats = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1428,17 +1453,7 @@ export const make = Effect.gen(function* () {
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
         const [read, viewerCanEditLabels] = yield* Effect.all(
-          [
-            mergeRequestDetail(input),
-            graphqlRead({
-              cwd: input.cwd,
-              host: input.host,
-              operation: "getLabelPermission",
-              query: LABEL_PERMISSION_GRAPHQL_QUERY,
-              variables: { fullPath: input.repository, iid: String(input.number) },
-              decode: decodeLabelPermissionJson,
-            }),
-          ],
+          [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
         const detail = { ...read, viewerCanEditLabels };
@@ -1677,8 +1692,24 @@ export const make = Effect.gen(function* () {
         const found = yield* Effect.forEach(
           input.labels,
           (label) =>
-            projectLabels({ ...input, search: label }).pipe(
-              Effect.map(({ labels }) => labels.some((candidate) => candidate.name === label)),
+            api({
+              cwd: input.cwd,
+              host: input.host,
+              path: `projects/${projectPath(input.repository)}/labels/${encodeURIComponent(label)}?${query(
+                [["include_ancestor_groups", "true"]],
+              )}`,
+            }).pipe(
+              // The lookup also matches a numeric id, so the returned name must be the one asked for.
+              Effect.map((result) => {
+                const decoded = decodeLabelNameJson(result.stdout.trim());
+                return Result.isSuccess(decoded) && decoded.success === label;
+              }),
+              Effect.catchTags({
+                GitLabCliCommandError: (error) =>
+                  isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
+                    ? Effect.succeed(false)
+                    : Effect.fail(error),
+              }),
             ),
           { concurrency: 4 },
         );
