@@ -426,7 +426,9 @@ const make = Effect.gen(function* () {
           rejectPending(mapped);
         };
         const child = NodeChildProcess.spawn(config.command, [...config.args], {
-          env: { ...process.env, ...config.env },
+          // Pass only the executable search path and explicitly configured MCP values.
+          // Inheriting the server environment would expose unrelated secrets.
+          env: { PATH: process.env.PATH ?? "", ...config.env },
           // Ignore stderr so a full pipe cannot block the child.
           stdio: ["pipe", "pipe", "ignore"],
         });
