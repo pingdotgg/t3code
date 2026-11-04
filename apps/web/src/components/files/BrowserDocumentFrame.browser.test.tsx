@@ -266,7 +266,11 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
     window.addEventListener(
       "message",
       (event) => {
-        if (event.source === frame.contentWindow) posted = event.data?.params?.text;
+        if (
+          event.source === frame.contentWindow &&
+          event.data?.method === "t3/notifications/selection-changed"
+        )
+          posted = event.data.params?.text;
       },
       { signal: listening.signal },
     );
