@@ -22,6 +22,12 @@ import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -835,6 +841,82 @@ describe("providerMaintenanceRunner", () => {
               ),
             };
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("holds text generation for an instance until its update finishes", () => {
+    const updateStarted = Deferred.makeUnsafe<void>();
+    const log: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider, {
+        installedVersionAfterUpdate: "1.0.0",
+      });
+      const updater = yield* makeTestRunner(registry);
+      const instance: ProviderInstance = {
+        instanceId: CODEX_INSTANCE_ID,
+        driverKind: CODEX_DRIVER,
+        continuationIdentity: { driverKind: CODEX_DRIVER, continuationKey: CODEX_INSTANCE_ID },
+        displayName: undefined,
+        enabled: true,
+        snapshot: { getSnapshot: Effect.succeed(baseProvider) } as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+          generateThreadTitle: () =>
+            Effect.sync(() => {
+              log.push("text generation spawned provider");
+              return { title: "Generated title" };
+            }),
+        }),
+      };
+      const textGeneration = yield* TextGeneration.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              listInstances: Effect.succeed([instance]),
+              getInstance: (id) => Effect.succeed(id === CODEX_INSTANCE_ID ? instance : undefined),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveLink: () => Effect.die("unused"),
+            }),
+          ),
+        ),
+      );
+
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(updateStarted);
+      const generation = yield* textGeneration
+        .generateThreadTitle({
+          cwd: "/tmp",
+          message: "hello",
+          linkedContext: "",
+          modelSelection: { instanceId: CODEX_INSTANCE_ID, model: "gpt-5" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 minute");
+      const result = yield* Fiber.join(update);
+      yield* Fiber.join(generation);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.deepStrictEqual(log, ["update command exited", "text generation spawned provider"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(updateStarted, undefined).pipe(
+              Effect.andThen(Effect.sleep("1 minute")),
+              Effect.andThen(Effect.sync(() => log.push("update command exited"))),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
         ),
       ),
     );
