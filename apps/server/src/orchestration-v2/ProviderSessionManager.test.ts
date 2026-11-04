@@ -441,6 +441,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeArchive?: (
+      providerThread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
     /** Offers `unload:<native id>`, `archive:<native id>` and `close`; also gives the runtime archiveThread. */
@@ -576,10 +579,15 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 }: {
                   providerThread: OrchestrationV2ProviderThread;
                 }) =>
-                  Queue.offer(
-                    options.nativeThreadExits!,
-                    `archive:${providerThread.nativeThreadRef?.nativeId}`,
-                  ).pipe(Effect.asVoid),
+                  (options.beforeArchive?.(providerThread) ?? Effect.void).pipe(
+                    Effect.andThen(
+                      Queue.offer(
+                        options.nativeThreadExits!,
+                        `archive:${providerThread.nativeThreadRef?.nativeId}`,
+                      ),
+                    ),
+                    Effect.asVoid,
+                  ),
               }),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
@@ -618,6 +626,9 @@ function layerTest(input: {
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly beforeArchive?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly nativeThreadExits?: Queue.Queue<string>;
@@ -655,6 +666,7 @@ function layerTest(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.beforeArchive === undefined ? {} : { beforeArchive: input.beforeArchive }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
@@ -3942,9 +3954,9 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 archives a delegated child only once its parent took its result",
-  () =>
+it.effect.each([false, true])(
+  "ProviderSessionManagerV2 archives a delegated child only once its parent took its result (archive fails: %s)",
+  (archiveFails) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const exits = yield* Queue.unbounded<string>();
@@ -4161,15 +4173,32 @@ it.effect(
         });
         yield* endTurn(parentThread);
         yield* TestClock.adjust("1 second");
-        // Each child archives once before the session closes.
-        assert.deepEqual(
-          [yield* Queue.take(exits), yield* Queue.take(exits), yield* Queue.take(exits)],
-          ["archive:native-delivered", "archive:native-late", "close"],
+        // Failed sweep archives fall back to unload before the session closes.
+        assert.equal(yield* Queue.take(exits), "archive:native-delivered");
+        assert.equal(
+          yield* Queue.take(exits),
+          archiveFails ? "unload:native-late" : "archive:native-late",
         );
+        assert.equal(yield* Queue.take(exits), "close");
       });
 
       yield* effect.pipe(
-        Effect.provide(layerTest({ state, idleTimeoutMs: 1000, nativeThreadExits: exits })),
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            nativeThreadExits: exits,
+            beforeArchive: (providerThread) =>
+              archiveFails && providerThread.nativeThreadRef?.nativeId === "native-late"
+                ? Effect.fail(
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CODEX_DRIVER,
+                      detail: "test archive failed",
+                    }),
+                  )
+                : Effect.void,
+          }),
+        ),
       );
     }),
 );

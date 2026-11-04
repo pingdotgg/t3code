@@ -1742,23 +1742,54 @@ export const layerWithOptions = (
                     !latest.attachedThreadIds.has(threadId) ||
                     latest.archivedThreadIds.has(threadId)
                   ) {
-                    return [false, current] as const;
+                    return [undefined, current] as const;
                   }
                   const loadedProviderThreadKeyByThread = new Map(
                     latest.loadedProviderThreadKeyByThread,
                   );
                   loadedProviderThreadKeyByThread.delete(threadId);
-                  const idleThreadUnloads = new Map(latest.idleThreadUnloads);
-                  idleThreadUnloads.delete(threadId);
                   const updated = new Map(current);
                   updated.set(key, {
                     ...latest,
                     loadedProviderThreadKeyByThread,
-                    idleThreadUnloads,
                   });
-                  return [true, updated] as const;
+                  return [{ pending: latest.idleThreadUnloads.get(threadId) }, updated] as const;
                 });
-                if (claimed) yield* archiveProviderThread({ entry, threadId, providerThread });
+                if (claimed === undefined) return;
+                const archived = yield* archiveProviderThread({ entry, threadId, providerThread });
+                if (!archived) {
+                  const unloadThread = entry.exposedRuntime.unloadThread;
+                  const latest = (yield* Ref.get(sessions)).get(key);
+                  if (
+                    unloadThread === undefined ||
+                    latest?.runtime !== entry.runtime ||
+                    latest.idleThreadUnloads.get(threadId) !== claimed.pending ||
+                    hasBusyTurn(latest, providerThread.id)
+                  )
+                    return;
+                  yield* unloadThread({ providerThread }).pipe(
+                    Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
+                        providerSessionId,
+                        threadId,
+                        providerThreadId: providerThread.id,
+                        cause,
+                      }),
+                    ),
+                  );
+                }
+                yield* Ref.update(sessions, (current) => {
+                  const latest = current.get(key);
+                  if (
+                    latest?.runtime !== entry.runtime ||
+                    latest.idleThreadUnloads.get(threadId) !== claimed.pending
+                  )
+                    return current;
+                  const idleThreadUnloads = new Map(latest.idleThreadUnloads);
+                  idleThreadUnloads.delete(threadId);
+                  return new Map(current).set(key, { ...latest, idleThreadUnloads });
+                });
               }),
             ),
           { discard: true },
