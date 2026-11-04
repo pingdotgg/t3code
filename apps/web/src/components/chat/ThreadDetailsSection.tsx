@@ -69,7 +69,8 @@ export function ThreadDetailsSection({
       {card ? (
         <div
           className={cn(
-            "flex items-center gap-1 ps-3 pe-1",
+            "flex items-center gap-1 ps-3",
+            action ? "pe-0" : "pe-1",
             isCollapsed ? "h-7" : spacing === "relaxed" ? "h-7.5 pb-1" : "h-6.5 pb-1",
           )}
           draggable
