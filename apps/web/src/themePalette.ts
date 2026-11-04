@@ -379,6 +379,7 @@ const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function normalizeThemeId(themeId: string): string {
+  if (!Object.hasOwn(LEGACY_THEME_ID_ALIASES, themeId)) return themeId;
   return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
 }
 
