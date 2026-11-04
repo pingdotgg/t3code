@@ -238,6 +238,12 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       expected: "openai.gpt-5.6-luna",
     },
     {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["gpt-6-astra", "gpt-5.6-luna"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-5.6-luna",
+    },
+    {
       selectedModel: "gpt-6-luna",
       models: ["gpt-5.6-luna", "gpt-6-astra"],
       defaultModel: "gpt-6-astra",
@@ -265,6 +271,26 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Live title");
           }),
       ),
+  );
+
+  it.effect("drops the requested model's options when falling back to another model", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra"],
+        requireArg: '--model gpt-6-astra --config model_reasoning_effort="low"',
+        forbidArg: 'service_tier="priority"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna", [
+            { id: "reasoningEffort", value: "none" },
+            { id: "serviceTier", value: "priority" },
+          ]),
+        }),
+    ),
   );
 
   it.effect("omits a persisted service tier for managed ChatGPT text generation", () =>
