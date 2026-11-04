@@ -2,11 +2,14 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { chooseVoiceDestination, voiceRouteAtom } from "./voiceDestination";
+import { chooseVoiceDestination, voiceGrantAtom, voiceRouteAtom } from "./voiceDestination";
+import { readVoiceGrant } from "./voiceGrantStorage";
 
 const mocks = vi.hoisted(() => ({
-  read: vi.fn(async () => null),
+  read: vi.fn<() => Promise<string | null>>(async () => null),
   write: vi.fn(),
+  markerRead: vi.fn<() => string>(),
+  markerWrite: vi.fn<(id: string) => void>(),
   probe: vi.fn(),
   fetch: vi.fn<typeof fetch>(),
 }));
@@ -14,6 +17,13 @@ vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({ decodeRecording: async () => new Uint8Array([0, 0]) }),
 }));
 vi.mock("expo/fetch", () => ({ fetch: mocks.fetch }));
+vi.mock("expo-file-system", () => ({
+  Paths: { document: "file:///app/" },
+  File: class {
+    textSync = mocks.markerRead;
+    write = mocks.markerWrite;
+  },
+}));
 vi.mock("expo-secure-store", () => ({
   getItemAsync: mocks.read,
   setItem: mocks.write,
@@ -53,6 +63,51 @@ vi.mock("../../state/session", async () => {
     sessionHasScope: () => true,
   };
 });
+
+it.each(["secure store", "marker"])(
+  "revokes across restarts when writing the %s fails",
+  async (failedStore) => {
+    let saved: string | null = null;
+    let marker = "";
+    mocks.read.mockImplementation(async () => saved);
+    mocks.write.mockImplementation((_key: string, value: string) => {
+      saved = value;
+    });
+    mocks.markerRead.mockImplementation(() => marker);
+    mocks.markerWrite.mockImplementation((id) => {
+      marker = id;
+    });
+    const host = EnvironmentId.make("my-server");
+    try {
+      chooseVoiceDestination(host);
+      expect((await readVoiceGrant())?.destination.environmentId).toBe(host);
+      mocks.markerRead.mockReturnValueOnce("");
+      expect(await readVoiceGrant()).toBeNull();
+      const old = { saved, marker };
+      const failedWrite = failedStore === "secure store" ? mocks.write : mocks.markerWrite;
+      failedWrite.mockImplementationOnce(() => {
+        throw new Error("storage unavailable");
+      });
+      chooseVoiceDestination(null);
+      expect(failedStore === "secure store" ? saved : marker).toBe(
+        failedStore === "secure store" ? old.saved : old.marker,
+      );
+      expect(await readVoiceGrant()).toBeNull();
+      chooseVoiceDestination(host);
+      failedWrite.mockImplementationOnce(() => {
+        throw new Error("storage unavailable");
+      });
+      expect(() => chooseVoiceDestination(EnvironmentId.make("other-host"))).toThrow();
+      expect(await readVoiceGrant()).toBeNull();
+    } finally {
+      mocks.read.mockReset();
+      mocks.write.mockReset();
+      mocks.markerRead.mockReset();
+      mocks.markerWrite.mockReset();
+      appAtomRegistry.reset();
+    }
+  },
+);
 
 it("keeps local as the default and never reuses consent for an offline or reselected host", async () => {
   const unmount = appAtomRegistry.mount(voiceRouteAtom);
@@ -96,6 +151,14 @@ it("keeps local as the default and never reuses consent for an offline or resele
       ["https://my-server.test/api/voice/status", "error"],
       ["https://my-server.test/api/voice/transcribe", "error"],
     ]);
+    const failWrite = () => {
+      throw new Error("Device storage is unavailable");
+    };
+    mocks.markerWrite.mockImplementationOnce(failWrite);
+    mocks.write.mockImplementationOnce(failWrite);
+    expect(() => chooseVoiceDestination(null)).toThrow("Device storage is unavailable");
+    expect(appAtomRegistry.get(voiceGrantAtom)).toBeNull();
+    await expect(current!.prepare(options)).rejects.toThrow("destination changed");
   } finally {
     unmount();
     appAtomRegistry.reset();

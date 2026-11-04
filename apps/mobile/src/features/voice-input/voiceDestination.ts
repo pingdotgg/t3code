@@ -1,5 +1,4 @@
 import {
-  VoiceTranscriptionDestination,
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
@@ -12,42 +11,22 @@ import {
 import { FetchHttpClient, type HttpClient } from "effect/http";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
-import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 import { requireOptionalNativeModule } from "expo";
 import { fetch as expoFetch } from "expo/fetch";
-import * as SecureStore from "expo-secure-store";
 
-import { whenProtectedDataAvailable } from "../../lib/protectedData";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession, sessionHasScope } from "../../state/session";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { uuidv4 } from "../../lib/uuid";
 import { createEnvironmentTranscriber } from "./environmentTranscriber";
+import { readVoiceGrant, writeVoiceGrant, type VoiceGrant } from "./voiceGrantStorage";
 
-const key = "t3code.voice.audio-grant.v1";
-const deviceOnly = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
-const Grant = Schema.Struct({
-  id: Schema.NonEmptyString,
-  destination: VoiceTranscriptionDestination,
-});
-type Grant = typeof Grant.Type;
-const decodeGrant = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.NullOr(Grant)));
-const storedGrant = Atom.make(
-  Effect.promise(async () => {
-    await whenProtectedDataAvailable();
-    try {
-      const raw = await SecureStore.getItemAsync(key, deviceOnly);
-      return raw ? decodeGrant(raw) : null;
-    } catch {
-      return null;
-    }
-  }),
-).pipe(Atom.keepAlive);
-const choice = Atom.make<Grant | null | undefined>(undefined).pipe(Atom.keepAlive);
+const storedGrant = Atom.make(Effect.promise(readVoiceGrant)).pipe(Atom.keepAlive);
+const choice = Atom.make<VoiceGrant | null | undefined>(undefined).pipe(Atom.keepAlive);
 export const voiceGrantAtom = Atom.make((get) => {
   const chosen = get(choice);
   if (chosen !== undefined) return chosen;
@@ -55,16 +34,16 @@ export const voiceGrantAtom = Atom.make((get) => {
 });
 
 export function chooseVoiceDestination(environmentId: EnvironmentId | null) {
-  const grant: Grant | null =
+  // A failed change must not leave the old destination armed in this session.
+  appAtomRegistry.set(choice, null);
+  const grant: VoiceGrant | null =
     environmentId === null
       ? null
       : {
           id: uuidv4(),
           destination: { kind: "environment", environmentId },
         };
-  // Revocation takes effect even if the device cannot persist the new choice.
-  appAtomRegistry.set(choice, null);
-  SecureStore.setItem(key, JSON.stringify(grant), deviceOnly);
+  writeVoiceGrant(grant);
   appAtomRegistry.set(choice, grant);
 }
 

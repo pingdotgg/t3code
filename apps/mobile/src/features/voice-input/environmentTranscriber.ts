@@ -5,6 +5,9 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 
+const pcmBytesPerSecond = 16_000 * 2;
+const maxPcmBytes = pcmBytesPerSecond * VOICE_RECORDING_LIMIT_SECONDS;
+
 export function createEnvironmentTranscriber(input: {
   readonly canSend: () => boolean;
   readonly prepare: (signal: AbortSignal) => Promise<string>;
@@ -31,13 +34,18 @@ export function createEnvironmentTranscriber(input: {
           if (
             !decoded.length ||
             decoded.length % 2 ||
-            decoded.length > 16_000 * 2 * VOICE_RECORDING_LIMIT_SECONDS
+            decoded.length > maxPcmBytes + pcmBytesPerSecond
           ) {
             throw new VoiceTranscriptionError("transcription-failed", "Invalid voice recording.");
           }
-          const samples = new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength);
-          const pcm = new Float32Array(decoded.length / 2);
-          for (let i = 0; i < pcm.length; i++) pcm[i] = samples.getInt16(i * 2, true) / 32768;
+          // A timed native stop can include a final encoder packet beyond the recording limit.
+          const bytes = decoded.subarray(0, maxPcmBytes);
+          const samples =
+            bytes.byteOffset % 2 === 0
+              ? new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)
+              : new Int16Array(Uint8Array.from(bytes).buffer);
+          const pcm = new Float32Array(samples.length);
+          for (let i = 0; i < samples.length; i++) pcm[i] = samples[i]! / 32768;
           const text = await input.upload(new Uint8Array(pcm.buffer), signal);
           check(signal);
           return text;

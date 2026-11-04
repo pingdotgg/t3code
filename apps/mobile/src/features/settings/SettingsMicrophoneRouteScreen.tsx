@@ -115,7 +115,7 @@ function saveDestination(id: EnvironmentId | null) {
   } catch {
     Dialog.alert(
       "Could not save transcription choice",
-      "Remote dictation is off for this session. Try saving your choice again before closing the app.",
+      "Remote dictation is off for this session. Try saving again before closing the app; otherwise your previous choice may return after restart.",
     );
   }
 }
