@@ -13,10 +13,19 @@ export function getDesktopUpdatePrompt(
   dismissedVersion?: string | null,
 ): DesktopUpdatePrompt {
   if (!state?.enabled) return null;
-  if (state.status === "downloaded" && state.autoUpdate) {
+  // A background check keeps the versions, so the open prompt survives it instead of blinking.
+  const status =
+    state.status !== "checking"
+      ? state.status
+      : state.downloadedVersion
+        ? "downloaded"
+        : state.availableVersion
+          ? "available"
+          : state.status;
+  if (status === "downloaded" && state.autoUpdate) {
     return state.downloadedVersion !== dismissedVersion ? "ready" : null;
   }
-  if (state.status === "available" && !state.autoUpdate) {
+  if (status === "available" && !state.autoUpdate) {
     return state.availableVersion !== dismissedVersion ? "available" : null;
   }
   return null;

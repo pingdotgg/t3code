@@ -299,7 +299,7 @@ function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   disabledReason: Option.Option<string>,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
-  autoUpdate = false,
+  autoUpdate: boolean,
 ): DesktopUpdateState {
   const enabled = Option.isNone(disabledReason);
   return {
@@ -702,7 +702,7 @@ export const make = Effect.gen(function* () {
   const baseUpdateState = (
     channel: DesktopUpdateChannel,
     disabledReason: Option.Option<string>,
-    autoUpdate = false,
+    autoUpdate: boolean,
   ) =>
     Ref.get(notAppliedVersionRef).pipe(
       Effect.map((notAppliedVersion) => ({

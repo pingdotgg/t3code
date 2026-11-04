@@ -98,6 +98,18 @@ describe("desktop update prompt", () => {
     [{ status: "available", autoUpdate: false, availableVersion: "1.1.0" }, "available", undefined],
     [{ status: "available", autoUpdate: true, availableVersion: "1.1.0" }, null, undefined],
     [{ status: "downloaded", autoUpdate: true, downloadedVersion: "1.1.0" }, "ready", undefined],
+    [{ status: "checking", autoUpdate: false, availableVersion: "1.1.0" }, "available", undefined],
+    [
+      {
+        status: "checking",
+        autoUpdate: true,
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+      },
+      "ready",
+      undefined,
+    ],
+    [{ status: "checking", autoUpdate: false, availableVersion: null }, null, undefined],
     [{ status: "available", autoUpdate: false, availableVersion: "1.1.0" }, null, "1.1.0"],
     [
       { status: "available", autoUpdate: false, availableVersion: "1.1.0", enabled: false },
