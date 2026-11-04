@@ -20,6 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  AuthFilesystemReadScope,
   AuthPreviewOperateScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
@@ -31,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -58,8 +60,8 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { isTerminalUrl } from "../terminal-links";
+import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { isTerminalLinkActivation, isTerminalUrl } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -88,6 +90,9 @@ import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { filesystemEnvironment } from "../state/filesystem";
+import { useRightPanelStore } from "../rightPanelStore";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
 import {
@@ -525,16 +530,45 @@ function TerminalSessionViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const openFilesInApp = useClientSettings((settings) => settings.terminalFileLinksOpenInApp);
   const canActivateTerminalLink = useEffectEvent(
     (text: string) =>
-      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+      isTerminalUrl(text) ||
+      (openFilesInApp && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) ||
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
   );
-  const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const getFilesystemMetadata = useAtomQueryRunner(filesystemEnvironment.getMetadata, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const openTerminalPath = useEffectEvent(async (target: string, event: MouseEvent) => {
+    if (
+      openFilesInApp &&
+      !isTerminalLinkActivation(event) &&
+      readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+    ) {
+      const position = splitFilePathPosition(target);
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [position.path] },
+      });
+      if (metadata._tag !== "Success") return metadata;
+      if (metadata.value.entries[0]?.kind !== "directory") {
+        if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+          return AsyncResult.success(undefined);
+        }
+        useRightPanelStore.getState().openFile(threadRef, position.path, position.line);
+        return AsyncResult.success(undefined);
+      }
+    }
+    return openInPreferredEditor(target);
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -637,13 +671,14 @@ function TerminalSessionViewport({
   }, [canOperateTerminal, terminalId, threadRef]);
 
   // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
-  const linkActivationScopeRef = useRef(canOpenHostEditor);
+  const canActivatePath = canOpenHostEditor || (openFilesInApp && canReadFiles);
+  const linkActivationScopeRef = useRef(canActivatePath);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes link activation styling on the imperative terminal surface when the editor grant changes
   useEffect(() => {
-    if (linkActivationScopeRef.current === canOpenHostEditor) return;
-    linkActivationScopeRef.current = canOpenHostEditor;
+    if (linkActivationScopeRef.current === canActivatePath) return;
+    linkActivationScopeRef.current = canActivatePath;
     terminalRef.current?.refreshLinkActivation();
-  }, [canOpenHostEditor]);
+  }, [canActivatePath]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
@@ -1027,7 +1062,7 @@ function TerminalSessionViewport({
         }
         const target = resolvePathLinkTarget(text, cwd);
         void (async () => {
-          const result = await openTerminalPath(target);
+          const result = await openTerminalPath(target, event);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
             return;
           }

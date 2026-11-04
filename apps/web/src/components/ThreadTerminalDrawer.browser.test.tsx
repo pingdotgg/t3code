@@ -1,12 +1,24 @@
 import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/terminal";
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type FilesystemGetMetadataResult,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import type { GhosttyTerminalSurfaceOptions } from "../terminal/ghostty/surface";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "running" | "exited">(),
   pendingSurfaces: [] as Array<() => void>,
+  surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
+  openFilesInApp: false,
+  scopes: null as ReadonlySet<string> | null,
+  metadata: { entries: [{ kind: "file" }] } as FilesystemGetMetadataResult,
+  openEditor: vi.fn(async (_target: string) => ({ _tag: "Success" as const })),
 }));
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
@@ -19,8 +31,9 @@ const fakeSurface: object = new Proxy(
 );
 vi.mock("~/terminal/ghostty/surface", () => ({
   GhosttyTerminalSurface: {
-    create: () =>
+    create: (_mount: HTMLElement, options: GhosttyTerminalSurfaceOptions) =>
       new Promise((resolve) => {
+        fixture.surfaceOptions.push(options);
         fixture.pendingSurfaces.push(() => resolve(fakeSurface));
       }),
   },
@@ -42,8 +55,10 @@ vi.mock("../state/terminalSessions", async () => {
   };
 });
 vi.mock("../state/session", () => ({
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
+  useEnvironmentScope: (_environmentId: EnvironmentId, scope: string) =>
+    fixture.scopes === null || fixture.scopes.has(scope),
+  readEnvironmentScope: (_environmentId: EnvironmentId, scope: string) =>
+    fixture.scopes === null || fixture.scopes.has(scope),
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success" }),
@@ -56,14 +71,18 @@ vi.mock("../state/server", async () => {
 });
 vi.mock("../state/terminal", () => ({ terminalEnvironment: { write: {}, resize: {} } }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
+vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => fixture.openEditor }));
+vi.mock("../state/filesystem", () => ({ filesystemEnvironment: { getMetadata: {} } }));
+vi.mock("../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: fixture.metadata }),
+}));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => null }));
 vi.mock("../hooks/useSettings", async () => {
   const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts/settings");
   return {
     useClientSettings: <T,>(select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
-      select(DEFAULT_CLIENT_SETTINGS),
+      select({ ...DEFAULT_CLIENT_SETTINGS, terminalFileLinksOpenInApp: fixture.openFilesInApp }),
   };
 });
 
@@ -107,8 +126,108 @@ function setup() {
     [other.threadId, "running"],
   ]);
   fixture.pendingSurfaces = [];
+  fixture.surfaceOptions = [];
+  fixture.openFilesInApp = false;
+  fixture.scopes = null;
+  fixture.metadata = { entries: [{ kind: "file" }] };
+  fixture.openEditor.mockClear();
+  useRightPanelStore.setState({ byThreadKey: {} });
   return { original, other };
 }
+
+it.each([false, true])(
+  "opens terminal file links using the saved in-app preference (%s)",
+  async (openFilesInApp) => {
+    const { original } = setup();
+    fixture.openFilesInApp = openFilesInApp;
+    await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate("src/example.ts:42:7", new MouseEvent("click"));
+    });
+
+    const panel = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      original,
+    );
+    if (openFilesInApp) {
+      expect(panel).toMatchObject({
+        kind: "file",
+        relativePath: "/repo/src/example.ts",
+        revealLine: 42,
+      });
+      expect(fixture.openEditor).not.toHaveBeenCalled();
+    } else {
+      expect(panel).toBeNull();
+      expect(fixture.openEditor).toHaveBeenCalledWith("/repo/src/example.ts:42:7");
+    }
+  },
+);
+
+it.each(["modifier", "directory"])(
+  "keeps the external editor available for a %s when file previews are enabled",
+  async (reason) => {
+    const { original } = setup();
+    fixture.openFilesInApp = true;
+    if (reason === "directory") fixture.metadata = { entries: [{ kind: "directory" }] };
+    await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const mac = /mac/i.test(navigator.platform);
+    await act(() => {
+      fixture.surfaceOptions[0]!.onLinkActivate(
+        "src/example.ts:42",
+        new MouseEvent("click", {
+          metaKey: reason === "modifier" && mac,
+          ctrlKey: reason === "modifier" && !mac,
+        }),
+      );
+    });
+    expect(fixture.openEditor).toHaveBeenCalledWith("/repo/src/example.ts:42");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+    ).toBeNull();
+  },
+);
+
+it("opens files on their owning environment with filesystem access and no editor-launch grant", async () => {
+  const { original, other } = setup();
+  fixture.openFilesInApp = true;
+  fixture.scopes = new Set(["filesystem:read", "terminal:operate"]);
+  await using _screen = await render(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const options = fixture.surfaceOptions[0]!;
+  expect(options.canActivateLink?.("/repo/src/example.ts:42")).toBe(true);
+  await act(() => {
+    options.onLinkActivate("/repo/src/example.ts:42", new MouseEvent("click"));
+  });
+  expect(
+    selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, other),
+  ).toMatchObject({
+    kind: "file",
+    relativePath: "/repo/src/example.ts",
+    revealLine: 42,
+  });
+  expect(
+    selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+  ).toBeNull();
+  fixture.scopes = new Set(["terminal:operate"]);
+  expect(options.canActivateLink?.("/repo/other.ts")).toBe(false);
+  await act(() => {
+    options.onLinkActivate("/repo/other.ts", new MouseEvent("click"));
+  });
+  expect(
+    selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, other),
+  ).toMatchObject({
+    relativePath: "/repo/src/example.ts",
+  });
+  expect(fixture.openEditor).not.toHaveBeenCalled();
+});
 
 it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
   const { original, other } = setup();
