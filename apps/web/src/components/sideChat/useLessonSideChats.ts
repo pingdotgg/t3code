@@ -16,7 +16,7 @@ import {
   sideChatSurfaceTopThreadId,
   useRightPanelStore,
 } from "../../rightPanelStore";
-import { readThreadShell, useSideChatTreeShells } from "../../state/entities";
+import { useSideChatTreeShells } from "../../state/entities";
 import { useEnvironmentShellStatus } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -72,8 +72,10 @@ export function useLessonSideChats(input: {
       ...shellIds,
       ...pendingSideChatThreadIds(usePendingSideChatStore.getState(), key),
     ]);
-    // Without the capability no side chat is listed, though none is gone.
-    if (supported) clearGoneSideChatDrafts(lessonRef, live);
+    // An archived lesson's side chats come back on unarchive, draft and all.
+    if (supported && shells.some((shell) => shell.id === lessonRef.threadId)) {
+      clearGoneSideChatDrafts(lessonRef, live);
+    }
     useRightPanelStore.getState().reconcileSideChatSurfaces(lessonRef, live, supported);
   }, [capabilityKnown, lessonRef, shellLive, shells, supported]);
 
@@ -123,8 +125,6 @@ function clearGoneSideChatDrafts(lessonRef: ScopedThreadRef, live: ReadonlySet<s
     for (const id of new Set(shown)) {
       if (live.has(id)) continue;
       const ref = scopeThreadRef(lessonRef.environmentId, ThreadId.make(id));
-      // An archived side chat comes back when its lesson is unarchived, draft and all.
-      if (readThreadShell(ref)?.deletedAt === null) continue;
       drafts.clearComposerContent(ref);
     }
   }

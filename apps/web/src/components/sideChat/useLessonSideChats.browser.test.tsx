@@ -4,7 +4,6 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   shells: [] as ReadonlyArray<{ readonly id: string }>,
-  threadShells: [] as ReadonlyArray<{ readonly id: string }>,
   shellStatus: "live" as string | null,
 }));
 
@@ -12,8 +11,6 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useSideChatTreeShells: ((ref: unknown) => (ref === null ? [] : state.shells)) as never,
   readSideChatTreeShells: (() => state.shells) as never,
-  readThreadShell: ((ref: { threadId: string }) =>
-    state.threadShells.find((shell) => shell.id === ref.threadId) ?? null) as never,
 }));
 
 vi.mock(import("../../state/shell"), async (importOriginal) => ({
@@ -92,7 +89,6 @@ const lessonInput = (overrides: Partial<LessonSideChatsInput> = {}): LessonSideC
 
 function setup() {
   state.shells = [LESSON_SHELL];
-  state.threadShells = [];
   state.shellStatus = "live";
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   useRightPanelStore.setState({
@@ -189,11 +185,7 @@ it("clears the unsent drafts of side chats that are gone", async () => {
 it("keeps the unsent draft of a side chat archived with its lesson", async () => {
   setup();
   // Archiving the lesson archives its side chats, and unarchiving brings them back.
-  state.threadShells = [
-    sideChatShell("side-1", LESSON_ID, "observation space", {
-      archivedAt: "2026-10-24T00:00:00.000Z",
-    }),
-  ];
+  state.shells = [];
   showSideChat("side-1");
   const draftRef = scopeThreadRef(ENVIRONMENT_ID, SIDE_1.id);
   useComposerDraftStore.getState().setPrompt(draftRef, "Kept question");
