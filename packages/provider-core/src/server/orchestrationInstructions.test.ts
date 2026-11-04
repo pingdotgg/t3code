@@ -13,7 +13,7 @@ describe("T3 review delegation instructions", () => {
   it("keep every independent review round on a new delegate_task", () => {
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Every new delegate review or re-check is a new `delegate_task`",
+      "Independent review/re-check: new `delegate_task`",
     );
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never a `t3_thread_send`");
   });
@@ -21,13 +21,20 @@ describe("T3 review delegation instructions", () => {
   it("resume an interrupted unfinished delegated task in its own child thread", () => {
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Told to continue an interrupted unfinished delegated task that has no pending question or approval: resume that same child with `t3_thread_send` on its `childThreadId`",
+      "Continue interrupted unfinished work without gates: `t3_thread_send` to the same `childThreadId`",
     );
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "A waiting task with `hasPendingQuestion` or `pendingApproval`: answer via `t3_pending_request`",
+      "`hasPendingQuestion`: answer via `t3_pending_request`",
     );
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "a `delegate_task` starts that work over");
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`pendingApproval`: user approves in the child thread; start no run",
+    );
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`remoteChild.threadId` plus `remoteChild.environmentId`",
+    );
   });
 });
 
