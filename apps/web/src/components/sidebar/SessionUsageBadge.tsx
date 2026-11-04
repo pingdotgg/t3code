@@ -1,11 +1,11 @@
 import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
+import { sessionUsageAtom } from "../../state/sessionUsage";
 import { useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { formatSessionCost, sessionTokenCount, SESSION_USAGE_WINDOW } from "../../lib/sessionUsage";
+import { formatSessionCost, sessionTokenCount, sessionSpendRate } from "../../lib/sessionUsage";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -17,18 +17,30 @@ const money = new Intl.NumberFormat("en-US", {
 export function SessionUsageBadge({
   environmentId,
   threadId,
+  working,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  working: boolean;
 }) {
   const rowAnchor = useRef<HTMLElement | null>(null);
   const canRead = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
-  const query = useEnvironmentQuery(
-    canRead
-      ? serverEnvironment.threadUsageSummary({ environmentId, input: SESSION_USAGE_WINDOW })
-      : null,
-  );
+  const query = useEnvironmentQuery(canRead ? sessionUsageAtom(environmentId) : null);
   const usage = query.data?.threadUsage?.find((entry) => entry.threadId === threadId);
+  const sampleKey = `${environmentId}:${threadId}:${working}`;
+  const [sample, setSample] = useState({ key: sampleKey, at: 0, cost: 0, rate: 0 });
+  if (sample.key !== sampleKey || (usage && query.dataUpdatedAt !== sample.at)) {
+    setSample({
+      key: sampleKey,
+      at: query.dataUpdatedAt,
+      cost: usage?.costUsd ?? 0,
+      rate:
+        working && sample.key === sampleKey && usage
+          ? sessionSpendRate(sample.cost, sample.at, usage.costUsd, query.dataUpdatedAt)
+          : 0,
+    });
+  }
+  const burningFast = working && sample.key === sampleKey && sample.rate >= 1;
   if (!canRead) return null;
   const tokens = usage ? sessionTokenCount(usage.totals) : null;
   const price = usage ? formatSessionCost(usage.costUsd, usage.unpricedRecords > 0) : "$?";
@@ -67,11 +79,21 @@ export function SessionUsageBadge({
           </span>
         )}
         <span>{price}</span>
+        {burningFast ? (
+          <span className="text-destructive font-bold" aria-label="High spending rate">
+            !
+          </span>
+        ) : null}
       </TooltipTrigger>
       <TooltipPopup side="right" align="start" sideOffset={4} anchor={rowAnchor} variant="glass">
         {usage ? (
           <div className="flex max-w-72 flex-col items-start gap-1 text-xs tabular-nums">
             <span className="font-medium">Session usage · API-equivalent USD estimate</span>
+            {burningFast ? (
+              <span className="text-destructive">
+                High spending: ${sample.rate.toFixed(2)}/min (warning at $1/min).
+              </span>
+            ) : null}
             <div className="grid grid-cols-[max-content_max-content_max-content] gap-x-2 gap-y-1">
               <span>Category</span>
               <span className="text-right">Tokens</span>
@@ -102,7 +124,7 @@ export function SessionUsageBadge({
               </span>
             </div>
             <span className="max-w-64 text-muted-foreground">
-              Cache writes save input for reuse. Usage totals refresh about once a minute.
+              Cache writes save input for reuse. Refreshes every minute while working.
             </span>
             {usage.unpricedRecords > 0 ? <span>Some records have no known price.</span> : null}
           </div>

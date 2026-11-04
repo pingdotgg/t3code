@@ -1,5 +1,14 @@
 import { expect, it } from "vite-plus/test";
-import { formatSessionCost, sessionTokenCount } from "./sessionUsage";
+import { formatSessionCost, sessionTokenCount, sessionSpendRate } from "./sessionUsage";
+
+it("measures recent spend without treating history, gaps or corrections as a burst", () => {
+  expect(sessionSpendRate(10, 60_000, 12, 120_000)).toBe(2);
+  expect(sessionSpendRate(10, 60_000, 10, 120_000)).toBe(0);
+  expect(sessionSpendRate(10, 60_000, 9, 120_000)).toBe(0);
+  expect(sessionSpendRate(0, 0, 100, 120_000)).toBe(0);
+  expect(sessionSpendRate(10, 60_000, 100, 60_001)).toBe(0);
+  expect(sessionSpendRate(10, 60_000, 100, 300_000)).toBe(0);
+});
 
 it("counts each billed token once, without adding reasoning twice", () => {
   expect(

@@ -6,11 +6,10 @@ import {
   type ProviderDriverKind,
 } from "@t3tools/contracts";
 import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
+import { sessionUsageAtom } from "../../state/sessionUsage";
 import { threadEnvironment } from "../../state/threads";
 import { useEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import { SESSION_USAGE_WINDOW } from "../../lib/sessionUsage";
 import {
   deriveLatestContextWindowSnapshot,
   latestProviderTurnTokenUsage,
@@ -32,14 +31,7 @@ export function SessionContextMeter({
 }) {
   const canRead = useEnvironmentScope(thread.environmentId, AuthDiagnosticsReadScope);
   const canOperate = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  const query = useEnvironmentQuery(
-    canRead
-      ? serverEnvironment.threadUsageSummary({
-          environmentId: thread.environmentId,
-          input: SESSION_USAGE_WINDOW,
-        })
-      : null,
-  );
+  const query = useEnvironmentQuery(canRead ? sessionUsageAtom(thread.environmentId) : null);
   const context = query.data?.threadContexts?.find((entry) => entry.threadId === thread.id);
   const [pending, setPending] = useState(false);
   const send = useOrchestrationCommand(threadEnvironment.startTurn, "Failed to compact context");

@@ -1,0 +1,35 @@
+import { Atom, AtomRegistry } from "effect/reactivity";
+import { expect, it, vi } from "vite-plus/test";
+import { workingUsageQuery } from "./workingUsageQuery";
+
+it("shares polling while working, captures completion once, and stops while idle", () => {
+  using stack = new DisposableStack();
+  vi.useFakeTimers();
+  stack.defer(() => vi.useRealTimers());
+  const registry = AtomRegistry.make();
+  stack.defer(() => registry.dispose());
+  let fetches = 0;
+  const query = Atom.make(() => ++fetches);
+  const working = Atom.make(false);
+  const usage = workingUsageQuery(query, working);
+  const release = registry.mount(usage);
+  const releaseSecond = registry.mount(usage);
+  expect(registry.get(usage)).toBe(1);
+  vi.advanceTimersByTime(180_000);
+  expect(fetches).toBe(1);
+  registry.set(working, true);
+  expect(registry.get(usage)).toBe(2);
+  vi.advanceTimersByTime(60_000);
+  expect(registry.get(usage)).toBe(3);
+  registry.set(working, false);
+  expect(registry.get(usage)).toBe(4);
+  vi.advanceTimersByTime(180_000);
+  expect(fetches).toBe(4);
+  registry.set(working, true);
+  expect(registry.get(usage)).toBe(5);
+  releaseSecond();
+  release();
+  registry.dispose();
+  vi.advanceTimersByTime(180_000);
+  expect(fetches).toBe(5);
+});

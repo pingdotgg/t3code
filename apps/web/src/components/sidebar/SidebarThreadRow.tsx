@@ -1141,7 +1141,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const sessionIndicators = (
     <span className="inline-flex shrink-0 items-center gap-1 text-secondary-label text-xs">
-      <SessionUsageBadge environmentId={thread.environmentId} threadId={thread.id} />
+      <SessionUsageBadge
+        environmentId={thread.environmentId}
+        threadId={thread.id}
+        working={thread.runtime?.status === "running"}
+      />
       {remoteMachineIcon}
       <SidebarProviderStack
         thread={thread}

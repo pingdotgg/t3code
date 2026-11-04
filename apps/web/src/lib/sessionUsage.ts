@@ -7,6 +7,18 @@ export const SESSION_USAGE_WINDOW = {
   includeThreadUsage: true,
 };
 
+export function sessionSpendRate(
+  previousCost: number,
+  previousAt: number,
+  cost: number,
+  at: number,
+): number {
+  const elapsed = at - previousAt;
+  // Ignore initial history, reconnect gaps and tiny intervals that magnify rounding.
+  if (previousAt === 0 || elapsed < 30_000 || elapsed > 120_000) return 0;
+  return (Math.max(0, cost - previousCost) * 60_000) / elapsed;
+}
+
 export function sessionTokenCount(tokens: UsageTokenTotals): number {
   return (
     tokens.uncachedInputTokens +
