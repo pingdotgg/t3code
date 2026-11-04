@@ -128,6 +128,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
       : yield* input.materializeWorkspace(replayTranscript, workspace),
   );
   const materialized = yield* materializeFixtureInput({
+    cwd: workspace,
     scenario: input.fixtureName,
     fixtureInput,
     driver: input.driver.driver,

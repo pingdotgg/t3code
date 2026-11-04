@@ -482,6 +482,7 @@ function dispatchMessageCommand(input: {
 }
 
 export function materializeFixtureInput(input: {
+  readonly cwd?: string;
   readonly scenario: string;
   readonly fixtureInput: OrchestratorFixtureInput;
   readonly driver: ProviderDriverKind;
@@ -939,7 +940,7 @@ export function materializeFixtureInput(input: {
           {
             const scopeId = yield* idAllocator.allocate.checkpointScope({
               threadId: ids.threadId,
-              name: step.checkpointScopeSuffix,
+              name: `${step.checkpointScopeSuffix}:${input.cwd ?? process.cwd()}`,
             });
             pushDispatch({
               type: "checkpoint.rollback",
