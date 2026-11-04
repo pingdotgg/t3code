@@ -40,6 +40,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -1678,6 +1679,10 @@ it.effect("Force stop answers an unresponsive Stop of an ended run's background 
     const attempt = started.attempts[0]!;
     const providerThreadId = run.providerThreadId!;
     const providerTurnId = ProviderTurnId.make("provider-turn:force-stop-ended");
+    const requestId = IdAllocator.derive.runSignalTurnItem({
+      runId: run.id,
+      signal: "interrupt-request",
+    });
     const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
       projections.apply({
         ...event,
@@ -1721,7 +1726,7 @@ it.effect("Force stop answers an unresponsive Stop of an ended run's background 
       runId: run.id,
       occurredAt: now,
       payload: {
-        id: TurnItemId.make("turn-item:force-stop-ended:interrupt-request"),
+        id: requestId,
         threadId,
         runId: run.id,
         nodeId: run.rootNodeId!,
@@ -1759,6 +1764,7 @@ it.effect("Force stop answers an unresponsive Stop of an ended run's background 
       "Force stopped by user",
       "Force stop must answer the unresponsive Stop of an ended run",
     );
+    assert.equal(result?.parentItemId, requestId);
     assert.deepEqual(
       settled.runs.map((candidate) => candidate.status),
       ["completed"],
