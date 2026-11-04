@@ -169,3 +169,59 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
 });
+
+it("folds an aggregator's vendors into sections that open on click and stay searchable", async () => {
+  const instanceId = ProviderInstanceId.make("opencode");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "anthropic/claude-sonnet", name: "Claude Sonnet", subProvider: "Anthropic" },
+        { slug: "openai/gpt-pro", name: "GPT Pro", subProvider: "OpenAI" },
+      ],
+    ],
+  ]);
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="anthropic/claude-sonnet"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const gptPro = page.getByRole("option", { name: /GPT Pro/ });
+  await expect.element(page.getByRole("option", { name: /Claude Sonnet/ })).toBeVisible();
+  await expect.element(gptPro).not.toBeInTheDocument();
+
+  await userEvent.keyboard("gpt");
+  await expect.element(gptPro).toBeVisible();
+  await userEvent.clear(page.getByPlaceholder("Search models..."));
+  await expect.element(gptPro).not.toBeInTheDocument();
+
+  const openAiSection = page.getByRole("option", { name: /^OpenAI/ });
+  await expect.element(openAiSection).toHaveAttribute("aria-expanded", "false");
+  await openAiSection.click();
+  await expect.element(gptPro).toBeVisible();
+  await expect.element(openAiSection).toHaveAttribute("aria-expanded", "true");
+});
