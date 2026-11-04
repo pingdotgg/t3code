@@ -2,7 +2,9 @@ import type { EnvironmentId, ProjectId, ServerSettings } from "@t3tools/contract
 
 export type AutoSettleSettings = Pick<
   ServerSettings,
-  "sidebarAutoSettleAfterDays" | "autoSettleFinishedChildrenAfterHours"
+  | "sidebarAutoSettleAfterDays"
+  | "autoSettleFinishedChildrenAfterHours"
+  | "autoArchiveSettledAfterDays"
 >;
 
 interface AutoSettleSyncTarget {
@@ -19,9 +21,12 @@ export function planAutoSettleSettingsSync(
     readonly settings: AutoSettleSettings;
   },
   targets: readonly AutoSettleSyncTarget[],
-  // Child auto-settle is environment-wide and unknown to older servers, so callers
-  // include it only outside project scope and when every target supports it.
-  { includeFinishedChildren = false }: { readonly includeFinishedChildren?: boolean } = {},
+  // Child auto-settle and auto-archive are environment-wide and unknown to older servers, so
+  // callers include them only outside project scope and when every target supports them.
+  {
+    includeFinishedChildren = false,
+    includeAutoArchive = false,
+  }: { readonly includeFinishedChildren?: boolean; readonly includeAutoArchive?: boolean } = {},
 ) {
   const patch: Partial<AutoSettleSettings> = {
     sidebarAutoSettleAfterDays: reference.settings.sidebarAutoSettleAfterDays,
@@ -30,6 +35,9 @@ export function planAutoSettleSettingsSync(
           autoSettleFinishedChildrenAfterHours:
             reference.settings.autoSettleFinishedChildrenAfterHours,
         }
+      : {}),
+    ...(includeAutoArchive
+      ? { autoArchiveSettledAfterDays: reference.settings.autoArchiveSettledAfterDays }
       : {}),
   };
   const mismatches = targets.filter(
@@ -40,7 +48,9 @@ export function planAutoSettleSettingsSync(
       (target.settings.sidebarAutoSettleAfterDays !== patch.sidebarAutoSettleAfterDays ||
         (includeFinishedChildren &&
           target.settings.autoSettleFinishedChildrenAfterHours !==
-            patch.autoSettleFinishedChildrenAfterHours)),
+            patch.autoSettleFinishedChildrenAfterHours) ||
+        (includeAutoArchive &&
+          target.settings.autoArchiveSettledAfterDays !== patch.autoArchiveSettledAfterDays)),
   );
   return { patch, mismatches };
 }

@@ -80,25 +80,25 @@ describe("auto-settle settings sync", () => {
     ]);
   });
 
-  it("syncs finished child auto-settle only when the caller includes it", () => {
+  it.each([
+    {
+      option: "includeFinishedChildren",
+      key: "autoSettleFinishedChildrenAfterHours",
+    },
+    { option: "includeAutoArchive", key: "autoArchiveSettledAfterDays" },
+  ] as const)("syncs $key only when the caller includes it", ({ option, key }) => {
     const target = {
       environmentId: EnvironmentId.make("remote"),
       label: "Remote",
-      settings: { ...reference.settings, autoSettleFinishedChildrenAfterHours: 0 },
+      settings: { ...reference.settings, [key]: 0 },
     };
 
     expect(planAutoSettleSettingsSync(reference, [target])).toEqual({
       patch: { sidebarAutoSettleAfterDays: 7 },
       mismatches: [],
     });
-    expect(
-      planAutoSettleSettingsSync(reference, [target], { includeFinishedChildren: true }),
-    ).toEqual({
-      patch: {
-        sidebarAutoSettleAfterDays: 7,
-        autoSettleFinishedChildrenAfterHours:
-          reference.settings.autoSettleFinishedChildrenAfterHours,
-      },
+    expect(planAutoSettleSettingsSync(reference, [target], { [option]: true })).toEqual({
+      patch: { sidebarAutoSettleAfterDays: 7, [key]: reference.settings[key] },
       mismatches: [target],
     });
   });

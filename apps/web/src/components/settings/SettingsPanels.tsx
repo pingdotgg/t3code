@@ -15,6 +15,8 @@ import {
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS,
   MAX_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS,
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -474,6 +476,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? ["Auto-settle merged threads"]
       : []),
+    ...(settings.autoArchiveSettledAfterDays !==
+    DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays
+      ? ["Auto-archive settled threads"]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? ["Resume after usage limits"]
       : []),
@@ -634,6 +640,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      autoArchiveSettledAfterDays: DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -1562,6 +1569,11 @@ export function ThreadsSettingsPanel() {
       (target) =>
         target.serverConfig?.environment.capabilities.threadAutoSettleFinishedChildren === true,
     );
+  const supportsAutoArchive =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.threadAutoArchive === true,
+    );
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
@@ -1832,6 +1844,62 @@ export function ThreadsSettingsPanel() {
                         updateSettings({ autoSettleFinishedChildrenAfterHours: hours })
                       }
                       aria-label="Hours before a finished child chat settles"
+                    />
+                  }
+                />
+              ) : null}
+            </>
+          ) : null}
+          {supportsAutoArchive ? (
+            <>
+              <SettingsRow
+                serverScoped
+                settingKeys={["autoArchiveSettledAfterDays"]}
+                {...searchableSetting("auto-archive-settled-threads")}
+                description="Archive threads that stay settled this many days. Unarchive brings them back."
+                resetAction={
+                  settings.autoArchiveSettledAfterDays !==
+                  DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays ? (
+                    <SettingResetButton
+                      label="auto-archive"
+                      onClick={() =>
+                        updateSettings({
+                          autoArchiveSettledAfterDays:
+                            DEFAULT_UNIFIED_SETTINGS.autoArchiveSettledAfterDays,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <ScopedSwitch
+                    settingKeys={["autoArchiveSettledAfterDays"]}
+                    checked={settings.autoArchiveSettledAfterDays > 0}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        autoArchiveSettledAfterDays: checked
+                          ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS
+                          : 0,
+                      })
+                    }
+                    aria-label="Auto-archive settled threads"
+                  />
+                }
+              />
+              {settings.autoArchiveSettledAfterDays > 0 ? (
+                <SettingsRow
+                  serverScoped
+                  settingKeys={["autoArchiveSettledAfterDays"]}
+                  title={searchableSetting("days-before-auto-archive").title}
+                  description="Pinned, snoozed, and active threads are never archived."
+                  control={
+                    <SettingIntegerInput
+                      value={settings.autoArchiveSettledAfterDays}
+                      // 0 is the off state, owned by the switch above.
+                      min={1}
+                      max={MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}
+                      onCommit={(days) => updateSettings({ autoArchiveSettledAfterDays: days })}
+                      aria-label="Days settled before a thread is archived"
                     />
                   }
                 />

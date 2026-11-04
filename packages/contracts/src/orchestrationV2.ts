@@ -3440,6 +3440,16 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /**
+   * The settlement sweep archives a thread that stayed settled for the configured period.
+   * Rejected when the thread changed after `snapshotAt`, is no longer settled, or has live work.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-archive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snapshotAt: Schema.DateTimeUtc,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

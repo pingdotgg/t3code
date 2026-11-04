@@ -107,7 +107,7 @@ import {
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { planThreadParentRepairs } from "./threadParentLinks.ts";
-import { isFinishedChild } from "./autoSettlement.ts";
+import { isAutoArchiveCandidate, isFinishedChild } from "./autoSettlement.ts";
 import {
   CommandPolicyV2,
   goalCommandStopsActiveRun,
@@ -529,6 +529,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.guest-message.dismiss":
     case "thread.settle":
     case "thread.auto-settle":
+    case "thread.auto-archive":
     case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
@@ -3537,7 +3538,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+          // A settled thread comes back as freshly settled: it lists with the newest
+          // settled threads and its auto-archive clock starts again.
+          return {
+            ...thread,
+            archivedAt: null,
+            ...(thread.settledOverride === "settled" ? { settledAt: now } : {}),
+            updatedAt: now,
+          };
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -13307,6 +13315,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settlementSource: "inactivity",
           });
         }
+        break;
+      }
+      case "thread.auto-archive": {
+        // The sweep read a snapshot; any change since then, an unarchive included, wins.
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const now = yield* DateTime.now;
+        const candidates = yield* projectionStore
+          .getAutoArchiveCandidates({ settledBefore: now, limit: 1, threadId: command.threadId })
+          .pipe(mapDispatchError(command));
+        if (
+          thread.archivedAt !== null ||
+          DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt) ||
+          !candidates.some((candidate) =>
+            isAutoArchiveCandidate(candidate, DateTime.toEpochMillis(now)),
+          ) ||
+          (yield* projectionStore
+            .hasActiveDescendants(command.threadId)
+            .pipe(mapDispatchError(command)))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} changed before automatic archiving.`,
+          });
+        }
+        yield* dispatchThreadMutation(
+          { type: "thread.archive", commandId: command.commandId, threadId: command.threadId },
+          events,
+          effects,
+        );
         break;
       }
       case "thread.delete": {

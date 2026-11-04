@@ -135,6 +135,7 @@ const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
   "autoSettleFinishedChildrenAfterHours",
+  "autoArchiveSettledAfterDays",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
 ]);

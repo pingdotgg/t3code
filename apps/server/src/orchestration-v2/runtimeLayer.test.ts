@@ -2621,6 +2621,58 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.deepEqual(activeShell?.unsettledAt, activeProjection.thread.unsettledAt);
 
+      // Its worktree path does not exist: archiving touches thread state only.
+      const autoArchiveActive = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-archive",
+          commandId: CommandId.make("runtime-layer-lifecycle-auto-archive-active"),
+          threadId,
+          snapshotAt: activeProjection.thread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(autoArchiveActive, Orchestrator.OrchestratorDispatchError);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-resettle"),
+        threadId,
+      });
+      const resettled = yield* orchestrator.getThreadProjection(threadId);
+      const autoArchive = yield* orchestrator.dispatch({
+        type: "thread.auto-archive",
+        commandId: CommandId.make("runtime-layer-lifecycle-auto-archive"),
+        threadId,
+        snapshotAt: resettled.thread.updatedAt,
+      });
+      assert.deepEqual(
+        autoArchive.storedEvents.map((stored) => stored.event.type),
+        ["thread.archived"],
+      );
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+
+      yield* TestClock.adjust("1 hour");
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-lifecycle-unarchive"),
+        threadId,
+      });
+      const unarchived = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(unarchived.thread.archivedAt);
+      assert.equal(unarchived.thread.settledOverride, "settled");
+      // Unarchiving restarts the settled clock, and a sweep that read the thread before loses.
+      assert.isAbove(
+        DateTime.toEpochMillis(unarchived.thread.settledAt!),
+        DateTime.toEpochMillis(resettled.thread.settledAt!),
+      );
+      const staleAutoArchive = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-archive",
+          commandId: CommandId.make("runtime-layer-lifecycle-auto-archive-stale"),
+          threadId,
+          snapshotAt: resettled.thread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleAutoArchive, Orchestrator.OrchestratorDispatchError);
+
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("runtime-layer-lifecycle-archive"),

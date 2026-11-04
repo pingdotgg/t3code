@@ -71,7 +71,10 @@ export interface SettingsSearchItem {
   readonly requiresCapability?: AutoSettlementCapability;
 }
 
-type AutoSettlementCapability = "threadAutoSettlement" | "threadAutoSettleFinishedChildren";
+type AutoSettlementCapability =
+  | "threadAutoSettlement"
+  | "threadAutoSettleFinishedChildren"
+  | "threadAutoArchive";
 
 export interface SettingsSearchAvailability {
   readonly localEnvironmentDisabled?: boolean;
@@ -83,6 +86,7 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly hasThreadAutoSettleFinishedChildren?: boolean;
+  readonly hasThreadAutoArchive?: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -546,6 +550,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "auto-settle-finished-child-chats",
     searchTerms: ["subagent delegated sub-thread timeout"],
     requiresCapability: "threadAutoSettleFinishedChildren",
+    scope: "environment-defaults",
+  },
+  {
+    id: "auto-archive-settled-threads",
+    title: "Auto-archive settled threads",
+    to: "/settings/threads",
+    searchTerms: ["archive settled cleanup old threads days automatically"],
+    requiresCapability: "threadAutoArchive",
+    scope: "environment-defaults",
+  },
+  {
+    id: "days-before-auto-archive",
+    title: "Days settled before auto-archive",
+    to: "/settings/threads",
+    targetId: "auto-archive-settled-threads",
+    searchTerms: ["archive settled timeout"],
+    requiresCapability: "threadAutoArchive",
     scope: "environment-defaults",
   },
   {
@@ -1378,6 +1399,8 @@ export function filterAvailableSettingsSearchItems(
         availability.hasThreadAutoSettlement) &&
       (item.requiresCapability !== "threadAutoSettleFinishedChildren" ||
         availability.hasThreadAutoSettleFinishedChildren === true) &&
+      (item.requiresCapability !== "threadAutoArchive" ||
+        availability.hasThreadAutoArchive === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

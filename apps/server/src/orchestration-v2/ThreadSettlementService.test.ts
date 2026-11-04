@@ -521,6 +521,19 @@ const makeHarness = Effect.fn(function* (input: {
           Effect.map((all) => (id === undefined ? all : all.filter((thread) => thread.id === id))),
           Effect.tap(() => Queue.offer(reads, id)),
         ),
+      getAutoArchiveCandidates: ({ settledBefore, limit }) =>
+        Ref.get(candidates).pipe(
+          Effect.map((all) =>
+            all
+              .filter(
+                (thread) =>
+                  thread.settledOverride === "settled" &&
+                  thread.settledAt !== null &&
+                  DateTime.toEpochMillis(thread.settledAt) <= DateTime.toEpochMillis(settledBefore),
+              )
+              .slice(0, limit),
+          ),
+        ),
       hasActiveDescendants: (id) => Effect.succeed(input.activeDescendants?.has(id) ?? false),
       getThread: (id) =>
         Ref.get(candidates).pipe(
@@ -927,5 +940,106 @@ describe("finished child sweep", () => {
         assert.deepEqual(commands[0].settledAt, at(-6 * HOUR_MS));
       }
     }),
+  );
+});
+
+describe("auto-archive", () => {
+  const settled = (id: string, settledDaysAgo: number, overrides: Partial<SettlementShell> = {}) =>
+    shell({
+      id: ThreadId.make(id),
+      settledOverride: "settled",
+      settledAt: at(-settledDaysAgo * DAY_MS),
+      updatedAt: at(-settledDaysAgo * DAY_MS),
+      ...overrides,
+    });
+  const due = (thread: SettlementShell, afterDays = 10) =>
+    AutoSettlement.isAutoArchiveDue(thread, { nowMs: NOW_MS, afterDays });
+  const archivedIds = (commands: ReadonlyArray<OrchestrationV2ServerCommand>) =>
+    commands.flatMap((command) =>
+      command.type === "thread.auto-archive" ? [command.threadId] : [],
+    );
+
+  it("archives after the full settled period, including the boundary", () => {
+    expect(due(settled("a", 10))).toBe(true);
+    expect(due(settled("a", 10 - 1 / 24))).toBe(false);
+    expect(due(settled("a", 4), 3)).toBe(true);
+    expect(due(settled("a", 400), 0)).toBe(false);
+    expect(due(shell({ settledAt: at(-30 * DAY_MS) }))).toBe(false);
+    expect(due(settled("a", 30, { archivedAt: at(-DAY_MS) }))).toBe(false);
+  });
+
+  it("keeps anything still waiting on the thread or the user", () => {
+    const old = (overrides: Partial<SettlementShell>) => due(settled("a", 30, overrides));
+    expect(old({ pinnedAt: at(-DAY_MS) })).toBe(false);
+    expect(old({ autoSettleDisabledAt: at(-DAY_MS) })).toBe(false);
+    expect(old({ snoozedUntil: at(DAY_MS), snoozedAt: at(-DAY_MS) })).toBe(false);
+    expect(old({ activityRunStatus: "running" })).toBe(false);
+    expect(old({ pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" }] })).toBe(false);
+    expect(
+      old({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("question"),
+          kind: "user_input",
+          createdAt: at(-DAY_MS),
+        },
+      }),
+    ).toBe(false);
+    expect(old({ pullRequests: [persistedLink("open", at(-30 * DAY_MS))] })).toBe(false);
+    expect(
+      old({
+        pullRequests: [
+          {
+            ...persistedLink(null, at(-30 * DAY_MS)),
+            watch: {
+              startedAt: DateTime.formatIso(at(-30 * DAY_MS)),
+              headSha: null,
+              failedChecks: [],
+              passedChecks: [],
+              passed: false,
+              remarksThrough: DateTime.formatIso(at(-30 * DAY_MS)),
+              remarkIds: [],
+              conflicting: false,
+              wakes: 0,
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(old({ pullRequests: [persistedLink(null, at(-30 * DAY_MS))] })).toBe(true);
+  });
+
+  it.effect.each([
+    ["the default 10 days", undefined, ["old"]],
+    ["3 days", 3, ["old", "week"]],
+    ["0 (off)", 0, []],
+  ] as const)("sweeps with %s", ([, afterDays, expected]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* makeHarness({
+          settings:
+            afterDays === undefined
+              ? DEFAULT_SERVER_SETTINGS
+              : { ...DEFAULT_SERVER_SETTINGS, autoArchiveSettledAfterDays: afterDays },
+          activeDescendants: new Set(["busy-parent"]),
+          threads: [
+            settled("old", 11),
+            settled("week", 7),
+            settled("busy-parent", 30),
+            settled("pinned", 30, { pinnedAt: at(-DAY_MS) }),
+          ],
+        });
+        yield* Effect.gen(function* () {
+          yield* fixture.start(yield* ThreadSettlementService.ThreadSettlementServiceV2);
+          const commands = yield* Ref.get(fixture.commands);
+          assert.deepEqual(archivedIds(commands), expected.map(ThreadId.make));
+          const [first] = commands;
+          if (first?.type === "thread.auto-archive") {
+            assert.deepEqual(first.snapshotAt, at(-11 * DAY_MS));
+            assert.match(first.commandId, /^server:auto-archive:old:/);
+          }
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
 });

@@ -122,6 +122,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   /** Server settles finished child chats after `autoSettleFinishedChildrenAfterHours`. */
   threadAutoSettleFinishedChildren: Schema.optionalKey(Schema.Boolean),
+  /** Server archives threads settled for `autoArchiveSettledAfterDays`. */
+  threadAutoArchive: Schema.optionalKey(Schema.Boolean),
   threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),

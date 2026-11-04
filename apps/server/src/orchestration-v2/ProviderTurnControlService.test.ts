@@ -226,6 +226,7 @@ it.effect(
           getChildThreads: () => Effect.succeed([]),
           getThreadParentLinks: () => Effect.succeed([]),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
+          getAutoArchiveCandidates: () => Effect.die("unused getAutoArchiveCandidates"),
           hasActiveDescendants: () => Effect.die("unused hasActiveDescendants"),
           getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
           getPullRequestSyncThreads: () => Effect.die("unused getPullRequestSyncThreads"),
