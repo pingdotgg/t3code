@@ -72,6 +72,14 @@ describe("codexRateLimitsToLimits", () => {
     });
   });
 
+  it("vouches for a personal plan's account id but not a team's", () => {
+    const fingerprint = (planType: string) =>
+      codexRateLimitsToLimits({ checkedAt, snapshot: { planType }, accountId: "acct-1" })
+        .credentialFingerprint;
+    expect(fingerprint("pro")).toBe("chatgpt:acct-1");
+    expect(fingerprint("business")).toBeUndefined();
+  });
+
   it("treats a lone duration-less primary as monthly on Free and Go", () => {
     expect(
       codexRateLimitsToLimits({

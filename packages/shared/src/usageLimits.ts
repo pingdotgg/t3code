@@ -205,11 +205,9 @@ interface AccountReport {
   readonly email?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
-  readonly native?: boolean;
 }
 
 const nativeReport = (provider: ServerProvider): AccountReport => ({
-  native: true,
   driver: provider.driver,
   email: provider.auth.email,
   workspaceId: provider.auth.workspaceId,
@@ -219,29 +217,34 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
-  const loginsByWorkspace = new Map<string, Set<string>>();
+  const loginsByCredential = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
-      if (report.email?.trim()) {
-        const workspaceKey = `${report.driver}:${report.workspaceId}`;
-        loginsByWorkspace.set(
-          workspaceKey,
-          (loginsByWorkspace.get(workspaceKey) ?? new Set()).add(key),
-        );
-      }
+    }
+    const credential = report.usageLimits?.credentialFingerprint;
+    if (key && report.email?.trim() && credential) {
+      const credentialKey = `${report.driver}:${credential}`;
+      loginsByCredential.set(
+        credentialKey,
+        (loginsByCredential.get(credentialKey) ?? new Set()).add(key),
+      );
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) {
-      // A Codex instance on a custom model provider reports no login, yet its usage still comes
-      // from the ChatGPT login on disk. Join it to that login when exactly one is known there.
-      if (!report.native || !report.workspaceId) return null;
-      const logins = loginsByWorkspace.get(`${report.driver}:${report.workspaceId}`);
-      return logins?.size === 1 ? `${[...logins][0]}:${report.workspaceId}` : null;
-    }
+    // A Codex instance on a custom model provider reports no login, yet its usage comes from the
+    // ChatGPT login on disk, which the server identifies by credential on personal plans.
+    const credential = report.usageLimits?.credentialFingerprint;
+    const logins =
+      !report.email?.trim() && credential
+        ? loginsByCredential.get(`${report.driver}:${credential}`)
+        : undefined;
+    const key =
+      logins?.size === 1
+        ? [...logins][0]!
+        : accountKey(report.driver, report.email, report.usageLimits);
+    if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
@@ -307,7 +310,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const names = new Map<string, Set<string>>();
   const merge = (key: string, next: LimitAccount) => {
     const seenNames = names.get(key) ?? new Set<string>();
-    if (next.environments.length > 0) names.set(key, seenNames.add(next.displayName ?? ""));
+    if (next.environments.length > 0 && next.displayName) {
+      names.set(key, seenNames.add(next.displayName));
+    }
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
