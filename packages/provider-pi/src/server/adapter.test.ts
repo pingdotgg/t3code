@@ -1205,6 +1205,9 @@ describe("PiAdapterV2", () => {
       assert.isTrue(Exit.isSuccess(resumed));
       if (!Exit.isSuccess(resumed)) return;
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      const offer = yield* Queue.take(offers);
+      assert.equal(offer.threadId, THREAD_ID);
+      assert.equal(yield* Queue.size(offers), 0);
 
       yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
       yield* fake.emit({
