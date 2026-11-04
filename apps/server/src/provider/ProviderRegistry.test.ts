@@ -6,6 +6,7 @@ import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -44,6 +45,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
@@ -175,6 +177,7 @@ type TestClaudeCapabilities = {
   readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models?: ReadonlyArray<ModelInfo>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -3038,6 +3041,72 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("adds models Claude Code reports that the catalog does not know", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          {
+            ...defaultClaudeSettings,
+            customModels: [{ slug: "gateway/kimi-3[1m]", name: "Kimi (mine)" }],
+          },
+          claudeCapabilities({
+            models: [
+              { value: "default", displayName: "Default", description: "" },
+              { value: "sonnet", displayName: "Sonnet", description: "" },
+              { value: "claude-haiku-4-5[1m]", displayName: "Haiku", description: "" },
+              {
+                value: "best",
+                resolvedModel: "claude-opus-5[1m]",
+                displayName: "Best",
+                description: "",
+              },
+              { value: "gateway/kimi-3[1m]", displayName: "Kimi 3", description: "" },
+              { value: "gateway/glm-5[1m]", displayName: "GLM 5", description: "" },
+              { value: "gateway/glm-5", displayName: "GLM 5 again", description: "" },
+              {
+                value: "gateway/claude-relay",
+                displayName: "Claude Relay",
+                description: "",
+                supportsEffort: true,
+                supportedEffortLevels: ["low", "high"],
+              },
+            ],
+          }),
+        );
+        const catalogSlugs = new Set(BUNDLED_CLAUDE_MODEL_CATALOG.models.map((m) => m.model.slug));
+        const added = status.models.filter((model) => !catalogSlugs.has(model.slug));
+
+        assert.deepStrictEqual(
+          added.map((model) => [model.slug, model.name, model.isCustom]),
+          [
+            ["gateway/glm-5[1m]", "GLM 5", false],
+            ["gateway/claude-relay", "Claude Relay", false],
+            ["gateway/kimi-3[1m]", "Kimi (mine)", true],
+          ],
+        );
+        assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
+        assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "default", label: "Default", isDefault: true },
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
