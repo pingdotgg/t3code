@@ -124,6 +124,7 @@ describe("CDP relay", () => {
     expect(written).toEqual([]);
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     await settle();
+    relay.event("Target.attachedToTarget", { sessionId: "iframe-session" }, "");
     relay.event("Page.loadEventFired", { timestamp: 1 }, "");
     relay.event("Runtime.consoleAPICalled", {}, "iframe-session");
     expect(written.slice(-2)).toEqual([
@@ -201,58 +202,124 @@ describe("CDP relay popups", () => {
   const resultOf = (written: Array<Record<string, unknown>>, id: number) =>
     written.find((message) => message["id"] === id)!;
 
-  it("detaches an announced popup session without closing its native window or detaching the opener", async () => {
-    const pageSend = vi.fn(async () => ({}));
-    const popupSend = vi.fn(async () => ({}));
-    const closePopup = vi.fn();
-    const written: Array<Record<string, unknown>> = [];
-    const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
-    const popup = relay.addPopup(makePopup("POPUP", popupSend, closePopup));
-    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
-    await settle();
-    relay.receive(
-      JSON.stringify({
-        id: 2,
-        method: "Target.detachFromTarget",
-        params: { sessionId: "t3-preview-popup-1" },
-      }),
-    );
-    relay.receive(
-      JSON.stringify({
-        id: 3,
-        method: "Target.detachFromTarget",
-        params: { sessionId: "t3-preview-page" },
-      }),
-    );
-    await settle();
-    expect(resultOf(written, 2)).toHaveProperty("result");
-    expect(written).toContainEqual({
-      method: "Target.detachedFromTarget",
-      params: { sessionId: "t3-preview-popup-1", targetId: "POPUP" },
-    });
-    relay.receive(
-      JSON.stringify({ id: 4, method: "Runtime.evaluate", sessionId: "t3-preview-popup-1" }),
-    );
-    relay.receive(JSON.stringify({ id: 5, method: "Page.enable", sessionId: "t3-preview-page" }));
-    await settle();
-    expect(resultOf(written, 4)).toHaveProperty("error");
-    expect(popupSend).not.toHaveBeenCalled();
-    expect(closePopup).not.toHaveBeenCalled();
-    expect(pageSend).toHaveBeenCalledExactlyOnceWith("Page.enable", {}, undefined, undefined);
-    expect(resultOf(written, 5)).toHaveProperty("result");
-    relay.receive(JSON.stringify({ id: 6, method: "Target.getTargets" }));
-    await settle();
-    expect(resultOf(written, 6)["result"]).toMatchObject({
-      targetInfos: [
-        { targetId: "GUEST-TARGET", attached: true },
-        { targetId: "POPUP", attached: false },
-      ],
-    });
-    popup.remove();
-    expect(
-      written.filter((message) => message["method"] === "Target.detachedFromTarget"),
-    ).toHaveLength(1);
-  });
+  it.each(["announced", "extra"])(
+    "revokes popup children when its last %s page session detaches without affecting other targets",
+    async (last) => {
+      const pageSend = vi.fn(async () => ({}));
+      const popupSend = vi.fn(async () => ({}));
+      const siblingSend = vi.fn(async () => ({}));
+      const closePopup = vi.fn();
+      const written: Array<Record<string, unknown>> = [];
+      const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
+      const popup = relay.addPopup(makePopup("POPUP", popupSend, closePopup));
+      const sibling = relay.addPopup(makePopup("SIBLING", siblingSend));
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
+      await settle();
+      relay.receive(
+        JSON.stringify({ id: 2, method: "Target.attachToTarget", params: { targetId: "POPUP" } }),
+      );
+      await settle();
+      const extra = (resultOf(written, 2)["result"] as { sessionId: string }).sessionId;
+      const firstSession = last === "announced" ? extra : "t3-preview-popup-1";
+      const lastSession = last === "announced" ? "t3-preview-popup-1" : extra;
+      relay.event("Target.attachedToTarget", { sessionId: "opener-child" }, "");
+      sibling.event("Target.attachedToTarget", { sessionId: "sibling-child" }, "");
+      popup.event("Target.attachedToTarget", { sessionId: "popup-child" }, "");
+      popup.event("Target.attachedToTarget", { sessionId: "nested-child" }, "popup-child");
+      relay.receive(
+        JSON.stringify({
+          id: 3,
+          method: "Target.detachFromTarget",
+          params: { sessionId: firstSession },
+        }),
+      );
+      await settle();
+      relay.receive(JSON.stringify({ id: 4, method: "DOM.enable", sessionId: "popup-child" }));
+      await settle();
+      expect(resultOf(written, 4)).toHaveProperty("result");
+      expect(popupSend).toHaveBeenCalledExactlyOnceWith("DOM.enable", {}, "popup-child", undefined);
+      const childEvent = {
+        method: "Runtime.consoleAPICalled",
+        params: {},
+        sessionId: "popup-child",
+      };
+      popup.event(childEvent.method, childEvent.params, childEvent.sessionId);
+      expect(written.at(-1)).toEqual(childEvent);
+      popupSend.mockClear();
+
+      relay.receive(
+        JSON.stringify({
+          id: 5,
+          method: "Target.detachFromTarget",
+          params: { sessionId: lastSession },
+        }),
+      );
+      relay.receive(
+        JSON.stringify({
+          id: 6,
+          method: "Target.detachFromTarget",
+          params: { sessionId: "t3-preview-page" },
+        }),
+      );
+      await settle();
+      for (const sessionId of [firstSession, lastSession]) {
+        expect(written).toContainEqual({
+          method: "Target.detachedFromTarget",
+          params: { sessionId, targetId: "POPUP" },
+        });
+      }
+      const eventCount = written.length;
+      popup.event(childEvent.method, childEvent.params, childEvent.sessionId);
+      popup.event("Runtime.consoleAPICalled", {}, "nested-child");
+      popup.event("Target.attachedToTarget", { sessionId: "late-child" }, "");
+      popup.event("Target.attachedToTarget", { sessionId: "late-nested-child" }, "popup-child");
+      popup.event("Page.loadEventFired", {}, "");
+      expect(written).toHaveLength(eventCount);
+      const detached = [
+        lastSession,
+        "popup-child",
+        "nested-child",
+        "late-child",
+        "late-nested-child",
+      ];
+      detached.forEach((sessionId, index) =>
+        relay.receive(JSON.stringify({ id: 10 + index, method: "Runtime.evaluate", sessionId })),
+      );
+      for (const [id, sessionId] of [
+        [20, "t3-preview-page"],
+        [21, "opener-child"],
+        [22, "sibling-child"],
+      ])
+        relay.receive(JSON.stringify({ id, method: "Page.enable", sessionId }));
+      relay.receive(JSON.stringify({ id: 23, method: "Target.getTargets" }));
+      await settle();
+      detached.forEach((_, index) => expect(resultOf(written, 10 + index)).toHaveProperty("error"));
+      expect(popupSend).not.toHaveBeenCalled();
+      expect(closePopup).not.toHaveBeenCalled();
+      expect(pageSend.mock.calls).toEqual([
+        ["Page.enable", {}, undefined, undefined],
+        ["Page.enable", {}, "opener-child", undefined],
+      ]);
+      expect(siblingSend).toHaveBeenCalledExactlyOnceWith(
+        "Page.enable",
+        {},
+        "sibling-child",
+        undefined,
+      );
+      for (const id of [20, 21, 22]) expect(resultOf(written, id)).toHaveProperty("result");
+      expect(resultOf(written, 23)["result"]).toMatchObject({
+        targetInfos: [
+          { targetId: "GUEST-TARGET", attached: true },
+          { targetId: "POPUP", attached: false },
+          { targetId: "SIBLING", attached: true },
+        ],
+      });
+      popup.remove();
+      expect(
+        written.filter((message) => message["method"] === "Target.detachedFromTarget"),
+      ).toHaveLength(2);
+    },
+  );
 
   it.each(["browser", "popup", "child"])(
     "detaches a popup child through its %s session without affecting the other sessions",
@@ -267,6 +334,7 @@ describe("CDP relay popups", () => {
       const popupSession = "t3-preview-popup-1";
       popup.event("Target.attachedToTarget", { sessionId: "parent-frame" }, "");
       popup.event("Target.attachedToTarget", { sessionId: "popup-child" }, "parent-frame");
+      popup.event("Target.attachedToTarget", { sessionId: "nested-child" }, "popup-child");
       popup.event("Target.attachedToTarget", { sessionId: "sibling-frame" }, "");
       relay.receive(JSON.stringify({ id: 2, method: "DOM.enable", sessionId: "popup-child" }));
       await settle();
@@ -296,8 +364,15 @@ describe("CDP relay popups", () => {
       relay.receive(JSON.stringify({ id: 5, method: "Page.enable", sessionId: popupSession }));
       relay.receive(JSON.stringify({ id: 6, method: "DOM.enable", sessionId: "sibling-frame" }));
       relay.receive(JSON.stringify({ id: 7, method: "Page.enable", sessionId: "t3-preview-page" }));
+      relay.receive(JSON.stringify({ id: 8, method: "DOM.enable", sessionId: "nested-child" }));
       await settle();
       expect(resultOf(written, 4)).toHaveProperty("error");
+      expect(resultOf(written, 8)).toHaveProperty("error");
+      const eventCount = written.length;
+      popup.event("Runtime.consoleAPICalled", {}, "popup-child");
+      popup.event("Runtime.consoleAPICalled", {}, "nested-child");
+      popup.event("Target.attachedToTarget", { sessionId: "late-child" }, "popup-child");
+      expect(written).toHaveLength(eventCount);
       expect(popupSend.mock.calls).toEqual([
         ["Page.enable", {}, undefined, popupSession],
         ["DOM.enable", {}, "sibling-frame", undefined],

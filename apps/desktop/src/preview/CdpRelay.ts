@@ -144,6 +144,10 @@ export function createCdpRelayConnection(
     string,
     { readonly owner: RelayedTarget; readonly parent: string | undefined }
   >();
+  const removeChild = (sessionId: string) => {
+    children.delete(sessionId);
+    for (const [id, child] of children) if (child.parent === sessionId) removeChild(id);
+  };
   let sessionSequence = 0;
   const newSession = (session: RelaySession) => {
     const sessionId = `t3-preview-${session.kind}-${++sessionSequence}`;
@@ -151,14 +155,17 @@ export function createCdpRelayConnection(
     return sessionId;
   };
   const announced = (relayed: RelayedTarget) => relayed.targetId !== null && !relayed.removed;
+  const hasPageSession = (relayed: RelayedTarget) => {
+    for (const session of sessions.values())
+      if (session.kind === "page" && session.owner === relayed) return true;
+    return false;
+  };
   const targetInfo = async (relayed: RelayedTarget) => ({
     targetId: await relayed.target.targetId(),
     type: "page",
     title: relayed.target.title(),
     url: relayed.target.url(),
-    attached: [...sessions.values()].some(
-      (session) => session.kind === "page" && session.owner === relayed,
-    ),
+    attached: hasPageSession(relayed),
     ...(relayed === page
       ? { canAccessOpener: false }
       : { canAccessOpener: true, openerId: await target.targetId() }),
@@ -262,10 +269,13 @@ export function createCdpRelayConnection(
             child.parent,
             undefined,
           );
-          children.delete(sessionId as string);
+          removeChild(sessionId as string);
         } else if (session?.kind === "page" && sessionId !== PAGE_SESSION_ID) {
           const targetId = session.owner.targetId ?? (await session.owner.target.targetId());
           sessions.delete(sessionId as string);
+          if (!hasPageSession(session.owner))
+            for (const [id, child] of children)
+              if (child.owner === session.owner) children.delete(id);
           session.owner.target.sessionDetached?.(sessionId as string);
           send({
             method: "Target.detachedFromTarget",
@@ -319,11 +329,13 @@ export function createCdpRelayConnection(
   const eventFor =
     (relayed: RelayedTarget): CdpRelayEvent =>
     (method, params, sessionId) => {
+      if (relayed.removed || (announced(relayed) && !hasPageSession(relayed))) return;
+      if (sessionId && children.get(sessionId)?.owner !== relayed) return;
       const child = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
       if (method === "Target.attachedToTarget" && typeof child === "string") {
         children.set(child, { owner: relayed, parent: sessionId || undefined });
       } else if (method === "Target.detachedFromTarget" && typeof child === "string") {
-        children.delete(child);
+        removeChild(child);
       }
       if (!announced(relayed)) return;
       if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
