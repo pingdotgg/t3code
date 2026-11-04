@@ -183,11 +183,7 @@ export function applySpeechAliases(text: string, words: SpeechCustomWords): stri
   return makeSpeechTextCorrector([], words)(text);
 }
 
-const normalizeWord = (word: string) =>
-  word
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+const normalizeWord = (word: string) => word.replace(/\s+/g, " ").trim();
 
 export function normalizeSpeechCustomWords(words: SpeechCustomWords): SpeechCustomWords {
   const seen = new Set<string>();
