@@ -9,7 +9,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
+import { ArrowDown, ArrowDownAZ, ArrowUp, ChevronsDownUp, ChevronsUpDown, Clock } from "lucide";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -19,6 +19,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -31,6 +32,11 @@ import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import {
+  createFileTreeSortComparator,
+  DEFAULT_FILE_TREE_SORT_ORDER,
+  FileTreeSortOrder,
+} from "./fileTreeSort";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -53,6 +59,16 @@ function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
 
+const FILE_BROWSER_SORT_STORAGE_KEY = "t3code:file-browser-sort";
+
+function hasMtimeChanged(previous: ReadonlyMap<string, number>, next: ReadonlyMap<string, number>) {
+  for (const [path, mtimeMs] of previous) {
+    const nextMtimeMs = next.get(path);
+    if (nextMtimeMs !== undefined && nextMtimeMs !== mtimeMs) return true;
+  }
+  return false;
+}
+
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
     <Tooltip>
@@ -71,6 +87,53 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+function FileSortButtons(props: {
+  order: FileTreeSortOrder;
+  onChange: (order: FileTreeSortOrder) => void;
+}) {
+  const { order, onChange } = props;
+  const sortsByName = order.key === "name";
+  const ascending = order.direction === "asc";
+  const keyLabel = sortsByName ? "Sort by date modified" : "Sort by name";
+  const directionLabel = ascending ? "Sort descending" : "Sort ascending";
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label={keyLabel}
+              onClick={() => onChange({ ...order, key: sortsByName ? "modified" : "name" })}
+            />
+          }
+        >
+          <MorphIcon className="size-3.5" icon={sortsByName ? ArrowDownAZ : Clock} />
+        </TooltipTrigger>
+        <TooltipPopup>{keyLabel}</TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label={directionLabel}
+              onClick={() => onChange({ ...order, direction: ascending ? "desc" : "asc" })}
+            />
+          }
+        >
+          <MorphIcon className="size-3.5" icon={ascending ? ArrowUp : ArrowDown} />
+        </TooltipTrigger>
+        <TooltipPopup>{directionLabel}</TooltipPopup>
+      </Tooltip>
+    </>
   );
 }
 
@@ -124,13 +187,17 @@ function buildTreeEntries(
   const entryKinds: ReadonlyMap<string, ProjectEntry["kind"]> = new Map(
     entries.map((entry) => [entry.path, entry.kind] as const),
   );
+  const mtimes = new Map<string, number>();
+  for (const entry of directoryEntries) {
+    if (entry.mtimeMs !== undefined) mtimes.set(entry.path, entry.mtimeMs);
+  }
   const treePaths = entries.map(treePath);
   const directories = entries.filter((entry) => entry.kind === "directory");
   const directoryPaths = directories.map(treePath);
   // Expanding a folder lists it, and an ignored one such as `node_modules` can hold tens of
   // thousands, so expand all skips ignored folders. They still open by hand.
   const expandableDirectoryPaths = directories.filter((entry) => !entry.ignored).map(treePath);
-  return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
+  return { entries, entryKinds, mtimes, treePaths, directoryPaths, expandableDirectoryPaths };
 }
 
 export default function FileBrowserPanel({
@@ -164,9 +231,22 @@ export default function FileBrowserPanel({
     { environmentId, cwd: hostFolder ? null : cwd, query: query.slice(0, 256) },
     200,
   );
-  const { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths } =
+  const { entries, entryKinds, mtimes, treePaths, directoryPaths, expandableDirectoryPaths } =
     buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
+  const [sortOrder, setSortOrder] = useLocalStorage(
+    FILE_BROWSER_SORT_STORAGE_KEY,
+    DEFAULT_FILE_TREE_SORT_ORDER,
+    FileTreeSortOrder,
+  );
+  const { key: sortKey, direction: sortDirection } = sortOrder;
   const entryKindsRef = useRef(entryKinds);
+  // The tree model is built once, so its comparator reads the latest order and mtimes from here.
+  const sortComparatorRef = useRef(createFileTreeSortComparator(sortOrder, () => undefined));
+  const appliedSortRef = useRef<{
+    key: typeof sortKey;
+    direction: typeof sortDirection;
+    mtimes: ReadonlyMap<string, number>;
+  } | null>(null);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -293,6 +373,7 @@ export default function FileBrowserPanel({
         ? { icon: "t3-tree-icon-loading", title: "Loading…" }
         : null,
     search: false,
+    sort: (left, right) => sortComparatorRef.current(left, right),
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
@@ -388,10 +469,21 @@ export default function FileBrowserPanel({
     resourceKey: `files:${environmentId}:${cwd}`,
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies tree path changes to the imperative Pierre tree model as a reset or batch update
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies tree path and sort order changes to the imperative Pierre tree model as a reset or batch update
   useEffect(() => {
     if (!ready) return;
-    if (previousTreePathsRef.current === treePaths) return;
+    const applied = appliedSortRef.current;
+    const resort =
+      applied !== null &&
+      (applied.key !== sortKey ||
+        applied.direction !== sortDirection ||
+        (sortKey === "modified" && hasMtimeChanged(applied.mtimes, mtimes)));
+    appliedSortRef.current = { key: sortKey, direction: sortDirection, mtimes };
+    sortComparatorRef.current = createFileTreeSortComparator(
+      { key: sortKey, direction: sortDirection },
+      (path) => mtimes.get(path),
+    );
+    if (previousTreePathsRef.current === treePaths && !resort) return;
     entryKindsRef.current = entryKinds;
     const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
@@ -399,9 +491,18 @@ export default function FileBrowserPanel({
       model.resetPaths(treePaths);
       return;
     }
+    if (resort) {
+      // A reset rebuilds the store with every folder closed unless told which stay open.
+      const expandedDirectoryPaths = directoryPaths.filter((path) => {
+        const item = model.getItem(path);
+        return item?.isDirectory() && "isExpanded" in item && item.isExpanded();
+      });
+      model.resetPaths(treePaths, { initialExpandedPaths: expandedDirectoryPaths });
+      return;
+    }
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (updates.length > 0) model.batch(updates);
-  }, [ready, entryKinds, model, treePaths]);
+  }, [ready, entryKinds, model, treePaths, directoryPaths, mtimes, sortKey, sortDirection]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
   useEffect(() => {
@@ -496,6 +597,7 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={closeSearch}
         />
+        <FileSortButtons order={sortOrder} onChange={setSortOrder} />
         {directoryPaths.length > 0 && !hostFolder ? (
           <Tooltip>
             <TooltipTrigger
