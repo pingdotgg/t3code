@@ -2673,12 +2673,18 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
-it.effect.each(["stream", "terminal", "continuing", "completed"] as const)(
+it.effect.each(["stream", "terminal", "continuing", "completed", "transferred"] as const)(
   "withdraws failed-turn approvals only when children stop (%s)",
   (failureMode) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const requestId = RuntimeRequestId.make("request:stream-error");
+      const childRequestId = RuntimeRequestId.make("request:stream-error:child");
+      const childTurnId = ProviderTurnId.make("provider-turn:stream-error:child");
+      const childProviderThreadId = ProviderThreadId.make("provider-thread:stream-error:child");
+      const childThreadId = backgroundScenarioIds(
+        "pull-request-refresh:stream-error",
+      ).childThreadId;
       const observedTurnId = ProviderTurnId.make("provider-turn:stream-error:observed");
       const guarded = yield* Ref.make(false);
       const { written, observed, finalEvents } = yield* captureRootRunTermination({
@@ -2689,15 +2695,16 @@ it.effect.each(["stream", "terminal", "continuing", "completed"] as const)(
           Effect.succeed(
             input.withdrawApprovals &&
               input.event.type === "turn.terminal" &&
-              input.event.providerTurnId === observedTurnId
+              (input.event.providerTurnId === observedTurnId ||
+                (input.event.providerTurnId === childTurnId && input.threadId === childThreadId))
               ? [
                   {
-                    id: EventId.make("event:stream-error:withdraw-request"),
+                    id: EventId.make(`event:stream-error:withdraw-request:${input.threadId}`),
                     type: "runtime-request.updated",
                     threadId: input.threadId,
                     occurredAt: now,
                     payload: {
-                      id: requestId,
+                      id: input.threadId === childThreadId ? childRequestId : requestId,
                       nodeId: NodeId.make("node:stream-error:approval"),
                       providerTurnId:
                         input.event.type === "turn.terminal" ? input.event.providerTurnId : null,
@@ -2722,21 +2729,78 @@ it.effect.each(["stream", "terminal", "continuing", "completed"] as const)(
         },
         events: (ids) =>
           Stream.concat(
-            Stream.make({
-              type: "provider_turn.updated",
-              driver,
-              providerTurn: {
-                id: observedTurnId,
-                providerThreadId: ids.providerThreadId,
-                nodeId: ids.rootNodeId,
-                runAttemptId: ids.attemptId,
-                nativeTurnRef: null,
-                ordinal: 1,
-                status: "running",
-                startedAt: now,
-                completedAt: null,
+            Stream.make(
+              childThreadCreatedEvent(ids),
+              {
+                type: "provider_turn.updated",
+                threadId: childThreadId,
+                driver,
+                providerTurn: {
+                  id: childTurnId,
+                  providerThreadId: childProviderThreadId,
+                  nodeId: NodeId.make("node:stream-error:child-root"),
+                  runAttemptId: null,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
               },
-            }),
+              {
+                type: "runtime_request.updated",
+                driver,
+                threadId: childThreadId,
+                runtimeRequest: {
+                  id: childRequestId,
+                  nodeId: NodeId.make("node:stream-error:child-approval"),
+                  providerTurnId: childTurnId,
+                  nativeRequestRef: null,
+                  kind: "command",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: ProviderSessionId.make("session:stream-error"),
+                  },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+              {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: observedTurnId,
+                  providerThreadId: ids.providerThreadId,
+                  nodeId: ids.rootNodeId,
+                  runAttemptId: ids.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+              ...(failureMode === "transferred"
+                ? [
+                    {
+                      type: "subagent.updated" as const,
+                      driver,
+                      subagent: {
+                        ...makeRunOwnedSubagentFixture({
+                          ids,
+                          providerInstanceId: ProviderInstanceId.make("codex"),
+                          childThreadId,
+                          driver,
+                          status: "running",
+                        }),
+                        providerThreadId: childProviderThreadId,
+                        runId: RunId.make("run:replacement"),
+                      },
+                    },
+                  ]
+                : []),
+            ),
             failureMode === "stream"
               ? Stream.fail(
                   new ProviderAdapter.ProviderAdapterEventStreamError({
@@ -2768,9 +2832,16 @@ it.effect.each(["stream", "terminal", "continuing", "completed"] as const)(
         assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
       assert.equal(
         finalEvents.some(
-          (event) => event.type === "runtime-request.updated" && event.payload.id === requestId,
+          (event) =>
+            event.type === "runtime-request.updated" && event.payload.id === childRequestId,
         ),
         failureMode === "stream" || failureMode === "terminal",
+      );
+      assert.equal(
+        finalEvents.some(
+          (event) => event.type === "runtime-request.updated" && event.payload.id === requestId,
+        ),
+        failureMode === "stream" || failureMode === "terminal" || failureMode === "transferred",
       );
     }),
 );

@@ -21,6 +21,7 @@ import {
   type ProviderThreadId,
   type ProviderTurnId,
   type RunAttemptId,
+  type RuntimeRequestId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -151,6 +152,11 @@ export function selectInheritedBackgroundTurnItems(input: {
 }
 
 type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+
+type PendingRequestTurn = {
+  readonly threadId: ThreadId;
+  readonly providerTurnId: ProviderTurnId;
+};
 
 type OpenRunOwnedSubagentProjection = {
   readonly subagents: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
@@ -635,6 +641,7 @@ export const layer: Layer.Layer<
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
+        readonly pendingRequestTurns?: ReadonlyArray<PendingRequestTurn>;
         readonly refreshAfterTurn: Effect.Effect<void>;
         readonly writeIfRunCurrent?: {
           readonly activeAttemptId: RunAttemptId;
@@ -740,20 +747,33 @@ export const layer: Layer.Layer<
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
         // Failed turns without continuing children have no consumer for their pending callbacks.
-        const cancelledRequestEvents =
-          input.terminal.status === "failed" && !childTurnsContinue(input.terminal)
-            ? (yield* providerEventIngestor.normalize({
-                providerSessionId: input.providerSessionId,
-                providerInstanceId: input.run.providerInstanceId,
-                threadId: input.run.threadId,
-                runId: input.run.id,
-                nodeId: input.rootNode.id,
-                event: input.terminal,
-                withdrawApprovals: true,
-              })).filter(
+        const cancelledRequestEvents: Array<OrchestrationV2DomainEvent> = [];
+        if (input.terminal.status === "failed" && !childTurnsContinue(input.terminal)) {
+          const turns = new Map<ThreadId, Set<ProviderTurnId>>();
+          for (const turn of [
+            { threadId: input.run.threadId, providerTurnId: input.terminal.providerTurnId },
+            ...(input.pendingRequestTurns ?? []),
+          ]) {
+            const seen = turns.get(turn.threadId) ?? new Set<ProviderTurnId>();
+            if (seen.has(turn.providerTurnId)) continue;
+            seen.add(turn.providerTurnId);
+            turns.set(turn.threadId, seen);
+            const events = yield* providerEventIngestor.normalize({
+              providerSessionId: input.providerSessionId,
+              providerInstanceId: input.run.providerInstanceId,
+              threadId: turn.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              event: { ...input.terminal, providerTurnId: turn.providerTurnId },
+              withdrawApprovals: true,
+            });
+            cancelledRequestEvents.push(
+              ...events.filter(
                 (event) => event.type !== "turn-item.updated" || event.payload.type !== "error",
-              )
-            : [];
+              ),
+            );
+          }
+        }
         const finalization = {
           guardPendingRuntimeRequestCancellations: true,
           // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
@@ -1083,6 +1103,13 @@ export const layer: Layer.Layer<
               : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
           }),
         );
+        const pendingRequestTurns = new Map<RuntimeRequestId, PendingRequestTurn>();
+        const ownedPendingRequestTurns = (routing: ProviderEventRoutingState) =>
+          [...pendingRequestTurns.values()].filter(
+            (turn) =>
+              routing.ownedProviderTurns.has(turn.providerTurnId) ||
+              (turn.threadId !== input.run.threadId && routing.ownedThreadIds.has(turn.threadId)),
+          );
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
@@ -1128,6 +1155,7 @@ export const layer: Layer.Layer<
               ? {}
               : { loadRunInterruptReason: input.loadRunInterruptReason }),
             openRunOwnedSubagents: openSubagents,
+            pendingRequestTurns: ownedPendingRequestTurns(yield* Ref.get(eventRouting)),
             terminal,
             failureItemPersisted: terminal.status === "failed",
             refreshAfterTurn,
@@ -1145,6 +1173,15 @@ export const layer: Layer.Layer<
           deliverable: boolean,
         ) {
           const routing = yield* Ref.get(eventRouting);
+          if (event.type === "runtime_request.updated") {
+            const request = event.runtimeRequest;
+            if (request.status === "pending" && request.providerTurnId !== null) {
+              pendingRequestTurns.set(request.id, {
+                threadId: event.threadId ?? input.run.threadId,
+                providerTurnId: request.providerTurnId,
+              });
+            } else pendingRequestTurns.delete(request.id);
+          }
           if (event.type === "provider_turn.updated") {
             const isRoot =
               event.providerTurn.runAttemptId === input.attempt.id ||
@@ -1633,6 +1670,7 @@ export const layer: Layer.Layer<
                     expectedStatus: "running",
                   },
                   openRunOwnedSubagents: openSubagents,
+                  pendingRequestTurns: ownedPendingRequestTurns(routing),
                   ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                   completedAt,
                   terminal: makeFailedTerminalEvent(
