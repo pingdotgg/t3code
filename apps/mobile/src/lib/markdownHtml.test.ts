@@ -109,6 +109,21 @@ describe("HTML in native Markdown", () => {
     ).toBe("foo\\_ bar");
   });
 
+  it("keeps a space after a closing delimiter and a link after a replaced image", () => {
+    expect(
+      markdownForNativeRendering(
+        "**Done**![](https://example.com/icon.svg) next",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("**Done** next");
+    expect(
+      markdownForNativeRendering(
+        "![!](https://example.com/icon.svg)[Details](https://example.com)",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("\\![Details](https://example.com)");
+  });
+
   it("keeps emphasis around an SVG image that is removed", () => {
     const svg = "[icon]: https://example.com/icon.svg";
     expect(

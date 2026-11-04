@@ -233,16 +233,19 @@ function markdownText(text: string): string {
   if (!text.trim()) return "";
   return text
     .replace(/\s+/g, " ")
-    .replace(/[\\`*_[\]<>&|~]/g, "\\$&")
+    .replace(/[\\`!*_[\]<>&|~]/g, "\\$&")
     .replace(/^( ?)(?:([#+=-])|(\d+)([.)]))/, (_, space, marker, digits, delimiter) =>
       marker ? `${space}\\${marker}` : `${space}${digits}\\${delimiter}`,
     );
 }
 
-/** An escaped `\_` is literal text; only an unescaped delimiter or whitespace makes the next space removable. */
+/**
+ * True when a space after `text` is removable: whitespace, or an emphasis delimiter that opens.
+ * A delimiter touching the end of a word closes it, and an escaped one is literal.
+ */
 function endsWithOpener(text: string): boolean {
-  const delimiter = /(\\*)[*_]$/.exec(text);
-  return delimiter ? delimiter[1]!.length % 2 === 0 : text === "" || /\s$/.test(text);
+  if (/[*_]$/.test(text)) return /(?:^|[^\p{L}\p{N}\\*_])[*_]+$/u.test(text);
+  return text === "" || /\s$/.test(text);
 }
 
 function htmlTagMarkdown(
