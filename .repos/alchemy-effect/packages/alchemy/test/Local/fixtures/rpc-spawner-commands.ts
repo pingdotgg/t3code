@@ -1,18 +1,15 @@
+import { unwrapRpcHandlers } from "alchemy/Local/RpcSerialization";
+import type { RpcProxyApi } from "alchemy/Local/RpcServer";
+import { encodeSessionEnvironment, SESSION_ENV_PARAM } from "alchemy/Local/RpcServerEnvironment";
+import { layerServer, RpcSpawner } from "alchemy/Local/RpcSpawner";
+import { PlatformServices, runMain } from "alchemy/Util/PlatformServices";
 import { newWebSocketRpcSession } from "capnweb";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
-import { unwrapRpcHandlers } from "alchemy/Local/RpcSerialization";
-import type { RpcProxyApi } from "alchemy/Local/RpcServer";
-import {
-  encodeSessionEnvironment,
-  SESSION_ENV_PARAM,
-} from "alchemy/Local/RpcServerEnvironment";
-import { layerServer, RpcSpawner } from "alchemy/Local/RpcSpawner";
-import { PlatformServices, runMain } from "alchemy/Util/PlatformServices";
+import * as Layer from "effect/Layer";
 
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -29,10 +26,7 @@ const program = Effect.gen(function* () {
   const wsUrl = yield* http
     .post(spawner.url, {
       body: yield* HttpBody.json({
-        serverEntryUrl: new URL(
-          "../../../src/Local/Sidecar.ts",
-          import.meta.url,
-        ).href,
+        serverEntryUrl: new URL("../../../src/Local/Sidecar.ts", import.meta.url).href,
       }),
     })
     .pipe(Effect.flatMap((response) => response.text));
@@ -49,9 +43,7 @@ const program = Effect.gen(function* () {
       stack: { name: "CommandShutdown", stage: "test" },
     }),
   );
-  const session = yield* Effect.sync(() =>
-    newWebSocketRpcSession<RpcProxyApi>(url.toString()),
-  );
+  const session = yield* Effect.sync(() => newWebSocketRpcSession<RpcProxyApi>(url.toString()));
   const wrapped = yield* Effect.promise(
     () =>
       session.getProvider(
@@ -81,9 +73,7 @@ const program = Effect.gen(function* () {
 program.pipe(
   Effect.provide(
     Layer.mergeAll(
-      layerServer({ profile: undefined, envFile: undefined }).pipe(
-        Layer.provide(PlatformServices),
-      ),
+      layerServer({ profile: undefined, envFile: undefined }).pipe(Layer.provide(PlatformServices)),
       PlatformServices,
       FetchHttpClient.layer,
     ),

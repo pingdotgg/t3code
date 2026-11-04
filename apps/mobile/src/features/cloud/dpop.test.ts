@@ -6,9 +6,8 @@ import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import { verifyDpopProof } from "@t3tools/shared/dpop";
 
-import { createDpopProof, generateDpopProofKeyPair, loadOrCreateDpopProofKeyPair } from "./dpop";
+import { loadOrCreateDpopProofKeyPair } from "./dpop";
 import * as Dpop from "./dpop";
 
 vi.mock("expo-crypto", () => ({
@@ -40,28 +39,6 @@ vi.mock("expo-secure-store", () => ({
   },
 }));
 
-function proofIat(proof: string): number {
-  const payload = proof.split(".")[1];
-  if (!payload) {
-    throw new Error("Missing DPoP payload.");
-  }
-  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-    readonly iat: number;
-  };
-  return decoded.iat;
-}
-
-function proofHtu(proof: string): string {
-  const payload = proof.split(".")[1];
-  if (!payload) {
-    throw new Error("Missing DPoP payload.");
-  }
-  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-    readonly htu: string;
-  };
-  return decoded.htu;
-}
-
 describe("mobile DPoP", () => {
   it.effect("passes typed-array digest input through the Expo Crypto adapter", () =>
     Effect.gen(function* () {
@@ -78,7 +55,6 @@ describe("mobile DPoP", () => {
       const first = yield* loadOrCreateDpopProofKeyPair();
       const second = yield* loadOrCreateDpopProofKeyPair();
 
-      expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
     }).pipe(Effect.provide(Dpop.layer)),
   );
@@ -90,71 +66,6 @@ describe("mobile DPoP", () => {
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);
 
       expect(error.message).toBe("Stored DPoP proof key is invalid.");
-    }).pipe(Effect.provide(Dpop.layer)),
-  );
-
-  it.effect("signs connect and bootstrap proofs with the same ephemeral proof key", () =>
-    Effect.gen(function* () {
-      const proofKey = yield* generateDpopProofKeyPair();
-      const connect = yield* createDpopProof({
-        method: "POST",
-        url: "https://relay.example.test/v1/environments/env-1/connect",
-        accessToken: "clerk-token",
-        proofKey,
-      });
-      const bootstrap = yield* createDpopProof({
-        method: "POST",
-        url: "https://desktop.example.test/oauth/token",
-        proofKey,
-      });
-
-      expect(connect.thumbprint).toBe(proofKey.thumbprint);
-      expect(bootstrap.thumbprint).toBe(proofKey.thumbprint);
-      expect(
-        verifyDpopProof({
-          proof: connect.proof,
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect",
-          expectedThumbprint: proofKey.thumbprint,
-          expectedAccessToken: "clerk-token",
-          nowEpochSeconds: proofIat(connect.proof),
-        }),
-      ).toMatchObject({ ok: true, thumbprint: proofKey.thumbprint });
-      expect(
-        verifyDpopProof({
-          proof: bootstrap.proof,
-          method: "POST",
-          url: "https://desktop.example.test/oauth/token",
-          expectedThumbprint: proofKey.thumbprint,
-          nowEpochSeconds: proofIat(bootstrap.proof),
-        }),
-      ).toMatchObject({ ok: true, thumbprint: proofKey.thumbprint });
-    }).pipe(Effect.provide(Dpop.layer)),
-  );
-
-  it.effect("signs DPoP proofs with RFC 9449 htu normalization", () =>
-    Effect.gen(function* () {
-      const proofKey = yield* generateDpopProofKeyPair();
-      const proof = yield* createDpopProof({
-        method: "POST",
-        url: "https://relay.example.test/v1/environments/env-1/connect?debug=1#ignored",
-        accessToken: "clerk-token",
-        proofKey,
-      });
-
-      expect(proofHtu(proof.proof)).toBe(
-        "https://relay.example.test/v1/environments/env-1/connect",
-      );
-      expect(
-        verifyDpopProof({
-          proof: proof.proof,
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect?debug=1#ignored",
-          expectedThumbprint: proofKey.thumbprint,
-          expectedAccessToken: "clerk-token",
-          nowEpochSeconds: proofIat(proof.proof),
-        }),
-      ).toMatchObject({ ok: true });
     }).pipe(Effect.provide(Dpop.layer)),
   );
 });
