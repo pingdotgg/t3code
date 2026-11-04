@@ -351,6 +351,10 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    const graceMs = claudeGatewayDiscoveryGraceMs({
+      ...claudeEnvironment,
+      ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
+    });
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
@@ -366,7 +370,7 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      return { q, init, graceMs: claudeGatewayDiscoveryGraceMs(claudeEnvironment) };
+      return { q, init, graceMs };
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),

@@ -436,6 +436,8 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 const SettingsEnv = Schema.Struct({
   ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
   CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.String),
+  CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.String),
 });
 const decodeSettingsEnv = Schema.decodeUnknownEffect(
   fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),

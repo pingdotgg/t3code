@@ -5,6 +5,7 @@ import { vi } from "vite-plus/test";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -60,13 +61,21 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
       } as ReturnType<typeof ClaudeSdk.query>;
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped();
+    // Claude Code also reads these from settings.json, which is where gateway users set them.
+    yield* fileSystem.writeFileString(
+      `${configDir}/settings.json`,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "https://gateway.example",
+          CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+        },
+      }),
+    );
     const capabilities = yield* probeClaudeCapabilities(
       yield* decodeClaudeSettings({ binaryPath: "claude" }),
-      {
-        ...process.env,
-        ANTHROPIC_BASE_URL: "https://gateway.example",
-        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
-      },
+      { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: configDir },
     );
     assert.equal(capabilities.email, "dev@example.com");
     assert.equal(abortSignal?.aborted, false);
