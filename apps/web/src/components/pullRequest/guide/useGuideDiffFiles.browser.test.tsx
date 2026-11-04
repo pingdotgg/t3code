@@ -66,5 +66,5 @@ it.each([
   expect(result()).toEqual({ loading: true, files: [] });
 
   await act(() => registry.set(first, AsyncResult.success(page("wanted.ts", "FRESH", null))));
-  expect(result()).toEqual({ loading: false, files: [["wanted.ts", "FRESH"]] });
+  expect(result()).toEqual({ loading: false, files: [["wanted.ts", "FRESH\n"]] });
 });

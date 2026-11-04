@@ -483,7 +483,7 @@ export interface PullRequestTimelineThread
   readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
-type PullRequestTimelineRow =
+export type PullRequestTimelineRow =
   | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
   | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
 
@@ -753,7 +753,7 @@ export function buildPullRequestTimeline(
           },
         ]
       : []),
-  ].toSorted((left, right) => right.at.localeCompare(left.at));
+  ].toSorted((left, right) => (instant(right.at) || 0) - (instant(left.at) || 0));
 }
 
 const FINDING_LIMIT = 20;

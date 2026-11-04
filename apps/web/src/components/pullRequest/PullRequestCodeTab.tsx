@@ -81,6 +81,7 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
+import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
@@ -175,6 +176,76 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
   return parsed;
 }
 
+type DiffModel = {
+  readonly parsedSlices: ReadonlyArray<RenderablePatch | null>;
+  readonly loadedFiles: ReadonlyArray<Extract<RenderablePatch, { kind: "files" }>["files"][number]>;
+  readonly sourceFileStats: ReadonlyMap<string, ReturnType<typeof getDiffLineStat>>;
+};
+const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
+const patchHashes = new WeakMap<DiffSlice, number>();
+
+// Hashing, ordering and counting every file of a huge pull request costs a second, and the tab
+// renders far more often than its slices change, so the model is kept per slice list.
+function diffModel(
+  slices: ReadonlyArray<DiffSlice>,
+  keyPrefix: string,
+  ignoreWhitespace: boolean,
+): DiffModel {
+  let models = diffModels.get(slices);
+  if (models === undefined) diffModels.set(slices, (models = new Map()));
+  const cached = models.get(keyPrefix);
+  if (cached !== undefined) return cached;
+  const parsedSlices = slices.map((slice) => {
+    let hash = patchHashes.get(slice);
+    if (hash === undefined) patchHashes.set(slice, (hash = fnv1a32(slice.patch)));
+    // The cache key carries the theme, which the tokenizer caches against, and the patch's
+    // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
+    return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
+  });
+  const model: DiffModel = {
+    parsedSlices,
+    loadedFiles: orderDiffFilesLikeTree(
+      parsedSlices.flatMap((parsed) =>
+        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+      ),
+    ),
+    sourceFileStats: new Map(
+      parsedSlices.flatMap((parsed) =>
+        parsed?.kind === "files"
+          ? parsed.files.map(
+              (file, index) =>
+                [
+                  buildFileDiffRenderKey(file),
+                  getDiffLineStat([parsed.sourceFiles[index] ?? file]),
+                ] as const,
+            )
+          : [],
+      ),
+    ),
+  };
+  models.set(keyPrefix, model);
+  return model;
+}
+
+const threadsByPathCache = new WeakMap<
+  ReadonlyArray<PullRequestReviewThread>,
+  ReadonlyMap<string, ReadonlyArray<PullRequestReviewThread>>
+>();
+
+function reviewThreadsByPath(threads: ReadonlyArray<PullRequestReviewThread>) {
+  let byPath = threadsByPathCache.get(threads);
+  if (byPath === undefined) {
+    const grouped = new Map<string, PullRequestReviewThread[]>();
+    for (const thread of threads) {
+      const list = grouped.get(thread.path);
+      if (list) list.push(thread);
+      else grouped.set(thread.path, [thread]);
+    }
+    threadsByPathCache.set(threads, (byPath = grouped));
+  }
+  return byPath;
+}
+
 interface FileViewedToggleState {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
@@ -203,7 +274,7 @@ function FileViewedToggle({
       {stat}
       <label
         data-viewed-toggle=""
-        className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
@@ -490,20 +561,10 @@ function PullRequestCodeTab({
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
     commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
-  // The cache key carries the theme, which is what the tokenizer caches against, so a theme
-  // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
-  // reuses its cursor, and a key of position alone would hand back the parse it replaced.
-  const parsedSlices = loadedSlices.map((slice) =>
-    parseSlice(
-      slice,
-      `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`,
-      ignoreWhitespace,
-    ),
-  );
-  const loadedFiles = orderDiffFilesLikeTree(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-    ),
+  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+    loadedSlices,
+    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
+    ignoreWhitespace,
   );
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
@@ -522,33 +583,16 @@ function PullRequestCodeTab({
       slice.omittedFileStats.map((file) => [file.path, file] as const),
     ),
   );
-  const sourceFileStats = new Map(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files"
-        ? parsed.files.map(
-            (file, index) =>
-              [
-                buildFileDiffRenderKey(file),
-                getDiffLineStat([parsed.sourceFiles[index] ?? file]),
-              ] as const,
-          )
-        : [],
-    ),
-  );
   const fileTreeEntries = diffFileTreeEntries(files);
+  const threadsByPath = reviewThreadsByPath(detail.reviewThreads);
   // File membership does not guarantee a rendered hunk for the thread.
   const placedThreadIds = (() => {
     const placed = new Set<string>();
     // Commit diffs use different line coordinates; list conversations separately.
     if (commit !== null) return placed;
     for (const file of files) {
-      const path = resolveFileDiffPath(file);
-      for (const thread of detail.reviewThreads) {
-        if (
-          thread.path === path &&
-          thread.line !== null &&
-          isLineInFileDiff(file, thread.side, thread.line)
-        ) {
+      for (const thread of threadsByPath.get(resolveFileDiffPath(file)) ?? []) {
+        if (thread.line !== null && isLineInFileDiff(file, thread.side, thread.line)) {
           placed.add(thread.id);
         }
       }
@@ -575,9 +619,8 @@ function PullRequestCodeTab({
       return created;
     };
 
-    for (const thread of detail.reviewThreads) {
-      if (thread.path !== path || thread.line === null) continue;
-      if (!placedThreadIds.has(thread.id)) continue;
+    for (const thread of threadsByPath.get(path) ?? []) {
+      if (thread.line === null || !placedThreadIds.has(thread.id)) continue;
       groupAt(thread.side, thread.line).threads.push(thread);
     }
     if (commit === null) {
@@ -1515,7 +1558,14 @@ function PullRequestCodeTab({
           </FileViewedToggleContext>
         </div>
         {fileTreeOpen ? (
-          <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
+          <FileExplorerPane
+            resizable
+            storageKey="t3code:diff-file-tree-width"
+            defaultWidth={320}
+            defaultWidthFraction={0.4}
+            minWidth={192}
+            resizeLabel="Resize PR Code files"
+          >
             <DiffFileTree
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
@@ -1541,7 +1591,7 @@ function PullRequestCodeTab({
                 )
               }
             />
-          </aside>
+          </FileExplorerPane>
         ) : null}
       </div>
       {unstructured}

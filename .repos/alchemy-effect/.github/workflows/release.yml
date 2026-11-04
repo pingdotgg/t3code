@@ -5,19 +5,16 @@ on:
     inputs:
       version:
         description: >-
-          Release spec. `beta` (the default) publishes the next
-          `2.0.0-beta.N`; `beta.N` publishes that exact candidate. `rc[.N]`
-          and `alpha[.N]` select those prerelease channels.
-          `patch|minor|major` or `x.y.z` publishes a stable release. Anything
-          else publishes `0.0.0-<name>`.
+          Release spec, bumped from the version every package.json shares.
+          `beta` (the default) publishes the next beta, e.g. `2.0.0-beta.81`
+          to `2.0.0-beta.82`; `beta.N` publishes that candidate. `rc[.N]` and
+          `alpha[.N]` select those prerelease channels. `patch|minor|major`
+          bump per semver, and `x.y.z[-beta.N]` publishes exactly that
+          version. Anything else publishes `0.0.0-<name>` without committing
+          it.
         required: false
         type: string
         default: "beta"
-      force-latest:
-        description: Publish the release under the latest dist-tag
-        required: false
-        type: boolean
-        default: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -36,7 +33,6 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
-      tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       channel: ${{ steps.release.outputs.channel }}
     steps:
@@ -56,15 +52,6 @@ jobs:
       - name: Checkout distilled
         run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
-      - name: Restore Turbo cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
-            turbo-${{ runner.os }}-${{ github.repository_id }}-
-
       - name: Setup pnpm, Node.js, Bun and install dependencies
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
@@ -74,21 +61,12 @@ jobs:
 
       - id: release
         name: Prepare release
-        env:
-          FORCE_LATEST: ${{ inputs.force-latest }}
         run: |
           set -euo pipefail
-          bun scripts/release/prepare.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
+          node scripts/release/prepare.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
 
       - name: Build release packages
-        # Match preview CI: the cold tsgo build can starve the runner
-        # without Go heap limits on this 32 GB machine.
-        env:
-          GOMEMLIMIT: 6GiB
-          GOGC: "40"
-        run: >-
-          pnpm turbo run build
-          $(jq -r '.[] | "--filter=\(.name)"' release-packages.json)
+        run: pnpm build:pkg
 
       - name: Pack release artifacts
         run: |
@@ -133,8 +111,8 @@ jobs:
           cache: true
           install: false
 
-      # Release scripts import changelogithub, but publishing does not need
-      # package lifecycle scripts or the root Turbo-backed prepare build.
+      # Release scripts import changelogen, but publishing does not need
+      # package lifecycle scripts.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -148,12 +126,7 @@ jobs:
           path: release-packages
 
       - name: Publish tarballs with OIDC
-        env:
-          PUBLISH_TAG: ${{ needs.build.outputs.tag }}
-          CHANNEL_TAG: ${{ needs.build.outputs.channel == 'release' && 'latest' || needs.build.outputs.channel == 'tag' && needs.build.outputs.tag || 'next' }}
-          FORCE_LATEST: ${{ inputs.force-latest }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bash scripts/release/publish.sh
+        run: node scripts/release/publish.ts
 
       - name: Create GitHub release
         if: needs.build.outputs.channel != 'tag'
@@ -161,7 +134,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
           CHANNEL: ${{ needs.build.outputs.channel }}
-        run: bun scripts/release/github-release.ts "v${VERSION}" "$CHANNEL"
+        run: node scripts/release/github-release.ts "v${VERSION}" "$CHANNEL"
 
       - name: Notify Discord
         if: needs.build.outputs.channel != 'tag'
@@ -169,4 +142,4 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           VERSION: ${{ needs.build.outputs.version }}
           CHANNEL: ${{ needs.build.outputs.channel }}
-        run: bun scripts/release/discord-notify.ts "v${VERSION}" "$CHANNEL"
+        run: node scripts/release/discord-notify.ts "v${VERSION}" "$CHANNEL"

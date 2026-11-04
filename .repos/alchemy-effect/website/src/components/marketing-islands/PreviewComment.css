@@ -1,0 +1,280 @@
+/* The preview comment's pull request page (PreviewComment.tsx). */
+
+.pc {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  background: var(--alc-bg-code);
+  color: var(--alc-fg-invert);
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  font-size: 13px;
+}
+.pc-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+}
+.pc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.pc-bar__url {
+  margin-left: 8px;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+}
+.pc-body {
+  flex: 1;
+  /* Room for the tallest frame (three pushes, the comment, the merge), so
+     the card never changes height. */
+  min-height: 318px;
+  padding: 16px 18px 18px;
+}
+.pc-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.pc-muted {
+  color: var(--alc-code-comment);
+  font-weight: 400;
+}
+.pc-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+.pc code {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(var(--alc-code-lift), 0.06);
+}
+.pc-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--prf-open-solid, #38511f);
+  color: #fbf6ea;
+}
+.pc-pill--merged {
+  background: var(--prf-merged-solid, #5b3290);
+}
+
+.pc-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-left: 1px solid rgba(var(--alc-code-edge), 0.14);
+  display: grid;
+  gap: 12px;
+}
+.pc-push,
+.pc-event {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.pc-push__who {
+  flex: none;
+  display: grid;
+  place-items: center;
+  position: absolute;
+  left: -26px;
+  top: -2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 9.5px;
+  font-weight: 600;
+  background: #7a3a18;
+  color: #fbf6ea;
+}
+.pc-push__who--merged {
+  background: var(--prf-merged-solid, #5b3290);
+  font-size: 12px;
+}
+.pc-status {
+  margin-left: auto;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+}
+.pc-status--run {
+  color: var(--alc-warn);
+}
+.pc-status--ok {
+  color: var(--alc-success);
+}
+.pc-spin {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: pc-spin 700ms linear infinite;
+}
+@keyframes pc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The one comment, edited in place. */
+.pc-comment {
+  border: 1.5px solid rgba(var(--alc-code-edge), 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+  transition:
+    border-color 300ms ease,
+    box-shadow 300ms ease,
+    opacity 600ms ease;
+}
+.pc-comment.is-edited {
+  border-color: var(--alc-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--alc-success) 22%, transparent);
+}
+.pc-comment.is-deleting {
+  border-color: var(--alc-danger);
+  opacity: 0.55;
+}
+.pc-comment__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  background: rgba(var(--alc-code-lift), 0.03);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+}
+.pc-avatar {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(var(--alc-code-lift), 0.06);
+}
+.pc-bot {
+  padding: 0 6px;
+  border: 1px solid rgba(var(--alc-code-edge), 0.24);
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--alc-code-comment);
+}
+.pc-edited {
+  margin-left: auto;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-success);
+}
+.pc-comment__body {
+  padding: 10px 12px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.pc-link {
+  color: var(--alc-code-type);
+  text-decoration: underline;
+}
+.pc-sha {
+  display: inline-block;
+  padding: 0 1px;
+  border-radius: 3px;
+  animation: pc-sha 1100ms ease-out;
+}
+@keyframes pc-sha {
+  from {
+    background: color-mix(in srgb, var(--alc-success) 45%, transparent);
+    transform: translateY(-4px);
+  }
+  30% {
+    transform: none;
+  }
+  to {
+    background: transparent;
+  }
+}
+.pc-comment__gone {
+  padding: 6px 12px;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-danger);
+  border-top: 1px solid rgba(var(--alc-code-edge), 0.08);
+}
+
+.pc-enter {
+  animation: pc-enter 360ms ease-out;
+}
+@keyframes pc-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Narrow screens: one line per row. Commit messages, the URL scheme and
+   wordier labels drop out; "Preview:" sits on its own line. */
+.pc-narrow {
+  display: none;
+}
+.pc-nowrap {
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .pc-wide {
+    display: none;
+  }
+  .pc-narrow {
+    display: inline;
+  }
+  .pc-push,
+  .pc-comment__head {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .pc-label {
+    display: block;
+  }
+  .pc-link {
+    white-space: nowrap;
+  }
+  .pc-title {
+    font-size: 16px;
+  }
+}
+
+.alc-motion-paused .pc *,
+.alc-motion-paused .pc *::before {
+  animation-play-state: paused !important;
+}
+@media (max-width: 900px) {
+  /* The tallest phone frame, so the card keeps one height. */
+  .pc-body {
+    min-height: 370px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc *,
+  .pc *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -863,6 +863,13 @@ const decodeRevisionRefs = Schema.decodeUnknownOption(
   ),
 );
 
+/** Where a pull request's head forked off its base, the commit its patch is computed from. */
+const decodeMergeBase = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ merge_base_commit: Schema.Struct({ sha: Schema.String }) }),
+  ),
+);
+
 const GRAPHQL_MERGE_METHODS = {
   merge: "MERGE",
   squash: "SQUASH",
@@ -1299,6 +1306,29 @@ export const make = Effect.gen(function* () {
           ...(input.commit === undefined ? {} : { commit: input.commit }),
         });
       }
+      // A pull request's patch runs from the merge base, and the base branch may have moved on
+      // since, so its old side is read there. Page 2 of a compare leaves out the file list; a
+      // failed read falls back to the base branch tip.
+      const oldRef =
+        input.commit === undefined && input.changeType !== "new"
+          ? yield* api
+              .rest({
+                host: input.host,
+                operation: "getPullRequestDiffFileContents",
+                path: `repos/${owner}/${name}/compare/${baseRef}...${headRef}?per_page=1&page=2`,
+                timeout: DIFF_TIMEOUT,
+              })
+              .pipe(
+                Effect.map((response) =>
+                  decodeMergeBase(response.body).pipe(
+                    Option.map((compare) => compare.merge_base_commit.sha),
+                    Option.filter(isCommitSha),
+                    Option.getOrElse(() => baseRef ?? ""),
+                  ),
+                ),
+                Effect.orElseSucceed(() => baseRef ?? ""),
+              )
+          : (baseRef ?? "");
 
       const readFile = (revision: string, filePath: string) =>
         api
@@ -1329,7 +1359,7 @@ export const make = Effect.gen(function* () {
 
       const [oldContents, newContents] = yield* Effect.all(
         [
-          input.changeType === "new" ? Effect.succeed("") : readFile(baseRef ?? "", input.oldPath),
+          input.changeType === "new" ? Effect.succeed("") : readFile(oldRef, input.oldPath),
           input.changeType === "deleted" ? Effect.succeed("") : readFile(headRef, input.newPath),
         ],
         { concurrency: 2 },
