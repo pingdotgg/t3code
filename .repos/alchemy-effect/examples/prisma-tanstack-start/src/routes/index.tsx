@@ -71,10 +71,7 @@ function Home() {
           }}
         >
           <RuntimeRow label="Message" value={runtime.message} />
-          <RuntimeRow
-            label="Database"
-            value={runtime.databaseReady ? "ready" : "unavailable"}
-          />
+          <RuntimeRow label="Database" value={runtime.databaseReady ? "ready" : "unavailable"} />
           <RuntimeRow
             label="Configuration"
             value={runtime.configurationReady ? "ready" : "unavailable"}
@@ -106,12 +103,8 @@ function Home() {
                   background: "#ffffff",
                 }}
               >
-                <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>
-                  {post.title}
-                </h3>
-                <p style={{ margin: 0, color: "#4a5568", fontSize: 13 }}>
-                  {post.excerpt}
-                </p>
+                <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>{post.title}</h3>
+                <p style={{ margin: 0, color: "#4a5568", fontSize: 13 }}>{post.excerpt}</p>
               </article>
             ))}
           </div>
