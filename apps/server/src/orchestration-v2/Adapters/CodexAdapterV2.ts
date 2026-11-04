@@ -5249,10 +5249,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.delivery === "async" && payload.item.questions?.length) {
+              const nativeRequestId = `async:${payload.item.id}`;
+              // Request ids are random, so a repeated completion would add a second question.
+              for (const request of context.asyncQuestions.values()) {
+                if (request.nativeRequestRef?.nativeId === nativeRequestId) return;
+              }
               const artifacts = yield* buildUserInputRequestArtifacts({
                 context,
                 nativeItemId: payload.item.id,
-                nativeRequestId: `async:${payload.item.id}`,
+                nativeRequestId,
                 responseMode: "message",
                 questions: payload.item.questions.map((question, index) => ({
                   id: String(index),

@@ -1851,6 +1851,40 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             outputTokens: 5,
             reasoningOutputTokens: 1,
           };
+          const question = (label: string) =>
+            ({
+              type: "emit_inbound",
+              label,
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: {
+                    type: "agentMessage",
+                    id: restored ? "prior-question" : "async-question-item",
+                    text: "Which branch?",
+                    delivery: "async",
+                    questions: [{ title: "Which branch?", options: ["main", "dev"] }],
+                  },
+                },
+              },
+            }) as const;
+          const sleep = (method: "item/started" | "item/completed") =>
+            ({
+              type: "emit_inbound",
+              label: `sleep ${method}`,
+              frame: {
+                method,
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622441000,
+                  completedAtMs: 1782622501000,
+                  item: { type: "sleep", id: "sleep-item", durationMs: 60_000 },
+                },
+              },
+            }) as const;
           const transcript = makeCodexReplayTranscript({
             scenario: "async-question-and-billed-usage",
             entries: [
@@ -1859,46 +1893,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeTurnId,
                 prompt: "Continue while I decide.",
               }),
-              ...(restored
-                ? []
-                : [
-                    {
-                      type: "emit_inbound",
-                      label: "question",
-                      frame: {
-                        method: "item/completed",
-                        params: {
-                          threadId: nativeThreadId,
-                          turnId: nativeTurnId,
-                          item: {
-                            type: "agentMessage",
-                            id: "async-question-item",
-                            text: "Which branch?",
-                            delivery: "async",
-                            questions: [{ title: "Which branch?", options: ["main", "dev"] }],
-                          },
-                        },
-                      },
-                    } as const,
-                  ]),
+              ...(restored ? [] : [question("question")]),
+              sleep("item/started"),
+              // A repeated completion of a tracked question must not reopen or replace it.
+              question("repeated question"),
               // An interrupted turn ends without completing the sleep item.
-              ...(terminalStatus === "completed"
-                ? (["item/started", "item/completed"] as const)
-                : (["item/started"] as const)
-              ).map((method) => ({
-                type: "emit_inbound" as const,
-                label: `sleep ${method}`,
-                frame: {
-                  method,
-                  params: {
-                    threadId: nativeThreadId,
-                    turnId: nativeTurnId,
-                    startedAtMs: 1782622441000,
-                    completedAtMs: 1782622501000,
-                    item: { type: "sleep", id: "sleep-item", durationMs: 60_000 },
-                  },
-                },
-              })),
+              ...(terminalStatus === "completed" ? [sleep("item/completed")] : []),
               {
                 type: "emit_inbound",
                 label: "usage",
