@@ -169,7 +169,10 @@ export function excerptExpansionOldContents(
       ? [...Array.from({ length: oldBefore - prefix.length }, () => "\n"), ...prefix]
       : prefix.slice(prefix.length - oldBefore);
   const oldRows = rows.filter((row) => row.oldLine !== null).map((row) => row.text);
-  return [...oldPrefix, ...oldRows, ...newLines.slice(before + newCount)].join("");
+  const suffix = newLines.slice(before + newCount);
+  // Synthetic context still needs its own line after an old EOF row.
+  if (suffix.length > 0 && oldRows.at(-1)?.endsWith("\n") === false) oldRows.push("\n");
+  return [...oldPrefix, ...oldRows, ...suffix].join("");
 }
 
 export function letterStopNotes(stop: PullRequestReviewGuideStop) {

@@ -164,6 +164,15 @@ describe("excerptExpansionOldContents", () => {
       ),
     },
     ...LINE_ENDING_CASES,
+    {
+      name: "partial replacement of an unterminated old EOF",
+      patch:
+        "diff --git a/src/tray.ts b/src/tray.ts\n--- a/src/tray.ts\n+++ b/src/tray.ts\n@@ -1 +1,3 @@\n-a\n\\ No newline at end of file\n+a\n+b\n+c\n",
+      start: 1,
+      end: 1,
+      newContents: "a\nb\nc\n",
+      oldContents: "a\nb\nc\n",
+    },
   ])(
     "puts back only the excerpt's lines and keeps both sides numbered as in the file: $name",
     ({ patch, start, end, newContents, oldContents }) => {
