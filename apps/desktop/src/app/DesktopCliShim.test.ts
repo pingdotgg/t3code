@@ -85,12 +85,14 @@ describe("renderCliShim", () => {
       PATH: `${bin}:${process.env.PATH}`,
       WSL_DISTRO_NAME: "Ubuntu",
       T3CODE_HOME: "/linux-home",
+      HOME: root,
     };
     const result = run(shim, ["app", project, "--base-dir", project], env);
     expect(result.status).toBe(0);
     expect(result.stdout.split("\n").slice(0, 4)).toEqual(["Ubuntu", project, project, "unset"]);
     expect(result.stdout).toContain("T3CODE_WSL_WORKSPACE_ROOT/w");
     expect(run(shim, ["app", `--base-dir=${project}`, "--", project], env).status).toBe(0);
+    expect(run(shim, ["app", "--base-dir=~/data"], env).stdout.split("\n")[2]).toBe(`${root}/data`);
     expect(run(shim, ["app", "--help"], env).status).toBe(0);
     expect(run(shim, ["app", project, project], env).status).toBe(2);
     expect(run(shim, ["app", "--base-dir"], env).status).toBe(2);

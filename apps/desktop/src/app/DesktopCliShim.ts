@@ -61,6 +61,7 @@ export const renderWslCliShim = (windowsCliPath: string) =>
     '  if [ -n "$base_dir" ]; then',
     '    case "$base_dir" in',
     '      [A-Za-z]:*|\\\\*) base_dir_wsl=$(wslpath -u "$base_dir") || exit 1 ;;',
+    '      "~"|"~/"*) base_dir_wsl=$HOME${base_dir#"~"} ;;',
     "      *) base_dir_wsl=$base_dir ;;",
     "    esac",
     '    T3CODE_WSL_BASE_DIR=$(wslpath -w "$base_dir_wsl") || exit 1',
