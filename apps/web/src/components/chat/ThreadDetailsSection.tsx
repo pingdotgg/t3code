@@ -1,4 +1,4 @@
-import { type ComponentProps, type ReactNode, type Ref, useId, useState } from "react";
+import { type ComponentProps, type ReactNode, type Ref, useId } from "react";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
@@ -14,7 +14,6 @@ export function ThreadDetailsSection({
   contentRef,
   summary,
   action,
-  empty = false,
   variant = "card",
   spacing = "default",
   ...props
@@ -23,24 +22,15 @@ export function ThreadDetailsSection({
   contentRef?: Ref<HTMLDivElement>;
   summary?: ReactNode;
   action?: ReactNode;
-  empty?: boolean;
   variant?: "card" | "workspace" | "usage";
   spacing?: "default" | "relaxed";
 }) {
   const contentId = useId();
-  const [collapsed, setCollapsed] = useLocalStorage(
+  const [isCollapsed, setCollapsed] = useLocalStorage(
     "thread-details:collapsed:" + title,
     false,
     Schema.Boolean,
   );
-  // Empty cards start closed. A content transition overrides a saved collapse,
-  // while a click still remembers the user's preference for populated cards.
-  const [disclosure, setDisclosure] = useState<{ empty: boolean; collapsed: boolean | null }>({
-    empty,
-    collapsed: empty ? true : null,
-  });
-  if (disclosure.empty !== empty) setDisclosure({ empty, collapsed: empty });
-  const isCollapsed = disclosure.collapsed ?? collapsed;
   const [order, setOrder] = useLocalStorage(
     "thread-details:card-order",
     DEFAULT_ORDER,
@@ -92,10 +82,7 @@ export function ThreadDetailsSection({
             part="heading"
             aria-expanded={!isCollapsed}
             aria-controls={contentId}
-            onClick={() => {
-              setCollapsed(!isCollapsed);
-              setDisclosure({ empty, collapsed: empty ? !isCollapsed : null });
-            }}
+            onClick={() => setCollapsed(!isCollapsed)}
           >
             <span className="shrink-0">{title}</span>
             {summary ? (
