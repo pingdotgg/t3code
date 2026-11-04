@@ -174,10 +174,14 @@ describe("AcpMcpStdioBridge", () => {
         jsonrpc: "2.0",
         id: 4,
         method: "tools/call",
-        params: { name: "echo", arguments: { text: "a\u2028b\u2029c" } },
+        params: { name: "echo", arguments: { text: "a\u2028b\u2029c\u{1f30d}" } },
       });
 
-      input.end(`${message}\n`);
+      // Split inside the emoji's UTF-8 bytes and leave the last line unterminated, as stdin may.
+      const bytes = Buffer.from(message);
+      const split = bytes.indexOf(Buffer.from("\u{1f30d}")) + 2;
+      input.write(bytes.subarray(0, split));
+      input.end(bytes.subarray(split));
       yield* Fiber.join(fiber);
 
       expect(requests.map((request) => request.body)).toEqual([message]);
