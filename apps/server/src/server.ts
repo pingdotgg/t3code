@@ -679,9 +679,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
-  // One gate for the server: layers memoize by reference, so the runtime layer shares it.
-  Layer.provideMerge(ProviderInstallationGate.layer),
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
+  // reference, so the runtime layer shares it.
+  Layer.provideMerge(ProviderInstallationGate.layer),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),

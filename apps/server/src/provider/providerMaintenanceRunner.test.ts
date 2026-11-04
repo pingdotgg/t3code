@@ -302,6 +302,7 @@ describe("providerMaintenanceRunner", () => {
         [
           ["queued", "Waiting for another provider update to finish."],
           ["running", "Checking for the latest version"],
+          ["running", "Waiting for running provider work to finish."],
           ["running", "Running native-agent update"],
           ["running", "Verifying the installed version"],
           ["succeeded", "Provider updated."],
@@ -939,20 +940,8 @@ describe("providerMaintenanceRunner", () => {
         ],
         { installedVersionAfterUpdate: "1.0.0" },
       );
-      const updater = yield* makeTestRunner({
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) => {
-          const capabilities = lifecycleFor(provider);
-          return Effect.succeed(
-            provider === OPENCODE_DRIVER
-              ? {
-                  ...capabilities,
-                  update: { ...capabilities.update!, lockKey: "npm-global:/other" },
-                }
-              : capabilities,
-          );
-        },
-      });
+      // OpenCode installs into the same npm prefix, so it shares the lock key but not the package.
+      const updater = yield* makeTestRunner(registry);
       const gate = yield* ProviderInstallationGate.ProviderInstallationGate;
 
       const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
@@ -966,7 +955,7 @@ describe("providerMaintenanceRunner", () => {
       const other = yield* gate
         .execute(
           OPENCODE_INSTANCE_ID,
-          Effect.sync(() => log.push("other installation ran")),
+          Effect.sync(() => log.push("other driver ran")),
         )
         .pipe(Effect.forkScoped);
       yield* TestClock.adjust("1 minute");
@@ -975,7 +964,7 @@ describe("providerMaintenanceRunner", () => {
       yield* Fiber.join(other);
 
       assert.deepStrictEqual(log, [
-        "other installation ran",
+        "other driver ran",
         "update command exited",
         "shared installation ran",
       ]);
@@ -999,7 +988,7 @@ describe("providerMaintenanceRunner", () => {
 
   it.effect("runs the installer after in-flight provider work and before later work", () => {
     const executionStarted = Deferred.makeUnsafe<void>();
-    const updateRunning = Deferred.makeUnsafe<void>();
+    const updateWaiting = Deferred.makeUnsafe<void>();
     const log: Array<string> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider, {
@@ -1012,8 +1001,8 @@ describe("providerMaintenanceRunner", () => {
             .setProviderMaintenanceActionState(input)
             .pipe(
               Effect.tap(() =>
-                input.state?.message?.startsWith("Running ")
-                  ? Deferred.succeed(updateRunning, undefined)
+                input.state?.message === "Waiting for running provider work to finish."
+                  ? Deferred.succeed(updateWaiting, undefined)
                   : Effect.void,
               ),
             ),
@@ -1031,7 +1020,7 @@ describe("providerMaintenanceRunner", () => {
         .pipe(Effect.forkScoped);
       yield* Deferred.await(executionStarted);
       const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
-      yield* Deferred.await(updateRunning);
+      yield* Deferred.await(updateWaiting);
       const later = yield* gate
         .execute(
           CODEX_INSTANCE_ID,

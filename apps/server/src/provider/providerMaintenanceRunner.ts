@@ -318,13 +318,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       onProgress,
       ...(update.env ? { env: update.env } : {}),
     });
-  // Instances with other homes or accounts can still run the binary this update replaces.
+  // Instances with other homes or accounts can still run the binary this update replaces. The
+  // lock key names the package manager location, so other drivers there keep their own package.
   const instancesSharingInstallation = Effect.fn(
     "ProviderMaintenanceRunner.instancesSharingInstallation",
-  )(function* (instanceId: ProviderInstanceId, lockKey: string) {
+  )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind, lockKey: string) {
     const providers = yield* providerRegistry.getProviders;
     const shared = yield* Effect.forEach(
-      providers.filter((candidate) => candidate.instanceId !== instanceId),
+      providers.filter(
+        (candidate) => candidate.instanceId !== instanceId && candidate.driver === provider,
+      ),
       (candidate) =>
         providerRegistry
           .getProviderMaintenanceCapabilitiesForInstance(candidate.instanceId, candidate.driver)
@@ -552,10 +555,17 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
-            yield* setRunningMessage(`Running ${describeCommand(command)}`);
+            const sharingInstances = yield* instancesSharingInstallation(
+              instanceId,
+              provider,
+              update.lockKey,
+            );
+            yield* setRunningMessage("Waiting for running provider work to finish.");
             const result = yield* installationGate.update(
-              yield* instancesSharingInstallation(instanceId, update.lockKey),
-              runMaintenanceCommand(command, setRunningMessage),
+              sharingInstances,
+              setRunningMessage(`Running ${describeCommand(command)}`).pipe(
+                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+              ),
             );
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {

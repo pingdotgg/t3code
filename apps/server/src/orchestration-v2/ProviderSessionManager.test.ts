@@ -590,6 +590,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -669,7 +670,7 @@ function layerTest(input: {
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
           layerTestStores,
-          ProviderInstallationGate.layer,
+          input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -1066,6 +1067,53 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
         layerTest({
           state,
           idleTimeoutMs: 60_000,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 opens provider sessions inside the installation gate", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const log: Array<string> = [];
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-provider-session-manager-installation-gate");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      assert.deepStrictEqual(log, [`enter ${modelSelection.instanceId}`, "openSession", "exit"]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen: () => Effect.sync(() => log.push("openSession")),
+          installationGateLayer: Layer.succeed(
+            ProviderInstallationGate.ProviderInstallationGate,
+            ProviderInstallationGate.ProviderInstallationGate.of({
+              execute: (instanceId, gated) =>
+                Effect.sync(() => log.push(`enter ${instanceId}`)).pipe(
+                  Effect.andThen(gated),
+                  Effect.ensuring(Effect.sync(() => log.push("exit"))),
+                ),
+              update: () => Effect.die("unused"),
+            }),
+          ),
         }),
       ),
     );
