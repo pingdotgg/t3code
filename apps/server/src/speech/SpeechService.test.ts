@@ -148,6 +148,47 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect.each(["cancellation", "timeout"] as const)(
+  "releases a stalled model preparation on %s",
+  (reason) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const started = Promise.withResolvers<AbortSignal>();
+      const stalled = Promise.withResolvers<typeof native>();
+      const disposed = Promise.withResolvers<void>();
+      const abandoned = { ...native, dispose: vi.fn(() => disposed.resolve()) };
+      loadNative.mockImplementationOnce((_path, signal) => {
+        started.resolve(signal);
+        return stalled.promise;
+      });
+      const request = yield* speech.prepareModel.pipe(Effect.forkChild);
+      const signal = yield* Effect.promise(() => started.promise);
+      try {
+        if (reason === "cancellation") {
+          yield* Fiber.interrupt(request).pipe(Effect.forkChild({ startImmediately: true }));
+        }
+        yield* TestClock.adjust(reason === "timeout" ? "2 minutes" : 0);
+        expect(signal.aborted).toBe(true);
+        const exit = yield* Fiber.await(request);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (reason === "timeout") {
+          expect(Exit.findErrorOption(exit)).toMatchObject({
+            value: { _tag: "SpeechOperationError", operation: "model preparation" },
+          });
+        }
+        yield* speech.selectModel("fallback-model");
+        const transcribe = speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        expect(yield* transcribe).toBe("hello");
+        stalled.resolve(abandoned);
+        yield* Effect.promise(() => disposed.promise);
+        expect(yield* transcribe).toBe("hello");
+        expect(loadNative).toHaveBeenCalledTimes(2);
+      } finally {
+        stalled.resolve(abandoned);
+      }
+    }).pipe(Effect.provide(layer)),
+);
+
 it.effect("rejects model mutations outside the offered registry", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
