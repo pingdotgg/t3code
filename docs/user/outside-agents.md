@@ -114,6 +114,10 @@ the message to read it from stdin.
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.
 
+`t3 thread list --all-projects` lists every project's threads. To list a linked
+environment's threads, pass `--environment <id>` from `t3 environment list`
+together with `--all-projects` or `--project <id>`. Paths name projects only here.
+
 ## Remove an agent
 
 Approved agents appear under **Settings → Sharing & access** like other clients.

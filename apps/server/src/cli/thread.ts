@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -559,11 +560,85 @@ const decodeThreadId = (value: string) =>
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
   );
 
+const decodeEnvironmentId = Schema.decodeUnknownEffect(EnvironmentId);
+const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
+
+/** A linked environment's project is named by id: local paths mean nothing there. */
+export const listThreads = Effect.fn("cli.thread.listThreads")(function* (
+  tools: ThreadTools,
+  scope: {
+    readonly environment: Option.Option<string>;
+    readonly project: Option.Option<string>;
+    readonly allProjects: boolean;
+  },
+) {
+  if (scope.allProjects && Option.isSome(scope.project)) {
+    return yield* new ThreadUsageError({ detail: "Pass --project or --all-projects, not both." });
+  }
+  const usage = (detail: string) => () => new ThreadUsageError({ detail });
+  let environmentId: EnvironmentId | undefined;
+  if (Option.isSome(scope.environment)) {
+    const value = scope.environment.value;
+    environmentId = yield* decodeEnvironmentId(value.trim()).pipe(
+      Effect.mapError(usage(`'${value}' is not an environment id.`)),
+    );
+  }
+  let target: { readonly allProjects: true } | { readonly projectId: ProjectId };
+  if (scope.allProjects) {
+    target = { allProjects: true };
+  } else if (environmentId === undefined) {
+    const project = yield* resolveProject(
+      tools,
+      Option.getOrElse(scope.project, () => "."),
+    );
+    target = { projectId: project.id };
+  } else if (Option.isSome(scope.project)) {
+    const value = scope.project.value;
+    target = {
+      projectId: yield* decodeProjectId(value.trim()).pipe(
+        Effect.mapError(usage(`'${value}' is not a project id.`)),
+      ),
+    };
+  } else {
+    return yield* usage("With --environment, pass --project <id> or --all-projects.")();
+  }
+  const threads: Array<OrchestratorMcpThreadListItem> = [];
+  let cursor: number | null = 0;
+  while (cursor !== null) {
+    const page: OrchestratorMcpThreadListResult = yield* tools.call(
+      "t3_thread_list",
+      {
+        ...(environmentId === undefined ? {} : { environmentId }),
+        ...target,
+        includeSubagents: false,
+        limit: 100,
+        cursor,
+      },
+      OrchestratorMcpThreadListResult,
+    );
+    threads.push(...page.threads);
+    cursor = page.nextCursor;
+  }
+  return threads;
+});
+
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   project: Flag.String("project").pipe(
-    Flag.withDescription("Project id or a path inside the project. Defaults to this directory."),
-    Flag.withDefault("."),
+    Flag.withDescription(
+      "Project id or a path inside the project. Defaults to this directory. With --environment, a project id there.",
+    ),
+    Flag.optional,
+  ),
+  allProjects: Flag.Boolean("all-projects").pipe(
+    Flag.withDescription("List threads in every project."),
+    Flag.withDefault(false),
+  ),
+  environment: Flag.String("environment").pipe(
+    Flag.withDescription(
+      "A linked environment's id, from `t3 environment list`. Defaults to this one.",
+    ),
+    Flag.optional,
   ),
   json: jsonFlag,
 }).pipe(
@@ -572,18 +647,7 @@ const threadListCommand = Command.make("list", {
     withThreadTools(
       flags,
       Effect.fn("cli.thread.list")(function* (tools) {
-        const project = yield* resolveProject(tools, flags.project);
-        const threads: Array<OrchestratorMcpThreadListItem> = [];
-        let cursor: number | null = 0;
-        while (cursor !== null) {
-          const page: OrchestratorMcpThreadListResult = yield* tools.call(
-            "t3_thread_list",
-            { projectId: project.id, includeSubagents: false, limit: 100, cursor },
-            OrchestratorMcpThreadListResult,
-          );
-          threads.push(...page.threads);
-          cursor = page.nextCursor;
-        }
+        const threads = yield* listThreads(tools, flags);
         if (flags.json) {
           return yield* printJson(threads);
         }

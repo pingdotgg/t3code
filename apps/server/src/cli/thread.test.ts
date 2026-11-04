@@ -1,8 +1,16 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
-import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
+import {
+  listThreads,
+  readLatestMessages,
+  type ThreadTools,
+  titleFromMessage,
+  waitForRun,
+} from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -165,3 +173,52 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+
+it.effect("list on a linked environment names its project by id and pages through it", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("env-remote");
+    const projectId = ProjectId.make("project-remote");
+    const page = (nextCursor: number | null) => ({
+      projectId,
+      currentThreadId: null,
+      threads: [],
+      nextCursor,
+      total: 2,
+    });
+    for (const [scope, target] of [
+      [{ project: Option.some(projectId), allProjects: false }, { projectId }],
+      [{ project: Option.none(), allProjects: true }, { allProjects: true }],
+    ] as const) {
+      // No t3_project_list script: resolving the id against local projects dies.
+      const { tools, calls } = scriptedTools({ t3_thread_list: [page(1), page(null)] });
+
+      yield* listThreads(tools, { environment: Option.some(environmentId), ...scope });
+
+      assert.deepStrictEqual(
+        calls.map((entry) => entry.args),
+        [0, 1].map((cursor) => ({
+          environmentId,
+          ...target,
+          includeSubagents: false,
+          limit: 100,
+          cursor,
+        })),
+      );
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("list on a linked environment needs a project id or --all-projects", () =>
+  Effect.gen(function* () {
+    const { tools, calls } = scriptedTools({});
+
+    const error = yield* listThreads(tools, {
+      environment: Option.some("env-remote"),
+      project: Option.none(),
+      allProjects: false,
+    }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "ThreadUsageError");
+    assert.deepStrictEqual(calls, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
