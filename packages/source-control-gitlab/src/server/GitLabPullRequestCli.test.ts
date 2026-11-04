@@ -1187,6 +1187,35 @@ layer("GitLabPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect("skips a fork's maintainer edits permission read when the caller opts out", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              source_project_id: 40,
+              target_project_id: 12,
+              allow_collaboration: true,
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      expect(detail.maintainerCanModify).toBe(true);
+      expect(detail.viewerCanEditMaintainerEdits).toBeUndefined();
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("sends maintainer edits as allow_collaboration", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));

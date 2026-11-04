@@ -254,6 +254,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       /** `false` skips the trigger job read; the permission check before every write does. */
       readonly downstreamChecks?: boolean;
+      /** `false` skips a fork's maintainer edits permission read, for views that never show it. */
+      readonly maintainerEdits?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
     readonly getReviewDecisions: (input: {
@@ -1370,7 +1372,9 @@ export const make = Effect.gen(function* () {
         const read = yield* mergeRequestDetail(input);
         // Only forks have the setting, so same-project merge requests skip the extra read.
         const detail =
-          read.maintainerCanModify === undefined || read.state !== "open"
+          input.maintainerEdits === false ||
+          read.maintainerCanModify === undefined ||
+          read.state !== "open"
             ? read
             : {
                 ...read,
