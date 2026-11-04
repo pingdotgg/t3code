@@ -1,7 +1,7 @@
-import * as DynamoDB from "alchemy/AWS/DynamoDB";
-import * as Lambda from "alchemy/AWS/Lambda";
-import * as S3 from "alchemy/AWS/S3";
-import * as SQS from "alchemy/AWS/SQS";
+import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
+import * as Lambda from "@alchemy.run/aws/Lambda";
+import * as S3 from "@alchemy.run/aws/S3";
+import * as SQS from "@alchemy.run/aws/SQS";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
 import * as Console from "effect/Console";
@@ -10,7 +10,6 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-
 import type { Job } from "./Job.ts";
 
 export class PutJobError extends Data.TaggedError("PutJobError")<{
@@ -50,23 +49,26 @@ export const JobStorageDynamoDB = Layer.provideMerge(
       const putItem = yield* DynamoDB.PutItem(table);
       const sink = yield* SQS.QueueSink(queue);
 
-      yield* DynamoDB.consumeTableChanges(table, {
-        streamViewType: "NEW_AND_OLD_IMAGES",
-        startingPosition: "LATEST",
-        batchSize: 10,
-      }, (stream) =>
-        stream.pipe(
-          Stream.map((record) => ({
-            MessageBody: JSON.stringify({
-              eventName: record.eventName,
-              keys: record.dynamodb.Keys,
-              newImage: record.dynamodb.NewImage,
-              oldImage: record.dynamodb.OldImage,
-            }),
-          })),
-          Stream.run(sink),
-          Effect.orDie,
-        ),
+      yield* DynamoDB.consumeTableChanges(
+        table,
+        {
+          streamViewType: "NEW_AND_OLD_IMAGES",
+          startingPosition: "LATEST",
+          batchSize: 10,
+        },
+        Effect.fn(function* (event) {
+          yield* Stream.fromIterable(event.Records).pipe(
+            Stream.map((record) => ({
+              MessageBody: JSON.stringify({
+                eventName: record.eventName,
+                keys: record.dynamodb.Keys,
+                newImage: record.dynamodb.NewImage,
+                oldImage: record.dynamodb.OldImage,
+              }),
+            })),
+            Stream.run(sink),
+          );
+        }),
       );
 
       const putJob = (job: Job) =>
@@ -129,11 +131,7 @@ export const JobStorageDynamoDB = Layer.provideMerge(
   ),
   Layer.mergeAll(Lambda.TableEventSource, SQS.QueueSinkHttp).pipe(
     Layer.provideMerge(
-      Layer.mergeAll(
-        DynamoDB.GetItemHttp,
-        DynamoDB.PutItemHttp,
-        SQS.SendMessageBatchHttp,
-      ),
+      Layer.mergeAll(DynamoDB.GetItemHttp, DynamoDB.PutItemHttp, SQS.SendMessageBatchHttp),
     ),
   ),
 );
@@ -204,9 +202,7 @@ export const JobStorageS3 = Layer.provideMerge(
 
       yield* S3.consumeBucketEvents(bucket, (stream) =>
         stream.pipe(
-          Stream.flatMap((item) =>
-            Stream.fromEffect(getJob(item.key).pipe(Effect.orDie)),
-          ),
+          Stream.flatMap((item) => Stream.fromEffect(getJob(item.key).pipe(Effect.orDie))),
           Stream.filter((job): job is Job => job !== undefined),
           Stream.map((job) => ({ MessageBody: JSON.stringify(job) })),
           Stream.run(sink),
@@ -222,11 +218,7 @@ export const JobStorageS3 = Layer.provideMerge(
   ),
   Layer.mergeAll(Lambda.BucketEventSource, SQS.QueueSinkHttp).pipe(
     Layer.provideMerge(
-      Layer.mergeAll(
-        S3.GetObjectHttp,
-        S3.PutObjectHttp,
-        SQS.SendMessageBatchHttp,
-      ),
+      Layer.mergeAll(S3.GetObjectHttp, S3.PutObjectHttp, SQS.SendMessageBatchHttp),
     ),
   ),
 );

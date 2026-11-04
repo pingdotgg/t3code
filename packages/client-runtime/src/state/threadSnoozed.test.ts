@@ -99,6 +99,18 @@ describe("effectiveSnoozed", () => {
       wokeAt: null,
     },
     {
+      reason: "failure without a completion timestamp",
+      completedAt: null,
+      pending: undefined,
+      wokeAt: null,
+    },
+    {
+      reason: "approval without a failure completion timestamp",
+      completedAt: null,
+      pending: "approval",
+      wokeAt: "2026-04-10T11:00:00.000Z",
+    },
+    {
       reason: "fresh failure",
       completedAt: "2026-04-10T10:00:00.000Z",
       pending: undefined,
