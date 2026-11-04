@@ -19,6 +19,8 @@ import type {
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
+  PullRequestContextMetadata,
+  PullRequestContextRecord,
   ReviewCommentContextRecord,
   TerminalContextRecord,
   ThreadContextRecord,
@@ -134,6 +136,57 @@ export function reviewCommentContextId(commentId: string): ComposerContextId {
   return toKindScopedComposerContextId("review-comment", commentId);
 }
 
+function pullRequestContextId(producerId: string): ComposerContextId {
+  return toKindScopedComposerContextId("pull-request", producerId);
+}
+
+function pullRequestContextLabel(pullRequest: PullRequestContextMetadata): string {
+  return `#${pullRequest.number}`;
+}
+
+function pullRequestContextRecord(
+  pullRequest: PullRequestContextMetadata,
+  producerId: string = `pr-reference:${pullRequest.url}`,
+): PullRequestContextRecord {
+  return {
+    version: 1,
+    contextId: pullRequestContextId(producerId),
+    kind: "pull-request",
+    label: sanitizeComposerContextLabel(pullRequestContextLabel(pullRequest), "pull-request"),
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+  };
+}
+
+function pullRequestContextReference(
+  pullRequest: PullRequestContextMetadata,
+  producerId: string = `pr-reference:${pullRequest.url}`,
+): ComposerContextReference {
+  return {
+    kind: "pull-request",
+    contextId: pullRequestContextId(producerId),
+    label: pullRequestContextLabel(pullRequest),
+  };
+}
+
+/** Upgrade legacy review-comment PR summaries to the first-class pull-request kind. */
+function upgradePullRequestSummaryRecord(record: ComposerContextRecord): ComposerContextRecord {
+  if (record.kind !== "review-comment") return record;
+  const comment = record as ReviewCommentContextRecord;
+  if (!isPullRequestSummaryContext(comment) || comment.pullRequest === undefined) return record;
+  // Keep contextId so existing t3-context:// links in message text still resolve.
+  return {
+    ...pullRequestContextRecord(comment.pullRequest),
+    contextId: comment.contextId,
+    label: comment.label,
+  };
+}
+
 export function previewAnnotationContextId(annotationId: string): ComposerContextId {
   return toKindScopedComposerContextId("preview-annotation", annotationId);
 }
@@ -141,6 +194,9 @@ export function previewAnnotationContextId(annotationId: string): ComposerContex
 export function reviewCommentContextReference(
   comment: ReviewCommentContext,
 ): ComposerContextReference {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextReference(comment.pullRequest, comment.id);
+  }
   return {
     kind: "review-comment",
     contextId: reviewCommentContextId(comment.id),
@@ -201,7 +257,10 @@ export function terminalContextRecord(context: TerminalContextDraft): TerminalCo
 
 export function reviewCommentContextRecord(
   comment: ReviewCommentContext,
-): ReviewCommentContextRecord {
+): ReviewCommentContextRecord | PullRequestContextRecord {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextRecord(comment.pullRequest, comment.id);
+  }
   return {
     version: 1,
     contextId: reviewCommentContextId(comment.id),
@@ -403,10 +462,11 @@ export function resolveUserMessageContext(message: {
   const resolved = message.context
     ? { text: message.text, records: message.context.records }
     : upgradeLegacyContextMessage(message.text);
+  const records = resolved.records.map(upgradePullRequestSummaryRecord);
   return {
     text: resolved.text,
-    records: resolved.records,
-    recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
+    records,
+    recordsById: new Map(records.map((record) => [record.contextId, record])),
   };
 }
 

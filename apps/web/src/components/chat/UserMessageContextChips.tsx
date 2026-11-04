@@ -119,19 +119,37 @@ function UserMessageSkillChip(props: {
 }
 
 function UserMessagePullRequestContextChip(props: {
-  record: Extract<KnownComposerContextRecord, { kind: "review-comment" }>;
+  record:
+    | Extract<KnownComposerContextRecord, { kind: "review-comment" }>
+    | Extract<KnownComposerContextRecord, { kind: "pull-request" }>;
   copyMarkdown: string;
   kind: ContextChipKind;
 }) {
   const { activeThreadEnvironmentId, openPullRequest } = use(TimelineRowCtx);
-  const metadata = props.record.pullRequest;
+  const metadata = props.record.kind === "pull-request" ? props.record : props.record.pullRequest;
   if (metadata === undefined) return null;
+  const label =
+    props.record.kind === "pull-request"
+      ? props.record.label || `#${metadata.number}`
+      : reviewCommentContextLabel(props.record);
+  const kindLabel = pullRequestContextKindLabel({
+    id: props.record.contextId,
+    sectionId: `pull-request:${metadata.number}`,
+    sectionTitle: `PR #${metadata.number}`,
+    filePath: `PR #${metadata.number}`,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: metadata.title,
+    text: "",
+    diff: "",
+    pullRequest: metadata,
+  });
   return (
     <PullRequestChip
       metadata={metadata}
       environmentId={activeThreadEnvironmentId}
-      label={reviewCommentContextLabel(props.record)}
-      kindLabel={pullRequestContextKindLabel(props.record)}
+      label={label}
+      kindLabel={kindLabel}
       kind={props.kind}
       copyMarkdown={props.copyMarkdown}
       onOpen={openPullRequest}
@@ -436,6 +454,23 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
+    },
+    {
+      kind: "pull-request",
+      canRender: (record) => record.kind === "pull-request",
+      render: (record, context) => {
+        if (record.kind !== "pull-request") {
+          return <UnavailableUserMessageContextChip {...context} />;
+        }
+        const pullRequestState = record.state === "open" && record.isDraft ? "draft" : record.state;
+        return (
+          <UserMessagePullRequestContextChip
+            record={record}
+            copyMarkdown={context.copyMarkdown}
+            kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
+          />
+        );
+      },
     },
     {
       kind: "review-comment",

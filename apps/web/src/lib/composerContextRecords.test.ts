@@ -270,8 +270,12 @@ describe("composerContextRecords", () => {
       });
 
     const atLimit = build(32_000);
+    expect(atLimit.kind).toBe("review-comment");
+    if (atLimit.kind !== "review-comment") throw new Error("expected review-comment");
     expect(atLimit.diff).toHaveLength(32_000);
     const overLimit = build(32_001);
+    expect(overLimit.kind).toBe("review-comment");
+    if (overLimit.kind !== "review-comment") throw new Error("expected review-comment");
     expect(overLimit.diff.length).toBeLessThanOrEqual(32_000);
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();

@@ -21,6 +21,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "element",
   "preview-annotation",
   "review-comment",
+  "pull-request",
   "mention",
   "skill",
   "thread",
@@ -189,6 +190,20 @@ export const ReviewCommentContextRecord = Schema.Struct({
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
+/** A whole pull request mentioned in the composer, distinct from a review hunk. */
+export const PullRequestContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("pull-request"),
+  number: PositiveInt,
+  title: ShortString,
+  url: ShortString,
+  headBranch: ShortString,
+  baseBranch: ShortString,
+  state: Schema.Literals(["open", "closed", "merged"]),
+  isDraft: Schema.Boolean,
+});
+export type PullRequestContextRecord = typeof PullRequestContextRecord.Type;
+
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
@@ -251,6 +266,7 @@ export const KnownComposerContextRecord = Schema.Union([
   ElementContextRecord,
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
+  PullRequestContextRecord,
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,

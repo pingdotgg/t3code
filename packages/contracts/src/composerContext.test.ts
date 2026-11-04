@@ -102,6 +102,18 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
       isDraft: false,
     },
   },
+  "pull-request": {
+    ...base,
+    kind: "pull-request",
+    label: "#42",
+    number: 42,
+    title: "Improve context chips",
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+    headBranch: "feat/context-chips",
+    baseBranch: "main",
+    state: "open",
+    isDraft: false,
+  },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
   thread: {
