@@ -1,4 +1,5 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1582,6 +1583,118 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.isDefined(deliveryRun);
         assert.notEqual(deliveryRun?.status, "queued");
       }),
+    );
+    it.effect(
+      "keeps the parent shell unsettled while its delegated completion wake is pending",
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:pending-wake-shell");
+          yield* seedParentWithTerminalTask({
+            threadId,
+            projectId: ProjectId.make("project:pending-wake-shell"),
+            runId: RunId.make("run:pending-wake-shell-seed"),
+            rootNodeId: NodeId.make("node:pending-wake-shell-seed"),
+            taskId: NodeId.make("node:pending-wake-shell-seed-task"),
+            deliveryState: "acknowledged",
+            parentRunStatus: "completed",
+            now,
+          });
+          const messageId = MessageId.make("message:pending-wake-shell");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:pending-wake-shell-send"),
+            threadId,
+            messageId,
+            text: "Delegate this and end your turn",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === messageId,
+          )!;
+          const runId = parentRun.id;
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("command:pending-wake-shell-delegate"),
+            parentThreadId: threadId,
+            parentRunId: runId,
+            parentNodeId: parentRun.rootNodeId!,
+            task: "Run in the background",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+          });
+          const started = yield* orchestrator.getThreadProjection(threadId);
+          const task = started.subagents.find((row) => row.runId === runId && row.childThreadId)!;
+          yield* sink.write({
+            events: [
+              {
+                ...runEvent({
+                  threadId,
+                  runId,
+                  ordinal: parentRun.ordinal,
+                  status: "completed",
+                  now,
+                }),
+                payload: {
+                  ...started.runs.find((run) => run.id === runId)!,
+                  status: "completed",
+                  completedAt: now,
+                },
+              },
+            ],
+          });
+          assert.isTrue(
+            backgroundWorkHoldsCompletion(
+              (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks ?? [],
+            ),
+          );
+
+          const childThreadId = task.childThreadId!;
+          const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+          yield* sink.write({
+            events: [
+              {
+                ...runEvent({
+                  threadId: childThreadId,
+                  runId: childRun.id,
+                  ordinal: childRun.ordinal,
+                  status: "completed",
+                  now,
+                }),
+                payload: { ...childRun, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          let wake = yield* requests.take;
+          while (wake.threadId !== threadId) wake = yield* requests.take;
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            projection.subagents.find((row) => row.id === task.id)?.completionDelivery?.state,
+            "claimed",
+          );
+          assert.isFalse(
+            projection.runs.some(
+              (run) => run.userMessageId === wake.delegatedCompletion?.messageId,
+            ),
+          );
+
+          const shell = yield* orchestrator.getThreadShell(threadId);
+          assert.isTrue(
+            backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []),
+            `parent shell reads settled (status ${shell?.status}, no held background work) while its delegated completion wake is still pending`,
+          );
+        }),
     );
     it.effect("pauses queued follow-up cards and resumes them", () =>
       Effect.gen(function* () {
