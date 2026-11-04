@@ -171,13 +171,6 @@ export interface RepoWorktreeSetSubmoduleResult {
   readonly staged: boolean;
 }
 
-export interface RepoWorktreeStatus {
-  readonly enabled: boolean;
-  readonly instructions: string;
-  readonly projectWorkspaceRoot: string;
-  readonly repoWorktrees: ReadonlyArray<ThreadRepoWorktree>;
-}
-
 export type RepoWorktreeFailure =
   | RepoWorktreesDisabledError
   | RepoWorktreeThreadUnavailableError
@@ -205,7 +198,6 @@ export class RepoWorktreeService extends Context.Service<
     readonly setSubmoduleCommit: (
       input: RepoWorktreeSetSubmoduleInput,
     ) => Effect.Effect<RepoWorktreeSetSubmoduleResult, RepoWorktreeFailure>;
-    readonly status: (threadId: ThreadId) => Effect.Effect<RepoWorktreeStatus, RepoWorktreeFailure>;
   }
 >()("t3/git/RepoWorktreeService") {}
 
@@ -216,7 +208,7 @@ interface WorktreeEntry {
 }
 
 /** `git worktree list --porcelain` records; the first is always the main worktree. */
-export function parseWorktreeList(stdout: string): ReadonlyArray<WorktreeEntry> {
+function parseWorktreeList(stdout: string): ReadonlyArray<WorktreeEntry> {
   return stdout.split("\0\0").flatMap((record) => {
     const fields = record.split("\0").filter((field) => field.length > 0);
     const worktree = fields.find((field) => field.startsWith("worktree "));
@@ -704,6 +696,18 @@ const make = Effect.gen(function* () {
     const { thread } = yield* loadEnabledContext(input.threadId);
     const parent = yield* requireAttached(thread, input.worktreePath);
     const source = yield* requireAttached(thread, input.sourceWorktreePath);
+    // One pin at a time per parent, so two calls cannot interleave checkouts.
+    return yield* repositoryLocks.withLock(
+      `submodules:${pathKey(parent.worktreePath)}`,
+      pinSubmodule(input, parent, source),
+    );
+  });
+
+  const pinSubmodule = Effect.fnUntraced(function* (
+    input: RepoWorktreeSetSubmoduleInput,
+    parent: ThreadRepoWorktree,
+    source: ThreadRepoWorktree,
+  ) {
     const submodulePath = input.submodulePath.replace(/\\/g, "/").replace(/\/+$/, "");
     if (
       submodulePath === "" ||
@@ -831,24 +835,10 @@ const make = Effect.gen(function* () {
       previousCommit,
       fetched: !present,
       staged: stage,
-    };
+    } satisfies RepoWorktreeSetSubmoduleResult;
   });
 
-  const status: RepoWorktreeService["Service"]["status"] = Effect.fn("RepoWorktreeService.status")(
-    function* (threadId) {
-      const thread = yield* loadThread(threadId);
-      const settings = yield* loadSettings(thread.projectId);
-      const project = yield* loadProject(thread.projectId);
-      return {
-        enabled: settings.repoWorktrees,
-        instructions: settings.repoWorktreeInstructions,
-        projectWorkspaceRoot: project.workspaceRoot,
-        repoWorktrees: thread.repoWorktrees ?? [],
-      };
-    },
-  );
-
-  return RepoWorktreeService.of({ ensure, detach, setSubmoduleCommit, status });
+  return RepoWorktreeService.of({ ensure, detach, setSubmoduleCommit });
 });
 
 export const layer = Layer.effect(RepoWorktreeService, make);
