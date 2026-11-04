@@ -3,10 +3,14 @@ import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3too
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  linkedPullRequestSnapshotStatus,
+  prStatusIndicator,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
 } from "./ThreadStatusIndicators";
 import { newestPullRequestSummary } from "../state/pullRequests";
+import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -118,5 +122,74 @@ describe("resolveDisplayedThreadPr", () => {
         gitStatus: status({ refName: "main", pr: mainPr }),
       }),
     ).toBeNull();
+  });
+});
+
+describe("prStatusIndicator mergeability", () => {
+  const provider = {
+    kind: SourceControlProviderKind.make("github"),
+    name: "GitHub",
+    baseUrl: "https://github.com",
+  };
+
+  function link(
+    mergeability: "mergeable" | "conflicting" | "unknown" | undefined,
+  ): ThreadPullRequestLink {
+    return {
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      source: "manual",
+      linkedAt: "2026-09-08T00:00:00.000Z",
+      stack: null,
+      snapshot: {
+        state: "open",
+        title: "Feature PR",
+        headBranch: "feature/current",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: "2026-09-08T00:00:00.000Z",
+        ...(mergeability === undefined ? {} : { mergeability }),
+      },
+    };
+  }
+
+  it("shows the open tone when the linked snapshot is mergeable", () => {
+    const status = linkedPullRequestSnapshotStatus(link("mergeable"));
+    const indicator = prStatusIndicator(status?.pr, provider);
+    expect(indicator).toMatchObject({
+      label: "PR open",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      Icon: PullRequestGlyph.pullRequest,
+      tooltipLead: "PR #42 - Open",
+    });
+  });
+
+  it("switches to the conflict tone when mergeability becomes conflicting", () => {
+    const status = linkedPullRequestSnapshotStatus(link("conflicting"));
+    const indicator = prStatusIndicator(status?.pr, provider);
+    expect(indicator).toMatchObject({
+      label: "PR conflicts with main",
+      colorClass: "text-destructive",
+      Icon: PullRequestGlyph.conflicting,
+      tooltipLead: "PR #42 - Conflicts with main",
+    });
+  });
+
+  it("keeps lifecycle tone when mergeability is unknown or absent", () => {
+    expect(
+      prStatusIndicator(linkedPullRequestSnapshotStatus(link("unknown"))?.pr, provider),
+    ).toMatchObject({
+      label: "PR open",
+      Icon: PullRequestGlyph.pullRequest,
+    });
+    expect(
+      prStatusIndicator(linkedPullRequestSnapshotStatus(link(undefined))?.pr, provider),
+    ).toMatchObject({
+      label: "PR open",
+      Icon: PullRequestGlyph.pullRequest,
+    });
   });
 });

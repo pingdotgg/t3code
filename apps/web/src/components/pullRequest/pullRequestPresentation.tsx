@@ -131,6 +131,19 @@ function resolvePullRequestConflict(input: {
   };
 }
 
+/** Lifecycle tone, overridden by conflicts for open non-draft PRs. */
+export function resolvePullRequestIndicatorPresentation(input: {
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
+  readonly mergeability?: PullRequestMergeability;
+  readonly baseBranch?: string;
+}): PullRequestStatePresentation {
+  return (
+    resolvePullRequestConflict(input) ??
+    resolvePullRequestState({ state: input.state, isDraft: input.isDraft })
+  );
+}
+
 export function PullRequestStateGlyph({
   state,
   isDraft,

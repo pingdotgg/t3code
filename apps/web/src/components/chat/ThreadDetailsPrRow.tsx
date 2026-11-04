@@ -47,7 +47,7 @@ import {
   pullRequestChecksState,
   PullRequestCheckStatusIcon,
   PullRequestDiffStat,
-  resolvePullRequestState,
+  resolvePullRequestIndicatorPresentation,
 } from "../pullRequest/pullRequestPresentation";
 import {
   usePullRequestActionRunner,
@@ -57,7 +57,7 @@ import {
 import {
   ChangeRequestStatusIcon,
   type PrStatusIndicator,
-  type ThreadPr,
+  type ThreadPrStatus,
 } from "../ThreadStatusIndicators";
 import {
   AlertDialog,
@@ -95,7 +95,7 @@ export function ThreadDetailsPrRow({
   onStopWatching,
 }: {
   environmentId: EnvironmentId;
-  pr: ThreadPr;
+  pr: ThreadPrStatus | null;
   number: number;
   reference?: Pick<PullRequestRef, "host" | "repository" | "number"> | null;
   status: PrStatusIndicator | null;
@@ -223,9 +223,11 @@ export function ThreadDetailsPrRow({
   const statePresentation =
     detail === null
       ? null
-      : resolvePullRequestState({
+      : resolvePullRequestIndicatorPresentation({
           state: detail.state,
           isDraft: detail.isDraft,
+          mergeability: detail.mergeability,
+          baseBranch: detail.baseBranch,
         });
   const icon = statePresentation ? (
     <statePresentation.Icon
@@ -235,6 +237,9 @@ export function ThreadDetailsPrRow({
   ) : pr && status ? (
     <ChangeRequestStatusIcon
       state={pr.state}
+      isDraft={pr.isDraft}
+      {...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability })}
+      baseBranch={pr.baseRef}
       className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)}
     />
   ) : (
