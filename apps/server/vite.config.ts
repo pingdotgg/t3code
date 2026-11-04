@@ -85,7 +85,7 @@ export default mergeConfig(
           cache: false,
         },
         typecheck: {
-          command: `tsc --noEmit --incremental --tsBuildInfoFile ${TYPECHECK_BUILD_INFO}`,
+          command: `effect-tsgo tsrs --noEmit --incremental --tsBuildInfoFile ${TYPECHECK_BUILD_INFO}`,
           cache: {
             input: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
             output: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
