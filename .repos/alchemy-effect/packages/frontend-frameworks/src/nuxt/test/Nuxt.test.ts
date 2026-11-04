@@ -11,9 +11,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("readNitroOutput", () => {
@@ -32,18 +30,9 @@ describe("readNitroOutput", () => {
         });
         yield* fs.makeDirectory(publicDir, { recursive: true });
         // alphabetically before index.mjs, to prove entry-first sorting
-        yield* fs.writeFileString(
-          path.join(serverDir, "chunks", "a.mjs"),
-          "export const a = 1;",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "index.mjs"),
-          "export default {};",
-        );
-        yield* fs.writeFileString(
-          path.join(publicDir, "robots.txt"),
-          "User-agent: *\n",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "chunks", "a.mjs"), "export const a = 1;");
+        yield* fs.writeFileString(path.join(serverDir, "index.mjs"), "export default {};");
+        yield* fs.writeFileString(path.join(publicDir, "robots.txt"), "User-agent: *\n");
         return yield* readNitroOutput({ dir, serverDir, publicDir });
       }),
     );
@@ -67,10 +56,7 @@ describe("readNitroOutput", () => {
         });
         const serverDir = path.join(dir, "server");
         yield* fs.makeDirectory(serverDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "other.mjs"),
-          "export const x = 1;",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "other.mjs"), "export const x = 1;");
         return yield* Effect.result(
           readNitroOutput({
             dir,
