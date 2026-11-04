@@ -160,7 +160,10 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           ["plugin:alpha:review", "plugin:beta:review"],
         );
         for (const [index, skill] of nativeSkills.entries()) {
-          assert.include(yield* fileSystem.readFileString(skill.path), expected[index]!.path);
+          assert.include(
+            yield* fileSystem.readFileString(skill.path),
+            JSON.stringify(expected[index]!.path),
+          );
           assert.equal(
             directories[index + 1],
             path.dirname(path.dirname(path.dirname(expected[index]!.path))),
