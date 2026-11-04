@@ -107,7 +107,7 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget?: ScopedThreadRef | DraftId | null | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -474,7 +474,12 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
+                      disabled={
+                        actionPending ||
+                        handoff !== null ||
+                        (composerDraftTarget === null &&
+                          (rowAction === "fix" || rowAction === "resolve"))
+                      }
                       onClick={trailingAction.onClick}
                     />
                   }
@@ -482,7 +487,11 @@ export function ThreadDetailsPrRow({
                   {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
                   {trailingAction.suffix}
                 </TooltipTrigger>
-                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {composerDraftTarget === null && (rowAction === "fix" || rowAction === "resolve")
+                    ? "Finish editing the queued message first"
+                    : trailingAction.tooltip}
+                </TooltipPopup>
               </Tooltip>
             ) : null}
           </div>

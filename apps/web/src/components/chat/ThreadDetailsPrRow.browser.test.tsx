@@ -192,6 +192,27 @@ it("adds the failing checks to the current composer instead of opening a thread"
         label="Test PR"
         openAriaLabel="Open PR"
         onOpen={vi.fn()}
+        composerDraftTarget={null}
+      />,
+    );
+  });
+  expect(
+    [...screen.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Fix",
+    )?.disabled,
+  ).toBe(true);
+  await act(async () => {
+    state.status = "failure";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
         composerDraftTarget={draftId}
       />,
     );

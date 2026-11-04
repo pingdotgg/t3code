@@ -298,7 +298,7 @@ export function usePullRequestHandoffs({
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestHandoffDetail | null;
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget?: ScopedThreadRef | DraftId | null | undefined;
 }) {
   const newThread = useNewThreadHandler();
   const prepareThread = usePreparePullRequestThreadAction({
@@ -360,7 +360,7 @@ export function usePullRequestHandoffs({
     task: PullRequestThreadTask | null,
     mode: "worktree" | "local" = "worktree",
   ) => {
-    if (!detail || handoff !== null) return;
+    if (!detail || handoff !== null || composerDraftTarget === null) return;
     if (composerDraftTarget !== undefined && task !== null) {
       writePullRequestTaskToComposer(composerDraftTarget, task);
       toastManager.add({
