@@ -9,14 +9,9 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
+import { isAltGraphText } from "@t3tools/shared/keybindings";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
-import {
-  iosModifierKeys,
-  typedCharacter,
-  usKey,
-  usKeyStrokes,
-  type UsKeyStroke,
-} from "./iosKeyboard.ts";
+import { iosModifierKeys, usKey, usKeyStrokes, type UsKeyStroke } from "./iosKeyboard.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
 export type DeviceStreamStatus = "connecting" | "streaming" | "error";
@@ -376,6 +371,11 @@ const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
   AltRight: 0xe6,
   MetaRight: 0xe7,
 };
+
+function typedCharacter(event: KeyboardEvent): string | null {
+  if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
+  return [...event.key].length === 1 ? event.key : null;
+}
 
 function hidUsageForCode(code: string): number | null {
   if (/^Key[A-Z]$/.test(code)) return 0x04 + (code.charCodeAt(3) - 65);
@@ -1450,9 +1450,8 @@ export function createDeviceStreamClient(
       if (event.key === "Escape") return send(JSON.stringify({ type: "back" }));
       const keycode = ANDROID_KEYCODE_BY_KEY[event.key];
       if (keycode !== undefined) return send(JSON.stringify({ type: "key", keycode }));
-      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
-        send(JSON.stringify({ type: "text", text: event.key }));
-      }
+      const text = typedCharacter(event);
+      if (text !== null) send(JSON.stringify({ type: "text", text }));
     },
     sendText: (text) => {
       if (avcc) return;

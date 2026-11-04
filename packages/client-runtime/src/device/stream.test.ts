@@ -154,6 +154,36 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+  it("types AltGr characters on Android and skips Ctrl shortcuts", async () => {
+    const { client, opened } = setup("android");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.send.mockClear();
+    const press = (key: string, ctrlKey: boolean, altGraph: boolean) =>
+      client.sendKey(
+        {
+          key,
+          code: "Digit0",
+          ctrlKey,
+          altKey: ctrlKey,
+          metaKey: false,
+          shiftKey: false,
+          getModifierState: (name: string) => name === "AltGraph" && altGraph,
+        } as unknown as KeyboardEvent,
+        "down",
+      );
+    // Firefox on Windows also reports AltGr as Ctrl and Alt.
+    press("@", true, true);
+    press("@", false, true);
+    press("0", true, false);
+    expect(socket.send.mock.calls).toEqual([
+      [JSON.stringify({ type: "text", text: "@" })],
+      [JSON.stringify({ type: "text", text: "@" })],
+    ]);
+    client.stop();
+  });
+
   it("types the character from the user's layout with the simulator's US keys", async () => {
     vi.stubGlobal("navigator", { platform: "Win32" });
     const { client, opened } = setup("ios");

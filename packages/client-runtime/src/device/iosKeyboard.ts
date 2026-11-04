@@ -1,6 +1,5 @@
 import {
   EVENT_CODE_SHORTCUT_KEYS,
-  isAltGraphText,
   isMacPlatform,
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
@@ -83,11 +82,6 @@ export function usKeyStrokes(character: string): UsKeyStroke[] | null {
     { ...accentKey, option: true },
     { ...letterKey, option: false },
   ];
-}
-
-export function typedCharacter(event: KeyboardEvent): string | null {
-  if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
-  return [...event.key].length === 1 ? event.key : null;
 }
 
 // Windows and Linux shortcuts such as Ctrl+A use Ctrl where iOS uses Command.
