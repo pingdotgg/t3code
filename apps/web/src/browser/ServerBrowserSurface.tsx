@@ -188,7 +188,12 @@ export function ServerBrowserSurface(props: {
     null,
   );
   const [accessibleNotice, setAccessibleNotice] = useState<PreviewAccessibleNotice | null>(null);
-  const accessibleViewWanted = useEffectEvent(() => accessibleView);
+  const accessibleViewWanted = useEffectEvent(() => accessibleView && pdfUrl === null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- PDF transitions release the semantic stream so returning to HTML starts with a fresh document.
+  useEffect(() => {
+    clientRef.current?.accessibility(accessibleView && pdfUrl === null);
+  }, [accessibleView, pdfUrl]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
@@ -438,7 +443,10 @@ export function ServerBrowserSurface(props: {
           clearInput();
         },
         onHostSetup: setHostSetup,
-        onAccessibility: setAccessibleDocument,
+        onAccessibility: (document) => {
+          setAccessibleDocument(document);
+          setAccessibleNotice(null);
+        },
         onAccessibilityNotice: (message) =>
           setAccessibleNotice((current) => ({ message, id: (current?.id ?? 0) + 1 })),
         onUnauthorized: () => {
@@ -777,7 +785,6 @@ export function ServerBrowserSurface(props: {
               const next = !accessibleView;
               setAccessibleView(next);
               setAccessibleNotice(null);
-              clientRef.current?.accessibility(next);
             }}
           >
             Accessible view
@@ -833,6 +840,7 @@ export function ServerBrowserSurface(props: {
         <textarea
           ref={inputRef}
           aria-label="Browser page"
+          aria-hidden={accessibleView}
           aria-description="Press Shift+Escape to leave the browser page."
           autoCapitalize="off"
           autoComplete="off"

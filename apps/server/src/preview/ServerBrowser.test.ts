@@ -2365,6 +2365,14 @@ it.live("a viewer whose backlog is replaced still gets the page's semantics", ()
       const refreshed = yield* Queue.takeAll(operator.output);
       expect(refreshed.map((output) => output._tag)).not.toContain("accessibilityNotice");
       expect(refreshed.filter((output) => output._tag === "accessibility")).toHaveLength(1);
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.accessibility(false);
+      const disabled = yield* Queue.takeAll(operator.output);
+      expect(disabled.filter((output) => output._tag === "accessibility")).toEqual([
+        { _tag: "accessibility", document: null },
+      ]);
       yield* operator.input({ type: "releaseControl" });
     }),
   ).pipe(Effect.provide(layer)),

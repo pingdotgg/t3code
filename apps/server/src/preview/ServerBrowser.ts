@@ -2551,6 +2551,7 @@ const make = Effect.gen(function* () {
             "control",
             "viewport",
             "fileChooser",
+            "accessibility",
             "accessibilityNotice",
           ].includes(next._tag)
         ) {
