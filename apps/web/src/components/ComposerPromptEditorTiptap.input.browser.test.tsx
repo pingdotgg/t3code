@@ -228,7 +228,9 @@ it("pastes arithmetic stars verbatim and still styles pasted markdown", async ()
       editor.commands.selectAll();
       const clipboardData = new DataTransfer();
       clipboardData.setData("text/plain", text);
-      editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
     });
   };
   const code = "signal = (7 * 2**3 * 5)**4";
