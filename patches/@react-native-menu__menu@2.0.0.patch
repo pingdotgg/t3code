@@ -178,7 +178,7 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..6cae3d5f0064838cd861904fed171236314afb40 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14c34aa70c 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
 @@ -60,15 +60,82 @@ public class MenuViewImplementation: UIButton {
@@ -241,32 +241,32 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..6cae3d5f0064838cd861904fed171236
 +
 +    private struct HiddenTriggerView {
 +        weak var view: UIView?
-+        let alpha: CGFloat
++        let wasHidden: Bool
 +    }
 +
 +    private var hiddenTriggerContent: [HiddenTriggerView] = []
 +    private var triggerContentHideCount = 0
 +
-+    // UIKit hides only this transparent button during the morph; the React content behind it must hide too.
++    // UIKit hides only this transparent button during the morph; hide the React content too, via isHidden since Fabric rewrites opacity on layout.
 +    private func hideTriggerContent() {
 +        guard !shouldOpenOnLongPress, let host = self.superview else { return }
 +        triggerContentHideCount += 1
 +        guard hiddenTriggerContent.isEmpty else { return }
 +        for view in host.subviews where view !== self {
-+            hiddenTriggerContent.append(HiddenTriggerView(view: view, alpha: view.alpha))
-+            view.alpha = 0
++            hiddenTriggerContent.append(HiddenTriggerView(view: view, wasHidden: view.isHidden))
++            view.isHidden = true
 +        }
 +    }
 +
 +    private func restoreTriggerContent() {
 +        for entry in hiddenTriggerContent {
-+            entry.view?.alpha = entry.alpha
++            entry.view?.isHidden = entry.wasHidden
 +        }
 +        hiddenTriggerContent.removeAll()
      }
  
      func setup () {
-@@ -86,8 +153,105 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +153,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -342,9 +342,6 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..6cae3d5f0064838cd861904fed171236
 +
 +    public override func didMoveToSuperview() {
 +        super.didMoveToSuperview()
-+        if self.superview == nil {
-+            self.restoreTriggerContent()
-+        }
 +        self.updateLongPressInteraction()
 +    }
 +
@@ -372,7 +369,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..6cae3d5f0064838cd861904fed171236
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +288,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +285,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
