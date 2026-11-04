@@ -82,6 +82,9 @@ export function ThreadRepoWorktreesSection(props: {
           </li>
         ))}
       </ul>
+      <p className="px-1.5 pt-1 text-2xs text-muted-foreground">
+        Checkpoints, diffs, and rollback don't cover these.
+      </p>
     </ThreadDetailsSection>
   );
 }

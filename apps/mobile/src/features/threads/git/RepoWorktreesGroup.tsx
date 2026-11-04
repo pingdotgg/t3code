@@ -56,6 +56,9 @@ export function RepoWorktreesGroup(props: {
           </View>
         ))}
       </View>
+      <Text className="px-1 text-xs text-foreground-muted">
+        Checkpoints, diffs, and rollback don't cover these.
+      </Text>
     </View>
   );
 }
