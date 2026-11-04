@@ -12,16 +12,27 @@ export class CallbackError extends Data.TaggedError("CallbackError")<{
 }> {}
 
 export interface CallbackOptions {
-  /** Recovery delay after an unsuccessful or interrupted delivery. Defaults to 30 seconds. */
+  /** Bounded backoff for unsuccessful deliveries and self-rescheduling without progress. */
   readonly retry?: {
-    /** Must be a finite, positive duration. */
-    readonly delay: Duration.Input;
+    /** Initial delay. Defaults to 30 seconds; positive durations below one second use one second. */
+    readonly delay?: Duration.Input;
+    /** Attempts without progress before parking. Must be a positive safe integer. Defaults to eight. */
+    readonly maxAttempts?: number;
+    /** Recovery interval for parked work. Must be at least one hour and the initial delay. Defaults to the greater of those two values. */
+    readonly parkedDelay?: Duration.Input;
   };
 }
 
 export type CallbackScheduleOptions<Payload> = {
   /** JSON-serializable data delivered to the callback. */
   readonly payload: Payload;
+  /**
+   * Committed source version or sequence, as a nonnegative safe integer.
+   * A strictly increasing value resets the retry budget. Replayed external
+   * schedules cannot replace newer work. Commit progress and scheduling in the
+   * same storage transaction; changing IDs, payloads, or deadlines is not progress.
+   */
+  readonly progress?: number;
 } & (
   | {
       /** Absolute delivery time, as a Date or positive milliseconds since the Unix epoch. */
@@ -35,6 +46,20 @@ export type CallbackScheduleOptions<Payload> = {
     }
 );
 
+/** Durable scheduling state, available without decoding the job's payload. */
+export interface CallbackStatus {
+  /** Requested delivery time in milliseconds since the Unix epoch; preserved across retries. */
+  readonly scheduledAt: number;
+  /** Earliest recovery time in milliseconds since the Unix epoch, if an attempt has started. */
+  readonly retryAt: number | undefined;
+  /** Attempts started without reported progress, capped when the job is parked. */
+  readonly attempts: number;
+  /** Whether the job is retained for recovery at the parked interval. */
+  readonly parked: boolean;
+  /** Latest committed source cursor supplied when scheduling, if any. */
+  readonly progress: number | undefined;
+}
+
 export interface Callback<Payload> {
   /** Schedule or replace a pending job identified by this callback's name and the supplied ID. */
   readonly schedule: (
@@ -42,9 +67,11 @@ export interface Callback<Payload> {
     options: CallbackScheduleOptions<Payload>,
   ) => Effect.Effect<void, CallbackError, RuntimeContext>;
   /** Cancel a pending job. Cancelling an absent ID succeeds; an already-running handler is not interrupted. */
-  readonly cancel: (
+  readonly cancel: (id: string) => Effect.Effect<void, CallbackError, RuntimeContext>;
+  /** Inspect a pending job. Returns undefined after successful completion or cancellation. */
+  readonly getStatus: (
     id: string,
-  ) => Effect.Effect<void, CallbackError, RuntimeContext>;
+  ) => Effect.Effect<CallbackStatus | undefined, CallbackError, RuntimeContext>;
 }
 
 /**
@@ -59,11 +86,7 @@ export type CallbackFactory = <Payload, E, R>(
   name: string,
   handler: (payload: Payload) => Effect.Effect<unknown, E, R>,
   options?: CallbackOptions,
-) => Effect.Effect<
-  Callback<Payload>,
-  never,
-  RuntimeContext | Exclude<R, Scope.Scope>
->;
+) => Effect.Effect<Callback<Payload>, never, RuntimeContext | Exclude<R, Scope.Scope>>;
 
 /**
  * Register a durable callback with the current host.
@@ -110,6 +133,31 @@ export type CallbackFactory = <Payload, E, R>(
  * yield* onArchive.cancel("revision-42");
  * ```
  *
+ * ### Inspecting and Recovering Work
+ * **Example:** Resume a parked job from an incoming recovery request
+ * ```typescript
+ * const status = yield* onArchive.getStatus("revision-42");
+ * if (status?.parked) {
+ *   yield* onArchive.schedule("revision-42", {
+ *     after: 0,
+ *     payload: { key: "42.txt", body: "hello" },
+ *   });
+ * }
+ * ```
+ *
+ * Cloudflare persists an exponential retry budget before each attempt. The
+ * default initial delay is 30 seconds, with a one-second minimum. After eight
+ * attempts without progress, jobs remain stored and recover hourly. Configure
+ * `retry.delay`, `retry.maxAttempts`, and `retry.parkedDelay` when registering.
+ * Status preserves the requested `scheduledAt` separately from `retryAt`.
+ *
+ * Scheduling inside a callback inherits its budget, including when cancelling
+ * or changing IDs. Supply a strictly increasing `progress` cursor alongside
+ * committed application state to reset it. An external schedule without a
+ * cursor starts a fresh budget; stale external cursors leave existing work
+ * unchanged. Detached callback fibers cannot schedule or cancel after the
+ * invocation ends. Successful completion and cancellation remove the job.
+ *
  * Callback names identify persisted jobs; retain handlers for old names while
  * jobs are pending. Payloads must be JSON values compatible with pending jobs
  * from earlier deployments; TypeScript types do not perform runtime decoding.
@@ -124,11 +172,7 @@ export const makeCallback = <Payload, E, R>(
   name: string,
   handler: (payload: Payload) => Effect.Effect<unknown, E, R>,
   options?: CallbackOptions,
-): Effect.Effect<
-  Callback<Payload>,
-  never,
-  RuntimeContext | Exclude<R, Scope.Scope>
-> =>
+): Effect.Effect<Callback<Payload>, never, RuntimeContext | Exclude<R, Scope.Scope>> =>
   Effect.gen(function* () {
     const context = yield* RuntimeContext;
     if (!context.makeCallback) {
