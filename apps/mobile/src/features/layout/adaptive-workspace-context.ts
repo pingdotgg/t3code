@@ -10,7 +10,6 @@ import {
   deriveWorkspacePaneLayout,
   type FileInspectorPaneLayout,
   type Layout,
-  type WorkspaceAuxiliaryPaneRole,
   type WorkspacePaneLayout,
 } from "../../lib/layout";
 
@@ -22,10 +21,12 @@ interface AdaptiveWorkspaceContextValue {
   readonly startNewTask: () => void;
   /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
-  readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
-  readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
+  readonly registerWorkspaceInspector: (
+    render: () => ReactNode,
+    reveal?: { readonly routeKey: string; readonly key: string },
+  ) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
-  readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
+  readonly showInspector: () => void;
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
   readonly setPrimarySidebarVisible: (visible: boolean) => void;
@@ -66,10 +67,9 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
-  activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
-  showAuxiliaryPane: () => undefined,
+  showInspector: () => undefined,
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
   setPrimarySidebarVisible: () => undefined,

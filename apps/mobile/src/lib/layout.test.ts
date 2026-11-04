@@ -151,7 +151,6 @@ describe("deriveWorkspacePaneLayout", () => {
           nativeWorkspace: true,
           primarySidebarPreferredVisible,
           auxiliaryPanePreferredVisible: true,
-          auxiliaryPaneRole: "inspector",
         }),
       ).toMatchObject({
         primarySidebarVisible: primarySidebarPreferredVisible,
@@ -170,7 +169,6 @@ describe("deriveWorkspacePaneLayout", () => {
         viewportWidth: 1_024,
         primarySidebarPreferredVisible: false,
         auxiliaryPanePreferredVisible: true,
-        auxiliaryPaneRole: "inspector",
       }),
     ).toMatchObject({
       primarySidebarVisible: false,

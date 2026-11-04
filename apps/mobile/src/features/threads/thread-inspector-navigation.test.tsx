@@ -221,7 +221,7 @@ it("keeps a focused inspector registered across renders and updates its content"
     },
   );
   const exports: {
-    useRegisterWorkspaceInspector?: (render: (() => React.ReactNode) | undefined) => void;
+    Inspector?: (props: { readonly children: React.ReactNode }) => null;
   } = {};
   const load = (name: string) => {
     if (name === "react" || name.startsWith("react/")) return requireMobile(name);
@@ -233,22 +233,19 @@ it("keeps a focused inspector registered across renders and updates its content"
       return {
         NavigationContext: navigationContext,
         NavigationRouteContext: routeContext,
-        useFocusEffect: (callback: () => (() => void) | undefined) =>
-          React.useEffect(callback, [callback]),
       };
     return {};
   };
   new Function("require", "exports", compiled.code)(load, exports);
-  const useRegisterWorkspaceInspector = exports.useRegisterWorkspaceInspector!;
-  function Screen({ render }: { render: (() => React.ReactNode) | undefined }) {
-    useRegisterWorkspaceInspector(render);
-    return null;
+  const Inspector = exports.Inspector!;
+  function Screen({ content }: { content: string | undefined }) {
+    return content === undefined ? null : <Inspector>{content}</Inspector>;
   }
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  const render = (content: (() => React.ReactNode) | undefined) =>
-    act(() => root.render(<Screen render={content} />));
-  const first = () => "first";
+  const render = (content: string | undefined) =>
+    act(() => root.render(<Screen content={content} />));
+  const first = "first";
   render(first);
   registerWorkspaceInspector.mockClear();
   deactivate.mockClear();
@@ -256,7 +253,7 @@ it("keeps a focused inspector registered across renders and updates its content"
   render(first);
   expect(registerWorkspaceInspector).not.toHaveBeenCalled();
   expect(deactivate).not.toHaveBeenCalled();
-  const second = () => "second";
+  const second = "second";
   render(second);
   expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
   const paneContainer = document.createElement("div");
