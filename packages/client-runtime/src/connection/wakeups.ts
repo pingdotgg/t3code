@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Stream from "effect/Stream";
 
@@ -29,6 +30,8 @@ export class ConnectionWakeups extends Context.Service<
   ConnectionWakeups,
   {
     readonly changes: Stream.Stream<ConnectionWakeup>;
+    /** Whether the user is looking at the app now; retries stay frequent while they are. */
+    readonly isForeground?: Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 

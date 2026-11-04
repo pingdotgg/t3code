@@ -1,4 +1,8 @@
-import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import {
+  connectionTroubleSince,
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+} from "@t3tools/client-runtime/connection";
 import { EnvironmentRpcSubscriptionObserver, request } from "@t3tools/client-runtime/rpc";
 import {
   type BackgroundScope,
@@ -57,6 +61,8 @@ export const layerReporter = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let appState = AppState.currentState;
+    // Newest failure each environment has already reported, so each one reaches the server once.
+    const troubleReportedUntil = new Map<string, number>();
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
@@ -68,20 +74,32 @@ export const layerReporter = Layer.effectDiscard(
           registry
             .run(
               environmentId,
-              request(WS_METHODS.serverReportClientActivity, {
-                environmentId: environmentId as EnvironmentId,
-                clientId,
-                clientKind: "mobile",
-                visible: active,
-                focused: active,
-                recentlyInteracted: active,
-                appState: normalizeAppState(appState),
-                scopes: [
-                  ...BASELINE_SCOPES,
-                  ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),
-                ],
-                ttlMs: LEASE_TTL_MS,
-                observedAt: DateTime.makeUnsafe(observedAtMs),
+              Effect.gen(function* () {
+                const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+                const log =
+                  supervisor.log === undefined ? [] : yield* SubscriptionRef.get(supervisor.log);
+                const trouble = connectionTroubleSince(
+                  log,
+                  troubleReportedUntil.get(environmentId) ?? 0,
+                );
+                yield* request(WS_METHODS.serverReportClientActivity, {
+                  environmentId: environmentId as EnvironmentId,
+                  clientId,
+                  clientKind: "mobile",
+                  visible: active,
+                  focused: active,
+                  recentlyInteracted: active,
+                  appState: normalizeAppState(appState),
+                  scopes: [
+                    ...BASELINE_SCOPES,
+                    ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),
+                  ],
+                  ttlMs: LEASE_TTL_MS,
+                  observedAt: DateTime.makeUnsafe(observedAtMs),
+                  ...(trouble.length === 0 ? {} : { connectionTrouble: trouble }),
+                });
+                const newest = trouble.at(-1);
+                if (newest !== undefined) troubleReportedUntil.set(environmentId, newest.at);
               }),
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,

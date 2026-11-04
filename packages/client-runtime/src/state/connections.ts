@@ -6,6 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
+import type { ConnectionLogEvent } from "../connection/connectionLog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
@@ -120,6 +121,24 @@ export function createEnvironmentCatalogAtoms<R, E>(
     ),
   );
 
+  const connectionLogAtom = Atom.family((environmentId: EnvironmentIdType) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              supervisor.log === undefined
+                ? Stream.succeed<ReadonlyArray<ConnectionLogEvent>>([])
+                : SubscriptionRef.changes(supervisor.log),
+            ),
+          ),
+        ),
+      ),
+      { initialValue: [] as ReadonlyArray<ConnectionLogEvent> },
+    ),
+  );
+
   const sessionGenerationAtom = (environmentId: EnvironmentIdType) =>
     environmentSessionGenerationAtom(runtime, environmentId);
 
@@ -200,6 +219,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    connectionLogAtom,
     sessionGenerationAtom,
     register,
     remove,

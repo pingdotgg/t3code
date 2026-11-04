@@ -149,6 +149,7 @@ const layerWakeups = Wakeups.layer({
     ],
     { concurrency: "unbounded" },
   ),
+  isForeground: Effect.sync(() => document.visibilityState === "visible"),
 });
 
 export function currentClientMetadata() {

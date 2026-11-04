@@ -160,8 +160,10 @@ export const make = Effect.gen(function* () {
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
 
-  // The descriptor is public, so this sends no credential to whatever
-  // answers at a saved LAN address on a different network.
+  // The descriptor is public, so it sends no credential to a stranger at a saved LAN address.
+  // Nothing here forces a new connection on iOS: NSURLSession ignores `Connection: close` and
+  // pools per origin. The WebSocket opens its own TCP connection every attempt, so a route whose
+  // check went silent is still dialled.
   const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
     fetchRemoteEnvironmentDescriptor({
       httpBaseUrl,

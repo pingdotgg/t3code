@@ -137,6 +137,7 @@ const layerWakeups = Wakeups.layer({
     ],
     { concurrency: "unbounded" },
   ),
+  isForeground: Effect.sync(() => AppState.currentState === "active"),
 });
 
 const layerCapabilities = Layer.effectContext(

@@ -64,6 +64,19 @@ export type ClientKind = typeof ClientKind.Type;
 export const ClientActivityClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type ClientActivityClientId = typeof ClientActivityClientId.Type;
 
+/** A failed or lost connection the client saw, reported once it reconnects so server logs show both sides. */
+export const ConnectionTroubleEvent = Schema.Struct({
+  at: Schema.Number,
+  kind: Schema.Literals(["failed", "lost"]),
+  attempt: Schema.Number,
+  route: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  reason: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  network: Schema.String.check(Schema.isMaxLength(16)),
+  foreground: Schema.optionalKey(Schema.Boolean),
+});
+export type ConnectionTroubleEvent = typeof ConnectionTroubleEvent.Type;
+
 export const ClientActivityReportInput = Schema.Struct({
   environmentId: Schema.optionalKey(EnvironmentId),
   clientId: ClientActivityClientId,
@@ -76,6 +89,9 @@ export const ClientActivityReportInput = Schema.Struct({
   scopes: Schema.Array(BackgroundScope),
   ttlMs: Schema.optionalKey(Schema.Number),
   observedAt: Schema.DateTimeUtc,
+  connectionTrouble: Schema.optionalKey(
+    Schema.Array(ConnectionTroubleEvent).check(Schema.isMaxLength(10)),
+  ),
 });
 export type ClientActivityReportInput = typeof ClientActivityReportInput.Type;
 
