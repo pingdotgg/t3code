@@ -34,6 +34,8 @@ interface AdaptiveWorkspaceContextValue {
    */
   readonly sidebarToggleable: boolean;
   readonly togglePrimarySidebar: () => void;
+  /** Shows the sidebar, setting aside the keyboard or an inspector that took its room. */
+  readonly revealPrimarySidebar: () => void;
   readonly setPrimarySidebarVisible: (visible: boolean) => void;
   /** Opens a workspace tab with its list and, with columns, the page it last showed. */
   readonly openWorkspaceTab: (
@@ -78,6 +80,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   toggleAuxiliaryPane: () => undefined,
   sidebarToggleable: false,
   togglePrimarySidebar: () => undefined,
+  revealPrimarySidebar: () => undefined,
   setPrimarySidebarVisible: () => undefined,
   openWorkspaceTab: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,

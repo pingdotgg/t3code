@@ -50,7 +50,6 @@ import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboarding
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
-import { selectedPullRequestKey } from "./features/pull-requests/pullRequestSelection";
 import {
   HardwareKeyboardCommandOverlay,
   HardwareKeyboardCommandProvider,
@@ -535,7 +534,6 @@ function RootStackLayout(props: {
                 pathname={workspaceLocation.pathname}
                 workspaceRouteKey={workspaceLocation.routeKey}
                 workspaceRouteName={workspaceLocation.routeName}
-                selectedPullRequestKey={selectedPullRequestKey(props.state)}
               >
                 {props.children}
                 <HardwareKeyboardCommandOverlay />
@@ -619,6 +617,9 @@ const RootStackConfig = createWorkspaceStackNavigator({
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
+        // Android draws Home's bars itself. Set here, not by the screen: Home also renders in the
+        // sidebar column, and that copy clears the route's set options when it unmounts.
+        headerShown: Platform.OS !== "android",
       },
     }),
     PullRequest: createNativeStackScreen({
