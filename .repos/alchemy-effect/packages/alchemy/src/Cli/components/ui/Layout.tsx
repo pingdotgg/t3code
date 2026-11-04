@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 import { Box as SigilBox, type DOMElement } from "@alchemy.run/sigil";
 import { forwardRef } from "@alchemy.run/sigil/react";
@@ -18,32 +19,31 @@ export { VirtualList } from "@alchemy.run/sigil";
 
 export type BoxProps = ComponentProps<typeof SigilBox>;
 
-/** Theme-aware Sigil container used by CliKit layouts. */
-export const Box: ForwardRefExoticComponent<
-  PropsWithoutRef<BoxProps> & RefAttributes<DOMElement>
-> = forwardRef<DOMElement, BoxProps>(function Box(props, ref) {
-  const { colors } = useCliEnvironment();
-  const {
-    borderColor: _borderColor,
-    borderTopColor: _borderTopColor,
-    borderBottomColor: _borderBottomColor,
-    borderLeftColor: _borderLeftColor,
-    borderRightColor: _borderRightColor,
-    borderBackgroundColor: _borderBackgroundColor,
-    borderTopBackgroundColor: _borderTopBackgroundColor,
-    borderBottomBackgroundColor: _borderBottomBackgroundColor,
-    borderLeftBackgroundColor: _borderLeftBackgroundColor,
-    borderRightBackgroundColor: _borderRightBackgroundColor,
-    backgroundColor: _backgroundColor,
-    borderDimColor: _borderDimColor,
-    borderTopDimColor: _borderTopDimColor,
-    borderBottomDimColor: _borderBottomDimColor,
-    borderLeftDimColor: _borderLeftDimColor,
-    borderRightDimColor: _borderRightDimColor,
-    ...colorless
-  } = props;
-  return <SigilBox {...(colors ? props : colorless)} ref={ref} />;
-});
+/** Theme-aware Sigil container used by CLI layouts. */
+export const Box: ForwardRefExoticComponent<PropsWithoutRef<BoxProps> & RefAttributes<DOMElement>> =
+  forwardRef<DOMElement, BoxProps>(function Box(props, ref) {
+    const { colors } = useCliEnvironment();
+    const {
+      borderColor: _borderColor,
+      borderTopColor: _borderTopColor,
+      borderBottomColor: _borderBottomColor,
+      borderLeftColor: _borderLeftColor,
+      borderRightColor: _borderRightColor,
+      borderBackgroundColor: _borderBackgroundColor,
+      borderTopBackgroundColor: _borderTopBackgroundColor,
+      borderBottomBackgroundColor: _borderBottomBackgroundColor,
+      borderLeftBackgroundColor: _borderLeftBackgroundColor,
+      borderRightBackgroundColor: _borderRightBackgroundColor,
+      backgroundColor: _backgroundColor,
+      borderDimColor: _borderDimColor,
+      borderTopDimColor: _borderTopDimColor,
+      borderBottomDimColor: _borderBottomDimColor,
+      borderLeftDimColor: _borderLeftDimColor,
+      borderRightDimColor: _borderRightDimColor,
+      ...colorless
+    } = props;
+    return <SigilBox {...(colors ? props : colorless)} ref={ref} />;
+  });
 
 export interface StackProps extends Omit<BoxProps, "flexDirection"> {
   readonly gap?: number;
@@ -64,12 +64,7 @@ export interface RowProps extends Omit<
 > {
   readonly gap?: number;
   readonly align?: "flex-start" | "center" | "flex-end";
-  readonly justify?:
-    | "flex-start"
-    | "center"
-    | "flex-end"
-    | "space-between"
-    | "space-around";
+  readonly justify?: "flex-start" | "center" | "flex-end" | "space-between" | "space-around";
 }
 
 /** Horizontal layout primitive. */
@@ -81,13 +76,7 @@ export function Row({
   ...props
 }: RowProps) {
   return (
-    <Box
-      flexDirection="row"
-      gap={gap}
-      alignItems={align}
-      justifyContent={justify}
-      {...props}
-    >
+    <Box flexDirection="row" gap={gap} alignItems={align} justifyContent={justify} {...props}>
       {children}
     </Box>
   );
@@ -122,9 +111,7 @@ export function SectionHeading({ children, annotation }: SectionHeadingProps) {
       <Text bold color={theme.color.brand}>
         {children}
       </Text>
-      {annotation === undefined ? null : (
-        <Text tone="muted"> · {annotation}</Text>
-      )}
+      {annotation === undefined ? null : <Text tone="muted"> · {annotation}</Text>}
     </Text>
   );
 }
@@ -154,10 +141,7 @@ export const listWindow = (
   cursor: number,
   count: number,
 ): { readonly start: number; readonly end: number } => {
-  const start = Math.max(
-    0,
-    Math.min(cursor - Math.floor(count / 2), length - count),
-  );
+  const start = Math.max(0, Math.min(cursor - Math.floor(count / 2), length - count));
   return { start, end: Math.min(length, start + count) };
 };
 
@@ -180,8 +164,7 @@ export const tabsWindow = (
   let used = widths[cursor]!;
   let takeRight = true;
   while (true) {
-    const canRight =
-      end < widths.length && used + gap + widths[end]! <= available;
+    const canRight = end < widths.length && used + gap + widths[end]! <= available;
     const canLeft = start > 0 && used + gap + widths[start - 1]! <= available;
     if (!canRight && !canLeft) break;
     if ((takeRight && canRight) || !canLeft) {
@@ -206,11 +189,7 @@ export const overflowListWindow = (
   cursor: number,
   visibleCount: number,
 ): { readonly start: number; readonly end: number } =>
-  listWindow(
-    length,
-    cursor,
-    Math.max(1, length > visibleCount ? visibleCount - 2 : visibleCount),
-  );
+  listWindow(length, cursor, Math.max(1, length > visibleCount ? visibleCount - 2 : visibleCount));
 
 /** Windowed list keeping `cursor` centered; each item renders as a block. */
 type ViewportProps<Item> = {
@@ -232,11 +211,7 @@ export function Viewport<Item>({
 }: ViewportProps<Item>) {
   if (items.length === 0) return <>{empty}</>;
   const selected = Math.max(0, Math.min(cursor, items.length - 1));
-  const { start, end } = listWindow(
-    items.length,
-    selected,
-    Math.max(1, height),
-  );
+  const { start, end } = listWindow(items.length, selected, Math.max(1, height));
   return (
     <Stack>
       {items.slice(start, end).map((item, offset) => {
