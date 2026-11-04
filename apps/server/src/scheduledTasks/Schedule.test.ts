@@ -134,6 +134,22 @@ describe("scheduled task schedule calculation", () => {
     expect(next && DateTime.toEpochMillis(next) - DateTime.toEpochMillis(from)).toBe(3_600_000);
   });
 
+  it("skips a window start that daylight saving shifts past the end", () => {
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs: 60_000,
+        window: { start: "02:30", end: "03:00" },
+      },
+      DateTime.makeZonedUnsafe(
+        { year: 2025, month: 3, day: 8, hour: 12, minute: 0, second: 0, millisecond: 0 },
+        { timeZone: "America/New_York", adjustForTimeZone: true },
+      ),
+    );
+    const parts = next ? DateTime.toParts(next) : null;
+    expect(parts && [parts.month, parts.day, parts.hour, parts.minute]).toEqual([3, 10, 2, 30]);
+  });
+
   it("returns null when no window start falls within eight days", () => {
     const next = nextScheduledRunAt(
       {
