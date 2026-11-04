@@ -1204,6 +1204,8 @@ function ScheduledTaskEditorForm({
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
     task?.schedule.type === "once";
+  const offersIntervalWindow =
+    environment?.serverConfig?.environment.capabilities.intervalScheduleWindows === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1332,6 +1334,13 @@ function ScheduledTaskEditorForm({
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
     ) {
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
+      return;
+    }
+    if (schedule.type === "interval" && schedule.window !== undefined && !offersIntervalWindow) {
+      reportFailure(
+        "Time windows are not available here",
+        "Update this environment to use interval time windows.",
+      );
       return;
     }
     if (schedule.type === "once" && !offersOnce) {
@@ -1927,6 +1936,7 @@ function ScheduledTaskEditorForm({
                   <Switch
                     id="scheduled-task-interval-window"
                     aria-describedby="scheduled-task-interval-window-description"
+                    disabled={!offersIntervalWindow && !draft.intervalWindowEnabled}
                     checked={draft.intervalWindowEnabled}
                     onCheckedChange={(intervalWindowEnabled) =>
                       setDraft((current) => ({
@@ -2026,6 +2036,9 @@ function ScheduledTaskEditorForm({
             !connected ||
             !tasksQuery.data ||
             (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined) ||
+            (draft.scheduleMode === "interval" &&
+              draft.intervalWindowEnabled &&
+              !offersIntervalWindow) ||
             intervalWindowError !== undefined
           }
           onClick={() => void submit()}

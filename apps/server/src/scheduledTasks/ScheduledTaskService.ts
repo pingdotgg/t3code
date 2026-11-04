@@ -841,6 +841,15 @@ export const layer = Layer.effect(
         ) {
           return { task: active, threadId: null, dispatchFailed: false };
         }
+        if (
+          trigger === "scheduled" &&
+          active.schedule.type === "interval" &&
+          Option.isSome(parsedNextRunAt) &&
+          isMissedScheduledRun(active.schedule, parsedNextRunAt.value, startedAt)
+        ) {
+          yield* rescheduleMissedRun(active, startedAt);
+          return { task: active, threadId: null, dispatchFailed: false };
+        }
         // Reject queued deliveries after pause, same-id recreation or trigger changes.
         if (webhook !== undefined) {
           const reason =
