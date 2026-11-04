@@ -764,7 +764,17 @@ const make = Effect.gen(function* () {
           };
         }),
       finish: run(async () => {
-        const text = await streamModel.finish();
+        let text: string;
+        try {
+          text = await streamModel.finish().catch(async (cause: unknown) => {
+            await recoverOnCpu(cause);
+            if (closed || signal.aborted) throw cause;
+            return streamModel.finish();
+          });
+        } catch (cause) {
+          started = false;
+          throw cause;
+        }
         finished = true;
         return finalizeTranscript(
           correct(text),
