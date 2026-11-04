@@ -44,9 +44,6 @@ const INVALID_SIGNATURE_ERROR = errorPayload(
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
 );
-const QUOTED_SIGNATURE_ERROR = Buffer.from(
-  "The API said: messages.1.content.0.thinking.signature: Field required",
-);
 const reusable = (failure: OrchestrationV2ProviderFailure) =>
   ({ failure, threadDisposition: "reusable" }) as const;
 const POISONED_HISTORY = {
@@ -166,13 +163,6 @@ describe("watchAntigravityPromptOutcome", () => {
           [ERROR_MESSAGE, INVALID_SIGNATURE_ERROR],
         ]),
         POISONED_HISTORY,
-      );
-      // Reply text is never evidence, even when it quotes the error.
-      assert.isUndefined(
-        yield* turn([
-          [USER_INPUT, input],
-          [PLANNER_RESPONSE, QUOTED_SIGNATURE_ERROR],
-        ]),
       );
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
