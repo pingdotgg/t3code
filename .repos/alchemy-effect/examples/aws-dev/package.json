@@ -16,11 +16,12 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "alchemy-test": "workspace:*"
+    "@alchemy.run/test": "workspace:*"
   }
 }
