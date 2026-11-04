@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
@@ -147,7 +149,7 @@ const startRun = Effect.fn("startRun")(function* (
   };
 });
 
-it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginContextEnrichment", (it) => {
   describe("sources", () => {
     it.effect("takes its generation snapshot only after catalogue restoration is ready", () =>
       withDatabase(
