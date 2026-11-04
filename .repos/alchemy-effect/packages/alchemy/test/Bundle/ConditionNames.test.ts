@@ -1,9 +1,9 @@
-import * as Bundle from "@/Bundle/Bundle";
+import { expect, layer } from "@alchemy.run/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Bundle from "@/Bundle/Bundle";
 
 /**
  * Rolldown's default `resolve.conditionNames` are import-kind specific
