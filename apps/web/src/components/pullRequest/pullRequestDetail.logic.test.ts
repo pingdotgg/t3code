@@ -991,6 +991,20 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toBe("octocat: > ```html\n> <!-- open\n> ```\n> Quoted. \nMine.");
   });
 
+  it("holds a fence open over a deeper quoted fence and closes it with its blockquote", () => {
+    const nested = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", "```md\n> ```\n<!-- kept -->\n```\nMine. <!-- bot -->"),
+    });
+    const unquoted = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c2", "> ```\n> code\nMine. <!-- bot -->"),
+    });
+
+    expect(nested?.text).toBe("octocat: ```md\n> ```\n<!-- kept -->\n```\nMine.");
+    expect(unquoted?.text).toBe("octocat: > ```\n> code\nMine.");
+  });
+
   it("keeps a fence written inside a hidden comment hidden", () => {
     const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",

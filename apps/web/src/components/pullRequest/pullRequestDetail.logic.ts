@@ -660,7 +660,19 @@ const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
 const FENCE_OPEN = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/u;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u;
 // Fences can sit inside a blockquote, as review bots quote code.
-const BLOCKQUOTE_PREFIX = /^(?: {0,3}>[ \t]?)+/u;
+const BLOCKQUOTE_MARKER = /^ {0,3}>[ \t]?/u;
+
+function stripQuotes(line: string, limit = Infinity): { depth: number; rest: string } {
+  let depth = 0;
+  let rest = line;
+  while (depth < limit) {
+    const marker = BLOCKQUOTE_MARKER.exec(rest);
+    if (marker === null) break;
+    rest = rest.slice(marker[0].length);
+    depth += 1;
+  }
+  return { depth, rest };
+}
 
 /**
  * A body as it reads, for text sent to the agent under a length bound. A bot's HTML-comment
@@ -671,19 +683,27 @@ const BLOCKQUOTE_PREFIX = /^(?: {0,3}>[ \t]?)+/u;
 function readableBody(body: string): string | null {
   if (visibleBody(body) === null) return null;
   const kept: string[] = [];
-  let fence: string | null = null;
+  let fence: { marker: string; depth: number } | null = null;
   let inComment = false;
   // Hosts pass bodies on with whatever line endings they were written with, and a `\r` left on a
   // closing fence would hold the fence open over everything after it.
   for (const line of body.split(/\r\n|\r|\n/u)) {
-    const unquoted = line.replace(BLOCKQUOTE_PREFIX, "");
     if (fence !== null) {
-      kept.push(line);
-      const closing = FENCE_CLOSE.exec(unquoted)?.[1];
-      if (closing !== undefined && closing[0] === fence[0] && closing.length >= fence.length) {
-        fence = null;
+      // A deeper "> ```" is fence content; a shallower line ends the blockquote and the fence.
+      const { depth, rest } = stripQuotes(line, fence.depth);
+      if (depth === fence.depth) {
+        kept.push(line);
+        const closing = FENCE_CLOSE.exec(rest)?.[1];
+        if (
+          closing !== undefined &&
+          closing[0] === fence.marker[0] &&
+          closing.length >= fence.marker.length
+        ) {
+          fence = null;
+        }
+        continue;
       }
-      continue;
+      fence = null;
     }
     let rest = line;
     if (inComment) {
@@ -692,9 +712,12 @@ function readableBody(body: string): string | null {
       rest = rest.slice(end + 3);
       inComment = false;
     } else {
-      const opening = FENCE_OPEN.exec(unquoted);
-      if (opening !== null) {
-        fence = opening[1] ?? opening[2] ?? null;
+      const { depth, rest: unquoted } = stripQuotes(line);
+      const marker = FENCE_OPEN.exec(unquoted)
+        ?.slice(1)
+        .find((group) => group !== undefined);
+      if (marker !== undefined) {
+        fence = { marker, depth };
         kept.push(line);
         continue;
       }
