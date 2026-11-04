@@ -1687,11 +1687,15 @@ export const make = Effect.gen(function* () {
               variables: { fullPath: input.repository, iid: String(input.number) },
               decode: decodeMergeMessagesJson,
             });
-            const merge = messages.merge === null ? null : removeAgentCredits(messages.merge);
+            // glab drops an empty message, which would bring the credits back.
+            const clean = (message: string) => {
+              const cleaned = removeAgentCredits(message);
+              return cleaned.trim() === "" ? (messages.title ?? message) : cleaned;
+            };
+            const merge = messages.merge === null ? null : clean(messages.merge);
             if (merge !== null && merge !== messages.merge) flags.push("--message", merge);
             const squashes = input.mergeMethod === "squash" || messages.squashOnMerge;
-            const squash =
-              messages.squash === null || !squashes ? null : removeAgentCredits(messages.squash);
+            const squash = messages.squash === null || !squashes ? null : clean(messages.squash);
             if (squash !== null && squash !== messages.squash) {
               // glab takes a squash message only alongside --squash, which changes nothing here.
               if (!flags.includes("--squash")) flags.push("--squash");

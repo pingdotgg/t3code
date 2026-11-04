@@ -441,6 +441,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     {
       mergeMethod: "squash",
       squashOnMerge: false,
+      squash: "Add thing\n\nCo-authored-by: Codex <noreply@openai.com>",
       flags: [
         "--squash",
         "--sha",
@@ -454,6 +455,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     {
       mergeMethod: "merge",
       squashOnMerge: false,
+      squash: "Add thing\n\nCo-authored-by: Codex <noreply@openai.com>",
       flags: [
         "--sha",
         "head",
@@ -464,6 +466,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     {
       mergeMethod: "merge",
       squashOnMerge: true,
+      squash: "Add thing\n\nCo-authored-by: Codex <noreply@openai.com>",
       flags: [
         "--sha",
         "head",
@@ -474,9 +477,23 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "Add thing",
       ],
     },
+    {
+      mergeMethod: "squash",
+      squashOnMerge: false,
+      squash: "Co-authored-by: Codex <noreply@openai.com>",
+      flags: [
+        "--squash",
+        "--sha",
+        "head",
+        "--message",
+        "Merge branch 'feature' into 'main'\n\nAdd thing\n\nCo-authored-by: Ada <ada@example.com>",
+        "--squash-message",
+        "Add thing",
+      ],
+    },
   ] as const)(
     "removes agent credits from GitLab's default messages for a $mergeMethod (squash on merge: $squashOnMerge)",
-    ({ mergeMethod, squashOnMerge, flags }) =>
+    ({ mergeMethod, squashOnMerge, squash, flags }) =>
       Effect.gen(function* () {
         const credits =
           "Co-authored-by: Ada <ada@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>";
@@ -488,10 +505,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
                     data: {
                       project: {
                         mergeRequest: {
+                          title: "Add thing",
                           squashOnMerge,
                           defaultMergeCommitMessage: `Merge branch 'feature' into 'main'\n\nAdd thing\n\n${credits}`,
-                          defaultSquashCommitMessage:
-                            "Add thing\n\nCo-authored-by: Codex <noreply@openai.com>",
+                          defaultSquashCommitMessage: squash,
                         },
                       },
                     },
