@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -243,8 +244,8 @@ export function ConnectAgentSurface() {
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              Create one in Settings → Sharing & access, or run <code>t3 auth pairing create</code>{" "}
-              on this machine.
+              Create one in Settings → Sharing & access, or run{" "}
+              <code>{T3_LEARN_COMMAND} auth pairing create</code> on this machine.
             </p>
           </div>
         )}
