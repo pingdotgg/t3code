@@ -10,6 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,7 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -188,7 +189,7 @@ const make = Effect.gen(function* () {
         modelId: string;
         downloaded: number;
         verifying: boolean;
-        fiber: Fiber.Fiber<string, SpeechError>;
+        fiber: Deferred.Deferred<Fiber.Fiber<string, SpeechError>>;
       }
     | undefined;
   let activeTranscriptions = 0;
@@ -292,44 +293,48 @@ const make = Effect.gen(function* () {
     yield* Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.");
   });
 
-  // The transfer runs in the service scope, so a dropped request keeps it going and
-  // a later request for the same model joins it; cancelDownload interrupts it.
-  const download = Effect.fn("SpeechService.download")(function* (modelId: string) {
+  // Publish the reservation before forking: a cached transfer can finish before forkIn returns.
+  const downloadFiber = Effect.fn("SpeechService.downloadFiber")(function* (modelId: string) {
     const definition = getSpeechModel(modelId);
     if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
     if (closing || activeOperation || (downloading && downloading.modelId !== modelId))
       return yield* new SpeechBusyError({ operation: "model download" });
-    if (!downloading) {
-      const fiber = yield* store
-        .download(definition, {
-          onProgress: (downloaded) => {
-            if (downloading?.modelId === modelId) {
-              downloading.downloaded = downloaded;
-              downloading.verifying = false;
-            }
-          },
-          onVerificationStart: () => {
-            if (downloading?.modelId === modelId) downloading.verifying = true;
-          },
-        })
-        .pipe(
-          (modelDownload) =>
-            Effect.all([modelDownload, acquireSilenceModel("installation")], { concurrency: 2 }),
-          Effect.map(([modelPath]) => modelPath),
-          Effect.mapError((cause) => speechError("model download", cause)),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (downloading?.modelId === modelId) {
-                downloading = undefined;
-                scheduleUnload();
-              }
-            }),
-          ),
-          Effect.forkIn(scope),
-        );
-      downloading = { modelId, downloaded: 0, verifying: false, fiber };
-    }
-    const exit = yield* Fiber.await(downloading.fiber);
+    if (downloading) return yield* Deferred.await(downloading.fiber);
+    const transfer = {
+      modelId,
+      downloaded: 0,
+      verifying: false,
+      fiber: Deferred.makeUnsafe<Fiber.Fiber<string, SpeechError>>(),
+    };
+    downloading = transfer;
+    const fiber = yield* store
+      .download(definition, {
+        onProgress: (downloaded) => {
+          transfer.downloaded = downloaded;
+          transfer.verifying = false;
+        },
+        onVerificationStart: () => {
+          transfer.verifying = true;
+        },
+      })
+      .pipe(
+        (modelDownload) =>
+          Effect.all([modelDownload, acquireSilenceModel("installation")], { concurrency: 2 }),
+        Effect.map(([modelPath]) => modelPath),
+        Effect.mapError((cause) => speechError("model download", cause)),
+        Effect.forkIn(scope),
+      );
+    fiber.addObserver(() => {
+      if (downloading !== transfer) return;
+      downloading = undefined;
+      scheduleUnload();
+    });
+    yield* Deferred.succeed(transfer.fiber, fiber);
+    return fiber;
+  }, Effect.uninterruptible);
+
+  const download = Effect.fn("SpeechService.download")(function* (modelId: string) {
+    const exit = yield* Fiber.await(yield* downloadFiber(modelId));
     if (Exit.isSuccess(exit)) return exit.value;
     return yield* Cause.hasInterruptsOnly(exit.cause)
       ? new SpeechDownloadCancelledError({ modelId })
@@ -663,15 +668,11 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const startStream: SpeechService["Service"]["startStream"] = Effect.fn(
-    "SpeechService.startStream",
-  )(function* (options) {
+  // Stream setup shares the public startStream span.
+  const openStream = Effect.fnUntraced(function* (options: SpeechTranscriptionOptions) {
     const operation = "streaming transcription";
-    if (closing || operationBusy()) return yield* new SpeechBusyError({ operation });
     yield* requireSupported;
     const released = Promise.withResolvers<void>();
-    activeOperation = released.promise;
-    activeTranscriptions += 1;
     // @effect-diagnostics-next-line abortControllerInEffect:off - Stream cancellation must abort native work independently of the caller fiber.
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, lifetime.signal]);
@@ -679,6 +680,21 @@ const make = Effect.gen(function* () {
     let closed = false;
     let started = false;
     let loaded: LoadedModel | undefined;
+    yield* Effect.acquireRelease(
+      Effect.suspend(() => {
+        if (closing || operationBusy()) return Effect.fail(new SpeechBusyError({ operation }));
+        activeOperation = released.promise;
+        activeTranscriptions += 1;
+        return Effect.void;
+      }),
+      () =>
+        Effect.sync(() => {
+          activeTranscriptions -= 1;
+          if (activeOperation === released.promise) activeOperation = undefined;
+          scheduleUnload();
+          released.resolve();
+        }),
+    );
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         closed = true;
@@ -701,10 +717,6 @@ const make = Effect.gen(function* () {
             yield* dispose;
           }
         }
-        activeTranscriptions -= 1;
-        if (activeOperation === released.promise) activeOperation = undefined;
-        scheduleUnload();
-        released.resolve();
       }),
     );
     const settings = yield* readSettings(operation);
@@ -848,7 +860,13 @@ const make = Effect.gen(function* () {
     models: modelsEffect,
     prepareModel,
     transcribe,
-    startStream,
+    startStream: Effect.fn("SpeechService.startStream")(function* (options) {
+      const session = yield* Scope.fork(yield* Effect.scope);
+      return yield* openStream(options).pipe(
+        Scope.provide(session),
+        Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))),
+      );
+    }),
     downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
       requireSupported.pipe(
         Effect.andThen(download(modelId)),
@@ -870,7 +888,9 @@ const make = Effect.gen(function* () {
     ),
     cancelDownload: Effect.fn("SpeechService.cancelDownload")((modelId) =>
       Effect.suspend(() =>
-        downloading?.modelId === modelId ? Fiber.interrupt(downloading.fiber) : Effect.void,
+        downloading?.modelId === modelId
+          ? Deferred.await(downloading.fiber).pipe(Effect.flatMap(Fiber.interrupt))
+          : Effect.void,
       ).pipe(Effect.andThen(modelsEffect)),
     ),
     removeModel: Effect.fn("SpeechService.removeModel")((modelId) =>
