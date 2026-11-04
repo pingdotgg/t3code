@@ -50,16 +50,20 @@ The adapter supports:
 - thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
 - interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
+- editing sent messages and reverting conversations through persisted SDK checkpoints;
 - provider conversation snapshots through `Agent.messages.list()`;
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 
-The public SDK does not currently expose native agent fork, conversation rollback, active steering,
+The public SDK does not currently expose native agent fork, active steering,
 or interactive approval callbacks. Direct active steering is advertised as unsupported, while V2
 steering uses the orchestrator's interrupt-and-restart path and preserves the app run identity across
 provider turns. Same-provider Cursor forks use the orchestrator's portable full-thread context
 handoff into a fresh Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter
 intentionally uses the authenticated, thread-scoped MCP server instead.
+
+Editing a sent message rewinds the conversation to before that message. Rollback requires the
+local Cursor checkpoint data to still be available on the environment running the thread.
 
 Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read
 [Context in portable handoffs](./portable-handoffs.md) before using a fork for work whose exact

@@ -81,6 +81,7 @@ describe("CursorAdapterV2", () => {
             open: () =>
               Effect.succeed({
                 agentId: "native-cursor-lifecycle",
+                rollback: () => Effect.void,
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (input) =>
@@ -414,6 +415,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-failure",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -534,6 +536,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-error",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -694,6 +697,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-device",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -1064,6 +1068,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-search",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -1335,6 +1340,7 @@ describe("CursorAdapterV2", () => {
           open: () =>
             Effect.succeed({
               agentId: "native-cursor-task-ls",
+              rollback: () => Effect.void,
               listMessages: Effect.succeed([]),
               close: Effect.void,
               send: (input) =>
@@ -1519,6 +1525,7 @@ describe("CursorAdapterV2", () => {
             checkModel(`agent.${input.operation}`, input.options.model).pipe(
               Effect.as({
                 agentId: "native-cursor-custom-model",
+                rollback: () => Effect.void,
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (sendInput) =>
