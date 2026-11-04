@@ -1,5 +1,6 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { PullRequestActor } from "@t3tools/contracts";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
@@ -74,12 +75,12 @@ export function PullRequestDiffStats(props: {
     <View className="shrink-0 flex-row items-center gap-2">
       {!props.compact || props.additions > 0 ? (
         <Text className={cn(textSize, "font-t3-medium tabular-nums text-adaptive-emerald-600-400")}>
-          +{props.additions.toLocaleString()}
+          +{formatDiffCount(props.additions)}
         </Text>
       ) : null}
       {!props.compact || props.deletions > 0 ? (
         <Text className={cn(textSize, "font-t3-medium tabular-nums text-danger-foreground")}>
-          −{props.deletions.toLocaleString()}
+          −{formatDiffCount(props.deletions)}
         </Text>
       ) : null}
     </View>
