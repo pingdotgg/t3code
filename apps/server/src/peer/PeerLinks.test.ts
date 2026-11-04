@@ -623,9 +623,10 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
-      expect(failed.message).toBe(
-        `This environment could not reach Box at ${impostor.url}, http://192.168.1.20:3773.`,
-      );
+      // Each address says why it was not Box.
+      expect(failed.message).toContain("could not reach Box");
+      expect(failed.message).toContain("Impostor");
+      expect(failed.message).toContain("plain http");
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
 
@@ -641,6 +642,30 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
       expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const closed = yield* Effect.scoped(
+        serveRaw(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
+      );
+      const notT3 = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.html("<h1>Not Found</h1>", { status: 404 })),
+      );
+      const a = yield* makeA(laptop);
+      const linking = (url: string) =>
+        a.links.link({ url, pairingCode: "unused", access: "auto" }).pipe(Effect.flip);
+      const refused = yield* linking(closed);
+      const answered = yield* linking(notT3);
+      expect(answered.message).toContain(notT3);
+      expect(refused.message).toContain(closed);
+      expect(refused.message.replace(closed, "<url>")).not.toBe(
+        answered.message.replace(notT3, "<url>"),
+      );
+      expect(yield* a.links.list).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
