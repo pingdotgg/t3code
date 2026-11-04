@@ -34,6 +34,7 @@ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
+import * as ModelPreviews from "./ModelPreviews.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -124,6 +125,7 @@ const layerTest = Layer.mergeAll(
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(layerConfig))),
   ),
+  ModelPreviews.layer,
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {
@@ -211,6 +213,74 @@ describe("AssetAccess", () => {
         resource: { ...resource, itemId: oversizedScreenshotItem.id },
       }).pipe(Effect.flip);
       expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves previews of 3D files and downloads the originals", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-model-root-" });
+      const stl = new Uint8Array(84 + 50);
+      new DataView(stl.buffer).setUint32(80, 1, true);
+      [0, 0, 0, 10, 0, 0, 0, 0, 10].forEach((value, index) =>
+        new DataView(stl.buffer).setFloat32(96 + index * 4, value, true),
+      );
+      const stlPath = path.join(root, "part.stl");
+      yield* fs.writeFile(stlPath, stl);
+      const emptyPath = path.join(root, "empty.stl");
+      yield* fs.writeFile(emptyPath, new Uint8Array(84));
+      const canonicalStl = yield* fs.realPath(stlPath);
+      const resolveUrl = (relativeUrl: string) => {
+        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      };
+      const threadId = ThreadId.make("thread-1");
+
+      for (const resource of [
+        { _tag: "media-file" as const, threadId, path: stlPath },
+        { _tag: "workspace-file" as const, threadId, path: "part.stl" },
+        { _tag: "draft-workspace-file" as const, cwd: root, path: "part.stl" },
+      ]) {
+        const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
+        const asset = yield* resolveUrl(issued.relativeUrl);
+        expect(asset).toMatchObject({ kind: "bytes", mimeType: "image/png" });
+        expect(asset?.kind === "bytes" && [...asset.bytes.subarray(1, 4)]).toEqual([
+          0x50, 0x4e, 0x47,
+        ]);
+      }
+
+      const download = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId, path: stlPath, disposition: "attachment" },
+        workspaceRoot: root,
+      });
+      expect(yield* resolveUrl(download.relativeUrl)).toMatchObject({
+        kind: "file",
+        path: canonicalStl,
+        download: true,
+      });
+
+      const draftDownload = yield* issueAssetUrl({
+        resource: {
+          _tag: "draft-workspace-file",
+          cwd: root,
+          path: "part.stl",
+          disposition: "attachment",
+        },
+      });
+      expect(yield* resolveUrl(draftDownload.relativeUrl)).toMatchObject({
+        kind: "file",
+        path: canonicalStl,
+        download: true,
+      });
+
+      const empty = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId, path: emptyPath },
+        workspaceRoot: root,
+      });
+      expect(yield* resolveUrl(empty.relativeUrl)).toBeNull();
+      expect(new Uint8Array(yield* fs.readFile(stlPath))).toEqual(stl);
     }).pipe(Effect.provide(layerTest)),
   );
 
