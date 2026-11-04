@@ -11,6 +11,7 @@ import type {
   PullRequestComment,
   PullRequestMergeMethod,
   PullRequestMergeability,
+  PullRequestReviewDecision,
   PullRequestState,
 } from "@t3tools/contracts";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
@@ -24,6 +25,17 @@ const RawIdentitySchema = Schema.Struct({
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const RawReviewerSchema = Schema.Struct({
+  ...RawIdentitySchema.fields,
+  /** 10 approved, 5 approved with suggestions, 0 none, -5 waiting for author, -10 rejected. */
+  vote: Schema.optional(Schema.NullOr(Schema.Number)),
+  isRequired: Schema.optional(Schema.NullOr(Schema.Boolean)),
+});
+
+const RawThreadPropertySchema = Schema.optional(
+  Schema.NullOr(Schema.Struct({ $value: Schema.optional(Schema.NullOr(Schema.String)) })),
+);
 
 const RawPullRequestSchema = Schema.Struct({
   pullRequestId: Schema.Int,
@@ -43,7 +55,7 @@ const RawPullRequestSchema = Schema.Struct({
   ),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
-  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
+  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawReviewerSchema))),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -74,6 +86,14 @@ const RawPullRequestSchema = Schema.Struct({
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  properties: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        CodeReviewThreadType: RawThreadPropertySchema,
+        CodeReviewVoteResult: RawThreadPropertySchema,
+      }),
+    ),
+  ),
   threadContext: Schema.optional(
     Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
@@ -124,6 +144,7 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  readonly reviewDecision: PullRequestReviewDecision | null;
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -187,13 +208,39 @@ function toAutoMergeMethod(
   }
 }
 
+function toReviewDecision(
+  reviewers: ReadonlyArray<Schema.Schema.Type<typeof RawReviewerSchema>>,
+): PullRequestReviewDecision | null {
+  if (reviewers.length === 0) return null;
+  const votes = reviewers.map((reviewer) => reviewer.vote ?? 0);
+  if (votes.some((vote) => vote < 0)) return "changes-requested";
+  if (reviewers.some((reviewer, index) => reviewer.isRequired === true && votes[index] === 0)) {
+    return "review-required";
+  }
+  return votes.some((vote) => vote > 0) ? "approved" : "review-required";
+}
+
+/** Azure records a vote as a system thread; GitHub's review states are what consumers read. */
+function toVoteReviewState(
+  properties: Schema.Schema.Type<typeof RawThreadSchema>["properties"],
+): "APPROVED" | "CHANGES_REQUESTED" | null {
+  if (properties?.CodeReviewThreadType?.$value?.trim() !== "VoteUpdate") return null;
+  const vote = Number(properties.CodeReviewVoteResult?.$value ?? "");
+  return vote > 0 ? "APPROVED" : vote < 0 ? "CHANGES_REQUESTED" : null;
+}
+
 function toPullRequest(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsPullRequest | null {
   const autoMergeMethod = toAutoMergeMethod(raw);
-  const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
+  const rawReviewers = raw.reviewers ?? [];
+  const reviewers = rawReviewers.flatMap((reviewer) => {
     const actor = toActor(reviewer);
     return actor === null ? [] : [actor];
+  });
+  const reviewRequestLogins = rawReviewers.flatMap((reviewer) => {
+    const login = (reviewer.vote ?? 0) === 0 ? toActor(reviewer)?.login : undefined;
+    return login === undefined ? [] : [login];
   });
   const closedAt = trimmed(raw.closedDate);
   const url = trimmed(
@@ -223,8 +270,9 @@ function toPullRequest(
     updatedAt: closedAt ?? raw.creationDate,
     closedAt,
     body: raw.description ?? "",
-    reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
+    reviewRequestLogins,
     reviewers,
+    reviewDecision: toReviewDecision(rawReviewers),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
@@ -299,25 +347,28 @@ export function decodeThreadsJson(
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
     const path = toRepositoryPath(thread.threadContext?.filePath);
+    const voteReviewState = toVoteReviewState(thread.properties);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
+      const isSystem = comment.commentType?.trim().toLowerCase() === "system";
       if (
         comment.isDeleted === true ||
-        comment.commentType?.trim().toLowerCase() === "system" ||
+        (isSystem && voteReviewState === null) ||
         (comment.content ?? "").trim().length === 0 ||
         publishedDate === null
       ) {
         continue;
       }
+      const reviewState = isSystem ? voteReviewState : null;
       comments.push({
         id: `${thread.id}:${comment.id ?? 0}`,
-        kind: path === null ? "issue-comment" : "review-comment",
+        kind: reviewState !== null ? "review" : path === null ? "issue-comment" : "review-comment",
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
         url: null,
-        path,
-        reviewState: null,
+        path: reviewState === null ? path : null,
+        reviewState,
       });
     }
   }
