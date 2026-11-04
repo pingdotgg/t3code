@@ -1,7 +1,5 @@
 import type {
-  MentionIndexFigmaPayload,
   MentionIndexHit,
-  MentionIndexJiraPayload,
   MentionIndexProviderId,
   MentionIndexPullRequestPayload,
   MentionIndexSearchInput,
@@ -35,8 +33,6 @@ export interface MentionIndexRow {
   readonly tokens: string;
   readonly pullRequest?: MentionIndexPullRequestPayload;
   readonly thread?: MentionIndexThreadPayload;
-  readonly jira?: MentionIndexJiraPayload;
-  readonly figma?: MentionIndexFigmaPayload;
   readonly updatedAt: number;
 }
 
@@ -55,7 +51,7 @@ const ScopeBlob = Schema.fromJsonString(
   Schema.Struct({
     rows: Schema.Array(
       Schema.Struct({
-        providerId: Schema.Literals(["pull-request", "thread", "jira", "figma"]),
+        providerId: Schema.Literals(["pull-request", "thread"]),
         itemKey: Schema.String,
         label: Schema.String,
         description: Schema.String,
@@ -80,23 +76,6 @@ const ScopeBlob = Schema.fromJsonString(
             threadId: Schema.String,
             title: Schema.String,
             projectId: Schema.String,
-          }),
-        ),
-        jira: Schema.optionalKey(
-          Schema.Struct({
-            key: Schema.String,
-            summary: Schema.String,
-            url: Schema.String,
-            projectKey: Schema.optionalKey(Schema.String),
-            status: Schema.optionalKey(Schema.String),
-          }),
-        ),
-        figma: Schema.optionalKey(
-          Schema.Struct({
-            fileKey: Schema.String,
-            name: Schema.String,
-            url: Schema.String,
-            nodeId: Schema.optionalKey(Schema.String),
           }),
         ),
         updatedAt: Schema.Number,
@@ -269,8 +248,6 @@ export const make = Effect.gen(function* () {
             score,
             ...(row.pullRequest ? { pullRequest: row.pullRequest } : {}),
             ...(row.thread ? { thread: row.thread } : {}),
-            ...(row.jira ? { jira: row.jira } : {}),
-            ...(row.figma ? { figma: row.figma } : {}),
           });
         }
       }

@@ -9,8 +9,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { MentionIndex } from "./MentionIndex.ts";
-import { MentionIndexFigmaSyncer } from "./MentionIndexFigmaSyncer.ts";
-import { MentionIndexJiraSyncer } from "./MentionIndexJiraSyncer.ts";
 import { MentionIndexPrSyncer } from "./MentionIndexPrSyncer.ts";
 import { MentionIndexThreadSyncer } from "./MentionIndexThreadSyncer.ts";
 
@@ -26,8 +24,6 @@ const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
   const pullRequests = yield* MentionIndexPrSyncer;
   const threads = yield* MentionIndexThreadSyncer;
-  const jira = yield* MentionIndexJiraSyncer;
-  const figma = yield* MentionIndexFigmaSyncer;
 
   const ensureProviders = Effect.fn("MentionIndexService.ensureProviders")(function* (
     projectId: ProjectId,
@@ -35,8 +31,6 @@ const make = Effect.gen(function* () {
   ) {
     if (providers.includes("pull-request")) yield* pullRequests.ensureIndexed(projectId);
     if (providers.includes("thread")) yield* threads.ensureIndexed(projectId);
-    if (providers.includes("jira")) yield* jira.ensureIndexed(projectId);
-    if (providers.includes("figma")) yield* figma.ensureIndexed(projectId);
   });
 
   return MentionIndexService.of({
