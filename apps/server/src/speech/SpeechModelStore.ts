@@ -56,6 +56,8 @@ export class SpeechModelStore extends Context.Service<
 >()("t3/speech/SpeechModelStore") {}
 
 const DOWNLOAD_ATTEMPTS = 3;
+const PARTIAL_FILENAME =
+  /\.gguf\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -64,6 +66,12 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const directory = path.join(config.stateDir, "speech", "models");
+  // The server already owns this state directory; no download can be active before the store opens.
+  for (const name of yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []))) {
+    if (PARTIAL_FILENAME.test(name)) {
+      yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.ignore);
+    }
+  }
   const modelPath = (model: ModelFile) => path.join(directory, model.filename);
   // Files whose digest failed, by identity, so status polls stop calling them ready.
   const corrupt = new Map<string, string>();

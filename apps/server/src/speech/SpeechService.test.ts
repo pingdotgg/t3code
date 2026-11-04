@@ -13,6 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
+import { listNativeSpeechGpuDevices } from "./native.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import * as SpeechService from "./SpeechService.ts";
 import { SILERO_VAD } from "./silero.ts";
@@ -556,6 +557,24 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
       architecture: "arm64",
     });
   }),
+);
+
+it.effect.each([{ devices: [] }, { devices: [{ id: "gpu", name: "Test GPU" }] }])(
+  "retries failed GPU discovery without repeatedly probing on status polls: $devices",
+  ({ devices }) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const discover = vi.mocked(listNativeSpeechGpuDevices).mockReset();
+      discover.mockRejectedValueOnce(new Error("driver not ready")).mockResolvedValueOnce(devices);
+      expect(yield* speech.status).toMatchObject({ gpuDevices: [] });
+      yield* speech.status;
+      expect(discover).toHaveBeenCalledOnce();
+      yield* TestClock.adjust("1 minute");
+      expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
+      yield* TestClock.adjust("1 minute");
+      expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
+      expect(discover).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect(
