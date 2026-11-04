@@ -10,7 +10,6 @@ export const OFFICIAL_PROFILES = [
   GITHUB_REPOSITORY_URL,
   IOS_APP_STORE_URL,
   ANDROID_PLAY_STORE_URL,
-  "https://x.com/t3dotgg",
   "https://discord.gg/jn4EGJjrvv",
 ] as const;
 
