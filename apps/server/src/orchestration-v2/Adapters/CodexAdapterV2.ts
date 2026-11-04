@@ -1217,6 +1217,7 @@ interface ActiveCodexProviderRetry {
   readonly context?: ActiveCodexTurnContext;
   readonly nativeMessage: string;
   readonly nativeCode: string | null;
+  readonly errorInfo?: CodexErrorInfo | null;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
@@ -4758,6 +4759,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
+              ...(payload.error.codexErrorInfo === undefined
+                ? {}
+                : { errorInfo: payload.error.codexErrorInfo }),
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
@@ -5819,7 +5823,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 failureCode != null &&
                 (failureCode !== "responseTooManyFailedAttempts" ||
                   codexExhaustionHttpStatus(input.failureErrorInfo) !== null);
-              const failure =
+              let failure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
@@ -5834,6 +5838,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }),
                       input.failureMessage,
                     );
+              const retry = input.providerRetry;
+              // Codex 0.164 reports an exhausted stream error as `other` with the same details.
+              if (
+                failure.code === "other" &&
+                failure.class === "provider_error" &&
+                retry !== undefined &&
+                failure.message === retry.failure.message &&
+                codexTerminalFailureClass(retry.errorInfo, retry.nativeCode) === "transport_error"
+              ) {
+                failure = { ...failure, class: "transport_error" };
+              }
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,

@@ -5645,6 +5645,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       notification: true,
       expectedClass: "provider_error",
     },
+    ...(
+      [
+        {
+          name: "generic-disconnection",
+          status: null,
+          terminalMessage: "Connection lost.",
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-replacement",
+          status: null,
+          terminalMessage: "A different failure.",
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-http-status",
+          status: 503,
+          terminalMessage: "Connection lost.",
+          expectedClass: "provider_error",
+        },
+      ] as const
+    ).map((scenario) => ({
+      ...scenario,
+      code: "responseStreamDisconnected" as const,
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: scenario.status } },
+      notification: true,
+      details: "Connection lost.",
+    })),
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -5717,7 +5745,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       params: {
                         threadId: nativeThreadId,
                         turnId: nativeTurnId,
-                        willRetry: scenario.name === "retry",
+                        willRetry: scenario.name === "retry" || "terminalMessage" in scenario,
                         error: {
                           message,
                           codexErrorInfo: errorInfo,
@@ -5733,6 +5761,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 ]
               : []),
+            ...("terminalMessage" in scenario
+              ? [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "error/terminal",
+                    frame: {
+                      method: "error",
+                      params: {
+                        threadId: nativeThreadId,
+                        turnId: nativeTurnId,
+                        willRetry: false,
+                        error: { message: scenario.terminalMessage, codexErrorInfo: "other" },
+                      },
+                    },
+                  },
+                ]
+              : []),
             {
               type: "emit_inbound",
               label: "turn/completed",
@@ -5743,12 +5788,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   turn: {
                     ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
                     error: {
-                      message: scenario.name === "replacement" ? "A different failure." : message,
-                      ...(scenario.notification &&
-                      scenario.name !== "matching-details" &&
-                      !("details" in scenario)
-                        ? {}
-                        : { codexErrorInfo: errorInfo }),
+                      message:
+                        "terminalMessage" in scenario
+                          ? scenario.terminalMessage
+                          : scenario.name === "replacement"
+                            ? "A different failure."
+                            : message,
+                      ...("terminalMessage" in scenario
+                        ? { codexErrorInfo: "other" }
+                        : scenario.notification &&
+                            scenario.name !== "matching-details" &&
+                            !("details" in scenario)
+                          ? {}
+                          : { codexErrorInfo: errorInfo }),
                     },
                   },
                 },
