@@ -322,7 +322,7 @@ export function mergeLearnedRoutes(input: {
       sharedCredential !== undefined &&
       !tailscaleOrigins.has(url.origin) &&
       !tokenAllowsPlainHttp(saved, sharedCredential);
-    if (needsLanCredential && !canUseLanCredential) continue;
+    if (needsLanCredential && (!canUseLanCredential || !lanCredentialCanProve(url))) continue;
     const lanDpop = needsLanCredential && canUseLanCredential && lanParentId !== null;
     const httpBaseUrl = `${url.origin}/`;
     const connectionId = learnedConnectionId(
@@ -362,6 +362,9 @@ export function mergeLearnedRoutes(input: {
   return signature(saved) === signature(next) ? null : next;
 }
 
+// The proof binds the socket's IPv4 address, so a route with a host name can never verify.
+const lanCredentialCanProve = (url: URL) => parseLanDiscoveryCandidate(url.href) !== null;
+
 function replacesWithLanCredential(
   route: ConnectionRoute,
   httpBaseUrl: string,
@@ -374,7 +377,9 @@ function replacesWithLanCredential(
   } catch {
     return false;
   }
-  if (url.protocol !== "http:" || tailscaleOrigins.has(url.origin)) return false;
+  if (url.protocol !== "http:" || tailscaleOrigins.has(url.origin) || !lanCredentialCanProve(url)) {
+    return false;
+  }
   const profile = Option.getOrNull(route.profile);
   return !(
     connectionRouteId(route.target) ===
