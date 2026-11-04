@@ -3015,7 +3015,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       return;
                     }
                     if (!(eventDetails.event instanceof MouseEvent)) {
-                      soloProjectScopeKey(item.value);
+                      setProjectScopeKeys([item.value]);
                       return;
                     }
                     // Canceling skips Base UI's commit, which would freeze the search query, and its close.
