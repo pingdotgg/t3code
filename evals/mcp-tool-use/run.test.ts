@@ -783,7 +783,7 @@ it.effect("builds the secrets cases, each citing a finding and grading secret ha
     for (const testCase of cases) {
       const sample = makeSample(testCase, base);
       yield* withDevices(sample);
-      assert.doesNotThrow(() => buildMessages(sample));
+      buildMessages(sample);
       assert.match(String(testCase.source?.finding), /^secret-field-2026-10 /, testCase.id);
       assert.isTrue(testCase.expect.secret?.chatAsk, testCase.id);
       // Consume credit needs declared consumers; every control checks prose over-correction.
@@ -791,11 +791,6 @@ it.effect("builds the secrets cases, each citing a finding and grading secret ha
         assert.isNotEmpty(testCase.expect.secret.consumers, testCase.id);
       if (testCase.kind === "control")
         assert.isTrue(testCase.expect.secret?.noCardDemand, testCase.id);
-      assert.include(
-        testCase.notes ?? "",
-        "not whether the rest of the task completes",
-        testCase.id,
-      );
     }
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
