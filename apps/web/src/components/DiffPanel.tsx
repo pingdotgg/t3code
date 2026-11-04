@@ -156,7 +156,7 @@ function DiffFileCollapseToggle({
             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
             aria-expanded={!collapsed}
             ref={(node) => {
-              if (!node || !load || collapsed) return;
+              if (!node || !load) return;
               return observeIntersection(
                 node,
                 (entry) => {
@@ -750,9 +750,10 @@ export default function DiffPanel({
   const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
     const file = renderableFileEntries.find((file) => file.fileKey === fileKey);
     if (lazySource && file) requestFile(resolveFileDiffPath(file.fileDiff));
+    const pending = file?.fileDiff.cacheKey?.endsWith(":pending") === true;
     updateCollapsedDiffFiles((current) => {
       const next = new Set(current);
-      if (next.has(fileKey)) {
+      if (pending || next.has(fileKey)) {
         next.delete(fileKey);
       } else {
         next.add(fileKey);
@@ -1462,14 +1463,15 @@ export default function DiffPanel({
                         }
                       : {})}
                     onRevealSearchMatch={unfoldDiffFile}
-                    renderHeaderPrefix={(fileDiff, fileKey) => {
+                    renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       return (
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}
                           fileKey={fileKey}
-                          collapsed={collapsedDiffFileKeys.has(fileKey)}
+                          collapsed={collapsed}
                           onToggle={toggleDiffFileCollapsed}
-                          {...(fileDiff.cacheKey?.endsWith(":pending")
+                          {...(fileDiff.cacheKey?.endsWith(":pending") &&
+                          !collapsedDiffFileKeys.has(fileKey)
                             ? {
                                 load: () => requestFile(resolveFileDiffPath(fileDiff)),
                               }
