@@ -91,6 +91,38 @@ describe("ElectronApp", () => {
     ),
   );
 
+  it("relaunches the AppImage only when its mount contains the current executable", () => {
+    const currentExecPath = "/tmp/t3-mount/t3code";
+    for (const [execPath, env, expected] of [
+      [currentExecPath, {}, currentExecPath],
+      [currentExecPath, { APPIMAGE: "/Apps/T3.AppImage" }, currentExecPath],
+      [currentExecPath, { APPDIR: "/tmp/t3-mount" }, currentExecPath],
+      [
+        currentExecPath,
+        { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3-mount/" },
+        "/Apps/T3.AppImage",
+      ],
+      [currentExecPath, { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3" }, currentExecPath],
+      [currentExecPath, { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/unrelated" }, currentExecPath],
+      [currentExecPath, { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "tmp/t3-mount" }, currentExecPath],
+      [
+        currentExecPath,
+        { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3-mount/../other" },
+        currentExecPath,
+      ],
+      [
+        "/tmp/t3-mount/custom",
+        { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3-mount" },
+        "/tmp/t3-mount/custom",
+      ],
+    ] as const) {
+      assert.strictEqual(
+        ElectronApp.resolveLinuxRelaunchExecPath({ execPath, currentExecPath, env }),
+        expected,
+      );
+    }
+  });
+
   it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "keeps the detached Linux relaunch alive until parent exit without setting NoNewPrivs",
     async () => {

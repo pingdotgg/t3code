@@ -254,9 +254,30 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
+export function resolveLinuxRelaunchExecPath(input: {
+  readonly execPath: string;
+  readonly currentExecPath: string;
+  readonly env: NodeJS.ProcessEnv;
+}): string {
+  const appImage = input.env.APPIMAGE?.trim();
+  const appDir = input.env.APPDIR?.trim().replace(/\/+$/, "");
+  if (!appImage || !appDir?.startsWith("/") || input.execPath !== input.currentExecPath) {
+    return input.execPath;
+  }
+  const hasParentSegment = (path: string) => path.split("/").includes("..");
+  // The AppImage mount disappears with this process, so start the AppImage itself.
+  return input.execPath.startsWith(`${appDir}/`) &&
+    !hasParentSegment(appDir) &&
+    !hasParentSegment(input.execPath)
+    ? appImage
+    : input.execPath;
+}
+
 const makeWithLinuxRelaunch = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const env = yield* HostProcess.Environment;
+  const currentExecPath = yield* HostProcess.ExecutablePath;
   if (platform !== "linux") return make;
 
   return ElectronApp.of({
@@ -272,7 +293,11 @@ const makeWithLinuxRelaunch = Effect.gen(function* () {
               "-c",
               'while read -r _; do :; done; exec "$@" </dev/null',
               "t3code-relaunch",
-              options.execPath ?? process.execPath,
+              resolveLinuxRelaunchExecPath({
+                execPath: options.execPath ?? currentExecPath,
+                currentExecPath,
+                env,
+              }),
               ...(options.args ?? process.argv.slice(1)),
             ],
             { detached: true, stdin: "pipe", stdout: "ignore", stderr: "ignore" },
