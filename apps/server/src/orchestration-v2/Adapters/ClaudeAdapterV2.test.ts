@@ -5306,6 +5306,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: false,
     },
     {
+      case: "a deny wildcard that may match only a server alias",
+      rules: [{ behavior: "deny", rule: "*notion*" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "an ask rule for every tool",
+      rules: [{ behavior: "ask", rule: "*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
       case: "rules that cannot cover an MCP tool",
       rules: [
         { behavior: "ask", rule: "Bash" },

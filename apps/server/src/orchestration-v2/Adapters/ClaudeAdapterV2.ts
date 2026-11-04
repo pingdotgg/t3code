@@ -808,37 +808,23 @@ function withoutForgedMcpApp(output: ClaudeNativeToolOutput): ClaudeNativeToolOu
     : { type: "structured_tool_use_result", value: { result: value } };
 }
 
-function claudeMcpGlobMatches(pattern: string, value: string): boolean {
-  const glob = pattern
-    .split("*")
-    .map((part) => part.replaceAll(/[\\^$.|?+()[\]{}]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${glob}$`).test(value);
-}
-
 /**
- * Deliberately broader than Claude's matcher: Claude also matches server aliases T3 can't list, and
- * an alias may contain `__`, so any `mcp__` rule may be server-wide for this server. A false match
- * only refuses a card's call, or asks first.
+ * Deliberately broader than Claude's matcher: Claude also matches rules against server aliases T3
+ * can't list, and an alias may contain `__`, so any `mcp__` rule or wildcard may cover any MCP tool.
+ * A false match only refuses a card's call, or asks first.
  */
-function claudeRuleMayCover(rule: string, qualifiedTool: string): boolean {
-  const name = rule.split("(", 1)[0] ?? rule;
-  return name.startsWith("mcp__") || claudeMcpGlobMatches(name, qualifiedTool);
-}
-
-function claudeMcpToolRuled(
+function claudeRulesMayCoverMcpTools(
   rules: ReadonlyArray<ClaudePermissionRule>,
   behaviors: ReadonlyArray<ClaudePermissionRule["behavior"]>,
-  server: string,
-  tool: string,
 ): boolean {
-  const qualifiedTool = claudeMcpToolName(server, tool);
-  return rules.some(
-    (entry) =>
+  return rules.some((entry) => {
+    const name = entry.rule.split("(", 1)[0] ?? entry.rule;
+    return (
       behaviors.includes(entry.behavior) &&
       entry.notInEffect !== true &&
-      claudeRuleMayCover(entry.rule, qualifiedTool),
-  );
+      (name.startsWith("mcp__") || name.includes("*"))
+    );
+  });
 }
 
 /**
@@ -847,14 +833,13 @@ function claudeMcpToolRuled(
  * rules (null when not) with no ask or deny rule that may cover the tool.
  */
 function claudeMcpToolForApps(
-  server: string,
   tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
   rules: ReadonlyArray<ClaudePermissionRule> | null,
 ) {
   const annotations = tool.annotations ?? {};
   const readOnlyHint =
     annotations.readOnly !== true ||
-    (rules !== null && !claudeMcpToolRuled(rules, ["ask", "deny"], server, tool.name))
+    (rules !== null && !claudeRulesMayCoverMcpTools(rules, ["ask", "deny"]))
       ? annotations.readOnly
       : undefined;
   return {
@@ -11854,7 +11839,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const rules = yield* liveQuery.query.listPermissionRules.pipe(
                 Effect.orElseSucceed(() => null),
               );
-              return (status?.tools ?? []).map((tool) => claudeMcpToolForApps(server, tool, rules));
+              return (status?.tools ?? []).map((tool) => claudeMcpToolForApps(tool, rules));
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
               const { liveQuery, statuses } = yield* mcpAppServerStatuses(
@@ -11883,7 +11868,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     }),
                 ),
               );
-              if (claudeMcpToolRuled(rules, ["deny"], call.server, call.tool)) {
+              if (claudeRulesMayCoverMcpTools(rules, ["deny"])) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: `A Claude deny rule may cover ${tool}, so it was not called.`,
