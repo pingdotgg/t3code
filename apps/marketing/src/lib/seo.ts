@@ -11,7 +11,6 @@ export const OFFICIAL_PROFILES = [
   IOS_APP_STORE_URL,
   ANDROID_PLAY_STORE_URL,
   "https://x.com/t3dotgg",
-  "https://www.youtube.com/@t3dotgg",
   "https://discord.gg/jn4EGJjrvv",
 ] as const;
 
@@ -29,11 +28,7 @@ export const organizationJsonLd = (): JsonLd => ({
   name: "T3 Tools Inc",
   url: SITE_ORIGIN,
   logo: absoluteUrl("/apple-touch-icon.png"),
-  sameAs: [
-    "https://x.com/t3dotgg",
-    "https://www.youtube.com/@t3dotgg",
-    "https://github.com/pingdotgg",
-  ],
+  sameAs: ["https://x.com/t3dotgg", "https://github.com/pingdotgg"],
 });
 
 export const websiteJsonLd = (): JsonLd => ({
