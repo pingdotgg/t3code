@@ -113,3 +113,19 @@ describe("tool image output parsing", () => {
     },
   );
 });
+
+describe("tool text output formatting", () => {
+  it.each(['{"id":1234567890123456789,"name":"x"}', '{"id":1}\n{"id":-9007199254740993}'])(
+    "keeps %j as returned instead of rounding integers beyond 2^53",
+    (text) => {
+      expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
+    },
+  );
+
+  it("still pretty-prints JSON whose long digit runs are inside strings", () => {
+    const text = '{"id":42,"note":"12345678901234567890"}';
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+      JSON.stringify(JSON.parse(text), null, 2),
+    );
+  });
+});

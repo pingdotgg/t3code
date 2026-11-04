@@ -66,9 +66,19 @@ export function isJsonToolText(text: string): boolean {
   return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
 }
 
+// JSON.parse rounds integers beyond 2^53; strings match whole so digit runs inside them are skipped.
+const LONG_JSON_NUMBER = /"(?:[^"\\]|\\.)*"|\d{16,}/g;
+
+function hasUnsafeJsonInteger(text: string): boolean {
+  for (const [token] of text.matchAll(LONG_JSON_NUMBER)) {
+    if (!token.startsWith('"') && !Number.isSafeInteger(Number(token))) return true;
+  }
+  return false;
+}
+
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
-  if (!/^[[{]/.test(trimmed)) return text;
+  if (!/^[[{]/.test(trimmed) || hasUnsafeJsonInteger(trimmed)) return text;
   const whole = parseJson(trimmed);
   if (whole !== undefined) return JSON.stringify(whole, null, 2);
   const lines = trimmed.split("\n").filter((line) => line.trim());
