@@ -40,6 +40,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
     { nightly: true, naming: "versionless", failure: undefined },
     { nightly: false, naming: "versioned", failure: "missing" },
     { nightly: false, naming: "versioned", failure: "digest" },
+    { nightly: false, naming: "versioned", failure: "version" },
   ])("updates architecture-specific sources: %j", ({ nightly, naming, failure }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -70,7 +71,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("AUR release", 
           ? []
           : [
               {
-                name: `${prefix}-arm64.AppImage`,
+                name:
+                  failure === "version"
+                    ? "T3-Code-1.2.2-arm64.AppImage"
+                    : `${prefix}-arm64.AppImage`,
                 digest: failure === "digest" ? "invalid" : `sha256:${"b".repeat(64)}`,
               },
             ]),
