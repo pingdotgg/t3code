@@ -139,6 +139,11 @@ describe("QuickUsagePopover", () => {
       .element(page.getByRole("button", { name: "Claude Code", pressed: true }))
       .toBeVisible();
     await expect.element(page.getByText("Session", { exact: true })).toBeVisible();
+    const positioner = page
+      .getByText("Quick usage")
+      .element()
+      .closest<HTMLElement>('[data-slot="popover-positioner"]');
+    expect(positioner?.getBoundingClientRect().left).toBe(0);
     await userEvent.click(page.getByRole("button", { name: "Cursor" }));
     await expect.element(page.getByText("Could not read limits.")).toBeVisible();
   });

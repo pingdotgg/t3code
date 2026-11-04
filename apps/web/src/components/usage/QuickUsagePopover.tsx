@@ -146,6 +146,18 @@ export function QuickUsagePopover({
   const [now, setNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshingRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const appLeftAnchor = () => {
+    const trigger = triggerRef.current;
+    if (trigger === null) return null;
+    return {
+      contextElement: trigger,
+      getBoundingClientRect: () => {
+        const rect = trigger.getBoundingClientRect();
+        return new DOMRect(0, rect.top, 1, rect.height);
+      },
+    };
+  };
 
   const todayWindow = makeWindow(8, new Date(now));
   const usage = useUsage(todayWindow);
@@ -251,10 +263,19 @@ export function QuickUsagePopover({
 
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant="ghost" size="sm" aria-label="Usage" />}>
+      <PopoverTrigger
+        render={<Button ref={triggerRef} variant="ghost" size="sm" aria-label="Usage" />}
+      >
         {trigger ?? "Usage"}
       </PopoverTrigger>
-      <PopoverPopup width="xl" side="top" align="start" sideOffset={8}>
+      <PopoverPopup
+        width="xl"
+        side="top"
+        align="start"
+        sideOffset={8}
+        anchor={appLeftAnchor}
+        collisionPadding={0}
+      >
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <PopoverTitle>Quick usage</PopoverTitle>
