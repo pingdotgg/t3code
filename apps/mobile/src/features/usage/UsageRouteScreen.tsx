@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
