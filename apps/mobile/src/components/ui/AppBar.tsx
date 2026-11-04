@@ -84,6 +84,7 @@ export function AppBar(props: AppBarProps) {
                           ? {
                               composeButtonId: `${headerId}-refresh`,
                               composeSystemImageName: "arrow.clockwise",
+                              composeTitle: "Refresh",
                               onComposePress: refresh,
                             }
                           : undefined),
