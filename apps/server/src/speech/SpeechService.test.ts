@@ -170,7 +170,9 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
     const started = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
     const helperStarted = yield* Deferred.make<void>();
+    const helperFinish = yield* Deferred.make<void>();
     let helperStartedDuringInstall = false;
+    let helperInterrupted = false;
     download
       .mockImplementationOnce(() =>
         Deferred.succeed(started, undefined).pipe(
@@ -186,25 +188,60 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
             }),
           ),
           Effect.andThen(Deferred.succeed(helperStarted, undefined)),
+          Effect.andThen(Deferred.await(helperFinish)),
           Effect.as("silero.gguf"),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              helperInterrupted = true;
+            }),
+          ),
         ),
       );
     const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
     yield* Deferred.await(started);
     yield* Deferred.await(helperStarted);
     yield* Fiber.interrupt(request);
+    yield* Deferred.succeed(finish, undefined);
+    yield* TestClock.adjust("16 seconds");
+    expect(helperInterrupted).toBe(false);
     const removed = yield* Effect.result(speech.removeModel("test-model"));
     expect(Result.isFailure(removed) && removed.failure).toMatchObject({ _tag: "SpeechBusyError" });
     const join = yield* speech
       .downloadModel("test-model")
       .pipe(Effect.forkChild({ startImmediately: true }));
-    yield* Deferred.succeed(finish, undefined);
+    yield* Deferred.succeed(helperFinish, undefined);
     yield* Fiber.join(join);
     expect(download.mock.calls.map(([model]) => model.id)).toEqual(["test-model", SILERO_VAD.id]);
     expect(helperStartedDuringInstall).toBe(true);
     yield* speech.removeModel("test-model");
     expect(readyModels.has("test-model")).toBe(false);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("bounds missing Silero recovery during recording and continues with raw audio", () =>
+  Effect.gen(function* () {
+    const helperStarted = yield* Deferred.make<void>();
+    const helperInterrupted = yield* Deferred.make<void>();
+    download.mockImplementationOnce(() =>
+      Deferred.succeed(helperStarted, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(helperInterrupted, undefined)),
+      ),
+    );
+    const speech = yield* SpeechService.SpeechService;
+    const recording = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(helperStarted);
+    yield* TestClock.adjust("14999 millis");
+    expect(native.begin).not.toHaveBeenCalled();
+    yield* TestClock.adjust("1 millis");
+    yield* Deferred.await(helperInterrupted);
+    const stream = yield* Fiber.join(recording);
+    expect(native.begin).toHaveBeenLastCalledWith(expect.anything(), true, undefined);
+    yield* stream.feed(pcm());
+    expect(yield* stream.finish).toBe("hello");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("keeps the installed speech model usable when optional Silero acquisition fails", () =>

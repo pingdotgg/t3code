@@ -273,16 +273,20 @@ const make = Effect.gen(function* () {
   const selectedModel = (settings: SettingsSnapshot): SpeechModel =>
     getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
 
-  const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")(() =>
-    store.download(SILERO_VAD).pipe(
-      Effect.timeout("15 seconds"),
+  const acquireSilenceModel = Effect.fn("SpeechService.acquireSilenceModel")((
+    purpose: "installation" | "recording",
+  ) => {
+    const acquisition = store.download(SILERO_VAD);
+    return (
+      purpose === "recording" ? acquisition.pipe(Effect.timeout("15 seconds")) : acquisition
+    ).pipe(
       Effect.catch(() =>
         Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.").pipe(
           Effect.as(undefined),
         ),
       ),
-    ),
-  );
+    );
+  });
 
   // The transfer runs in the service scope, so a dropped request keeps it going and
   // a later request for the same model joins it; cancelDownload interrupts it.
@@ -305,7 +309,8 @@ const make = Effect.gen(function* () {
           },
         })
         .pipe(
-          (modelDownload) => Effect.all([modelDownload, acquireSilenceModel()], { concurrency: 2 }),
+          (modelDownload) =>
+            Effect.all([modelDownload, acquireSilenceModel("installation")], { concurrency: 2 }),
           Effect.map(([modelPath]) => modelPath),
           Effect.mapError((cause) => speechError("model download", cause)),
           Effect.ensuring(
@@ -539,7 +544,7 @@ const make = Effect.gen(function* () {
   ) {
     if (!options.speechSilenceFiltering && (loaded.supportsStreaming || loaded.supportsLongForm))
       return undefined;
-    return yield* acquireSilenceModel();
+    return yield* acquireSilenceModel("recording");
   });
 
   const transcribe: SpeechService["Service"]["transcribe"] = Effect.fn("SpeechService.transcribe")(
