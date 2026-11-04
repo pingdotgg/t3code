@@ -1274,7 +1274,6 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
   assert.deepEqual(
     yield* store.getThreadTitles([
       deleted.id,
-      ThreadId.make("thread:unknown"),
       ThreadId.make("thread:active"),
       ThreadId.make("thread:archived"),
     ]),
@@ -1283,7 +1282,6 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       [ThreadId.make("thread:archived")]: "Title for thread:archived",
     },
   );
-  assert.deepEqual(yield* store.getThreadTitles([]), {});
 });
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {

@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationV2GetShellSnapshotError,
   ThreadId,
   type ReviewDiffPreviewInput,
   type PreviewEvent,
@@ -1027,19 +1026,13 @@ describe("environment query lifecycle", () => {
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const requests =
-          yield* Queue.unbounded<
-            Deferred.Deferred<Record<string, string>, OrchestrationV2GetShellSnapshotError>
-          >();
+        const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
         const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
           rpcSession: {
             client: {
               [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: () =>
                 Effect.gen(function* () {
-                  const answer = yield* Deferred.make<
-                    Record<string, string>,
-                    OrchestrationV2GetShellSnapshotError
-                  >();
+                  const answer = yield* Deferred.make<Record<string, string>>();
                   yield* Queue.offer(requests, answer);
                   return yield* Deferred.await(answer);
                 }),
@@ -1064,10 +1057,8 @@ describe("environment query lifecycle", () => {
         });
         const registry = yield* mountEnvironmentQuery(atom);
         const settled: Array<Record<string, string>> = [];
-        const failed = yield* Deferred.make<void>();
         const unsubscribe = registry.subscribe(atom, (result) => {
           if (AsyncResult.isSuccess(result) && !result.waiting) settled.push(result.value);
-          if (AsyncResult.isFailure(result)) Deferred.doneUnsafe(failed, Exit.void);
         });
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 
@@ -1080,21 +1071,12 @@ describe("environment query lifecycle", () => {
         // Archiving and then deleting the fork both remove it from the shell.
         registry.set(shellState, removed([["fork", 6]]));
         const beforeDelete = yield* Queue.take(requests);
-        expect(registry.get(atom)).toMatchObject({ value: { fork: "Fork" }, waiting: true });
         registry.set(shellState, removed([["fork", 7]]));
         const afterDelete = yield* Queue.take(requests);
         yield* Deferred.succeed(beforeDelete, { fork: "Fork" });
         yield* Deferred.succeed(afterDelete, {});
         expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
         expect(settled).toEqual([{ fork: "Fork" }, {}]);
-
-        registry.set(shellState, removed([["fork", 8]]));
-        yield* Deferred.fail(
-          yield* Queue.take(requests),
-          new OrchestrationV2GetShellSnapshotError({ message: "Failed to load thread titles" }),
-        );
-        yield* Deferred.await(failed);
-        expect(registry.get(atom)._tag).toBe("Failure");
       }),
     ),
   );

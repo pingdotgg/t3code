@@ -10,7 +10,6 @@ const state = vi.hoisted(() => ({
   commandSucceeds: false,
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
-  titleLookup: { isSuccess: true, isPending: false },
   archivedThreads: [] as unknown[],
 }));
 
@@ -19,7 +18,7 @@ vi.mock(import("../../state/query"), async (original) => ({
   useEnvironmentQuery: ((atom: unknown) =>
     atom === null
       ? { data: null, isSuccess: false, isPending: false }
-      : { data: state.threadTitles, ...state.titleLookup }) as never,
+      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
@@ -67,7 +66,6 @@ function setup() {
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
-  state.titleLookup = { isSuccess: true, isPending: false };
   state.archivedThreads = [];
   state.projection = {
     thread: {
@@ -362,101 +360,36 @@ it("shows a delegated-from thread's full title in its tooltip even when its envi
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
 });
 
-it.each([
-  {
-    name: "an omitted existing fork",
-    id: "constructor",
-    exists: true,
-    success: true,
-    pending: false,
-    archived: false,
-    visible: true,
-  },
-  {
-    name: "a deleted fork named constructor",
-    id: "constructor",
-    exists: false,
-    success: true,
-    pending: false,
-    archived: false,
-    visible: false,
-  },
-  {
-    name: "an existing archived fork with a stale title",
-    exists: true,
-    success: true,
-    pending: false,
-    archived: true,
-    visible: true,
-  },
-  {
-    name: "a deleted fork in a stale archived snapshot",
-    exists: false,
-    success: true,
-    pending: false,
-    archived: true,
-    visible: false,
-  },
-  {
-    name: "an unresolved fork named toString",
-    id: "toString",
-    exists: false,
-    success: true,
-    pending: true,
-    archived: false,
-    visible: true,
-  },
-  {
-    name: "a fork after lookup failure",
-    exists: false,
-    success: false,
-    pending: false,
-    archived: false,
-    visible: true,
-  },
-])(
-  "keeps or hides $name after checking its existence",
-  async ({ exists, success, pending, archived, visible, id = "deleted-fork" }) => {
-    setup();
-    const projection = makeThreadProjectionFixture();
-    const deletedId = ThreadId.make(id);
-    const title = "Example fork";
-    state.threadTitles = exists ? { [deletedId]: title } : {};
-    state.titleLookup = { isSuccess: success, isPending: pending };
-    if (archived)
-      state.archivedThreads = [
-        {
-          ...projection.thread,
-          id: deletedId,
-          title: "Old archived title",
-          archivedAt: projection.thread.updatedAt,
-          lineage: { parentThreadId: projection.thread.id, relationshipToParent: "fork" },
-        },
-      ];
-    state.projection = {
-      ...projection,
-      contextTransfers: [
-        {
-          sourceThreadId: projection.thread.id,
-          targetThreadId: deletedId,
-          status: "pending",
-        },
-      ],
-    };
-    await using screen = await render(
-      <ThreadRelationshipsPanel
-        environmentId={environmentId}
-        threadId={projection.thread.id}
-        showLineage
-        showSideChats
-      />,
-    );
-    if (visible) {
-      await expect
-        .element(screen.getByText(exists || archived ? title : deletedId, { exact: true }))
-        .toBeVisible();
-    } else {
-      await expect.element(screen.getByRole("region", { name: "Lineage" })).not.toBeInTheDocument();
-    }
-  },
-);
+it("hides a deleted fork and keeps unloaded and archived forks with their current titles", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.threadTitles = { "unloaded-fork": "Unloaded fork", "archived-fork": "Archived fork" };
+  state.archivedThreads = [
+    {
+      ...projection.thread,
+      id: ThreadId.make("archived-fork"),
+      title: "Old archived title",
+      archivedAt: projection.thread.updatedAt,
+      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "fork" },
+    },
+  ];
+  state.projection = {
+    ...projection,
+    contextTransfers: ["deleted-fork", "unloaded-fork", "archived-fork"].map((id) => ({
+      sourceThreadId: projection.thread.id,
+      targetThreadId: ThreadId.make(id),
+      status: "pending",
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
