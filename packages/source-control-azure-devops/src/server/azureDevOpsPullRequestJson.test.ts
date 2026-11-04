@@ -158,6 +158,50 @@ describe("decodePullRequestJson", () => {
     expect(detail?.location).toBeNull();
   });
 
+  it.each([
+    ["approved by a required reviewer", [{ vote: 10, isRequired: true }], [], "approved"],
+    ["rejected", [{ vote: -10 }], [], "changes-requested"],
+    ["not yet voted on", [{ vote: 0, isRequired: true }], ["me@example.com"], "review-required"],
+    [
+      "approved but waiting on a required reviewer",
+      [{ vote: 10 }, { uniqueName: "jane@example.com", vote: 0, isRequired: true }],
+      ["jane@example.com"],
+      "review-required",
+    ],
+    [
+      "approved with suggestions, with an optional reviewer still to vote",
+      [{ vote: 5 }, { uniqueName: "jane@example.com", vote: 0 }],
+      ["jane@example.com"],
+      "approved",
+    ],
+    [
+      "sent back to its author despite an approval",
+      [{ vote: -5 }, { uniqueName: "jane@example.com", vote: 10, isRequired: true }],
+      [],
+      "changes-requested",
+    ],
+    ["without reviewers", [], [], null],
+  ])(
+    "reads the reviewers' votes on a pull request %s",
+    (_case, votes, reviewRequestLogins, reviewDecision) => {
+      const detail = expectSuccess(
+        decodePullRequestJson(
+          asJson(
+            pullRequest({
+              reviewers: votes.map((vote) => ({
+                displayName: "Reviewer",
+                uniqueName: "me@example.com",
+                ...vote,
+              })),
+            }),
+          ),
+        ),
+      );
+
+      expect(detail).toMatchObject({ reviewRequestLogins, reviewDecision });
+    },
+  );
+
   it("returns nothing when Azure gave no way to place the pull request at all", () => {
     const detail = expectSuccess(
       decodePullRequestJson(asJson(pullRequest({ url: null, repository: null }))),
@@ -246,6 +290,41 @@ describe("decodeThreadsJson", () => {
     );
 
     expect(comments.map((comment) => comment.id)).toEqual(["4:1", "4:2", "4:3"]);
+  });
+
+  it("reads a reviewer's vote, which Azure records as a system thread, as their review", () => {
+    const voteThread = (id: number, vote: string, voter: Record<string, string>) => ({
+      id,
+      properties: {
+        CodeReviewThreadType: { $type: "System.String", $value: "VoteUpdate" },
+        CodeReviewVoteResult: { $type: "System.String", $value: vote },
+      },
+      comments: [
+        {
+          id: 1,
+          content: `${voter.displayName} voted ${vote}`,
+          commentType: "system",
+          author: voter,
+          publishedDate: `2026-07-0${id}T00:00:00Z`,
+        },
+      ],
+    });
+
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            voteThread(2, "10", { displayName: "Jane Doe", uniqueName: "jane@acme.dev" }),
+            voteThread(3, "-10", { displayName: "Bilal", uniqueName: "bilal@acme.dev" }),
+          ],
+        }),
+      ),
+    );
+
+    expect(comments).toMatchObject([
+      { kind: "review", reviewState: "APPROVED", author: { login: "jane@acme.dev" } },
+      { kind: "review", reviewState: "CHANGES_REQUESTED", author: { login: "bilal@acme.dev" } },
+    ]);
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
