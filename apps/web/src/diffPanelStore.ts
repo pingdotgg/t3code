@@ -220,7 +220,7 @@ export function toggleDiffFileFoldKey(
 }
 
 interface DiffPanelSessionStoreState {
-  collapsedFileKeysByScopeKey: Record<string, DiffFileFoldState>;
+  foldStateByScopeKey: Record<string, DiffFileFoldState>;
   updateFoldState: (
     scopeKey: string,
     update: (current: DiffFileFoldState) => DiffFileFoldState,
@@ -230,10 +230,10 @@ interface DiffPanelSessionStoreState {
 
 // Session-only so folds survive right-panel switches without changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
-  collapsedFileKeysByScopeKey: {},
+  foldStateByScopeKey: {},
   updateFoldState: (scopeKey, update, diffFilesCollapsed) =>
     set((state) => {
-      const current = state.collapsedFileKeysByScopeKey[scopeKey] ?? EMPTY_DIFF_FILE_FOLD_STATE;
+      const current = state.foldStateByScopeKey[scopeKey] ?? EMPTY_DIFF_FILE_FOLD_STATE;
       const updated = update(current);
       const next =
         updated === current
@@ -250,7 +250,7 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
         return state;
       }
       return {
-        collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
+        foldStateByScopeKey: { ...state.foldStateByScopeKey, [scopeKey]: next },
       };
     }),
 }));

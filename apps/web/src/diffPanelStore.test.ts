@@ -17,7 +17,7 @@ describe("diffPanelStore", () => {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} });
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {
@@ -98,13 +98,13 @@ describe("diffPanelStore", () => {
       true,
     );
 
-    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual({
+    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
     });
 
     useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => current, false);
-    const stored = useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]!;
+    const stored = useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]!;
     expect(
       isDiffFileFoldCollapsed(
         "src/app.ts",
@@ -112,15 +112,30 @@ describe("diffPanelStore", () => {
         stored.toggledFileKeys,
       ),
     ).toBe(false);
-    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual({
+    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
     });
   });
 
-  it("keeps files that arrive after collapse-all folded", () => {
-    const foldOverride = resolveDiffFileFoldOverride("folded", false);
-    expect(isDiffFileFoldCollapsed("a.ts", foldOverride, new Set())).toBe(true);
-    expect(isDiffFileFoldCollapsed("new.ts", foldOverride, new Set())).toBe(true);
+  it("stores collapse-all for files that arrive later", () => {
+    const scopeKey = "environment-1:thread-1:branch";
+    useDiffPanelSessionStore
+      .getState()
+      .updateFoldState(
+        scopeKey,
+        () => ({ foldOverride: "folded", toggledFileKeys: new Set() }),
+        false,
+      );
+
+    const stored = useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]!;
+    expect(stored.foldOverride).toBe("folded");
+    expect(
+      isDiffFileFoldCollapsed(
+        "new.ts",
+        resolveDiffFileFoldOverride(stored.foldOverride, false),
+        stored.toggledFileKeys,
+      ),
+    ).toBe(true);
   });
 });
