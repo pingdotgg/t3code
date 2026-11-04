@@ -57,6 +57,8 @@ const mobileEndorsementRows = [
       <p class="hero-sub" data-rise style="--d:300ms">
         Orchestrate Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, and Kiro from one surface.
         Bring your own subscription. Fork the whole thing.
+        Kiro requires a <a href="/download?channel=nightly">nightly build</a>.{" "}
+        <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-kiro.md">Set up Kiro</a>.
       </p>
 
       <div class="hero-actions" data-rise style="--d:400ms">
@@ -583,6 +585,8 @@ const mobileEndorsementRows = [
     text-wrap: balance;
   }
 
+  .hero-sub a { text-decoration: underline; text-underline-offset: 3px; }
+
   .hero-actions {
     display: flex;
     flex-direction: column;
@@ -780,7 +784,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -807,11 +811,12 @@ const mobileEndorsementRows = [
   .harness-name {
     font-size: 14px; font-weight: 500;
     letter-spacing: -0.01em; margin-bottom: 2px;
+    overflow-wrap: anywhere;
   }
   .harness-tag {
     font-family: var(--font-mono);
     font-size: 11px; color: var(--fg-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
   .harness-footer {
@@ -1212,17 +1217,20 @@ const mobileEndorsementRows = [
     margin-bottom: 24px;
   }
 
+  @media (max-width: 1180px) {
+    .harness-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .harness { border-right: 0; border-bottom: 1px solid var(--border); }
+    .harness:nth-child(odd) { border-right: 1px solid var(--border); }
+    .harness:nth-child(even) { border-right: 0; }
+    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
+  }
+
   @media (max-width: 960px) {
     .hero-preview {
       width: min(860px, calc(100vw - 24px));
       margin-left: 50%;
       transform: translateX(-50%);
     }
-    .harness-grid { grid-template-columns: 1fr 1fr; }
-    .harness { border-right: 0; border-bottom: 1px solid var(--border); }
-    .harness:nth-child(odd) { border-right: 1px solid var(--border); }
-    .harness:nth-child(even) { border-right: 0; }
-    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
