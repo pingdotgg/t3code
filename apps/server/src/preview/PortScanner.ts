@@ -684,6 +684,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // Only configured URLs are requested. Owned listeners are listed as plain HTTP without a
   // request: owning a process says nothing about its protocol, and HTTP or TLS bytes break
   // binary ones such as Unity's test runner or Steam's IPC.
+  // Idle polls omit this span; requested scans and uncached probes retain their own spans.
   const probeWebServers = Effect.fnUntraced(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
