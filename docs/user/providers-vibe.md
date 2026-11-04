@@ -20,6 +20,9 @@ The model picker lists the models Vibe offers once it is signed in. **Default** 
 Vibe itself would start with. That model shows a **Thinking** setting with the levels Vibe offers
 for it; other models run at Vibe's own thinking setting.
 
+After changing your Vibe configuration or account, refresh provider status in **Settings →
+Providers** to reload the model list.
+
 ## Permission Modes
 
 The permission mode picks the Vibe agent a thread runs as:
