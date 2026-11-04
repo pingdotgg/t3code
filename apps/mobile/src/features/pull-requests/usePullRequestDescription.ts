@@ -1,4 +1,4 @@
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   descriptionDraftInForce,
   settleDescriptionSave,
@@ -24,13 +24,16 @@ export function usePullRequestDescription(
   const target = pullRequestTarget(params);
   const update = useAtomCommand(composerPullRequests.update, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
+  const reading = useAtomValue(composerPullRequests.detailReadVersion(target));
   const savesRunning = useRef(0);
   const [draft, setDraft] = useState<DescriptionDraft | null>(null);
-  const kept = descriptionDraftInForce(draft, pr?.url ?? "", pr?.observedAt);
+  const kept = descriptionDraftInForce(draft, pr?.url ?? "", reading);
   if (kept !== draft) setDraft(kept);
   const body = kept?.body ?? pr?.body ?? "";
   const save = async (detail: PullRequestDetail, next: string) => {
-    setDraft((current) => startDescriptionSave(current, detail, next));
+    setDraft((current) =>
+      startDescriptionSave(current, { url: detail.url, observedAt: reading }, next),
+    );
     savesRunning.current += 1;
     const response = await update({ ...target, input: { ...target.input, body: next } });
     savesRunning.current -= 1;
