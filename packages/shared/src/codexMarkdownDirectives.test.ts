@@ -142,6 +142,7 @@ describe.each([
     [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
     ["`citeturn0search0`", "`citeturn0search0`"],
+    [':codex-followup[Show `citeturn0search0`]{prompt="Show it"}', "Show `citeturn0search0`"],
   ])("leaves the markers out of the rendered Markdown, except in code", (input, expected) => {
     expect(render(input)).toBe(expected);
   });

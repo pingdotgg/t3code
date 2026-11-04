@@ -304,7 +304,6 @@ interface DirectiveMatch {
   readonly end: number;
   readonly markdown?: string;
   readonly template?: CodexArtifactTemplate;
-  readonly labelRange?: readonly [start: number, end: number];
 }
 
 function collectDirectiveMatches(
@@ -333,8 +332,10 @@ function collectDirectiveMatches(
     const labelStart = node.children?.[0]?.position?.start.offset;
     const labelEnd = node.children?.at(-1)?.position?.end.offset;
     if (node.data?.codexFollowUp && labelStart !== undefined && labelEnd !== undefined) {
-      matches.push({ start, end, labelRange: [labelStart, labelEnd] });
-      return;
+      matches.push(
+        { start, end: labelStart, markdown: "" },
+        { start: labelEnd, end, markdown: "" },
+      );
     }
   }
   for (const child of node.children ?? []) collectDirectiveMatches(child, source, matches);
@@ -348,9 +349,7 @@ function renderDirectiveMatches(
   collectDirectiveMatches(parseCodexMarkdown(markdown), markdown, matches);
   let rendered = markdown;
   for (const match of matches.sort((left, right) => right.start - left.start)) {
-    const replacement = match.labelRange
-      ? markdown.slice(...match.labelRange).replace(WEB_CITATION_MARKER, "")
-      : replacementFor(match);
+    const replacement = replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
     }
