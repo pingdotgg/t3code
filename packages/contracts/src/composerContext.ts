@@ -21,10 +21,13 @@ export const COMPOSER_CONTEXT_KINDS = [
   "element",
   "preview-annotation",
   "review-comment",
+  "pull-request",
   "mention",
   "skill",
   "thread",
   "environment",
+  "jira",
+  "figma",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -189,6 +192,20 @@ export const ReviewCommentContextRecord = Schema.Struct({
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
+/** A whole pull request mentioned in the composer, distinct from a review hunk. */
+export const PullRequestContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("pull-request"),
+  number: PositiveInt,
+  title: ShortString,
+  url: ShortString,
+  headBranch: ShortString,
+  baseBranch: ShortString,
+  state: Schema.Literals(["open", "closed", "merged"]),
+  isDraft: Schema.Boolean,
+});
+export type PullRequestContextRecord = typeof PullRequestContextRecord.Type;
+
 export const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
@@ -224,6 +241,25 @@ export const EnvironmentContextRecord = Schema.Struct({
 });
 export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
+export const JiraContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("jira"),
+  key: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  url: ShortString,
+  summary: ShortString,
+});
+export type JiraContextRecord = typeof JiraContextRecord.Type;
+
+export const FigmaContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("figma"),
+  fileKey: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  url: ShortString,
+  name: ShortString,
+  nodeId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type FigmaContextRecord = typeof FigmaContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -251,10 +287,13 @@ export const KnownComposerContextRecord = Schema.Union([
   ElementContextRecord,
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
+  PullRequestContextRecord,
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  JiraContextRecord,
+  FigmaContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

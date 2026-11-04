@@ -24,7 +24,7 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import { LinkIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
@@ -119,19 +119,37 @@ function UserMessageSkillChip(props: {
 }
 
 function UserMessagePullRequestContextChip(props: {
-  record: Extract<KnownComposerContextRecord, { kind: "review-comment" }>;
+  record:
+    | Extract<KnownComposerContextRecord, { kind: "review-comment" }>
+    | Extract<KnownComposerContextRecord, { kind: "pull-request" }>;
   copyMarkdown: string;
   kind: ContextChipKind;
 }) {
   const { activeThreadEnvironmentId, openPullRequest } = use(TimelineRowCtx);
-  const metadata = props.record.pullRequest;
+  const metadata = props.record.kind === "pull-request" ? props.record : props.record.pullRequest;
   if (metadata === undefined) return null;
+  const label =
+    props.record.kind === "pull-request"
+      ? props.record.label || `#${metadata.number}`
+      : reviewCommentContextLabel(props.record);
+  const kindLabel = pullRequestContextKindLabel({
+    id: props.record.contextId,
+    sectionId: `pull-request:${metadata.number}`,
+    sectionTitle: `PR #${metadata.number}`,
+    filePath: `PR #${metadata.number}`,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: metadata.title,
+    text: "",
+    diff: "",
+    pullRequest: metadata,
+  });
   return (
     <PullRequestChip
       metadata={metadata}
       environmentId={activeThreadEnvironmentId}
-      label={reviewCommentContextLabel(props.record)}
-      kindLabel={pullRequestContextKindLabel(props.record)}
+      label={label}
+      kindLabel={kindLabel}
       kind={props.kind}
       copyMarkdown={props.copyMarkdown}
       onOpen={openPullRequest}
@@ -438,6 +456,23 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ),
     },
     {
+      kind: "pull-request",
+      canRender: (record) => record.kind === "pull-request",
+      render: (record, context) => {
+        if (record.kind !== "pull-request") {
+          return <UnavailableUserMessageContextChip {...context} />;
+        }
+        const pullRequestState = record.state === "open" && record.isDraft ? "draft" : record.state;
+        return (
+          <UserMessagePullRequestContextChip
+            record={record}
+            copyMarkdown={context.copyMarkdown}
+            kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
+          />
+        );
+      },
+    },
+    {
       kind: "review-comment",
       canRender: (record) => record.kind === "review-comment",
       render: (record, context) => {
@@ -500,6 +535,32 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           >
             <UserMessagePreviewAnnotationDetails record={record} image={context.annotationImage} />
           </UserMessageContextPopover>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "jira",
+      canRender: (record) => record.kind === "jira",
+      render: (record, context) =>
+        record.kind === "jira" ? (
+          <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
+            <LinkIcon />
+            <ContextChipLabel>{record.label}</ContextChipLabel>
+          </ContextChip>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "figma",
+      canRender: (record) => record.kind === "figma",
+      render: (record, context) =>
+        record.kind === "figma" ? (
+          <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
+            <PaintbrushIcon />
+            <ContextChipLabel>{record.label}</ContextChipLabel>
+          </ContextChip>
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),

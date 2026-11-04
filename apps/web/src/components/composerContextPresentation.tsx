@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { LinkIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -19,7 +19,6 @@ import {
   formatAttachmentUploadProgress,
   type AttachmentUploadState,
 } from "~/lib/attachmentUploadState";
-import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
@@ -30,6 +29,7 @@ import {
   previewAnnotationContextLabel,
   reviewCommentContextId,
   reviewCommentContextLabel,
+  reviewCommentContextReference,
   terminalContextReference,
   uploadedAttachmentContextRecord,
 } from "~/lib/composerContextRecords";
@@ -58,6 +58,7 @@ import {
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
   | { kind: "review-comment"; record: ReviewCommentContext }
+  | { kind: "pull-request"; record: ReviewCommentContext }
   | {
       kind: "preview-annotation";
       record: PreviewAnnotationPayload;
@@ -66,7 +67,9 @@ export type ComposerDraftContextRecord =
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord }
-  | { kind: "environment"; record: EnvironmentContextRecord };
+  | { kind: "environment"; record: EnvironmentContextRecord }
+  | { kind: "jira"; record: import("@t3tools/contracts").JiraContextRecord }
+  | { kind: "figma"; record: import("@t3tools/contracts").FigmaContextRecord };
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -106,6 +109,8 @@ export function composerContextRecordsFromDraft(input: {
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -129,6 +134,13 @@ export function composerContextRecordsFromDraft(input: {
     records.set(terminalContextReference(record).contextId, { kind: "terminal", record });
   }
   for (const record of input.reviewComments ?? []) {
+    if (isPullRequestSummaryContext(record) && record.pullRequest !== undefined) {
+      records.set(reviewCommentContextReference(record).contextId, {
+        kind: "pull-request",
+        record,
+      });
+      continue;
+    }
     records.set(reviewCommentContextId(record.id), { kind: "review-comment", record });
   }
   const imagesById = new Map((input.images ?? []).map((image) => [image.id, image]));
@@ -144,6 +156,12 @@ export function composerContextRecordsFromDraft(input: {
   }
   for (const record of input.environmentContexts ?? []) {
     records.set(record.contextId, { kind: "environment", record });
+  }
+  for (const record of input.jiraContexts ?? []) {
+    records.set(record.contextId, { kind: "jira", record });
+  }
+  for (const record of input.figmaContexts ?? []) {
+    records.set(record.contextId, { kind: "figma", record });
   }
   return records;
 }
@@ -382,9 +400,12 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
     "file",
     "terminal",
     "review-comment",
+    "pull-request",
     "preview-annotation",
     "thread",
     "environment",
+    "jira",
+    "figma",
   ],
   handlers: [
     {
@@ -421,6 +442,22 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         ),
     },
     {
+      kind: "pull-request",
+      canRender: (entry) => entry.kind === "pull-request",
+      render: (entry, context) => {
+        if (entry.kind !== "pull-request") {
+          return <UnresolvedContextChip label={context.label} />;
+        }
+        const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";
+        return (
+          <PullRequestContextChip
+            record={entry.record}
+            kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
+          />
+        );
+      },
+    },
+    {
       kind: "review-comment",
       canRender: (entry) => entry.kind === "review-comment",
       render: (entry, context, definition) => {
@@ -439,12 +476,12 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         }
         return (
           <ContextChip
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            icon={<MessageCircleIcon />}
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel="Review comment"
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
-            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            kind="review-comment"
           />
         );
       },
@@ -487,6 +524,40 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context) =>
         entry.kind === "environment" ? (
           <EnvironmentContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "jira",
+      canRender: (entry) => entry.kind === "jira",
+      render: (entry, context) =>
+        entry.kind === "jira" ? (
+          <ContextChip
+            icon={<LinkIcon />}
+            label={entry.record.label}
+            kindLabel="Jira"
+            details={<div className="max-w-xs text-xs">{entry.record.summary}</div>}
+            detailsMode="tooltip"
+            kind="file"
+          />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "figma",
+      canRender: (entry) => entry.kind === "figma",
+      render: (entry, context) =>
+        entry.kind === "figma" ? (
+          <ContextChip
+            icon={<PaintbrushIcon />}
+            label={entry.record.label}
+            kindLabel="Figma"
+            details={<div className="max-w-xs text-xs">{entry.record.name}</div>}
+            detailsMode="tooltip"
+            kind="file"
+          />
         ) : (
           <UnresolvedContextChip label={context.label} />
         ),

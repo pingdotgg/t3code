@@ -3,19 +3,18 @@ import {
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
-  PullRequestListInput,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { mentionSearchInput } from "@t3tools/client-runtime/state/mentions";
 import {
   composerPullRequestsFromLinks,
-  filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -31,27 +30,16 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
-import {
-  pullRequestEnvironment,
-  usePullRequestList,
-  type EnvironmentQueryTarget,
-} from "~/state/pullRequests";
+import { mentionIndexEnvironment, pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
-import {
-  matchesPullRequestQuery,
-  rankPullRequestMatches,
-} from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 
-const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
-const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
-  [];
 
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
@@ -126,25 +114,42 @@ export function useComposerMenuItems({
     query: isPathTrigger ? pathTriggerQuery : null,
   });
 
-  const pullRequestListTargets =
+  const mentionQueryForIndex =
+    composerTriggerKind === "pull-request"
+      ? (settledPullRequestTextQuery ??
+        (pullRequestTextQuery === null ? pullRequestTriggerQuery : null))
+      : null;
+  const mentionIndexLookup = useEnvironmentQuery(
     composerTriggerKind !== "pull-request" ||
-    pullRequestProjectId === null ||
-    (pullRequestTextQuery !== null && settledPullRequestTextQuery === null)
-      ? EMPTY_PULL_REQUEST_LIST_TARGETS
-      : [
-          {
-            environmentId,
-            input: {
-              state: "all" as const,
-              projectId: pullRequestProjectId,
-              limit: COMPOSER_PULL_REQUEST_LIST_LIMIT,
-              ...(settledPullRequestTextQuery === null
-                ? {}
-                : { query: settledPullRequestTextQuery }),
-            },
-          },
-        ];
-  const pullRequestLookup = usePullRequestList(pullRequestListTargets);
+      pullRequestProjectId === null ||
+      mentionQueryForIndex === null
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: mentionQueryForIndex,
+            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+          }),
+        }),
+  );
+  const threadMentionQuery = isPathTrigger ? pathTriggerQuery : null;
+  const debouncedThreadMentionQuery = useDebouncedValue(threadMentionQuery, 180);
+  const threadMentionIndexLookup = useEnvironmentQuery(
+    !isPathTrigger ||
+      pullRequestProjectId === null ||
+      threadMentionQuery !== debouncedThreadMentionQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedThreadMentionQuery ?? "",
+            limit: 12,
+            providers: ["thread"],
+          }),
+        }),
+  );
   const pullRequestTriggerNumber = (() => {
     if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
       return null;
@@ -155,19 +160,21 @@ export function useComposerMenuItems({
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
-  const recentHasExactPullRequest =
+  const indexHasExactPullRequest =
     settledPullRequestNumber !== null &&
-    pullRequestLookup.data?.entries.some(
-      (entry) =>
-        entry.projectId === pullRequestProjectId &&
-        entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
-        entry.number === settledPullRequestNumber,
+    mentionIndexLookup.data?.hits.some(
+      (hit) =>
+        hit.pullRequest !== undefined &&
+        hit.pullRequest.projectId === pullRequestProjectId &&
+        hit.pullRequest.repository.trim().toLowerCase() ===
+          pullRequestRepository?.trim().toLowerCase() &&
+        hit.pullRequest.number === settledPullRequestNumber,
     ) === true;
   const exactPullRequestLookup = useEnvironmentQuery(
     settledPullRequestNumber === null ||
       pullRequestProjectId === null ||
       pullRequestRepository === null ||
-      recentHasExactPullRequest
+      indexHasExactPullRequest
       ? null
       : pullRequestEnvironment.detail({
           environmentId,
@@ -187,15 +194,35 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const shellThreadItems = matchComposerThreadItems({
+        shells: environmentThreadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: activeThreadId,
+        query: composerTrigger.query,
+        now,
+      });
+      const shellThreadIds = new Set(shellThreadItems.map((item) => item.thread.threadId));
+      const indexedThreadItems = (threadMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.thread === undefined) return [];
+        if (shellThreadIds.has(hit.thread.threadId)) return [];
+        if (activeThreadId !== null && hit.thread.threadId === activeThreadId) return [];
+        return [
+          {
+            id: `thread-index:${hit.thread.environmentId}:${hit.thread.threadId}`,
+            type: "thread" as const,
+            thread: {
+              environmentId: hit.thread.environmentId,
+              threadId: hit.thread.threadId,
+            },
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
       return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-        }),
+        ...shellThreadItems,
+        ...indexedThreadItems,
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
           ? matchComposerEnvironmentItems({
@@ -315,43 +342,47 @@ export function useComposerMenuItems({
       pullRequestProjectId !== null &&
       pullRequestRepository !== null
     ) {
+      const indexed = (mentionIndexLookup.data?.hits ?? []).flatMap((hit) =>
+        hit.pullRequest === undefined
+          ? []
+          : [
+              {
+                projectId: hit.pullRequest.projectId,
+                repository: hit.pullRequest.repository,
+                number: hit.pullRequest.number,
+                title: hit.pullRequest.title,
+                url: hit.pullRequest.url,
+                headBranch: hit.pullRequest.headBranch,
+                baseBranch: hit.pullRequest.baseBranch,
+                state: hit.pullRequest.state,
+                isDraft: hit.pullRequest.isDraft,
+                updatedAt: "",
+              },
+            ],
+      );
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
-          ? [exactPullRequestLookup.data]
+          ? [
+              {
+                projectId: pullRequestProjectId,
+                repository: pullRequestRepository,
+                number: exactPullRequestLookup.data.number,
+                title: exactPullRequestLookup.data.title,
+                url: exactPullRequestLookup.data.url,
+                headBranch: exactPullRequestLookup.data.headBranch,
+                baseBranch: exactPullRequestLookup.data.baseBranch,
+                state: exactPullRequestLookup.data.state,
+                isDraft: exactPullRequestLookup.data.isDraft ?? false,
+                updatedAt: exactPullRequestLookup.data.updatedAt,
+              },
+            ]
           : [];
-      const matches = /^\d*$/u.test(composerTrigger.query)
-        ? filterComposerPullRequestMatches({
-            entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
-            linked: linkedPullRequests,
-            projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
-            query: composerTrigger.query,
-            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-          })
-        : withLinkedComposerPullRequestsFirst({
-            matches: rankPullRequestMatches(
-              (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-                if (
-                  entry.projectId !== pullRequestProjectId ||
-                  entry.repository.trim().toLowerCase() !==
-                    pullRequestRepository.trim().toLowerCase()
-                ) {
-                  return false;
-                }
-                const provider = pullRequestLookup.data?.providers.find(
-                  (candidate) => candidate.host === entry.host,
-                );
-                return (
-                  provider?.searchesOnHost === true ||
-                  matchesPullRequestQuery(entry, composerTrigger.query)
-                );
-              }),
-              composerTrigger.query,
-            ),
-            linked: linkedPullRequests,
-            query: composerTrigger.query,
-            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-          });
+      const matches = withLinkedComposerPullRequestsFirst({
+        matches: [...exactPullRequest, ...indexed],
+        linked: linkedPullRequests,
+        query: composerTrigger.query,
+        limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+      });
       return matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
         type: "pull-request",
@@ -373,14 +404,40 @@ export function useComposerMenuItems({
     }
     return [];
   })();
+  const mentionIndexSyncingEmpty =
+    mentionIndexLookup.data?.status === "syncing" && mentionIndexLookup.data.hits.length === 0;
+  const threadMentionIndexSyncingEmpty =
+    threadMentionIndexLookup.data?.status === "syncing" &&
+    threadMentionIndexLookup.data.hits.length === 0;
+  // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
+  useEffect(() => {
+    const refreshers: Array<() => void> = [];
+    if (mentionIndexSyncingEmpty) refreshers.push(mentionIndexLookup.refresh);
+    if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (refreshers.length === 0) return;
+    const interval = window.setInterval(() => {
+      for (const refresh of refreshers) refresh();
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [
+    mentionIndexSyncingEmpty,
+    threadMentionIndexSyncingEmpty,
+    mentionIndexLookup.refresh,
+    threadMentionIndexLookup.refresh,
+  ]);
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+        threadMentionIndexSyncingEmpty ||
+        threadMentionIndexLookup.isPending)) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
-      (pullRequestLookup.isPending ||
+      (mentionIndexLookup.isPending ||
+        mentionIndexSyncingEmpty ||
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
@@ -392,10 +449,7 @@ export function useComposerMenuItems({
       if (pullRequestProjectId === null || pullRequestRepository === null) {
         return "Pull requests are not available for this project.";
       }
-      if (
-        pullRequestLookup.error !== null ||
-        pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
-      ) {
+      if (mentionIndexLookup.error !== null || mentionIndexLookup.data?.status === "error") {
         return "Pull requests could not be read for this project.";
       }
       return composerTrigger?.query

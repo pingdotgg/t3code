@@ -897,6 +897,31 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const MentionIndexJiraSettings = Schema.Struct({
+  serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  spaces: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).check(Schema.isMaxLength(50)),
+  ),
+  jqlExtra: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(2_048))),
+});
+export type MentionIndexJiraSettings = typeof MentionIndexJiraSettings.Type;
+
+export const MentionIndexFigmaSettings = Schema.Struct({
+  serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  fileKeys: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+      Schema.isMaxLength(50),
+    ),
+  ),
+});
+export type MentionIndexFigmaSettings = typeof MentionIndexFigmaSettings.Type;
+
+export const MentionIndexSettings = Schema.Struct({
+  jira: Schema.optionalKey(MentionIndexJiraSettings),
+  figma: Schema.optionalKey(MentionIndexFigmaSettings),
+});
+export type MentionIndexSettings = typeof MentionIndexSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -1357,6 +1382,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  mentionIndex: MentionIndexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1698,6 +1724,31 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  mentionIndex: Schema.optionalKey(
+    Schema.Struct({
+      jira: Schema.optionalKey(
+        Schema.Struct({
+          serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+          spaces: Schema.optionalKey(
+            Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).check(
+              Schema.isMaxLength(50),
+            ),
+          ),
+          jqlExtra: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(2_048))),
+        }),
+      ),
+      figma: Schema.optionalKey(
+        Schema.Struct({
+          serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+          fileKeys: Schema.optionalKey(
+            Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+              Schema.isMaxLength(50),
+            ),
+          ),
+        }),
+      ),
     }),
   ),
   /** Merges per host, replacing patched fields whole; redaction markers retain secrets, empty secrets remove them. A non-empty token map keeps the saved tokens of hosts it omits; an empty map clears them all. */

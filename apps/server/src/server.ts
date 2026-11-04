@@ -127,6 +127,13 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
+import * as MentionIndex from "./mention/MentionIndex.ts";
+import * as MentionIndexFigmaSyncer from "./mention/MentionIndexFigmaSyncer.ts";
+import * as MentionIndexJiraSyncer from "./mention/MentionIndexJiraSyncer.ts";
+import * as MentionIndexMcpClient from "./mention/MentionIndexMcpClient.ts";
+import * as MentionIndexPrSyncer from "./mention/MentionIndexPrSyncer.ts";
+import * as MentionIndexService from "./mention/MentionIndexService.ts";
+import * as MentionIndexThreadSyncer from "./mention/MentionIndexThreadSyncer.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -416,6 +423,16 @@ const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(layerSourceControlProviderRegistry),
   Layer.provide(SourceControlRateLimit.layer),
+);
+
+const layerMentionIndex = MentionIndexService.layer.pipe(
+  Layer.provide(MentionIndexPrSyncer.layer),
+  Layer.provide(MentionIndexThreadSyncer.layer),
+  Layer.provide(MentionIndexJiraSyncer.layer),
+  Layer.provide(MentionIndexFigmaSyncer.layer),
+  Layer.provide(MentionIndexMcpClient.layer),
+  Layer.provide(MentionIndex.layer),
+  Layer.provide(layerPullRequestService),
 );
 
 const layerGitManager = GitManager.layer.pipe(
@@ -797,6 +814,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
+  Layer.provide(layerMentionIndex),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(

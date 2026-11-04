@@ -120,6 +120,8 @@ export function useComposerContextImport(input: {
     (store) => store.addPreviewAnnotation,
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
+  const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
+  const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
   const addComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.addEnvironmentContexts,
   );
@@ -337,7 +339,10 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "jira" ||
+                  existing?.kind === "figma"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -412,6 +417,36 @@ export function useComposerContextImport(input: {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "jira": {
+          // Question answers carry no Jira chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("jira", randomUUID()),
+              }
+            : record;
+          addComposerDraftJiraContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
+          break;
+        }
+        case "figma": {
+          // Question answers carry no Figma chips; keep them off the main draft while answering.
+          if (questionAttachmentTarget !== null) break;
+          const imported = conflicts
+            ? {
+                ...record,
+                contextId: toKindScopedComposerContextId("figma", randomUUID()),
+              }
+            : record;
+          addComposerDraftFigmaContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "image":
