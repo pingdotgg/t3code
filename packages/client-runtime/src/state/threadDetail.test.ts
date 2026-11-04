@@ -14,7 +14,12 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
-import { createEnvironmentThreadDetailAtoms, sameThreadStructure } from "./threadDetail.ts";
+import type { ThreadStructureVisibleTurnItem } from "./models.ts";
+import {
+  createEnvironmentThreadDetailAtoms,
+  deriveWorkspaceMutationId,
+  sameThreadStructure,
+} from "./threadDetail.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threadState.ts";
 
@@ -197,6 +202,42 @@ describe("quietThreadAtom", () => {
   });
 });
 
+describe("timelineVisibleTurnItemsAtom", () => {
+  const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
+
+  it("holds through streamed assistant text while the message reads its own text", () => {
+    const stateAtom = Atom.make(
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some<OrchestrationV2ThreadProjection>(withItem(assistant)),
+      }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => stateAtom);
+    const timelineAtom = details.timelineVisibleTurnItemsAtom(ref);
+    const textAtom = details.assistantMessageTextAtom(ref, assistant.id);
+    const registry = AtomRegistry.make();
+    registry.mount(timelineAtom);
+    registry.mount(textAtom);
+    const push = (item: OrchestrationV2TurnItem) =>
+      registry.set(
+        stateAtom,
+        AsyncResult.success({
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          data: Option.some(withItem(item, later)),
+        }),
+      );
+    const first = registry.get(timelineAtom);
+
+    push({ ...assistant, text: "Hello", updatedAt: later });
+    expect(registry.get(timelineAtom)).toBe(first);
+    expect(registry.get(textAtom)).toBe("Hello");
+
+    push({ ...assistant, text: "Hello", streaming: false, status: "completed" });
+    expect(registry.get(timelineAtom)[0]?.item).toMatchObject({ text: "Hello", streaming: false });
+    registry.dispose();
+  });
+});
+
 it("only compares replaced entries in a streamed reducer delta", () => {
   const size = 100;
   let slotReads = 0;
@@ -312,4 +353,36 @@ it("matches full structure comparisons across streamed, batched, and reordered u
     [reasoning.id, 0],
     [assistant.id, 1],
   ]);
+});
+
+describe("deriveWorkspaceMutationId", () => {
+  const item = (id: string, type: string, status: string) =>
+    ({
+      item: { id: TurnItemId.make(id), type, status },
+    }) as unknown as ThreadStructureVisibleTurnItem;
+
+  it("keys on the latest finished command or file change and the latest checkpoint", () => {
+    expect(
+      deriveWorkspaceMutationId(
+        [
+          item("edit", "file_change", "completed"),
+          item("reply", "assistant_message", "completed"),
+          item("command", "command_execution", "running"),
+        ],
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
+    expect(
+      deriveWorkspaceMutationId(
+        [item("edit", "file_change", "completed"), item("mcp", "dynamic_tool", "completed")],
+        null,
+      ),
+    ).toBe(JSON.stringify(["mcp", null]));
+  });
+
+  it("is null before anything could have touched the workspace", () => {
+    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
+      null,
+    );
+  });
 });
