@@ -40,6 +40,7 @@ import {
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
+import { CONNECTION_LOG_LIMIT } from "./connectionLog.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
@@ -155,6 +156,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly checkHost?: (prepared: PreparedConnection) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
   readonly inboundFrames?: Effect.Effect<number>;
+  readonly foreground?: Ref.Ref<boolean>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -243,6 +245,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
           Stream.drop(1),
           Stream.map((event) => event.reason),
         ),
+        ...(options?.foreground === undefined ? {} : { isForeground: Ref.get(options.foreground) }),
       }),
     ),
     Layer.succeed(
@@ -621,6 +624,44 @@ describe("EnvironmentSupervisor", () => {
       const back = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       expect(back.unreachable).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("retries at least every 15 seconds while foregrounded and logs each attempt", () =>
+    Effect.gen(function* () {
+      const foreground = yield* Ref.make(true);
+      const harness = yield* makeHarness({
+        foreground,
+        prepare: () => Effect.fail(transient("The host did not answer.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+
+      // Uncapped, ten failures back off for minutes; foregrounded, each waits 15 seconds at most.
+      for (let tick = 0; tick < 40; tick += 1) {
+        yield* TestClock.adjust("15 seconds");
+      }
+      const foregroundAttempts = yield* Ref.get(harness.prepareCount);
+      expect(foregroundAttempts).toBeGreaterThanOrEqual(30);
+
+      yield* Ref.set(foreground, false);
+      for (let tick = 0; tick < 40; tick += 1) {
+        yield* TestClock.adjust("15 seconds");
+      }
+      expect((yield* Ref.get(harness.prepareCount)) - foregroundAttempts).toBeLessThan(10);
+
+      const log = yield* SubscriptionRef.get(supervisor.log!);
+      expect(log).toHaveLength(CONNECTION_LOG_LIMIT);
+      expect(log.at(-1)).toMatchObject({
+        kind: "failed",
+        reason: "transport",
+        detail: "The host did not answer.",
+        network: "online",
+        foreground: false,
+      });
+      expect(log.filter((event) => event.kind === "attempt").length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not report a session lost while suspended as a failed connection", () =>

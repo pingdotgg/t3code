@@ -31,6 +31,11 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import {
+  appendConnectionLog,
+  connectionLogKind,
+  type ConnectionLogEvent,
+} from "./connectionLog.ts";
+import {
   connectionRouteId,
   connectionRouteKind,
   connectionRoutes,
@@ -70,6 +75,9 @@ const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 // Failing longer than this means the host is down, not recovering: it shows as offline
 // and keeps retrying quietly instead of reporting each attempt.
 const UNREACHABLE_AFTER_MS = 10_000;
+// While the user is looking at the app, a host that comes back should connect within seconds,
+// not after a backoff that grew while it was away.
+const FOREGROUND_RETRY_MAX_DELAY_MS = 15_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -261,6 +269,8 @@ export class EnvironmentSupervisor extends Context.Service<
     readonly connect: Effect.Effect<void>;
     readonly disconnect: Effect.Effect<void>;
     readonly retryNow: Effect.Effect<void>;
+    /** Recent attempts, connections and failures, newest last, for on-device diagnostics. */
+    readonly log?: SubscriptionRef.SubscriptionRef<ReadonlyArray<ConnectionLogEvent>>;
   }
 >()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {}
 
@@ -423,6 +433,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // When the current run of failed or pending attempts began; null while connected.
   const troubleSince = yield* Ref.make<number | null>(null);
   const lastConnectedAt = yield* Ref.make<number | null>(null);
+  const log = yield* SubscriptionRef.make<ReadonlyArray<ConnectionLogEvent>>([]);
+  const isForeground = wakeups.isForeground ?? Effect.succeed(false);
+  // The route of the latest attempt; the lease is already cleared when its failure is recorded.
+  const lastRoute = yield* Ref.make<string | null>(null);
+  const routeDescription = (target: PreparedConnection) =>
+    currentRoutes.pipe(
+      Effect.map((routes) => {
+        const route = routes.find(
+          (candidate) => connectionRouteId(candidate.target) === connectionRouteId(target.target),
+        );
+        const kind = route === undefined ? "unknown" : connectionRouteKind(route);
+        try {
+          return `${kind} ${new URL(target.httpBaseUrl).host}`;
+        } catch {
+          return kind;
+        }
+      }),
+    );
 
   const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
     next: SupervisorConnectionState,
@@ -431,6 +459,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const since = yield* Ref.get(troubleSince);
     const lastConnected = yield* Ref.get(lastConnectedAt);
     const { unreachable: _unreachable, lastConnectedAt: _lastConnectedAt, ...base } = next;
+    const previous = yield* SubscriptionRef.get(state);
     yield* SubscriptionRef.set(state, {
       ...base,
       ...(base.phase !== "connected" && since !== null && now - since >= UNREACHABLE_AFTER_MS
@@ -438,6 +467,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         : {}),
       ...(lastConnected === null ? {} : { lastConnectedAt: lastConnected }),
     });
+    const kind = connectionLogKind(previous, next);
+    if (kind === null) return;
+    const failure = kind === "failed" || kind === "lost" ? next.lastFailure : null;
+    const event: ConnectionLogEvent = {
+      at: now,
+      kind,
+      attempt: next.attempt,
+      route: kind === "attempt" ? null : yield* Ref.get(lastRoute),
+      stage: kind === "failed" ? previous.stage : next.stage,
+      reason: failure?.reason ?? null,
+      detail: failure?.detail ?? null,
+      network: next.network,
+      foreground: wakeups.isForeground === undefined ? null : yield* isForeground,
+    };
+    yield* SubscriptionRef.update(log, (current) => appendConnectionLog(current, event));
   });
 
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
@@ -461,6 +505,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     if ("prepared" in progress) {
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
+      yield* Ref.set(lastRoute, yield* routeDescription(progress.prepared));
     }
     yield* setState(
       connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
@@ -1158,7 +1203,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const delayMs = retryDelayMs(failureCount - 1, yield* Random.next);
+      const backoffMs = retryDelayMs(failureCount - 1, yield* Random.next);
+      const delayMs = (yield* isForeground)
+        ? Math.min(backoffMs, FOREGROUND_RETRY_MAX_DELAY_MS)
+        : backoffMs;
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,
@@ -1247,5 +1295,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     connect,
     disconnect,
     retryNow,
+    log,
   });
 });

@@ -215,6 +215,13 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const reportClientActivity: BackgroundPolicy["Service"]["reportClientActivity"] = Effect.fn(
     "BackgroundPolicy.reportClientActivity",
   )(function* (sessionId, rpcClientId, input) {
+    if (input.connectionTrouble !== undefined && input.connectionTrouble.length > 0) {
+      yield* Effect.logInfo("client reported connection trouble", {
+        clientId: input.clientId,
+        clientKind: input.clientKind,
+        events: input.connectionTrouble,
+      });
+    }
     const ttlMs = Math.min(Math.max(input.ttlMs ?? DEFAULT_LEASE_TTL_MS, 1_000), MAX_LEASE_TTL_MS);
     const now = yield* DateTime.now;
     const expiresAt = DateTime.add(now, { milliseconds: ttlMs });
