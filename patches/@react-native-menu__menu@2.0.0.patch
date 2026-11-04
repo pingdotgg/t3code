@@ -178,10 +178,10 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723b67b69c5 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..6cae3d5f0064838cd861904fed171236314afb40 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,17 +60,69 @@ public class MenuViewImplementation: UIButton {
+@@ -60,15 +60,82 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -209,12 +209,24 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723
 +        // preserve UIButton's presentation behavior by calling super.
 +        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
 +        sendMenuOpen()
++        if #available(iOS 26.0, *) {
++            hideTriggerContent()
++        }
 +    }
 +
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
 +        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
          sendMenuClose()
 +        isMenuPresented = false
++        if let animator = animator {
++            let hideCount = triggerContentHideCount
++            animator.addCompletion { [weak self] in
++                guard let self = self, self.triggerContentHideCount == hideCount else { return }
++                self.restoreTriggerContent()
++            }
++        } else {
++            restoreTriggerContent()
++        }
 +        if pendingMenu != nil {
 +            // Re-run the full assignment now that presentation is over, so
 +            // any props deferred by the presented-guard (menu contents, press
@@ -224,36 +236,37 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723
 +        }
 +    }
 +
-+    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-+        return tapTriggerPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
-     }
- 
-+    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-+        return tapTriggerPreview() ?? super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
-+    }
-+
-+    // The button is a transparent overlay: morph from the whole trigger, in the
-+    // window, so the menu hides the React content instead of lensing over it
-+    // inside a clipping scroll view.
-+    private func tapTriggerPreview() -> UITargetedPreview? {
-+        guard !shouldOpenOnLongPress, let host = self.superview, let window = host.window else {
-+            return nil
-+        }
-+        let bounds = host.bounds
-+        let parameters = UIPreviewParameters()
-+        parameters.backgroundColor = .clear
-+        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(bounds.height / 2, 22))
-+        let center = host.convert(CGPoint(x: bounds.midX, y: bounds.midY), to: window)
-+        return UITargetedPreview(view: host, parameters: parameters, target: UIPreviewTarget(container: window, center: center))
-+    }
-+
 +    private var isMenuPresented = false
 +    private var pendingMenu: UIMenu?
 +
++    private struct HiddenTriggerView {
++        weak var view: UIView?
++        let alpha: CGFloat
++    }
++
++    private var hiddenTriggerContent: [HiddenTriggerView] = []
++    private var triggerContentHideCount = 0
++
++    // UIKit hides only this transparent button during the morph; the React content behind it must hide too.
++    private func hideTriggerContent() {
++        guard !shouldOpenOnLongPress, let host = self.superview else { return }
++        triggerContentHideCount += 1
++        guard hiddenTriggerContent.isEmpty else { return }
++        for view in host.subviews where view !== self {
++            hiddenTriggerContent.append(HiddenTriggerView(view: view, alpha: view.alpha))
++            view.alpha = 0
++        }
++    }
++
++    private func restoreTriggerContent() {
++        for entry in hiddenTriggerContent {
++            entry.view?.alpha = entry.alpha
++        }
++        hiddenTriggerContent.removeAll()
+     }
+ 
      func setup () {
-         let menu = UIMenu(title: _title,
-             identifier: nil,
-@@ -86,8 +138,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +153,105 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -329,6 +342,9 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723
 +
 +    public override func didMoveToSuperview() {
 +        super.didMoveToSuperview()
++        if self.superview == nil {
++            self.restoreTriggerContent()
++        }
 +        self.updateLongPressInteraction()
 +    }
 +
@@ -356,7 +372,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..040712aefe036d72d8ed799d0f25e723
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +270,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +288,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
