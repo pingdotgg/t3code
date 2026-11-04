@@ -266,3 +266,91 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+const longFileLines = Array.from(
+  { length: 300 },
+  (_, index) =>
+    `SELECT ${index + 1} AS value, 'row ${index + 1}' AS label; -- fixture line ${index + 1}`,
+);
+
+async function renderLongFileDiff(context: ReturnType<typeof setup>, path: string) {
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: [{ path, previousPath: null, additions: longFileLines.length, deletions: 0 }],
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </div>
+        <textarea aria-label="Paste target" />
+      </RegistryContext.Provider>,
+    ),
+  );
+  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
+  act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        diff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${longFileLines.length} @@\n${longFileLines.map((line) => `+${line}\n`).join("")}`,
+      }),
+    ),
+  );
+  await expect.element(screen.getByText(longFileLines[0]!, { exact: true })).toBeVisible();
+  const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+  const pasteTarget = screen.getByRole("textbox", { name: "Paste target" });
+  // A copy that writes nothing must not pass with an earlier copy's text.
+  await userEvent.fill(pasteTarget, "nothing was copied");
+  (pasteTarget.element() as HTMLTextAreaElement).select();
+  await userEvent.copy();
+  await userEvent.clear(pasteTarget);
+  return {
+    screen: stack.move(),
+    row: (line: number) => root.querySelector<HTMLElement>(`[data-line="${line}"]`),
+    scroller: screen.container.querySelector<HTMLElement>(".diff-render-surface")!,
+    copiedRows: async () => {
+      await userEvent.copy();
+      const textarea = pasteTarget.element() as HTMLTextAreaElement;
+      // Playwright's click on the textarea stalls once the viewer has scrolled; paste needs focus only.
+      textarea.focus();
+      await userEvent.paste();
+      return textarea.value.trimEnd().split("\n");
+    },
+  };
+}
+
+it("copies every row of a long file after select-all inside its diff", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "select-all.sql");
+  await using _screen = diff.screen;
+  await userEvent.click(diff.row(2)!);
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+  const copied = await diff.copiedRows();
+  expect(copied, "select-all copies the whole file, not only mounted rows").toHaveLength(300);
+  expect(copied).toEqual(longFileLines);
+});
+
+it("copies a selection whose first row has scrolled out of the mounted rows", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "scrolled-selection.sql");
+  await using _screen = diff.screen;
+  await userEvent.click(diff.row(1)!);
+  const last = diff.row(20)!;
+  const selected = new Promise((resolve) =>
+    document.addEventListener("selectionchange", resolve, { once: true }),
+  );
+  document.getSelection()!.setBaseAndExtent(diff.row(1)!, 0, last, last.childNodes.length);
+  await selected;
+  diff.scroller.scrollTop = 4000;
+  await vi.waitFor(() => {
+    expect(diff.row(160)).not.toBeNull();
+    expect(diff.row(1)).toBeNull();
+  });
+  expect(await diff.copiedRows()).toEqual(longFileLines.slice(0, 20));
+});
