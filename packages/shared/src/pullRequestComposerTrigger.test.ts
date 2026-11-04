@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  debouncedPullRequestCompletionSearch,
   detectPullRequestComposerTrigger,
   insertPullRequestCompletion,
   narrowPullRequestMentions,
@@ -77,6 +78,19 @@ describe("pullRequestCompletionSearch", () => {
     ["reference", "crash", "crash"],
   ] as const)("sends a %s's %j to the host as %j", (kind, query, sent) => {
     expect(pullRequestCompletionSearch({ kind, query })).toBe(sent);
+  });
+});
+
+describe("debouncedPullRequestCompletionSearch", () => {
+  it.each([
+    ["a settled search", { kind: "reference", query: "crash" }, "reference:crash", "crash"],
+    ["a settled short query", { kind: "reference", query: "zz" }, "reference:", undefined],
+    ["a settled bare sigil", { kind: "mention", query: "" }, "mention:", undefined],
+    ["a lagging search", { kind: "reference", query: "crash" }, "reference:cra", "cra"],
+    ["the other kind's key", { kind: "mention", query: "jul" }, "reference:12", "jul"],
+    ["no key yet", { kind: "reference", query: "12" }, null, "12"],
+  ] as const)("sends %s as the host search", (_, trigger, key, sent) => {
+    expect(debouncedPullRequestCompletionSearch(trigger, key)).toBe(sent);
   });
 });
 

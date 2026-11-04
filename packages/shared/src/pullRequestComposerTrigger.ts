@@ -57,6 +57,27 @@ export function pullRequestCompletionSearch(
   return query.length >= MIN_HOST_SEARCH ? query : undefined;
 }
 
+/** The key a debounce delays: the trigger's kind and its host search, or `null` with no trigger. */
+export function pullRequestCompletionKey(
+  trigger: Pick<PullRequestComposerTrigger, "kind" | "query"> | null,
+): string | null {
+  return trigger === null ? null : `${trigger.kind}:${pullRequestCompletionSearch(trigger) ?? ""}`;
+}
+
+/**
+ * The search to send for `trigger` given a debounced key. A key for the other kind is stale, so
+ * switching between `@` and `#` sends the current search at once.
+ */
+export function debouncedPullRequestCompletionSearch(
+  trigger: Pick<PullRequestComposerTrigger, "kind" | "query">,
+  debouncedKey: string | null,
+): string | undefined {
+  const prefix = `${trigger.kind}:`;
+  return debouncedKey?.startsWith(prefix)
+    ? debouncedKey.slice(prefix.length) || undefined
+    : pullRequestCompletionSearch(trigger);
+}
+
 export function narrowPullRequestMentions<A extends { login: string; name: string | null }>(
   users: ReadonlyArray<A>,
   typed: string,

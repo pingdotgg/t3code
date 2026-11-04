@@ -5,10 +5,12 @@ import type {
   PullRequestReferenceCandidate,
 } from "@t3tools/contracts";
 import {
+  debouncedPullRequestCompletionSearch,
   detectPullRequestComposerTrigger,
   insertPullRequestCompletion,
   narrowPullRequestMentions,
   narrowPullRequestReferences,
+  pullRequestCompletionKey,
   pullRequestCompletionSearch,
   type PullRequestComposerTrigger,
 } from "@t3tools/shared/pullRequestComposerTrigger";
@@ -56,13 +58,12 @@ function useCompletions(
   trigger: PullRequestComposerTrigger | null,
 ) {
   const search = trigger === null ? undefined : pullRequestCompletionSearch(trigger);
-  const wanted = trigger === null ? null : `${trigger.kind}:${search ?? ""}`;
-  const sentKey = useDebouncedValue(wanted, COMPLETION_SEARCH_DEBOUNCE_MS);
-  // A switch between `@` and `#` asks at once; only a changing search waits for the debounce.
+  const sentKey = useDebouncedValue(
+    pullRequestCompletionKey(trigger),
+    COMPLETION_SEARCH_DEBOUNCE_MS,
+  );
   const sent =
-    trigger !== null && sentKey?.startsWith(`${trigger.kind}:`)
-      ? sentKey.slice(trigger.kind.length + 1)
-      : search;
+    trigger === null ? undefined : debouncedPullRequestCompletionSearch(trigger, sentKey);
   const hosted = usePullRequestFilterOptions(
     scope === null || trigger === null
       ? []

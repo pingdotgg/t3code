@@ -7,10 +7,12 @@ import {
   type PullRequestReferenceCandidate,
 } from "@t3tools/contracts";
 import {
+  debouncedPullRequestCompletionSearch,
   detectPullRequestComposerTrigger,
   insertPullRequestCompletion,
   narrowPullRequestMentions,
   narrowPullRequestReferences,
+  pullRequestCompletionKey,
   pullRequestCompletionSearch,
 } from "@t3tools/shared/pullRequestComposerTrigger";
 import * as Option from "effect/Option";
@@ -65,13 +67,9 @@ export function usePullRequestCompletions(input: {
       ? null
       : detectPullRequestComposerTrigger(input.value, selection.start);
   const search = trigger === null ? undefined : pullRequestCompletionSearch(trigger);
-  const wanted = trigger === null ? null : `${trigger.kind}:${search ?? ""}`;
-  const sentKey = useDebouncedValue(wanted, 250);
-  // A switch between `@` and `#` asks at once; only a changing search waits for the debounce.
+  const sentKey = useDebouncedValue(pullRequestCompletionKey(trigger), 250);
   const sent =
-    trigger !== null && sentKey?.startsWith(`${trigger.kind}:`)
-      ? sentKey.slice(trigger.kind.length + 1)
-      : search;
+    trigger === null ? undefined : debouncedPullRequestCompletionSearch(trigger, sentKey);
   const hosted = useAtomValue(
     completionOptionsFamily(
       JSON.stringify(
