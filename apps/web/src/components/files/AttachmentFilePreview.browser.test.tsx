@@ -462,7 +462,7 @@ import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePre
 
 describe("large text preview recovery", () => {
   it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {
-    const { WorkspaceLargeTextPreview } = await import("./FilePreviewPanel");
+    const { WorkspaceLargeTextPreview } = await import("~/panels/files/FilesSidePanel");
     const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
     const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
     const workers: Worker[] = [];
@@ -2346,7 +2346,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
 });
 
 it("keeps a workspace PDF open across URL renewals and reloads it when the file changes", async () => {
-  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const { WorkspaceBrowserPreview } = await import("~/panels/files/FilesSidePanel");
   using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
   const original = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
   const edited = URL.createObjectURL(new Blob(["%PDF-1.4 edited"], { type: "application/pdf" }));
@@ -2446,7 +2446,7 @@ function planningPdf(
 
 async function workspacePdfPreview() {
   assetUrlState.mockReset();
-  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const { WorkspaceBrowserPreview } = await import("~/panels/files/FilesSidePanel");
   const native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
   const urls = (() => {
     const original = URL.createObjectURL(planningPdf());
