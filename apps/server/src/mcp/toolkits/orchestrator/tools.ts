@@ -197,7 +197,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    'Ask for a secret in a private card and wait; open it, don\'t offer it. Returns a one-use `secretRef`, or with `delivery: "file"` a file to read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how to give one: call now. Pasted secret for a child or script: `value`. Never reuse old ones.',
+    'Ask for a secret in a private card and wait; open it, don\'t offer it. Returns a one-use `secretRef`, or with `delivery: "file"` a file to read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how to give one: call now. Pasted secret for child or script: `value`. Not one from an old thread.',
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,
