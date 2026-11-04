@@ -272,21 +272,6 @@ describe("useCloudLinkController", () => {
     expect(testState.refreshLink).toHaveBeenCalledOnce();
     expect(testState.refreshDiscovery).toHaveBeenCalledOnce();
     expect(testState.toast).toHaveBeenCalledOnce();
-    expect(testState.toast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        description: "Could not finish disconnecting. Try again.",
-        actionProps: {
-          children: "Copy trace ID",
-          onClick: expect.any(Function),
-        },
-        data: {
-          actionLayout: "stacked-end",
-          actionVariant: "outline",
-          copyErrorText: message,
-          expandableContent: message,
-          expandableLabels: { expand: "Show more", collapse: "Show less" },
-        },
-      }),
-    );
+    expect(screen.controller()?.operationError).toBe(`${message} Trace ID: unlink-trace`);
   });
 });

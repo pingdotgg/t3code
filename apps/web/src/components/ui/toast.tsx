@@ -163,7 +163,7 @@ function CopyErrorButton({ text }: { text: string }) {
 }
 
 const toastExpandablePanelClassName =
-  "mt-2 max-h-40 min-h-0 overflow-y-auto overscroll-contain pr-0.5 select-text";
+  "mt-2 max-h-40 min-h-0 overflow-y-auto overscroll-contain pr-0.5 select-text wrap-break-word text-muted-foreground";
 
 function ToastExpandableSection({
   children,

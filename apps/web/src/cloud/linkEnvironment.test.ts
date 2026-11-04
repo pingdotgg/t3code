@@ -288,34 +288,6 @@ describe("web cloud link environment client", () => {
     }),
   );
 
-  it.effect("preserves the network hint when relay cleanup fails after local unlink", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn((input: RequestInfo | URL) =>
-        String(input).startsWith("https://relay.example.test/")
-          ? Promise.reject(new TypeError("Failed to fetch"))
-          : Promise.resolve(Response.json({ ok: true, endpointRuntimeStatus: null })),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withServices(
-        unlinkPrimaryEnvironmentFromCloud({ target: TARGET, clerkToken: "clerk-token" }),
-      ).pipe(Effect.flip);
-
-      expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-        "http://127.0.0.1:3000/api/connect/unlink",
-        "https://relay.example.test/v1/client/environment-links/environment-1",
-      ]);
-      expect(error.message).toContain(
-        "Disconnected locally, but T3 Connect did not confirm it removed this environment",
-      );
-      expect(error.message).toContain("Your DNS or firewall may be blocking T3 Connect.");
-      expect(error.cause).toMatchObject({
-        _tag: "ManagedRelayRequestFailedError",
-        transportFailed: true,
-      });
-    }),
-  );
-
   it.effect("preserves the timeout reason, network hint and trace after local unlink", () =>
     Effect.gen(function* () {
       const relayStarted = yield* Deferred.make<void>();

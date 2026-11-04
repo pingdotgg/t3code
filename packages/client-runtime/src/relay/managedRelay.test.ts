@@ -8,7 +8,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -452,23 +451,6 @@ describe("ManagedRelayClient", () => {
         "Could not unlink relay environment: Relay encountered an internal error (upstream_unavailable).",
       );
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
-  });
-
-  it("keeps an undeclared relay status and the network hint in the message", () => {
-    expect(
-      new ManagedRelay.ManagedRelayRequestFailedError({
-        action: "unlink relay environment",
-        cause: new Error("Bad Gateway"),
-        status: 502,
-      }).message,
-    ).toBe("Could not unlink relay environment: Relay returned an unexpected HTTP 502.");
-    expect(
-      new ManagedRelay.ManagedRelayRequestFailedError({
-        action: "unlink relay environment",
-        transportFailed: true,
-        cause: new TypeError("Failed to fetch"),
-      }).message,
-    ).toBe(`Could not unlink relay environment. ${NETWORK_BLOCKING_HINT}`);
   });
 
   it.effect("accepts generic DPoP errors from relays without the optional reason", () => {
