@@ -1,4 +1,9 @@
-import { type MentionIndexSearchInput, WS_METHODS, type ProjectId } from "@t3tools/contracts";
+import {
+  type MentionIndexProviderId,
+  type MentionIndexSearchInput,
+  WS_METHODS,
+  type ProjectId,
+} from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -26,10 +31,11 @@ export function mentionSearchInput(input: {
   readonly projectId: ProjectId;
   readonly query: string;
   readonly limit?: number;
+  readonly providers?: ReadonlyArray<MentionIndexProviderId>;
 }): MentionIndexSearchInput {
   return {
     projectId: input.projectId,
-    providers: ["pull-request"],
+    providers: input.providers ?? ["pull-request"],
     query: input.query,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
   };

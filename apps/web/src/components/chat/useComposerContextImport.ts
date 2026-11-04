@@ -120,6 +120,8 @@ export function useComposerContextImport(input: {
     (store) => store.addPreviewAnnotation,
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
+  const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
+  const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
   const addComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.addEnvironmentContexts,
   );
@@ -337,7 +339,10 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "jira" ||
+                  existing?.kind === "figma"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -409,6 +414,20 @@ export function useComposerContextImport(input: {
           // but not in an answer to an agent's question, which carries no machines.
           if (questionAttachmentTarget !== null) break;
           addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "jira": {
+          addComposerDraftJiraContexts(composerDraftTarget, [record], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "figma": {
+          addComposerDraftFigmaContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);

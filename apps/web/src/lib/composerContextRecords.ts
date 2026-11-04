@@ -225,6 +225,18 @@ export function environmentContextReference(
   return { kind: "environment", contextId: record.contextId, label: record.label };
 }
 
+export function jiraContextReference(
+  record: import("@t3tools/contracts").JiraContextRecord,
+): ComposerContextReference {
+  return { kind: "jira", contextId: record.contextId, label: record.label };
+}
+
+export function figmaContextReference(
+  record: import("@t3tools/contracts").FigmaContextRecord,
+): ComposerContextReference {
+  return { kind: "figma", contextId: record.contextId, label: record.label };
+}
+
 export function environmentContextRecord(
   environmentId: EnvironmentId,
   label: string,
@@ -385,6 +397,8 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -397,6 +411,8 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.jiraContexts ?? []),
+    ...(input.figmaContexts ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

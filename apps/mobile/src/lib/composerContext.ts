@@ -25,6 +25,11 @@ import {
   sanitizeComposerContextLabel,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  externalLinkContextReferences,
+  figmaContextRecord,
+  jiraContextRecord,
+} from "@t3tools/shared/composerContextExternalLinks";
+import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
@@ -113,6 +118,25 @@ export function environmentComposerContext(
     environmentId,
   };
 }
+
+export function jiraComposerContext(input: {
+  readonly key: string;
+  readonly url: string;
+  readonly summary?: string;
+}) {
+  return jiraContextRecord(input);
+}
+
+export function figmaComposerContext(input: {
+  readonly fileKey: string;
+  readonly url: string;
+  readonly name: string;
+  readonly nodeId?: string;
+}) {
+  return figmaContextRecord(input);
+}
+
+export { externalLinkContextReferences };
 
 export function pullRequestComposerContext(
   pullRequest: PullRequestContextMetadata,

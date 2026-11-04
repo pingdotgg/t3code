@@ -1,13 +1,13 @@
 import * as Schema from "effect/Schema";
 
-import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PullRequestContextMetadata } from "./composerContext.ts";
 
 /**
  * Providers that can fill the mention index and appear in `@` / alias menus.
- * Phase 1 ships `pull-request`; `jira` and `figma` land in later PRs.
+ * Phase 1 shipped `pull-request`; Phase 2 adds `thread`, `jira`, and `figma`.
  */
-export const MentionIndexProviderId = Schema.Literals(["pull-request", "jira", "figma"]);
+export const MentionIndexProviderId = Schema.Literals(["pull-request", "thread", "jira", "figma"]);
 export type MentionIndexProviderId = typeof MentionIndexProviderId.Type;
 
 export const MentionIndexPullRequestPayload = Schema.Struct({
@@ -17,6 +17,31 @@ export const MentionIndexPullRequestPayload = Schema.Struct({
 });
 export type MentionIndexPullRequestPayload = typeof MentionIndexPullRequestPayload.Type;
 
+export const MentionIndexThreadPayload = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  projectId: ProjectId,
+});
+export type MentionIndexThreadPayload = typeof MentionIndexThreadPayload.Type;
+
+export const MentionIndexJiraPayload = Schema.Struct({
+  key: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  summary: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  projectKey: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  status: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type MentionIndexJiraPayload = typeof MentionIndexJiraPayload.Type;
+
+export const MentionIndexFigmaPayload = Schema.Struct({
+  fileKey: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  nodeId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type MentionIndexFigmaPayload = typeof MentionIndexFigmaPayload.Type;
+
 export const MentionIndexHit = Schema.Struct({
   providerId: MentionIndexProviderId,
   itemKey: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
@@ -25,6 +50,9 @@ export const MentionIndexHit = Schema.Struct({
   url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
   score: Schema.Number,
   pullRequest: Schema.optionalKey(MentionIndexPullRequestPayload),
+  thread: Schema.optionalKey(MentionIndexThreadPayload),
+  jira: Schema.optionalKey(MentionIndexJiraPayload),
+  figma: Schema.optionalKey(MentionIndexFigmaPayload),
 });
 export type MentionIndexHit = typeof MentionIndexHit.Type;
 

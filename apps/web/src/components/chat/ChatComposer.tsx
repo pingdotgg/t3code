@@ -329,6 +329,8 @@ export interface ChatComposerHandle {
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
     environmentContexts: EnvironmentContextRecord[];
+    jiraContexts: import("@t3tools/contracts").JiraContextRecord[];
+    figmaContexts: import("@t3tools/contracts").FigmaContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
@@ -711,6 +713,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
   const composerEnvironmentContexts = composerDraft.environmentContexts;
+  const composerJiraContexts = composerDraft.jiraContexts;
+  const composerFigmaContexts = composerDraft.figmaContexts;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -762,6 +766,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: composerThreadContexts,
     environmentContexts: composerEnvironmentContexts,
+    jiraContexts: composerJiraContexts,
+    figmaContexts: composerFigmaContexts,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -2997,6 +3003,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         reviewComments: composerReviewComments,
         threadContexts: composerThreadContexts,
         environmentContexts: composerEnvironmentContexts,
+        jiraContexts: composerJiraContexts,
+        figmaContexts: composerFigmaContexts,
         selectedPromptEffort,
         selectedModelSelection,
         multipleModelSelections:

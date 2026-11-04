@@ -21,6 +21,8 @@ import {
   RuntimeMode,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  JiraContextRecord,
+  FigmaContextRecord,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -87,6 +89,8 @@ import {
   terminalContextReference,
   threadContextReference,
   environmentContextReference,
+  jiraContextReference,
+  figmaContextReference,
 } from "./lib/composerContextRecords";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
@@ -107,6 +111,8 @@ const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
 const isEnvironmentContextRecord = Schema.is(EnvironmentContextRecord);
+const isJiraContextRecord = Schema.is(JiraContextRecord);
+const isFigmaContextRecord = Schema.is(FigmaContextRecord);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
@@ -248,6 +254,8 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
   threadContexts: Schema.optionalKey(Schema.Array(ThreadContextRecord)),
   environmentContexts: Schema.optionalKey(Schema.Array(EnvironmentContextRecord)),
+  jiraContexts: Schema.optionalKey(Schema.Array(JiraContextRecord)),
+  figmaContexts: Schema.optionalKey(Schema.Array(FigmaContextRecord)),
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
@@ -372,6 +380,8 @@ export interface ComposerThreadDraftState {
   reviewComments: ReviewCommentContext[];
   threadContexts: ThreadContextRecord[];
   environmentContexts: EnvironmentContextRecord[];
+  jiraContexts: JiraContextRecord[];
+  figmaContexts: FigmaContextRecord[];
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   activeProvider: ProviderInstanceId | null;
   modelSelectionExplicit?: boolean;
@@ -394,7 +404,9 @@ export function composerDraftHasUserContent(
     draft.previewAnnotations.length > 0 ||
     draft.reviewComments.length > 0 ||
     draft.threadContexts.length > 0 ||
-    draft.environmentContexts.length > 0
+    draft.environmentContexts.length > 0 ||
+    draft.jiraContexts.length > 0 ||
+    draft.figmaContexts.length > 0
   );
 }
 
@@ -620,6 +632,16 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     records: ReadonlyArray<EnvironmentContextRecord>,
   ) => void;
+  addJiraContexts: (
+    threadRef: ComposerThreadTarget,
+    records: ReadonlyArray<JiraContextRecord>,
+    options?: ComposerContextAddOptions,
+  ) => void;
+  addFigmaContexts: (
+    threadRef: ComposerThreadTarget,
+    records: ReadonlyArray<FigmaContextRecord>,
+    options?: ComposerContextAddOptions,
+  ) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
     threadRef: ComposerThreadTarget,
@@ -729,6 +751,8 @@ const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 const EMPTY_REVIEW_COMMENTS: ReviewCommentContext[] = [];
 const EMPTY_THREAD_CONTEXTS: ThreadContextRecord[] = [];
 const EMPTY_ENVIRONMENT_CONTEXTS: EnvironmentContextRecord[] = [];
+const EMPTY_JIRA_CONTEXTS: JiraContextRecord[] = [];
+const EMPTY_FIGMA_CONTEXTS: FigmaContextRecord[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_FILES);
 Object.freeze(EMPTY_IDS);
@@ -737,6 +761,8 @@ Object.freeze(EMPTY_PREVIEW_ANNOTATIONS);
 Object.freeze(EMPTY_REVIEW_COMMENTS);
 Object.freeze(EMPTY_THREAD_CONTEXTS);
 Object.freeze(EMPTY_ENVIRONMENT_CONTEXTS);
+Object.freeze(EMPTY_JIRA_CONTEXTS);
+Object.freeze(EMPTY_FIGMA_CONTEXTS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderDriverKind, ModelSelection>> =
   Object.freeze({});
 const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>({
@@ -755,6 +781,8 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   reviewComments: EMPTY_REVIEW_COMMENTS,
   threadContexts: EMPTY_THREAD_CONTEXTS,
   environmentContexts: EMPTY_ENVIRONMENT_CONTEXTS,
+  jiraContexts: EMPTY_JIRA_CONTEXTS,
+  figmaContexts: EMPTY_FIGMA_CONTEXTS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -773,6 +801,8 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     reviewComments: [],
     threadContexts: [],
     environmentContexts: [],
+    jiraContexts: [],
+    figmaContexts: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -879,6 +909,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.reviewComments.length === 0 &&
     draft.threadContexts.length === 0 &&
     draft.environmentContexts.length === 0 &&
+    draft.jiraContexts.length === 0 &&
+    draft.figmaContexts.length === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
@@ -1864,6 +1896,12 @@ function normalizePersistedDraftsByThreadId(
     const environmentContexts = Array.isArray(draftCandidate.environmentContexts)
       ? draftCandidate.environmentContexts.filter(isEnvironmentContextRecord)
       : [];
+    const jiraContexts = Array.isArray(draftCandidate.jiraContexts)
+      ? draftCandidate.jiraContexts.filter(isJiraContextRecord)
+      : [];
+    const figmaContexts = Array.isArray(draftCandidate.figmaContexts)
+      ? draftCandidate.figmaContexts.filter(isFigmaContextRecord)
+      : [];
     const previewAnnotations = Array.isArray(draftCandidate.previewAnnotations)
       ? draftCandidate.previewAnnotations.filter(isPreviewAnnotationPayload)
       : [];
@@ -1981,6 +2019,8 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       threadContexts.length === 0 &&
       environmentContexts.length === 0 &&
+      jiraContexts.length === 0 &&
+      figmaContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
       !interactionMode
@@ -2008,6 +2048,8 @@ function normalizePersistedDraftsByThreadId(
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
       ...(threadContexts.length > 0 ? { threadContexts } : {}),
       ...(environmentContexts.length > 0 ? { environmentContexts } : {}),
+      ...(jiraContexts.length > 0 ? { jiraContexts } : {}),
+      ...(figmaContexts.length > 0 ? { figmaContexts } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
@@ -2112,6 +2154,8 @@ export function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       draft.threadContexts.length === 0 &&
       draft.environmentContexts.length === 0 &&
+      draft.jiraContexts.length === 0 &&
+      draft.figmaContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -2169,6 +2213,12 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.environmentContexts.length > 0
         ? { environmentContexts: draft.environmentContexts.map((record) => ({ ...record })) }
+        : {}),
+      ...(draft.jiraContexts.length > 0
+        ? { jiraContexts: draft.jiraContexts.map((record) => ({ ...record })) }
+        : {}),
+      ...(draft.figmaContexts.length > 0
+        ? { figmaContexts: draft.figmaContexts.map((record) => ({ ...record })) }
         : {}),
       ...(hasModelData
         ? {
@@ -2429,6 +2479,8 @@ function toHydratedThreadDraft(
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
       ...(persistedDraft.threadContexts ?? []).map(threadContextReference),
       ...(persistedDraft.environmentContexts ?? []).map(environmentContextReference),
+      ...(persistedDraft.jiraContexts ?? []).map(jiraContextReference),
+      ...(persistedDraft.figmaContexts ?? []).map(figmaContextReference),
       ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
@@ -2445,6 +2497,8 @@ function toHydratedThreadDraft(
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
     threadContexts: persistedDraft.threadContexts?.map((record) => ({ ...record })) ?? [],
     environmentContexts: persistedDraft.environmentContexts?.map((record) => ({ ...record })) ?? [],
+    jiraContexts: persistedDraft.jiraContexts?.map((record) => ({ ...record })) ?? [],
+    figmaContexts: persistedDraft.figmaContexts?.map((record) => ({ ...record })) ?? [],
     modelSelectionByProvider,
     activeProvider,
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
@@ -3960,6 +4014,90 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        addJiraContexts: (threadRef, records, options) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const existingIds = new Set(
+            (get().draftsByThreadKey[threadKey]?.jiraContexts ?? []).map(
+              (record) => record.contextId,
+            ),
+          );
+          const incoming = records.filter((record) => {
+            if (existingIds.has(record.contextId)) return false;
+            existingIds.add(record.contextId);
+            return true;
+          });
+          if (incoming.length === 0) return;
+          const references = incoming.map(jiraContextReference);
+          const placedAtCaret =
+            options?.appendReference !== false &&
+            options?.insertAtCaret !== false &&
+            (contextInsertionHandlers.get(threadKey)?.(references) ?? false);
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const known = new Set(existing.jiraContexts.map((record) => record.contextId));
+            const accepted = incoming.filter((record) => !known.has(record.contextId));
+            if (accepted.length === 0) return state;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  prompt:
+                    placedAtCaret || options?.appendReference === false
+                      ? existing.prompt
+                      : ensureInlineContextReferences(
+                          existing.prompt,
+                          accepted.map(jiraContextReference),
+                        ),
+                  jiraContexts: [...existing.jiraContexts, ...accepted],
+                },
+              },
+            };
+          });
+        },
+        addFigmaContexts: (threadRef, records, options) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const existingIds = new Set(
+            (get().draftsByThreadKey[threadKey]?.figmaContexts ?? []).map(
+              (record) => record.contextId,
+            ),
+          );
+          const incoming = records.filter((record) => {
+            if (existingIds.has(record.contextId)) return false;
+            existingIds.add(record.contextId);
+            return true;
+          });
+          if (incoming.length === 0) return;
+          const references = incoming.map(figmaContextReference);
+          const placedAtCaret =
+            options?.appendReference !== false &&
+            options?.insertAtCaret !== false &&
+            (contextInsertionHandlers.get(threadKey)?.(references) ?? false);
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const known = new Set(existing.figmaContexts.map((record) => record.contextId));
+            const accepted = incoming.filter((record) => !known.has(record.contextId));
+            if (accepted.length === 0) return state;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  prompt:
+                    placedAtCaret || options?.appendReference === false
+                      ? existing.prompt
+                      : ensureInlineContextReferences(
+                          existing.prompt,
+                          accepted.map(figmaContextReference),
+                        ),
+                  figmaContexts: [...existing.figmaContexts, ...accepted],
+                },
+              },
+            };
+          });
+        },
         removeReviewComment: (threadRef, commentId) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey || !commentId) return;
@@ -4057,6 +4195,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               reviewComments: [],
               threadContexts: [],
               environmentContexts: [],
+              jiraContexts: [],
+              figmaContexts: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -4087,6 +4227,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...current.reviewComments.map(reviewCommentContextReference),
                 ...current.threadContexts.map(threadContextReference),
                 ...current.environmentContexts.map(environmentContextReference),
+                ...current.jiraContexts.map(jiraContextReference),
+                ...current.figmaContexts.map(figmaContextReference),
                 ...current.previewAnnotations.map(previewAnnotationContextReference),
               ]),
               images: [],

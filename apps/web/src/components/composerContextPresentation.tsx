@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { LinkIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -67,7 +67,9 @@ export type ComposerDraftContextRecord =
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord }
-  | { kind: "environment"; record: EnvironmentContextRecord };
+  | { kind: "environment"; record: EnvironmentContextRecord }
+  | { kind: "jira"; record: import("@t3tools/contracts").JiraContextRecord }
+  | { kind: "figma"; record: import("@t3tools/contracts").FigmaContextRecord };
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -107,6 +109,8 @@ export function composerContextRecordsFromDraft(input: {
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -152,6 +156,12 @@ export function composerContextRecordsFromDraft(input: {
   }
   for (const record of input.environmentContexts ?? []) {
     records.set(record.contextId, { kind: "environment", record });
+  }
+  for (const record of input.jiraContexts ?? []) {
+    records.set(record.contextId, { kind: "jira", record });
+  }
+  for (const record of input.figmaContexts ?? []) {
+    records.set(record.contextId, { kind: "figma", record });
   }
   return records;
 }
@@ -394,6 +404,8 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
     "preview-annotation",
     "thread",
     "environment",
+    "jira",
+    "figma",
   ],
   handlers: [
     {
@@ -512,6 +524,40 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context) =>
         entry.kind === "environment" ? (
           <EnvironmentContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "jira",
+      canRender: (entry) => entry.kind === "jira",
+      render: (entry, context) =>
+        entry.kind === "jira" ? (
+          <ContextChip
+            icon={<LinkIcon />}
+            label={entry.record.label}
+            kindLabel="Jira"
+            details={<div className="max-w-xs text-xs">{entry.record.summary}</div>}
+            detailsMode="tooltip"
+            kind="file"
+          />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "figma",
+      canRender: (entry) => entry.kind === "figma",
+      render: (entry, context) =>
+        entry.kind === "figma" ? (
+          <ContextChip
+            icon={<PaintbrushIcon />}
+            label={entry.record.label}
+            kindLabel="Figma"
+            details={<div className="max-w-xs text-xs">{entry.record.name}</div>}
+            detailsMode="tooltip"
+            kind="file"
+          />
         ) : (
           <UnresolvedContextChip label={context.label} />
         ),

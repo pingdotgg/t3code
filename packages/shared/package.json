@@ -275,6 +275,10 @@
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
     },
+    "./composerContextExternalLinks": {
+      "types": "./src/composerContextExternalLinks.ts",
+      "import": "./src/composerContextExternalLinks.ts"
+    },
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"

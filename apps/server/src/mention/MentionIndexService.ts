@@ -1,4 +1,5 @@
 import type {
+  MentionIndexProviderId,
   MentionIndexSearchInput,
   MentionIndexSearchResult,
   ProjectId,
@@ -8,7 +9,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { MentionIndex } from "./MentionIndex.ts";
+import { MentionIndexFigmaSyncer } from "./MentionIndexFigmaSyncer.ts";
+import { MentionIndexJiraSyncer } from "./MentionIndexJiraSyncer.ts";
 import { MentionIndexPrSyncer } from "./MentionIndexPrSyncer.ts";
+import { MentionIndexThreadSyncer } from "./MentionIndexThreadSyncer.ts";
 
 export class MentionIndexService extends Context.Service<
   MentionIndexService,
@@ -20,19 +24,30 @@ export class MentionIndexService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
-  const syncer = yield* MentionIndexPrSyncer;
+  const pullRequests = yield* MentionIndexPrSyncer;
+  const threads = yield* MentionIndexThreadSyncer;
+  const jira = yield* MentionIndexJiraSyncer;
+  const figma = yield* MentionIndexFigmaSyncer;
+
+  const ensureProviders = Effect.fn("MentionIndexService.ensureProviders")(function* (
+    projectId: ProjectId,
+    providers: ReadonlyArray<MentionIndexProviderId>,
+  ) {
+    if (providers.includes("pull-request")) yield* pullRequests.ensureIndexed(projectId);
+    if (providers.includes("thread")) yield* threads.ensureIndexed(projectId);
+    if (providers.includes("jira")) yield* jira.ensureIndexed(projectId);
+    if (providers.includes("figma")) yield* figma.ensureIndexed(projectId);
+  });
 
   return MentionIndexService.of({
     search: Effect.fn("MentionIndexService.search")(function* (input) {
       const providers = input.providers ?? (["pull-request"] as const);
-      if (providers.includes("pull-request")) {
-        yield* syncer.ensureIndexed(input.projectId);
-      }
+      yield* ensureProviders(input.projectId, providers);
       return yield* index.search(input);
     }),
 
     ensureIndexed: Effect.fn("MentionIndexService.ensureIndexed")(function* (projectId) {
-      yield* syncer.syncProject(projectId);
+      yield* pullRequests.syncProject(projectId);
       return yield* index.search({
         projectId,
         providers: ["pull-request"],

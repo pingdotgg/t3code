@@ -133,6 +133,23 @@ export function useComposerMenuItems({
           }),
         }),
   );
+  const threadMentionQuery = isPathTrigger ? pathTriggerQuery : null;
+  const debouncedThreadMentionQuery = useDebouncedValue(threadMentionQuery, 180);
+  const threadMentionIndexLookup = useEnvironmentQuery(
+    !isPathTrigger ||
+      pullRequestProjectId === null ||
+      threadMentionQuery !== debouncedThreadMentionQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedThreadMentionQuery ?? "",
+            limit: 12,
+            providers: ["thread"],
+          }),
+        }),
+  );
   const pullRequestTriggerNumber = (() => {
     if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
       return null;
@@ -177,15 +194,35 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const shellThreadItems = matchComposerThreadItems({
+        shells: environmentThreadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: activeThreadId,
+        query: composerTrigger.query,
+        now,
+      });
+      const shellThreadIds = new Set(shellThreadItems.map((item) => item.thread.threadId));
+      const indexedThreadItems = (threadMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.thread === undefined) return [];
+        if (shellThreadIds.has(hit.thread.threadId)) return [];
+        if (activeThreadId !== null && hit.thread.threadId === activeThreadId) return [];
+        return [
+          {
+            id: `thread-index:${hit.thread.environmentId}:${hit.thread.threadId}`,
+            type: "thread" as const,
+            thread: {
+              environmentId: hit.thread.environmentId,
+              threadId: hit.thread.threadId,
+            },
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
       return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-        }),
+        ...shellThreadItems,
+        ...indexedThreadItems,
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
           ? matchComposerEnvironmentItems({

@@ -26,6 +26,8 @@ export const COMPOSER_CONTEXT_KINDS = [
   "skill",
   "thread",
   "environment",
+  "jira",
+  "figma",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -239,6 +241,25 @@ export const EnvironmentContextRecord = Schema.Struct({
 });
 export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
+export const JiraContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("jira"),
+  key: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  url: ShortString,
+  summary: ShortString,
+});
+export type JiraContextRecord = typeof JiraContextRecord.Type;
+
+export const FigmaContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("figma"),
+  fileKey: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  url: ShortString,
+  name: ShortString,
+  nodeId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type FigmaContextRecord = typeof FigmaContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -271,6 +292,8 @@ export const KnownComposerContextRecord = Schema.Union([
   SkillContextRecord,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  JiraContextRecord,
+  FigmaContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

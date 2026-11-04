@@ -128,8 +128,12 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as MentionIndex from "./mention/MentionIndex.ts";
+import * as MentionIndexFigmaSyncer from "./mention/MentionIndexFigmaSyncer.ts";
+import * as MentionIndexJiraSyncer from "./mention/MentionIndexJiraSyncer.ts";
+import * as MentionIndexMcpClient from "./mention/MentionIndexMcpClient.ts";
 import * as MentionIndexPrSyncer from "./mention/MentionIndexPrSyncer.ts";
 import * as MentionIndexService from "./mention/MentionIndexService.ts";
+import * as MentionIndexThreadSyncer from "./mention/MentionIndexThreadSyncer.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -422,13 +426,13 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 );
 
 const layerMentionIndex = MentionIndexService.layer.pipe(
-  Layer.provide(
-    MentionIndexPrSyncer.layer.pipe(
-      Layer.provide(MentionIndex.layer),
-      Layer.provide(layerPullRequestService),
-    ),
-  ),
+  Layer.provide(MentionIndexPrSyncer.layer),
+  Layer.provide(MentionIndexThreadSyncer.layer),
+  Layer.provide(MentionIndexJiraSyncer.layer),
+  Layer.provide(MentionIndexFigmaSyncer.layer),
+  Layer.provide(MentionIndexMcpClient.layer),
   Layer.provide(MentionIndex.layer),
+  Layer.provide(layerPullRequestService),
 );
 
 const layerGitManager = GitManager.layer.pipe(

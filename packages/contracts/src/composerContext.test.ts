@@ -130,6 +130,23 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     label: "vps",
     environmentId: "environment-vps",
   },
+  jira: {
+    ...base,
+    kind: "jira",
+    label: "T3-42",
+    key: "T3-42",
+    url: "https://example.atlassian.net/browse/T3-42",
+    summary: "Improve context chips",
+  },
+  figma: {
+    ...base,
+    kind: "figma",
+    label: "Checkout flow",
+    fileKey: "AbCdEf123",
+    url: "https://www.figma.com/design/AbCdEf123",
+    name: "Checkout flow",
+    nodeId: "1:2",
+  },
 };
 
 describe("ComposerContextRecord", () => {

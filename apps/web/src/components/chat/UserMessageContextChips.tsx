@@ -24,7 +24,7 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
-import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import { LinkIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
@@ -535,6 +535,32 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           >
             <UserMessagePreviewAnnotationDetails record={record} image={context.annotationImage} />
           </UserMessageContextPopover>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "jira",
+      canRender: (record) => record.kind === "jira",
+      render: (record, context) =>
+        record.kind === "jira" ? (
+          <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
+            <LinkIcon />
+            <ContextChipLabel>{record.label}</ContextChipLabel>
+          </ContextChip>
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "figma",
+      canRender: (record) => record.kind === "figma",
+      render: (record, context) =>
+        record.kind === "figma" ? (
+          <ContextChip kind="file" data-markdown-copy={context.copyMarkdown}>
+            <PaintbrushIcon />
+            <ContextChipLabel>{record.label}</ContextChipLabel>
+          </ContextChip>
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
