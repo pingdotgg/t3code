@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
+import { act, useEffect, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
@@ -218,6 +218,14 @@ function setup() {
     });
     return null;
   }
+  // A screen that picks its route's project as it mounts, before the provider's effects run.
+  function SelectOnMount(props: { project: EnvironmentProject }) {
+    const { selectedProject, setProject } = useNewTaskFlow();
+    useEffect(() => {
+      if (selectedProject?.id !== props.project.id) setProject(props.project);
+    }, [props.project, selectedProject, setProject]);
+    return null;
+  }
   const root = createRoot(document.createElement("div"));
   return {
     projects,
@@ -243,12 +251,13 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean) {
+    async render(active: boolean, selectOnMount?: EnvironmentProject) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
             <NewTaskFlowProvider active={active} flowKey="test-flow">
               <Probe />
+              {selectOnMount ? <SelectOnMount project={selectOnMount} /> : null}
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
         ),
@@ -327,6 +336,17 @@ it("owns a status stream only while the draft is active, retaining draft choices
   expect.soft(screen.current.currentCheckoutBranchName).toBe("updated-checkout");
   expect(screen.current.prompt).toBe("keep this draft");
   expect(screen.snapshot(draftKey).workspaceSelection).toEqual(chosenWorkspace);
+});
+
+it("stamps the draft with a project the screen selects as it mounts", async () => {
+  using screen = setup();
+  await screen.render(true, screen.projects[1]);
+  expect(screen.current.selectedProject).toEqual(screen.projects[1]);
+  expect(screen.snapshot(screen.current.draftKey).project).toEqual({
+    environmentId: "one",
+    projectId: "b",
+  });
+  expect(mocks.createDraft).toHaveBeenCalledTimes(1);
 });
 
 it("does not persist a provisional workspace default after releasing inactive status", async () => {

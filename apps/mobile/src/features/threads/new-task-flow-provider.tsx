@@ -343,7 +343,9 @@ export function NewTaskFlowProvider(
       props.active === false ||
       props.routeDraftId !== undefined ||
       activeDraftKey !== null ||
-      selectedProject === null
+      selectedProject === null ||
+      // A child screen's mount effect, which runs first, may have bound a draft already.
+      readNewTaskFlowState(flowKey).draftKey !== null
     ) {
       return;
     }
