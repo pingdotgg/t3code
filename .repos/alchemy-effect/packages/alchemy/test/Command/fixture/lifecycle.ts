@@ -1,16 +1,12 @@
+import { PlatformServices, runMain, httpServer } from "alchemy/Util/PlatformServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
-import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
-import {
-  PlatformServices,
-  runMain,
-  httpServer,
-} from "alchemy/Util/PlatformServices";
+import * as Schedule from "effect/Schedule";
 
 const mode = process.env.LIFECYCLE_MODE ?? "cooperative";
 const leaf = process.env.LIFECYCLE_LEAF === "1";
@@ -29,9 +25,7 @@ const program = Effect.gen(function* () {
               .writeFileString(`${prefix}.term`, "TERM")
               .pipe(
                 Effect.andThen(
-                  mode === "early-exit" && !leaf
-                    ? Effect.sync(() => process.exit(0))
-                    : Effect.void,
+                  mode === "early-exit" && !leaf ? Effect.sync(() => process.exit(0)) : Effect.void,
                 ),
               ),
           );
@@ -73,9 +67,7 @@ const program = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* fs.writeFileString(`${prefix}.term`, "TERM");
           yield* Effect.sleep("150 millis");
-          yield* child
-            .kill({ forceKillAfter: "200 millis" })
-            .pipe(Effect.ignore);
+          yield* child.kill({ forceKillAfter: "200 millis" }).pipe(Effect.ignore);
           yield* fs.writeFileString(`${prefix}.clean`, "clean");
         }).pipe(Effect.orDie),
       );
@@ -87,9 +79,7 @@ const program = Effect.gen(function* () {
       path.join(directory, "url"),
       HttpServer.formatAddress(server.address),
     );
-    yield* Effect.sync(() =>
-      console.log(HttpServer.formatAddress(server.address)),
-    );
+    yield* Effect.sync(() => console.log(HttpServer.formatAddress(server.address)));
   }
   if (mode === "crash" && !leaf) {
     yield* fs.exists(path.join(directory, "crash")).pipe(
