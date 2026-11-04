@@ -1259,7 +1259,6 @@ it.effect("server.getSettings returns redacted settings to installed native clie
   ),
 );
 
-it.effect.each(["thread", "shell"] as const)(
 // Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot.
 it.effect.each(["thread", "shell"] as const)(
   "%s resume from a cursor below the pruned boundary loads a snapshot",
