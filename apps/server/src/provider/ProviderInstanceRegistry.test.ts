@@ -878,7 +878,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, configMap, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -906,6 +906,19 @@ describe("ProviderInstanceRegistry secret environment", () => {
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("does not read an unreadable secret again when a settings save leaves it alone", () => {
+    const fixture = setup({});
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+      const readsAtStartup = fixture.reads.length;
+
+      yield* mutator.reconcile({ ...fixture.configMap });
+
+      expect(fixture.reads).toHaveLength(readsAtStartup);
+      expect(yield* registry.listUnavailable).toHaveLength(1);
     }).pipe(Effect.scoped);
   });
 
