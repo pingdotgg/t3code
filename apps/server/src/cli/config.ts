@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Generates random hex fallback secret for desktop auto-attach.
-import * as crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NetService from "@t3tools/shared/Net";
 import {
   OtlpHeadersFromString,
@@ -384,7 +384,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const desktopBootstrapSecret =
     bootstrap?.desktopBootstrapSecret ??
     (mode !== "desktop" && desktopBootstrapToken === undefined
-      ? crypto.randomBytes(16).toString("hex")
+      ? NodeCrypto.randomBytes(16).toString("hex")
       : undefined);
   const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
   const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;

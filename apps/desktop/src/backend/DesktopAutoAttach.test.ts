@@ -53,6 +53,7 @@ describe("DesktopAutoAttach", () => {
         origin: "http://127.0.0.1:4545",
         port: 4545,
         startedAt: "2026-01-01T00:00:00.000Z",
+        desktopBootstrapSecret: "deadbeef00112233445566778899aabb",
       });
 
       let attached = false;

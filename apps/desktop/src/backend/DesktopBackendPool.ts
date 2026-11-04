@@ -37,6 +37,9 @@ export const PRIMARY_INSTANCE_ID = DesktopBackendManager.PRIMARY_INSTANCE_ID;
 export type DesktopBackendInstance = DesktopBackendManager.DesktopBackendInstance;
 export type BackendInstanceSpec = DesktopBackendManager.BackendInstanceSpec;
 
+const isWslConfig = (config: DesktopBackendManager.DesktopBackendStartConfig): boolean =>
+  config.runningDistro !== undefined || config.executablePath === "wsl.exe";
+
 export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedError<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
   "DesktopBackendPoolInstanceAlreadyRegisteredError",
   {
@@ -181,23 +184,32 @@ export const layer = Layer.effect(
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: (): Effect.Effect<void> =>
-        DesktopAutoAttach.tryAutoAttachToRunningServer({
-          stateDir: environment.stateDir,
-          backendCwd: environment.backendCwd,
-          primary: primaryInstance,
-        }).pipe(
-          Effect.provide(factoryContext),
-          Effect.flatMap((attached) =>
-            attached
-              ? Effect.void
-              : electronDialog
-                  .showErrorBox(
-                    "This T3 home is unavailable",
-                    "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
-                  )
-                  .pipe(Effect.andThen(electronApp.quit)),
-          ),
-        ),
+        Effect.gen(function* () {
+          const currentConfig = yield* primaryInstance.currentConfig;
+          const isWsl = Option.match(currentConfig, {
+            onNone: () => false,
+            onSome: isWslConfig,
+          });
+
+          if (!isWsl) {
+            const attached = yield* DesktopAutoAttach.tryAutoAttachToRunningServer({
+              stateDir: environment.stateDir,
+              backendCwd: environment.backendCwd,
+              primary: primaryInstance,
+            }).pipe(Effect.provide(factoryContext));
+
+            if (attached) {
+              return;
+            }
+          }
+
+          const message = isWsl
+            ? "Another T3 Code server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `t3 update` in the distro. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI in the distro. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command."
+            : "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.";
+
+          yield* electronDialog.showErrorBox("This T3 home is unavailable", message);
+          yield* electronApp.quit;
+        }),
     });
     primaryInstance = primary;
 

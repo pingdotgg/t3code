@@ -268,7 +268,9 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
         assert.equal(
-          yield* configuration.bootstrapTokenForSecret(first.bootstrap.desktopBootstrapSecret ?? ""),
+          yield* configuration.bootstrapTokenForSecret(
+            first.bootstrap.desktopBootstrapSecret ?? "",
+          ),
           first.bootstrap.desktopBootstrapToken,
         );
       }),
