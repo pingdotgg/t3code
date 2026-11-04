@@ -1,0 +1,37 @@
+---
+/**
+ * `<DomainIcon kind="event" />`: a building block's icon, in its colour.
+ * Inline in HTML (legends, prose). Inside an SVG, use `<DomainNode />`.
+ */
+import { KINDS, type Kind } from "./kinds.ts";
+
+interface Props {
+  kind: Kind;
+  size?: number;
+}
+
+const { kind, size = 14 } = Astro.props as Props;
+const style = KINDS[kind];
+---
+
+<svg
+  class="alc-domain-icon"
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  style={`--hue:${style.hue}`}
+  aria-hidden="true"
+>
+  {style.icon.map((d) => <path d={d} />)}
+</svg>
+
+<style>
+  .alc-domain-icon {
+    flex: none;
+    fill: none;
+    stroke: var(--hue);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+</style>
