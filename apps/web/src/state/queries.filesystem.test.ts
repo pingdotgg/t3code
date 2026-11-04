@@ -100,21 +100,29 @@ const contentTarget = {
 };
 
 it.each([
-  "src",
-  "a".repeat(256),
-  ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
-])("bounds the path search request while preserving query identity: %s", (query) => {
-  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
-  const result = useComposerPathSearch({ ...target, query: ` ${query} ` });
+  { query: "src", expected: "src" },
+  { query: "a".repeat(256), expected: "a".repeat(256) },
+  {
+    query: ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
+    expected: ["a".repeat(86), "b".repeat(86), "c".repeat(82)].join("/"),
+  },
+  { query: `${"a".repeat(255)}😀/boundary.ts`, expected: "a".repeat(255) },
+  { query: `${"a".repeat(254)}😀/boundary.ts`, expected: `${"a".repeat(254)}😀` },
+])(
+  "bounds the path search request while preserving query identity: $query",
+  ({ query, expected }) => {
+    state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+    const result = useComposerPathSearch({ ...target, query: ` ${query} ` });
 
-  expect(state.searchRequests).toHaveBeenCalledExactlyOnceWith({
-    environmentId: target.environmentId,
-    input: { cwd: target.cwd, query: query.slice(0, 256), limit: 80 },
-  });
-  expect(result.searchedTarget).toMatchObject({ ...target, query });
-  expect(result.searchedQuery).toBe(query);
-  expect(result.isPending).toBe(false);
-});
+    expect(state.searchRequests).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd, query: expected, limit: 80 },
+    });
+    expect(result.searchedTarget).toMatchObject({ ...target, query });
+    expect(result.searchedQuery).toBe(query);
+    expect(result.isPending).toBe(false);
+  },
+);
 
 it("shows content-search denial before typing and never issues an unauthorized request", () => {
   state.session = { authenticated: true, scopes: [] };

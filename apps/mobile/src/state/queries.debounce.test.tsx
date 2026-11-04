@@ -76,10 +76,15 @@ const target = {
 };
 
 it.each([
-  "src",
-  "a".repeat(256),
-  ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
-])("keeps the search deadline and bounds the request for query: %s", (query) => {
+  { query: "src", expected: "src" },
+  { query: "a".repeat(256), expected: "a".repeat(256) },
+  {
+    query: ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
+    expected: ["a".repeat(86), "b".repeat(86), "c".repeat(82)].join("/"),
+  },
+  { query: `${"a".repeat(255)}😀/boundary.ts`, expected: "a".repeat(255) },
+  { query: `${"a".repeat(254)}😀/boundary.ts`, expected: `${"a".repeat(254)}😀` },
+])("keeps the search deadline and bounds the request for query: $query", ({ query, expected }) => {
   using harness = setup();
   harness.render({ ...target, query: null });
   harness.render({ ...target, query: ` ${query} ` });
@@ -91,7 +96,7 @@ it.each([
   act(() => vi.advanceTimersByTime(1));
   expect(mocks.searchEntries).toHaveBeenCalledExactlyOnceWith({
     environmentId: target.environmentId,
-    input: { cwd: target.cwd, query: query.slice(0, 256), limit: 20 },
+    input: { cwd: target.cwd, query: expected, limit: 20 },
   });
 });
 
