@@ -334,6 +334,8 @@ describe("t3 pair", () => {
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, `serve --base-dir ${baseDir}\``);
+        assert.include(rendered, `connect --base-dir ${baseDir}\``);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
