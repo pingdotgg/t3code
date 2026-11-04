@@ -20,23 +20,31 @@ function Probe(props: {
 }
 
 describe("useLiveRefresh", () => {
-  it("defers a hidden mounted usage surface until the window becomes visible", async () => {
-    const refresh = vi.fn();
-    let visibility: DocumentVisibilityState = "hidden";
-    using _visibility = vi
-      .spyOn(document, "visibilityState", "get")
-      .mockImplementation(() => visibility);
-    using _timers = fakeTimers({ now: 2_000_000 });
-    // A bare hook probe; nothing here navigates.
-    await using _screen = await render(
-      <Probe refresh={refresh} viewKey="hidden-usage" refreshOnShow />,
-      { router: false },
-    );
-    expect(refresh).not.toHaveBeenCalled();
-    visibility = "visible";
-    await act(() => document.dispatchEvent(new Event("visibilitychange")));
-    expect(refresh).toHaveBeenCalledTimes(1);
-  });
+  it.each([true, false])(
+    "refreshes a hidden mount on arrival with refreshOnShow=%s",
+    async (refreshOnShow) => {
+      const refresh = vi.fn();
+      let visibility: DocumentVisibilityState = "hidden";
+      using _visibility = vi
+        .spyOn(document, "visibilityState", "get")
+        .mockImplementation(() => visibility);
+      using _timers = fakeTimers({ now: 2_000_000 });
+      // A bare hook probe; nothing here navigates.
+      await using _screen = await render(
+        <Probe
+          refresh={refresh}
+          viewKey={`hidden-usage:${refreshOnShow}`}
+          refreshOnShow={refreshOnShow}
+        />,
+        { router: false },
+      );
+      expect(refresh).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTime(30_000));
+      visibility = "visible";
+      await act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(refresh).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("with refreshOnShow, reads on every show unless it read within the floor", async () => {
     const refresh = vi.fn();

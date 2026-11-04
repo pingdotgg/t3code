@@ -483,6 +483,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const claudeId = ProviderInstanceId.make("claude_probe_recovery");
       let probeCount = 0;
       let successfulProbeCount = 0;
+      let overrideAccount: string | undefined;
       let failProbe = false;
       const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
@@ -501,7 +502,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                 ],
                 account: {
                   email:
-                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
+                    overrideAccount ??
+                    (successfulProbeCount === 1
+                      ? "account-a@example.com"
+                      : "account-b@example.com"),
                   subscriptionType: "pro",
                   tokenSource: "oauth",
                 },
@@ -595,6 +599,20 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(repeatedFailure.auth).toEqual(sameAccountFailure.auth);
       expect(repeatedFailure.slashCommands).toEqual(sameAccountFailure.slashCommands);
       expect(probeCount).toBe(sameAccountFailureProbeCount);
+
+      failProbe = false;
+      overrideAccount = "account-a@example.com";
+      yield* claude!.invalidateCaches ?? Effect.void;
+      yield* claude!.snapshot.refresh;
+      yield* TestClock.adjust("1 minute");
+      yield* claude!.snapshot.refreshUsage!;
+      expect((yield* claude!.snapshot.getSnapshot).auth.email).toBe(overrideAccount);
+      yield* TestClock.adjust("4 minutes");
+      overrideAccount = "account-b@example.com";
+      const changedHealth = yield* claude!.snapshot.refresh;
+      expect(changedHealth.auth.email).toBe(overrideAccount);
+      yield* claude!.snapshot.refreshUsage!;
+      expect((yield* claude!.snapshot.getSnapshot).auth.email).toBe(overrideAccount);
     }).pipe(Effect.provide(layerTest)),
   );
 

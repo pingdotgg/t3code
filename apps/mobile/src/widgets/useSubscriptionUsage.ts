@@ -6,11 +6,11 @@ import { isAppActive, subscribeAppState } from "../lib/appState";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
-import { createWidgetRefresher, WIDGET_REFRESH_INTERVAL } from "./subscriptionUsageSnapshot";
+import { createWidgetRefresher } from "./subscriptionUsageSnapshot";
 
 /**
  * App-lifetime worker that keeps provider quotas fresh for the usage widget:
- * on resume, on every connection change, and on a fixed interval while active.
+ * on resume and connection changes; periodic reads belong to visible usage UI.
  * Each environment is refreshed at most once per interval.
  */
 export function installSubscriptionUsageRefresh(): () => void {
@@ -18,15 +18,23 @@ export function installSubscriptionUsageRefresh(): () => void {
     runAtomCommand(
       appAtomRegistry,
       serverEnvironment.refreshProviders,
-      { environmentId, input: {} },
+      { environmentId, input: { usage: true } },
       { label: serverEnvironment.refreshProviders.label, reportFailure: false },
     ),
   );
+  let lastConnections = "";
   const update = () => {
-    if (!isAppActive() || !appAtomRegistry.get(environmentCatalog.catalogValueAtom).isReady) return;
+    if (!isAppActive()) {
+      lastConnections = "";
+      return;
+    }
+    if (!appAtomRegistry.get(environmentCatalog.catalogValueAtom).isReady) return;
     const connected = [...appAtomRegistry.get(environmentPresentations.presentationsAtom)]
       .filter(([, presentation]) => presentation.connection.phase === "connected")
       .map(([id]) => id);
+    const key = [...connected].sort().join(",");
+    if (key === lastConnections) return;
+    lastConnections = key;
     void refresh(connected, Date.now());
   };
 
@@ -37,11 +45,9 @@ export function installSubscriptionUsageRefresh(): () => void {
     { immediate: true },
   );
   const unsubscribeAppState = subscribeAppState(update);
-  const timer = setInterval(update, WIDGET_REFRESH_INTERVAL);
   return () => {
     unsubscribeCatalog();
     unsubscribePresentations();
     unsubscribeAppState();
-    clearInterval(timer);
   };
 }

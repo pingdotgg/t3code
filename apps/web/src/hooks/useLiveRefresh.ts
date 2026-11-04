@@ -111,10 +111,8 @@ export function useLiveRefresh(
       if (!refreshWhileIdle && now - lastInteractedAt >= LIVE_REFRESH_IDLE_AFTER_MS) return;
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
       if (lastRefreshedAt === undefined) {
-        if (visible()) {
-          if (refreshOnShow) read(now);
-          else lastRefreshedAtByView.set(viewId, now);
-        }
+        if (!refreshOnShow) lastRefreshedAtByView.set(viewId, now);
+        else if (visible()) read(now);
         return;
       }
       if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt })) read(now);

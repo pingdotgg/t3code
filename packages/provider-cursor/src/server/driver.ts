@@ -1,4 +1,7 @@
-import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsagePolling,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 import {
   ProviderDriverKind,
   ProviderSetupError,
@@ -253,6 +256,19 @@ export const CursorDriver: ProviderDriver<
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(CursorKeychain.CursorKeychain, keychain),
+        Effect.map((provider) =>
+          !includeUsage &&
+          provider.usageLimits === undefined &&
+          provider.auth.status === "authenticated"
+            ? {
+                ...provider,
+                usageLimits: makeUnavailableUsageLimits({
+                  checkedAt: provider.checkedAt,
+                  reason: "probeFailed",
+                }),
+              }
+            : provider,
+        ),
         Effect.map(stampSnapshot),
         Effect.tap((provider) =>
           Effect.sync(() => {

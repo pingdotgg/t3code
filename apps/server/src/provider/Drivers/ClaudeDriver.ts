@@ -215,6 +215,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         timeToLive: () => CAPABILITIES_PROBE_TTL,
       },
     );
+    let lastAccount: ClaudeCapabilitiesProbe | undefined;
     const resolveCapabilities = Effect.gen(function* () {
       let includeUsage = yield* UsagePolling;
       if (includeUsage && usageHttpClient) {
@@ -227,7 +228,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         )
           includeUsage = false;
       }
-      return (yield* Cache.get(capabilitiesProbeCache, includeUsage)).capabilities;
+      const capabilities: ClaudeCapabilitiesProbe = (yield* Cache.get(
+        capabilitiesProbeCache,
+        includeUsage,
+      )).capabilities;
+      if (
+        lastAccount !== undefined &&
+        (lastAccount.email?.toLowerCase() !== capabilities.email?.toLowerCase() ||
+          lastAccount.workspaceId !== capabilities.workspaceId)
+      )
+        yield* Cache.invalidate(capabilitiesProbeCache, !includeUsage);
+      lastAccount = capabilities;
+      return capabilities;
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

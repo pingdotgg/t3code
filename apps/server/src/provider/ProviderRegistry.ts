@@ -635,7 +635,8 @@ export const layer = Layer.effect(
         instances.filter(
           (instance) => instanceId === undefined || instance.instanceId === instanceId,
         ),
-        (instance) => refreshOneSource(instance, true),
+        (instance) =>
+          refreshOneSource(instance, true).pipe(Effect.catchCause(recoverRefreshFailure)),
         { concurrency: "unbounded" },
       );
       return yield* Ref.get(providersRef);
@@ -1093,7 +1094,8 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refreshUsage,
+      refreshUsage: (instanceId) =>
+        refreshUsage(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

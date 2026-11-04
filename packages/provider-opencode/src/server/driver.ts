@@ -1,4 +1,7 @@
-import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsagePolling,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
@@ -375,7 +378,11 @@ export const OpenCodeDriver: ProviderDriver<
     ).pipe(
       Effect.map(({ provider, usageLimits }) => ({
         ...provider,
-        ...(usageLimits ? { usageLimits } : {}),
+        usageLimits:
+          usageLimits ??
+          (provider.auth.status === "authenticated"
+            ? makeUnavailableUsageLimits({ checkedAt: provider.checkedAt, reason: "probeFailed" })
+            : undefined),
       })),
       Effect.map(stampIdentity),
       Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
