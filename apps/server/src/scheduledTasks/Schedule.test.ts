@@ -149,6 +149,14 @@ describe("scheduled task schedule calculation", () => {
     expect(next && DateTime.formatIso(next)).toBe("2026-11-01T06:30:00.000Z");
     const parts = next ? DateTime.toParts(next) : null;
     expect(parts && [parts.month, parts.day, parts.hour, parts.minute]).toEqual([11, 1, 1, 30]);
+    const halfHour = nextScheduledRunAt(
+      { type: "interval", everyMs: 3_600_000, window: { start: "01:35", end: "01:45" } },
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month: 4, day: 5, hour: 1, minute: 50 },
+        { timeZone: "Australia/Lord_Howe", adjustForTimeZone: true },
+      ),
+    );
+    expect(halfHour && DateTime.formatIso(halfHour)).toBe("2026-04-04T15:05:00.000Z");
   });
 
   it("skips a due windowed interval once the window has closed", () => {

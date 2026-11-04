@@ -37,13 +37,8 @@ function windowStartAfter(
   weekdays: ReadonlyArray<number> | undefined,
 ): DateTime.DateTime | null {
   const fromMs = DateTime.toEpochMillis(from);
-  const laterRepeatedHour = DateTime.addDuration(candidate, 3_600_000);
-  const repeatedParts = DateTime.toParts(laterRepeatedHour);
-  // A fall-back hour happens twice. The later one is one elapsed hour after the earlier.
-  const openings =
-    repeatedParts.hour === start.hour && repeatedParts.minute === start.minute
-      ? [candidate, laterRepeatedHour]
-      : [candidate];
+  const later = DateTime.mutate(candidate, () => {}, { disambiguation: "later" });
+  const openings = [candidate, later];
   for (const opening of openings) {
     if (DateTime.toEpochMillis(opening) <= fromMs) continue;
     if (!isInsideWindow(opening, weekdays, start, end)) continue;
