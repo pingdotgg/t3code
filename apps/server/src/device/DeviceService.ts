@@ -88,7 +88,7 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
     !(cause instanceof SshCommandError) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
-    cause.exitCode > 254
+    (cause.exitCode > 254 && cause.exitCode !== 9009)
   )
     return "Could not connect to this host over SSH.";
 

@@ -96,11 +96,12 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
   error: DeviceHost.DeviceHostError,
 ) {
   const cause = error.cause;
+  // Windows ssh.exe preserves full remote exit statuses such as 9009.
   if (
     !(cause instanceof SshCommandError) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
-    cause.exitCode > 254
+    (cause.exitCode > 254 && cause.exitCode !== 9009)
   )
     return yield* error;
   const windows = yield* runSshCommand(targetFor(config), {

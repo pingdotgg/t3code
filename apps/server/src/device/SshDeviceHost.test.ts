@@ -403,6 +403,13 @@ it.effect.each([
     windows: true,
   },
   {
+    name: "a Windows cmd login shell returning 9009",
+    exitCode: 9009,
+    stderr: "'sh' is not recognized as an internal or external command,\r\n",
+    shellEcho: "Windows_NT $env:OS\r\n",
+    windows: true,
+  },
+  {
     name: "a POSIX host without Node",
     exitCode: 1,
     stderr: "Node is missing from the non-interactive SSH PATH\n",
