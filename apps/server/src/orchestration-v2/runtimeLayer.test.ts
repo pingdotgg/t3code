@@ -4209,6 +4209,136 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("confirms a held edit in a paginated review thread from a fresh page", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-edit-tail");
+      const projectId = ProjectId.make("pr-watch-edit-tail-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch tail edits",
+        workspaceRoot: "/workspace/watch-tail-edits",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-edit-tail-create"),
+        threadId,
+        projectId,
+        title: "Watch tail edits",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 16 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-edit-tail-start"),
+        threadId,
+        ...key,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
+      });
+      const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(started);
+      if (started === undefined) return;
+      const at = (minutes: number) =>
+        DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(started.startedAt), { minutes }));
+      const comment = (id: string, body: string, editedAt: string | null) => ({
+        id,
+        author: { login: "review-bot", name: null, avatarUrl: null },
+        body,
+        createdAt: at(-30),
+        editedAt,
+        url: null,
+      });
+
+      let tail: { body: string; editedAt: string | null } = {
+        body: "Reviewing...",
+        editedAt: null,
+      };
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          // Fingerprints miss review-thread comment edits, so the host reports one throughout.
+          watchFingerprint: () => Effect.succeed({ status: "quiet", remarks: "same" }),
+          invalidate: () => Effect.void,
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({ projectId, number: 16, at: at(-60) }),
+              checks: [{ name: "lint", status: "success", description: null, url: null }],
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreadsTruncated: false,
+              reviewThreads: [
+                {
+                  id: "bot-thread",
+                  path: "src/index.ts",
+                  line: 1,
+                  side: "right",
+                  isResolved: false,
+                  isOutdated: false,
+                  comments: [comment("bot-first", "Started.", null)],
+                  commentCount: 2,
+                  nextCommentsCursor: "after-1",
+                },
+              ],
+              commits: [],
+            }),
+          threadComments: () =>
+            Effect.sync(() => ({
+              comments: [comment("bot-status", tail.body, tail.editedAt)],
+              nextCursor: null,
+            })),
+        }),
+      );
+      const wakes = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.filter((message) => message.text.includes("review-bot")),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+
+      yield* sweep;
+      tail = { body: "Still reviewing...", editedAt: at(31) };
+      yield* TestClock.adjust("31 minutes");
+      yield* sweep;
+      tail = { body: "Review finished.", editedAt: at(33) };
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      assert.lengthOf(yield* wakes, 0);
+
+      yield* TestClock.adjust("2 minutes");
+      yield* sweep;
+      const told = yield* wakes;
+      assert.lengthOf(told, 1);
+      assert.include(
+        told[0]!.text,
+        '1 edited comment:\n  - review-bot on src/index.ts: "Review finished."',
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-edit-tail-end"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+      yield* worker.drain();
+    }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {

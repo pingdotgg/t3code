@@ -137,6 +137,9 @@ const snapshotFingerprint = ({ link }: WatchTarget) => {
       ].join(" ");
 };
 
+const holdsEdits = (group: WatchGroup) =>
+  group.targets.some(({ watch }) => (watch.pendingEdits?.length ?? 0) > 0);
+
 function planRead(
   group: WatchGroup,
   last: LastRead | undefined,
@@ -153,7 +156,7 @@ function planRead(
       now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
   );
   // A held edit is delivered by the next read that finds it unchanged, which a quiet fingerprint skips.
-  const editsHeld = group.targets.some(({ watch }) => (watch.pendingEdits?.length ?? 0) > 0);
+  const editsHeld = holdsEdits(group);
   if (fingerprint === null) {
     const read =
       editsHeld ||
@@ -476,9 +479,10 @@ export const make = Effect.gen(function* () {
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
-      (fingerprint !== null && last.remarks !== fingerprint.remarks)
+      (fingerprint !== null && last.remarks !== fingerprint.remarks) ||
+      holdsEdits(group)
     ) {
-      // A new watch or changed host remarks needs a fresh view of every tail.
+      // A new watch, changed host remarks, or a held edit needs a fresh view of every tail.
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
