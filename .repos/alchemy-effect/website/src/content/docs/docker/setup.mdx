@@ -3,11 +3,17 @@ title: Setup
 description: Point alchemy at a Docker daemon — the active CLI context and the DOCKER_BIN override.
 ---
 
+import PackageManagers from "../../../components/PackageManagers.astro";
+
+Install `@alchemy.run/docker`:
+
+<PackageManagers add="@alchemy.run/docker" />
+
 Register the provider in your stack:
 
 ```typescript
 // alchemy.run.ts
-import * as Docker from "alchemy/Docker";
+import * as Docker from "@alchemy.run/docker";
 
 providers: Docker.providers(),
 state: Alchemy.localState(),
