@@ -1038,6 +1038,73 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect.each([
+    {
+      case: "the eligible release under minimumReleaseAge",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0  | 1.1.0 *  |",
+      expected: "1.1.0",
+    },
+    {
+      case: "no update when the installed version is the eligible release",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0 * | 1.0.0 * |",
+      expected: "1.0.0",
+    },
+  ])(
+    "advertises $case for bun-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-bun-latest");
+        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+        writeExecutable(NodePath.join(bunBinDir, "bun"));
+        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
+        const outdated = [
+          "bun outdated v1.3.3 (274e01c7)",
+          "|-------------------------------------------------------|",
+          "| Package               | Current | Update | Latest   |",
+          "|-----------------------|---------|--------|----------|",
+          fixture.row,
+          "|-------------------------------------------------------|",
+          "Note: The * indicates that version isn't true latest due to minimum release age",
+          "",
+        ].join("\n");
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: "package-tool", env: { PATH: bunBinDir } },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner((_command, args) =>
+              args[0] === "outdated"
+                ? outdated
+                : `${tempDir} node_modules (1)\n└── @example/package-tool@1.0.0\n`,
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: windowsHost },
+  );
+
   it.effect.skipIf(windowsHost)(
     "switches to bun updates when the resolved binary lives in bun's global bin",
     () =>
