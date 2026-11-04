@@ -45,6 +45,7 @@ it("shows the retry's progress after a failed worktree setup", async () => {
       environmentId,
       threadId,
       preparing: props.preparing,
+      hasWorktree: false,
       turnStarted: false,
       followUpSent: false,
     });

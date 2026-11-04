@@ -860,7 +860,7 @@ function WorkspacePreparationRetryButton(props: {
         label="Retry"
         tone="secondary"
         accessibilityLabel="Retry workspace preparation"
-        disabled={busy}
+        loading={busy}
         onPress={() => {
           setBusy(true);
           void Haptics.selectionAsync();

@@ -9,6 +9,8 @@ export function useWorktreeSetup(input: {
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   preparing: boolean;
+  /** Reads a worktree thread's last snapshot once; only `preparing` reopens after it. */
+  hasWorktree: boolean;
   turnStarted: boolean;
   followUpSent: boolean;
 }) {
@@ -18,7 +20,7 @@ export function useWorktreeSetup(input: {
   const query = useEnvironmentQuery(
     input.environmentId &&
       input.threadId &&
-      (live?.phase === "running" || (!live && input.preparing))
+      (input.preparing || live?.phase === "running" || (!live && input.hasWorktree))
       ? vcsEnvironment.worktreeSetup({
           environmentId: input.environmentId,
           input: { threadId: input.threadId },
