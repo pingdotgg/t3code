@@ -1510,7 +1510,7 @@ it.layer(
               skills: [],
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
-            const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
+            const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
             const instance = {
               instanceId,
               driverKind: driver,
@@ -1536,6 +1536,10 @@ it.layer(
                 applyUsageLimits: () => Effect.void,
               },
               invalidateCaches: Ref.update(invalidations, (count) => count + 1),
+              afterUpdate: Ref.update(maintenanceReads, (reads) => [
+                ...reads,
+                "afterUpdate" as const,
+              ]),
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
@@ -1607,6 +1611,12 @@ it.layer(
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [true]);
           yield* registry.invalidateModelCaches({ ...workspace, fresh: true });
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
+
+          yield* registry.refreshAfterUpdate(first.instance.driverKind, first.instance.instanceId);
+          assert.deepStrictEqual((yield* first.takeMaintenanceReads).slice(0, 2), [
+            "afterUpdate",
+            true,
+          ]);
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(

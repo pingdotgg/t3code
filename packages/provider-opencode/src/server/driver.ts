@@ -46,6 +46,7 @@ import {
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
 import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
+import { replaceOutdatedService } from "./v2/OpenCode2Service.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -439,6 +440,23 @@ export const OpenCodeDriver: ProviderDriver<
             ),
           );
 
+    const serverUrl = effectiveConfig.serverUrl.trim();
+    const afterUpdate =
+      serverUrl.length > 0
+        ? replaceOutdatedService({
+            binaryPath: effectiveConfig.binaryPath,
+            serverUrl,
+            environment: processEnv,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("OpenCode service replacement failed", cause),
+            ),
+            Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+          )
+        : serverOwner.closeIfIdle;
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>({
       resolveMaintenance,
@@ -537,6 +555,7 @@ export const OpenCodeDriver: ProviderDriver<
                 ),
               ),
             }),
+      afterUpdate,
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;

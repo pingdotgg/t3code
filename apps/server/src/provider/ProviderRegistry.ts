@@ -731,6 +731,7 @@ export const layer = Layer.effect(
         (instance) =>
           Effect.gen(function* () {
             yield* instance.invalidateCaches ?? Effect.void;
+            yield* instance.afterUpdate ?? Effect.void;
             const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
             yield* Effect.forEach(
               latestProviderVersionCacheKeys(maintenance),

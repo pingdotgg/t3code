@@ -23,6 +23,7 @@ export class OpenCodeServerOwner extends Context.Service<
     readonly withServer: <A, E, R>(
       use: (server: OpenCodeRuntime.OpenCodeServerProcess) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
+    readonly closeIfIdle: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/OpenCodeServerOwner") {}
 
@@ -175,6 +176,13 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
         ),
       );
     }),
+    closeIfIdle: mutex.withPermit(
+      Effect.gen(function* () {
+        if (state.borrowers > 0) return;
+        yield* cancelIdleClose();
+        yield* closeServer();
+      }),
+    ),
   });
 });
 
