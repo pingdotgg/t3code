@@ -2170,6 +2170,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .sources[0]!;
         assert.equal(rootSource.baseRef, emptyTree);
         assert.include(rootSource.diff, "+# test");
+        const rootMetadata = (yield* driver.getReviewDiffPreview({
+          cwd: upstream,
+          commitSha: root,
+          metadataOnly: true,
+        })).sources[0]!;
+        assert.deepStrictEqual(rootMetadata.files, rootSource.files);
+        assert.isTrue(rootMetadata.patchesDeferred);
+        assert.isEmpty(rootMetadata.diff);
 
         yield* writeTextFile(upstream, "README.md", "# boundary\n");
         yield* git(upstream, ["commit", "-am", "boundary"]);
@@ -2443,6 +2451,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             );
             assert.include(preview.sources[0]!.diff, "+changed");
             assert.notInclude(preview.sources[0]!.diff, "untracked");
+            const metadata = yield* driver.getReviewDiffPreview({
+              cwd,
+              sourceKind: "working-tree",
+              trackedOnly: true,
+              metadataOnly: true,
+            });
+            assert.isTrue(metadata.incomplete);
+            assert.deepStrictEqual(metadata.sources[0]!.files, preview.sources[0]!.files);
+            assert.isTrue(metadata.sources[0]!.patchesDeferred);
+            assert.isEmpty(metadata.sources[0]!.diff);
           }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
           const complete = yield* Fiber.join(full);
           assert.isUndefined(complete.incomplete);
@@ -2478,6 +2496,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         if (Result.isFailure(result)) {
           assert.equal(result.failure.operation, "GitVcsDriver.getReviewDiffPreview.patch");
         }
+        const metadata = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+          metadataOnly: true,
+        });
+        assert.isTrue(metadata.sources[0]!.patchesDeferred);
+        assert.isEmpty(metadata.sources[0]!.diff);
+        assert.deepStrictEqual(metadata.sources[0]!.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
+        ]);
       }),
     );
 
@@ -2659,9 +2687,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           );
           yield* writeTextFile(cwd, "README.md", "# tracked change\n");
 
-          const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+          const preview = yield* driver.getReviewDiffPreview({
+            cwd,
+            ignoreWhitespace: false,
+            metadataOnly: true,
+          });
           const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
 
+          const source = preview.sources.find((source) => source.kind === "working-tree")!;
+          assert.isUndefined(source.patchesDeferred);
+          assert.isUndefined(source.files);
+          assert.isTrue(source.truncated);
           assert.include(diff, "-# test");
           assert.include(diff, "+# tracked change");
         }),
@@ -2802,6 +2838,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             sourceKind: source.kind === "working-tree" ? "working-tree" : "branch-range",
           });
           assert.deepStrictEqual(selected.sources, [source]);
+          const metadata = (yield* driver.getReviewDiffPreview({
+            cwd,
+            baseRef: initialBranch,
+            sourceKind: source.kind === "working-tree" ? "working-tree" : "branch-range",
+            metadataOnly: true,
+          })).sources[0]!;
+          assert.deepStrictEqual(metadata.files, source.files);
+          assert.isTrue(metadata.patchesDeferred);
+          assert.isFalse(metadata.truncated);
+          assert.isEmpty(metadata.diff);
           for (const file of source.files ?? []) {
             const individual = yield* driver.getReviewDiffPreview({
               cwd,

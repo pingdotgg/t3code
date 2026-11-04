@@ -38,8 +38,16 @@ export function createReviewEnvironmentAtoms<R, E>(
     execute: Effect.fn("review.diffPreview")(function* (
       input: ReviewDiffPreviewInput,
       emit: (value: ReviewDiffPreviewResult) => Effect.Effect<void>,
+      previous: Option.Option<ReviewDiffPreviewResult>,
     ) {
-      if (input.sourceKind && !input.file && !input.commitSha && !input.trackedOnly) {
+      const hasCompletePreview = Option.exists(previous, (preview) => !preview.incomplete);
+      if (
+        !hasCompletePreview &&
+        input.sourceKind &&
+        !input.file &&
+        !input.commitSha &&
+        !input.trackedOnly
+      ) {
         const tracked = yield* request(WS_METHODS.reviewGetDiffPreview, {
           ...input,
           trackedOnly: true,
