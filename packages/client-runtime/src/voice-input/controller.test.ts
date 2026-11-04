@@ -231,6 +231,21 @@ describe("environment voice input", () => {
 });
 
 describe("resolveTranscriptCommit", () => {
+  it.each([
+    ["Hello", "world", "Hello world"],
+    ["Hello", "世界", "Hello世界"],
+    ["你好", "世界", "你好世界"],
+  ])(
+    "preserves script boundaries with an autodetected language: %s + %s",
+    (text, spoken, expected) => {
+      const captured = draft({ text, selection: { start: text.length, end: text.length } });
+      expect(resolveTranscriptCommit(captured, captured, spoken, "auto")).toMatchObject({
+        kind: "commit",
+        text: expected,
+      });
+    },
+  );
+
   it("replaces the recorded UTF-16 selection around emoji and composer tokens", () => {
     const text = "Fix 🧪 then $review please";
     const tokenStart = text.indexOf("$review");

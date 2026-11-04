@@ -60,8 +60,23 @@ export function createBrowserPcmCapture(
       recordingUri = null;
       chunks = [];
       const microphoneId = input.getMicrophoneId();
-      const captured = await navigator.mediaDevices.getUserMedia({
-        audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
+      const captured = await new Promise<MediaStream>((resolve, reject) => {
+        const onAbort = () => reject(captureSignal.reason);
+        const permission = navigator.mediaDevices.getUserMedia({
+          audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
+        });
+        captureSignal.addEventListener("abort", onAbort, { once: true });
+        void permission.then(
+          (media) => {
+            captureSignal.removeEventListener("abort", onAbort);
+            if (captureSignal.aborted) media.getTracks().forEach((track) => track.stop());
+            else resolve(media);
+          },
+          (error: unknown) => {
+            captureSignal.removeEventListener("abort", onAbort);
+            reject(error);
+          },
+        );
       });
       if (captureSignal.aborted) {
         captured.getTracks().forEach((track) => track.stop());

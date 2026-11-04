@@ -128,14 +128,17 @@ export function resolveTranscriptCommit(
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
   const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
   let insertion = replacement;
-  if (isEmptySelection && usesEnglishSpacing) {
+  const autoSpacing = normalizedLocale === "auto";
+  if (isEmptySelection && (usesEnglishSpacing || autoSpacing)) {
     const left = captured.text[captured.selection.start - 1];
     const right = captured.text[captured.selection.start];
     const leftNeedsBoundary =
+      (!autoSpacing || /^[\p{Script=Latin}\p{N}]/u.test(replacement)) &&
       left !== undefined &&
       /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
       (right === undefined || /\s/.test(right));
     const rightNeedsBoundary =
+      (!autoSpacing || /[\p{Script=Latin}\p{N}]$/u.test(replacement)) &&
       right !== undefined &&
       /[A-Za-z0-9([{'"]/.test(right) &&
       (left === undefined || /\s/.test(left));

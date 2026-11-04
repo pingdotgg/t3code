@@ -101,9 +101,9 @@ export function PullRequestReviewForm({
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
-    if (pending || !canSubmit(verdict.value, text)) return;
+    const submittedComments = usePullRequestReviewStore.getState().drafts[reviewKey] ?? [];
+    if (pending || !canSubmit(verdict.value, text, submittedComments.length)) return;
     const submittedBody = text;
-    const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
       environmentId,
@@ -137,10 +137,14 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string) =>
+  const canSubmit = (
+    verdict: PullRequestReviewVerdict,
+    summary: string,
+    commentCount = comments.length,
+  ) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
-      : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
+      : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
       ? "Summarize your review (optional)"

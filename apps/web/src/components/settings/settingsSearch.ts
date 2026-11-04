@@ -523,7 +523,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-project-dictionary",
     title: "Project dictionary",
     to: "/settings/voice",
-    scope: "project",
+    scope: "project-defaults",
     searchTerms: ["speech voice transcription vocabulary shared team environment glossary"],
   },
   {
