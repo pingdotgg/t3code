@@ -719,6 +719,7 @@ describe("side chat opening context", () => {
             assert.isDefined(prompt);
             assert.include(prompt, SIDE_CHAT_OPENING_FRAMING);
             assert.include(prompt, LESSON_SUMMARY);
+            assert.notInclude(prompt, "Historical material is context");
             assert.include(prompt, OBSERVATION_PARAGRAPH);
             assert.include(prompt, "User message:\nWhat is an observation space?");
             assert.include(prompt, `From thread ${LESSON_THREAD_ID}`);
@@ -740,6 +741,68 @@ describe("side chat opening context", () => {
           }).pipe(Effect.provide(layer));
         }),
       ),
+  );
+
+  it.effect.each([
+    { bytes: 22_500, fails: false },
+    { bytes: 34_500, fails: true },
+  ])("delivers an opening of $bytes bytes whole or fails the turn", ({ bytes, fails }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, layer, prompts } = yield* deliveryHarness(`side-chat-opening-size-${bytes}`);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* createLesson({ worktreePath: cwd });
+          const excerpt = "界".repeat(4_000);
+          const excerptContext = "語".repeat(1_500);
+          const summary = "文".repeat(fails ? 6_000 : 2_000);
+          yield* seedSideChatThread({
+            threadId: SIDE_CHAT_THREAD_ID,
+            anchorThreadId: LESSON_THREAD_ID,
+            sideChat: {
+              ...pendingSideChat({
+                anchor: observationAnchor(),
+                excerpt,
+                requestId: OPEN_REQUEST_ID,
+              }),
+              label: "Long highlight",
+              excerptContext,
+              opening: { status: "ready", text: summary, requestId: OPEN_REQUEST_ID },
+            },
+          });
+          yield* orchestrator.dispatch(
+            sideChatMessageCommand({
+              commandId: "command:side-chat:large-opening",
+              threadId: SIDE_CHAT_THREAD_ID,
+              text: "Explain the highlight.",
+            }),
+          );
+          yield* worker.drain();
+          const projection = yield* orchestrator.getThreadProjection(SIDE_CHAT_THREAD_ID);
+          const opening = projection.contextHandoffs.find((handoff) =>
+            handoff.id.startsWith("side-chat-opening:"),
+          );
+          if (fails) {
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            assert.lengthOf(promptsFor(prompts, SIDE_CHAT_THREAD_ID), 0);
+            assert.isUndefined(opening?.delivery);
+            assert.isTrue(
+              projection.turnItems.some(
+                (item) =>
+                  item.type === "error" && item.failure.message.includes("too little context"),
+              ),
+            );
+          } else {
+            const prompt = promptsFor(prompts, SIDE_CHAT_THREAD_ID)[0] ?? "";
+            assert.include(prompt, excerpt);
+            assert.include(prompt, excerptContext);
+            assert.include(prompt, summary);
+            assert.equal(opening?.delivery?.status, "inline");
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
   );
 
   it.effect("uses configured side-chat teaching instructions in the opening", () =>

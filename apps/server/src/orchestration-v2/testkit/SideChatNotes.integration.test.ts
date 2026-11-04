@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2SideChatOutcome,
   ScheduledTaskId,
   SIDE_CHAT_NOTES_HANDOFF_TITLE,
@@ -7,6 +8,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as EventSink from "../EventSink.ts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -122,7 +125,7 @@ describe("side-chat notes", () => {
           { label: BOX, note: BOX_NOTE },
         ]);
         const prompt = harness.prompts(lesson).at(-1) ?? "";
-        assert.include(prompt, expected);
+        assert.equal(prompt, `${expected}\n\nUser message:\nContinue the lesson.`);
         assert.equal(headerCount(prompt), 1);
         assert.isTrue(prompt.endsWith("User message:\nContinue the lesson."));
         // R3: the side chats' conversations stay out of the lesson.
@@ -157,6 +160,82 @@ describe("side-chat notes", () => {
         assert.equal(headerCount(harness.prompts(lesson).at(-1) ?? ""), 0);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([{ oversized: false }, { oversized: true }])(
+    "keeps zero-budget note delivery honest (oversized=$oversized)",
+    ({ oversized }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeSideChatHarness(`side-chat-notes-zero-${oversized}`);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const lesson = yield* harness.createLesson("Teach me RL environments.");
+          const space = yield* harness.openSideChat({ parentThreadId: lesson, label: SPACE });
+          yield* harness.send(space, SPACE_QUESTION);
+          const requestId = yield* finishWithNote(
+            harness,
+            space,
+            SPACE,
+            { text: SPACE_NOTE },
+            "ready",
+          );
+          const { providerThreads } = yield* orchestrator.getThreadProjection(lesson);
+          const providerThread = providerThreads.at(-1)!;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:zero-budget"),
+                type: "provider-thread.updated",
+                threadId: lesson,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...providerThread,
+                  contextUsage: { usedTokens: 155_000, maxTokens: 200_000 },
+                },
+              },
+            ],
+          });
+          if (oversized) {
+            for (const label of [BOX, SHAPING, "bounded vector", "reward"]) {
+              const child = yield* harness.openSideChat({ parentThreadId: lesson, label });
+              yield* harness.send(child, `Explain ${label}.`);
+              yield* finishWithNote(harness, child, label, { text: "界".repeat(300) }, "ready");
+            }
+          }
+          yield* harness.send(lesson, "Continue the lesson.");
+          const prompt = harness.prompts(lesson).at(-1) ?? "";
+          const thread = yield* harness.thread(lesson);
+          if (oversized) {
+            assert.equal(prompt, "Continue the lesson.");
+            assert.isUndefined(thread.sideChatNoteDeliveries?.[space]);
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:budget-restored"),
+                  type: "provider-thread.updated",
+                  threadId: lesson,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...providerThread,
+                    contextUsage: { usedTokens: 1_000, maxTokens: 200_000 },
+                  },
+                },
+              ],
+            });
+            yield* harness.send(lesson, "Next step.");
+            assert.include(harness.prompts(lesson).at(-1), SPACE_NOTE);
+            assert.equal(headerCount(harness.prompts(lesson).at(-1) ?? ""), 1);
+            assert.equal(
+              (yield* harness.thread(lesson)).sideChatNoteDeliveries?.[space],
+              requestId,
+            );
+          } else {
+            assert.include(prompt, SPACE_NOTE);
+            assert.equal(thread.sideChatNoteDeliveries?.[space], requestId);
+          }
+        }).pipe(Effect.provide(harness.layer));
+      }).pipe(Effect.scoped),
   );
 
   it.effect("no note and a failed note add nothing to the lesson's prompt", () =>
@@ -305,6 +384,7 @@ describe("side-chat notes", () => {
             event.threadId === lesson &&
             isSideChatNotesHandoff(event.payload),
         );
+        assert.isUndefined((yield* harness.thread(lesson)).sideChatNoteDeliveries);
         yield* orchestrator.dispatch({
           type: "thread.stop",
           commandId: CommandId.make("stop-lesson"),
@@ -320,6 +400,7 @@ describe("side-chat notes", () => {
 
         yield* harness.send(lesson, "Next step.");
         assert.include(harness.prompts(lesson).at(-1), spaceLine);
+        assert.equal(headerCount(harness.prompts(lesson).at(-1) ?? ""), 1);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),
   );

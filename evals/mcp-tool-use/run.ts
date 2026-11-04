@@ -14,6 +14,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ComposerContextRecord,
+  ProviderDriverKind,
+  ProviderThreadId,
+  RunId,
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
@@ -21,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -46,7 +50,12 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
-import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import {
+  deliverContextHandoffs,
+  withInlineContext,
+} from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { buildSideChatOpeningSummaryText } from "../../apps/server/src/orchestration-v2/sideChat/sideChatText.ts";
+import { sideChatOpeningHandoffId } from "../../apps/server/src/orchestration-v2/sideChat/sideChatOpening.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -269,6 +278,15 @@ export const McpToolUseCase = Schema.Struct({
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
+    ),
+    sideChatOpening: Schema.optional(
+      Schema.Struct({
+        lessonThreadId: Schema.String,
+        threadId: Schema.String,
+        summary: Schema.String,
+        excerpt: Schema.String,
+        excerptContext: Schema.optional(Schema.String),
+      }),
     ),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
@@ -870,6 +888,63 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
   return { type: "tool_result", tool_use_id: id, content };
 };
 
+const lessonSideChatOpening = (
+  opening: NonNullable<McpToolUseCase["setup"]["sideChatOpening"]>,
+) => {
+  const threadId = ThreadId.make(opening.threadId);
+  const providerThreadId = ProviderThreadId.make("eval-side-chat-provider-thread");
+  const runId = RunId.make("eval-side-chat-first-run");
+  const now = DateTime.makeUnsafe("2026-11-01T00:00:00Z");
+  return Effect.runSync(
+    deliverContextHandoffs({
+      handoffs: [
+        {
+          id: sideChatOpeningHandoffId(runId),
+          threadId,
+          targetRunId: runId,
+          fromProviderThreadIds: [],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: buildSideChatOpeningSummaryText({
+            opening: { status: "ready", text: opening.summary, requestId: "eval-opening" },
+            excerpt: opening.excerpt,
+            excerptContext: opening.excerptContext ?? "",
+            lessonTopic: null,
+            parentOpeningText: null,
+          }),
+          createdByProviderInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      providerThread: {
+        id: providerThreadId,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        appThreadId: threadId,
+        ownerNodeId: null,
+        providerSessionId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      historyThreadId: ThreadId.make(opening.lessonThreadId),
+      budget: 32_000,
+      alreadyDeliveredItemIds: new Set(),
+      persist: () => Effect.void,
+    }),
+  ).context;
+};
+
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
@@ -927,7 +1002,7 @@ export const buildMessages = (sample: Sample) => {
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const sideChat = testCase.setup.sideChat;
-  const prompt =
+  const legacyPrompt =
     sideChat === undefined
       ? userText
       : withInlineContext(
@@ -937,6 +1012,10 @@ export const buildMessages = (sample: Sample) => {
           }),
           userText,
         );
+  const prompt =
+    testCase.setup.sideChatOpening === undefined
+      ? legacyPrompt
+      : withInlineContext(lessonSideChatOpening(testCase.setup.sideChatOpening), userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.

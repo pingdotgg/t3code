@@ -12651,8 +12651,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /**
    * Hands the ready notes of the thread's side chats that it has not received to the run about to
-   * start, as one handoff that reaches the provider with the user's message, and records them as
-   * delivered. Only a user's own message takes notes, and only before its provider turn starts.
+   * start, as one handoff that reaches the provider with the user's message. Delivery is recorded
+   * after acceptance. Only a user's own message takes notes, before its provider turn starts.
    */
   const dispatchSideChatNotesAttach = Effect.fn("orchestrationV2.dispatch.sideChatNotesAttach")(
     function* (
@@ -12737,19 +12737,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runId: run.id,
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
-        payload: handoff,
-      });
-      yield* emitEvent({
-        type: "thread.metadata-updated",
-        threadId: thread.id,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
         payload: {
-          ...thread,
-          sideChatNoteDeliveries: {
-            ...thread.sideChatNoteDeliveries,
-            ...Object.fromEntries(notes.map((note) => [note.threadId, note.requestId])),
-          },
+          ...handoff,
+          sideChatNoteDeliveries: Object.fromEntries(
+            notes.map((note) => [note.threadId, note.requestId]),
+          ),
         },
       });
       yield* emitEvent({
