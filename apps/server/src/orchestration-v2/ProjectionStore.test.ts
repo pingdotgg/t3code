@@ -803,6 +803,35 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("working runs exclude queued and finished runs", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("working-runs");
+    const { runs } = yield* store.getThreadProjection(threadId);
+    const now = yield* DateTime.now;
+    for (const [status, working] of [
+      ["queued", false],
+      ["preparing", true],
+      ["starting", true],
+      ["running", true],
+      ["waiting", true],
+      ["completed", false],
+      ["interrupted", false],
+      ["failed", false],
+      ["cancelled", false],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`working-runs:${status}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...runs[0]!, status },
+      });
+      assert.equal(yield* store.hasWorkingRuns(), working, status);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

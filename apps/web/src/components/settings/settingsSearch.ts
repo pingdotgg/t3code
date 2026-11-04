@@ -759,6 +759,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "keep-host-awake",
+    title: "Keep host awake",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: ["wake lock prevent sleep caffeinate insomnia stay awake power agents working"],
+  },
+  {
     id: "new-threads",
     title: "New threads",
     to: "/settings/threads",

@@ -5,6 +5,7 @@ import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/sess
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  type KeepHostAwakeMode,
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
@@ -128,6 +129,28 @@ const STREAMING_CHOICES: ReadonlyArray<{
     mode: "paragraph",
     label: "Finished paragraphs",
     description: "Show each paragraph or code block as it completes.",
+  },
+];
+
+const KEEP_HOST_AWAKE_CHOICES: ReadonlyArray<{
+  readonly mode: KeepHostAwakeMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    mode: "off",
+    label: "Off",
+    description: "The host sleeps according to its own power settings.",
+  },
+  {
+    mode: "whileWorking",
+    label: "While agents work",
+    description: "Prevent the host from sleeping while agents are working on it.",
+  },
+  {
+    mode: "always",
+    label: "Always",
+    description: "Prevent the host from sleeping while T3 Code is running.",
   },
 ];
 
@@ -524,6 +547,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                             environmentId: target.environmentId,
                           })
                         }
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
+                {!projectSelected ? (
+                  <SettingsSection
+                    title="Keep host awake"
+                    footer={managed("keepHostAwake")}
+                    trailing={
+                      pendingWrites === 0 && uniform("keepHostAwake") === null ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {KEEP_HOST_AWAKE_CHOICES.map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={choice.label}
+                        description={choice.description}
+                        selected={uniform("keepHostAwake") === choice.mode}
+                        separated={index > 0}
+                        disabled={disabledFor("keepHostAwake")}
+                        onPress={() => write({ keepHostAwake: choice.mode })}
                       />
                     ))}
                   </SettingsSection>

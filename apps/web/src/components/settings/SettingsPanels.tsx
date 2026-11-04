@@ -19,6 +19,7 @@ import {
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  type KeepHostAwakeMode,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -114,6 +115,18 @@ import { canUpdateServer } from "../ServerUpdateAction";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+
+const KEEP_HOST_AWAKE_LABELS: Record<KeepHostAwakeMode, string> = {
+  off: "Off",
+  whileWorking: "While agents work",
+  always: "Always",
+};
+
+const KEEP_HOST_AWAKE_DESCRIPTIONS: Record<KeepHostAwakeMode, string> = {
+  off: "The host sleeps according to its own power settings.",
+  whileWorking: "Prevents the host from sleeping while agents are working on it.",
+  always: "Prevents the host from sleeping while T3 Code is running.",
+};
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -547,6 +560,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Continue threads after restarts"]
       : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+    ...(settings.keepHostAwake !== DEFAULT_UNIFIED_SETTINGS.keepHostAwake
+      ? ["Keep host awake"]
+      : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
       : []),
@@ -668,6 +684,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      keepHostAwake: DEFAULT_UNIFIED_SETTINGS.keepHostAwake,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -1949,6 +1966,7 @@ export function MaintenanceSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  const mixedKeepHostAwake = useScopedSettingsMixed(["keepHostAwake"]);
 
   return (
     <SettingsPageContainer>
@@ -2023,6 +2041,55 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
+        <SettingsRow
+          serverScoped
+          settingKeys={["keepHostAwake"]}
+          {...searchableSetting("keep-host-awake")}
+          description={
+            mixedKeepHostAwake
+              ? "The selected targets use different settings."
+              : KEEP_HOST_AWAKE_DESCRIPTIONS[settings.keepHostAwake]
+          }
+          resetAction={
+            settings.keepHostAwake !== DEFAULT_UNIFIED_SETTINGS.keepHostAwake ? (
+              <SettingResetButton
+                label="keep host awake"
+                onClick={() =>
+                  updateSettings({ keepHostAwake: DEFAULT_UNIFIED_SETTINGS.keepHostAwake })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={mixedKeepHostAwake ? null : settings.keepHostAwake}
+              onValueChange={(value) => {
+                if (value === "off" || value === "whileWorking" || value === "always") {
+                  updateSettings({ keepHostAwake: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Keep host awake">
+                <SelectValue>
+                  {(value: KeepHostAwakeMode | null) =>
+                    value === null ? "Mixed" : KEEP_HOST_AWAKE_LABELS[value]
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="off">
+                  {KEEP_HOST_AWAKE_LABELS.off}
+                </SelectItem>
+                <SelectItem hideIndicator value="whileWorking">
+                  {KEEP_HOST_AWAKE_LABELS.whileWorking}
+                </SelectItem>
+                <SelectItem hideIndicator value="always">
+                  {KEEP_HOST_AWAKE_LABELS.always}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <StorageCleanupSections />
