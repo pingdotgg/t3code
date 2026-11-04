@@ -814,7 +814,7 @@ function OpenCommandPaletteDialog(props: {
     true,
   );
 
-  const projectThreadItems = useOrderWhileOpen(
+  const openingOrderThreadItems = useOrderWhileOpen(
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
@@ -867,6 +867,15 @@ function OpenCommandPaletteDialog(props: {
     })(),
     rowOrderKey("new-thread-in"),
     true,
+  );
+  // Root search suggestions copy these numbers; the picker renumbers its shown rows below.
+  const projectJumpItems = new Map(
+    enumerateCommandPaletteItems(
+      openingOrderThreadItems.filter((item) => item.value !== NEW_THREAD_NO_PROJECT_VALUE),
+    ).map((item) => [item.value, item] as const),
+  );
+  const projectThreadItems = openingOrderThreadItems.map(
+    (item) => projectJumpItems.get(item.value) ?? item,
   );
 
   const {

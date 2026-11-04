@@ -132,7 +132,8 @@ describe("CommandPalette open intents", () => {
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/parent"));
   });
 
-  it("numbers the projects New thread in... shows after filtering from 1", async () => {
+  it("numbers filtered New thread in... rows from 1", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     setup({ projects: [makeProject("server"), makeProject("lima")] });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
@@ -143,7 +144,8 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent("Ctrl+1");
   });
 
-  it("starts a thread in the first project New thread in... shows on jump 1", async () => {
+  it("jump 1 starts a thread in the first filtered New thread in... row", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     setup({ projects: [makeProject("server"), makeProject("lima")] });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
