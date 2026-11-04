@@ -17,7 +17,7 @@ Configure Cloudflare and Neon through [Alchemy profiles](/environments/profiles)
 
 ```typescript title="src/auth-database.ts"
 import { Neon as NeonDatabase } from "@alchemy.run/better-auth/Neon";
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -34,7 +34,7 @@ The project's `connectionUri` Output is bound into the host environment and also
 
 ```typescript title="src/worker.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { AuthDatabase } from "./auth-database.ts";
 
@@ -60,8 +60,8 @@ This is an auth-only endpoint, with no frontend or application routes. Alchemy g
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import AuthApi from "./src/worker.ts";
