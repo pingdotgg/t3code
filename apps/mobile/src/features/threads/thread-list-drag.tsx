@@ -24,6 +24,7 @@ import Reanimated, {
 import { AppText as Text } from "../../components/ui/AppText";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { getPendingThreadOrder, threadDropBusyAtom } from "../../state/thread-order";
 import { environmentThreadShells } from "../../state/threads";
@@ -98,8 +99,9 @@ function createDropPolicy(
   section: ThreadDragSection,
   workingShelfEnabled: boolean,
 ) {
-  const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+  const shells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
   const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+  const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));
   const capabilities = (id: EnvironmentThreadShell["environmentId"]) =>
     configs.get(id)?.environment.capabilities;
   const environmentsWhere = (supported: (id: EnvironmentThreadShell["environmentId"]) => boolean) =>
@@ -117,10 +119,12 @@ function createDropPolicy(
       allThreads: shells,
       section: destination,
       // The Working beta orders Active by time, so only pins take a position.
-      reorderableEnvironmentIds: environmentsWhere((id) =>
-        destination === "pinned"
-          ? !!capabilities(id)?.threadPinReorder
-          : !workingShelfEnabled && !!capabilities(id)?.threadActiveReorder,
+      reorderableEnvironmentIds: environmentsWhere(
+        (id) =>
+          connectedEnvironmentIds.has(id) &&
+          (destination === "pinned"
+            ? !!capabilities(id)?.threadPinReorder
+            : !workingShelfEnabled && !!capabilities(id)?.threadActiveReorder),
       ),
     });
   const planners = { pinned: planner("pinned"), active: planner("active") };

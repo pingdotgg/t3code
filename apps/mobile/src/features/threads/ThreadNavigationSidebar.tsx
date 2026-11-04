@@ -770,6 +770,7 @@ function ThreadNavigationSidebarPane(
                 contentInsetAdjustmentBehavior={
                   NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"
                 }
+                scrollToOverflowEnabled
                 contentContainerStyle={[
                   styles.threadListContent,
                   Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
