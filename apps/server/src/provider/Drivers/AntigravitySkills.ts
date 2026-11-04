@@ -47,7 +47,7 @@ const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
   {
-    reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error", "invalid-config"]),
+    reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error"]),
     path: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -55,9 +55,7 @@ export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravityS
   override get message(): string {
     return this.reason === "scan-budget-exhausted"
       ? `Antigravity skill discovery exceeded its scan limit at '${this.path}'.`
-      : this.reason === "invalid-config"
-        ? `Antigravity could not parse plugin configuration at '${this.path}'.`
-        : `Antigravity could not read skills at '${this.path}'.`;
+      : `Antigravity could not read skills at '${this.path}'.`;
   }
 }
 
@@ -245,15 +243,14 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
     preferencesContents === undefined
       ? { plugins: {} }
       : yield* decodePluginPreferences(preferencesContents).pipe(
-          Effect.mapError(
-            (cause) =>
-              new AntigravitySkillsProbeError({
-                reason: "invalid-config",
-                path: preferencesPath,
-                cause,
-              }),
-          ),
+          Effect.catchTags({
+            SchemaError: () =>
+              Effect.logWarning("Antigravity plugin preferences are invalid.", {
+                errorTag: "invalid-config",
+              }).pipe(Effect.as(undefined)),
+          }),
         );
+  if (preferences === undefined) return [];
   const plugins = [];
   for (const entry of entries.toSorted()) {
     const pluginDirectory = path.join(directory, entry);

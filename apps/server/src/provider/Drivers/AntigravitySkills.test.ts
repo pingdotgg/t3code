@@ -167,6 +167,10 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           );
           assert.include(yield* fileSystem.readFileString(expected[index]!.path), "name: review\n");
         }
+        for (const contents of ["{ invalid", '{"plugins":{"alpha":{"enabled":"yes"}}}']) {
+          yield* fileSystem.writeFileString(path.join(config, "config.json"), contents);
+          assert.deepEqual(yield* discoverAntigravitySkills(input), expected.slice(2));
+        }
       }),
   );
 

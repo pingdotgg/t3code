@@ -280,13 +280,13 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
-    "refreshes through the selected executable and personal Google ACP",
+    "refreshes through the selected executable despite plugin preparation failure",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
         const plugin = h.path.join(h.userHome, ".gemini", "config", "plugins", "broken");
         yield* h.fs.makeDirectory(plugin, { recursive: true });
-        yield* h.fs.writeFileString(h.path.join(plugin, "plugin.json"), "{ invalid");
+        yield* h.fs.writeFileString(h.path.join(plugin, "plugin.json"), "x".repeat(1_000_001));
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
