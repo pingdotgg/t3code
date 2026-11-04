@@ -79,7 +79,10 @@ export function useReviewSections(input: {
       ["branch-range", branchPreview],
     ] as const
   ).flatMap(([kind, preview]) =>
-    (preview.data?.sources ?? lastGitSections).filter((source) => source.kind === kind),
+    (preview.data?.incomplete
+      ? lastGitSections
+      : (preview.data?.sources ?? lastGitSections)
+    ).filter((source) => source.kind === kind),
   );
 
   const lastTurnDiffs = useAtomValue(
@@ -181,7 +184,7 @@ export function useReviewSections(input: {
     isSelectedSectionPending:
       selectedSection?.kind === "turn"
         ? activeTurnDiff.isPending
-        : (selectedGitPreview?.isPending ?? false),
+        : ((selectedGitPreview?.isPending || selectedGitPreview?.data?.incomplete) ?? false),
     reviewSections,
     selectedSection,
     refreshSelectedSection,
@@ -191,8 +194,12 @@ export function useReviewSections(input: {
 
 function gitSectionState(
   isFileAccessPending: boolean,
-  preview: { readonly isPending: boolean; readonly error: string | null },
+  preview: {
+    readonly isPending: boolean;
+    readonly error: string | null;
+    readonly data: { readonly incomplete?: boolean } | null;
+  },
 ) {
-  if (isFileAccessPending || preview.isPending) return "loading";
+  if (isFileAccessPending || preview.isPending || preview.data?.incomplete) return "loading";
   return preview.error === null ? null : "failed";
 }
