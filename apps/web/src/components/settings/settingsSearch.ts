@@ -330,12 +330,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
-    id: "pdf-appearance",
-    title: "PDF appearance",
-    to: "/settings/appearance",
-    searchTerms: ["preview document dark original colors match app invert"],
-  },
-  {
     id: "chat-width",
     title: "Chat width",
     to: "/settings/appearance",
@@ -360,6 +354,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Render math",
     to: "/settings/appearance",
     searchTerms: ["latex tex katex equations formulas markdown"],
+  },
+  {
+    id: "pdf-appearance",
+    title: "PDF colors",
+    to: "/settings/appearance",
+    searchTerms: [
+      "preview document appearance dark original colors match theme app invert inverted",
+    ],
   },
   {
     id: "panel-animations",

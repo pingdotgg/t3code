@@ -2371,7 +2371,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     await using screen = await render(preview("first"));
     const opened = screen.container.querySelector("iframe");
     expect(opened?.src.startsWith(original)).toBe(true);
-    const colors = screen.getByRole("button", { name: "Dark PDF colors" });
+    const colors = screen.getByRole("button", { name: "Inverted colors" });
     const initiallyDark = colors.element().getAttribute("aria-pressed") === "true";
     await colors.click();
     await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));

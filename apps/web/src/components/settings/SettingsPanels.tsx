@@ -455,9 +455,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay
       ? ["Effort display"]
       : []),
-    ...(settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance
-      ? ["PDF appearance"]
-      : []),
+    ...(settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance ? ["PDF colors"] : []),
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),

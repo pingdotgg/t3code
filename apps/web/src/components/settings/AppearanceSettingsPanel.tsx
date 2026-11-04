@@ -86,9 +86,9 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
 };
 
 const PDF_APPEARANCE_LABELS: Record<PdfAppearance, string> = {
-  "match-app": "Match app",
+  "match-app": "Match theme",
   original: "Original colors",
-  dark: "Dark",
+  dark: "Inverted colors",
 };
 
 export function AppearanceSettingsPanel() {
@@ -170,41 +170,6 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-interface" title="Interface">
-        <SettingsRow
-          {...searchableSetting("pdf-appearance")}
-          description="Default colors for PDF previews. Each preview can temporarily use different colors."
-          resetAction={
-            settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance ? (
-              <SettingResetButton
-                label="PDF appearance"
-                onClick={() =>
-                  updateSettings({ pdfAppearance: DEFAULT_UNIFIED_SETTINGS.pdfAppearance })
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="w-full sm:w-40">
-              <Select
-                value={settings.pdfAppearance}
-                onValueChange={(value) => {
-                  if (value !== null) updateSettings({ pdfAppearance: value });
-                }}
-              >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="PDF appearance">
-                  <SelectValue>{PDF_APPEARANCE_LABELS[settings.pdfAppearance]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(PDF_APPEARANCE_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
-          }
-        />
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description="Adjust the contrast of colors and borders across the interface."
@@ -388,6 +353,41 @@ export function AppearanceSettingsPanel() {
               }
               aria-label="Render math"
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("pdf-appearance")}
+          description="Choose whether PDF previews start with inverted colors. Match theme uses inverted colors for dark themes and original colors for light themes."
+          resetAction={
+            settings.pdfAppearance !== DEFAULT_UNIFIED_SETTINGS.pdfAppearance ? (
+              <SettingResetButton
+                label="PDF colors"
+                onClick={() =>
+                  updateSettings({ pdfAppearance: DEFAULT_UNIFIED_SETTINGS.pdfAppearance })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.pdfAppearance}
+                onValueChange={(value) => {
+                  if (value !== null) updateSettings({ pdfAppearance: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="PDF colors">
+                  <SelectValue>{PDF_APPEARANCE_LABELS[settings.pdfAppearance]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(PDF_APPEARANCE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
         <AdvancedSettings

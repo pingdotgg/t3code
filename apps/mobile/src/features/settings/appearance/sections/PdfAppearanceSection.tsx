@@ -8,9 +8,9 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../
 import { SettingsSection } from "../../components/SettingsSection";
 
 const OPTIONS: ReadonlyArray<readonly [PdfAppearance, string]> = [
-  ["match-app", "Match app"],
+  ["match-app", "Match theme"],
   ["original", "Original colors"],
-  ["dark", "Dark"],
+  ["dark", "Inverted colors"],
 ];
 
 export function PdfAppearanceSection() {
@@ -19,7 +19,7 @@ export function PdfAppearanceSection() {
   const ready = AsyncResult.isSuccess(preferences);
   const appearance = ready ? (preferences.value.pdfAppearance ?? "match-app") : "match-app";
   return (
-    <SettingsSection title="PDF appearance">
+    <SettingsSection title="PDF colors">
       <View accessibilityRole="radiogroup">
         {OPTIONS.map(([value, label], index) => (
           <ListChoiceRow

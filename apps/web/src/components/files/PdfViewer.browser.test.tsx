@@ -70,7 +70,7 @@ it("fits, finds and selects text, and changes PDF colors without losing the read
     // The milestone is pdf.js booting its worker and parsing the document, not a frame count.
     await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
     const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
-    const colors = screen.getByRole("button", { name: "Dark PDF colors" });
+    const colors = screen.getByRole("button", { name: "Inverted colors" });
     await expect.element(colors).toHaveAttribute("aria-pressed", "true");
     await act(() => setAppearanceMode("light"));
     await expect.element(colors).toHaveAttribute("aria-pressed", "false");

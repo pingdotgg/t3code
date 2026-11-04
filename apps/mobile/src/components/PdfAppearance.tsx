@@ -22,9 +22,9 @@ export function PdfAppearance(props: { readonly children: ReactNode }) {
     <View className="flex-1 bg-card">
       <View className="items-end px-3 py-1">
         <ControlPill
-          icon={dark ? "sun.max" : "moon"}
-          label={dark ? "Original colors" : "Dark colors"}
-          variant="pill"
+          icon={dark ? "moon" : "sun.max"}
+          accessibilityLabel={dark ? "Restore original colors" : "Invert colors"}
+          variant={dark ? "primary" : "circle"}
           onPress={() => setOverride(!dark)}
         />
       </View>

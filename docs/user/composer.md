@@ -373,6 +373,7 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to read it inside T3 Code.
 
-PDF previews match the app's light or dark appearance by default. Choose **PDF appearance** in
-**Settings → Appearance** to always use **Original colors** or **Dark**. Each open preview also
-lets you switch colors temporarily; newly opened previews use your saved preference.
+PDF previews use **Match theme** by default: original colors with a light theme and inverted
+colors with a dark theme. Choose **PDF colors** in **Settings → Appearance** to always use
+**Original colors** or **Inverted colors**. Each open preview also lets you switch colors
+temporarily; newly opened previews use your saved preference.

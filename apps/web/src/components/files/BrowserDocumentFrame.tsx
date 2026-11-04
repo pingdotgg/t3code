@@ -33,7 +33,7 @@ import {
   type ReactNode,
 } from "react";
 import { isElectron } from "~/env";
-import { MoonIcon } from "lucide-react";
+import { MoonIcon, SunIcon } from "lucide-react";
 import { FileSurfaceAction, FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -102,11 +102,12 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
         onViewChange={setView}
         appearanceAction={
           <FileSurfaceAction
-            label="Dark PDF colors"
+            label="Inverted colors"
+            tooltip={dark ? "Restore original colors" : "Invert colors"}
             pressed={dark}
             onPress={() => setOverride(!dark)}
           >
-            <MoonIcon className="size-3.5" />
+            {dark ? <MoonIcon className="size-3.5" /> : <SunIcon className="size-3.5" />}
           </FileSurfaceAction>
         }
       />

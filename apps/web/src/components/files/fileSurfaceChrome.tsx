@@ -60,6 +60,7 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
 
 export function FileSurfaceAction(props: {
   readonly label: string;
+  readonly tooltip?: string;
   readonly pressed?: boolean;
   readonly disabled?: boolean;
   readonly onPress: () => void;
@@ -97,7 +98,7 @@ export function FileSurfaceAction(props: {
           )
         }
       />
-      <TooltipPopup>{props.label}</TooltipPopup>
+      <TooltipPopup>{props.tooltip ?? props.label}</TooltipPopup>
     </Tooltip>
   );
 }
