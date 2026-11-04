@@ -951,7 +951,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
       : isSelected || props.sweepAction !== null
-        ? "bg-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
+        ? "bg-sidebar-row-selected text-accent-foreground [--contrast-foreground:var(--contrast-accent-foreground)] [--contrast-muted-foreground:var(--contrast-accent-foreground)] [--contrast-secondary-label:var(--contrast-accent-foreground)] light:ring-1 light:ring-inset light:ring-sidebar-border/70"
         : hasUnsentDraft
           ? cn(draftSurfaceClassName, "text-sidebar-foreground")
           : shouldRecede

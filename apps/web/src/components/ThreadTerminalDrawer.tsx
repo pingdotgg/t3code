@@ -1449,7 +1449,7 @@ function TerminalSidebarGroup({
               className={cn(
                 "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                 isActive
-                  ? "bg-accent text-foreground"
+                  ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
               )}
             >
@@ -1859,7 +1859,7 @@ export default function ThreadTerminalDrawer({
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
                   ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-                  : "hover:bg-accent"
+                  : "hover:bg-accent hover:text-accent-foreground"
               }`}
               onClick={onSplitTerminalAction}
               label={splitTerminalActionLabel}
@@ -1872,7 +1872,7 @@ export default function ThreadTerminalDrawer({
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
                   ? "cursor-not-allowed opacity-64 hover:bg-transparent"
-                  : "hover:bg-accent"
+                  : "hover:bg-accent hover:text-accent-foreground"
               }`}
               onClick={onSplitTerminalVerticalAction}
               label={splitTerminalVerticalActionLabel}
@@ -1882,7 +1882,7 @@ export default function ThreadTerminalDrawer({
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               disabled={!canOperateTerminal}
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent hover:text-accent-foreground"
               onClick={onNewTerminalAction}
               label={newTerminalActionLabel}
             >
@@ -1891,7 +1891,7 @@ export default function ThreadTerminalDrawer({
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               disabled={!canOperateTerminal}
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent hover:text-accent-foreground"
               onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
             >

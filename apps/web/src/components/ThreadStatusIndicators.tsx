@@ -398,7 +398,7 @@ function ThreadPullRequestMiniListItem({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring hover:text-accent-foreground focus-visible:text-accent-foreground hover:[--contrast-foreground:var(--contrast-accent-foreground)] focus-visible:[--contrast-foreground:var(--contrast-accent-foreground)]"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => onOpenPullRequest(event, url)}
         >

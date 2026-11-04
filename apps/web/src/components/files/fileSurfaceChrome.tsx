@@ -142,7 +142,7 @@ export function FileSurfaceFailure(props: {
         <button
           type="button"
           onClick={props.onRetry}
-          className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring hover:text-accent-foreground"
         >
           Try again
         </button>
