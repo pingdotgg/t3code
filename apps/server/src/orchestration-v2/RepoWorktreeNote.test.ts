@@ -20,7 +20,6 @@ const note = (overrides: Partial<Parameters<typeof repoWorktreeNote>[0]> = {}) =
     userText: "Fix the login bug",
     hasT3Mcp: true,
     settings: enabled,
-    firstTurn: true,
     repoWorktrees: [],
     ...overrides,
   });
@@ -36,21 +35,21 @@ describe("repoWorktreeNote", () => {
     expect(note({ userText: "  /compact" })).toBe("");
   });
 
-  it("explains the workflow on the first turn and only reminds afterwards", () => {
-    const first = note({ firstTurn: true });
-    expect(first).toContain("t3_repo_worktree_ensure");
-    expect(first).toContain("t3_repo_worktree_set_submodule");
-    expect(first).toContain("never stash, reset, or clean");
-
-    const later = note({ firstTurn: false });
-    expect(later).toContain("t3_repo_worktree_ensure");
-    expect(later).not.toContain("t3_repo_worktree_set_submodule");
-    expect(later.length).toBeLessThan(first.length);
+  // The setting can turn on partway through a conversation, so no turn may
+  // count on an earlier one having carried the rules.
+  it("carries every rule the agent needs on any turn it is sent", () => {
+    const rules = note();
+    expect(rules).toContain("never edit, commit, or switch branches there");
+    expect(rules).toContain("t3_repo_worktree_ensure");
+    expect(rules).toContain("never stash, reset, or clean");
+    expect(rules).toContain("Use a new branch name for new, independent work");
+    expect(rules).toContain("`useExistingBranch:true` only to continue an existing branch");
+    expect(rules).toContain("t3_repo_worktree_set_submodule");
+    expect(rules).toContain("checkpoints, diffs, and rollback cover only the project folder");
   });
 
   it("repeats project guidance and where the work is on every turn", () => {
     const later = note({
-      firstTurn: false,
       settings: {
         repoWorktrees: true,
         repoWorktreeInstructions: "Base framework branches on team-develop.",

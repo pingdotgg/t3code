@@ -1012,11 +1012,6 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
-      const nativeThreadHasTurns =
-        nativeInputRunIds.size > 0 ||
-        (legacyInputRunIds.size > 0 &&
-          sameNativeThread &&
-          !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
       const hasT3Mcp =
         Option.isSome(mcpSessions) &&
         (yield* mcpSessions.value.read(projection.thread.id)) !== undefined;
@@ -1033,7 +1028,6 @@ export const layer: Layer.Layer<
                 ),
                 Effect.orElseSucceed(() => null),
               ),
-        firstTurn: !nativeThreadHasTurns,
         repoWorktrees: projection.thread.repoWorktrees ?? [],
       });
       // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
@@ -1252,7 +1246,11 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        nativeThreadHasTurns,
+        nativeThreadHasTurns:
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
