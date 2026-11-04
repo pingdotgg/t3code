@@ -71,6 +71,7 @@ describe("ChatMarkdownAssetImage", () => {
         "IntersectionObserver",
         class {
           observe() {}
+          unobserve() {}
           disconnect() {}
         },
       );
