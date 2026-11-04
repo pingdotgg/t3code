@@ -112,7 +112,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       if (canStart && (!speech.available || disabled)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.repeat) return;
+      if (event.repeat || (!canStart && speech.state.phase !== "recording")) return;
       // macOS may omit the previous non-modifier keyup while Command is held.
       pressed.current = null;
       generation.current += 1;
@@ -120,7 +120,6 @@ export function useDictationShortcut(input: ShortcutInput) {
         void speech.stop();
         return;
       }
-      if (!canStart) return;
       pressed.current = {
         generation: generation.current,
         code: event.code || event.key,
