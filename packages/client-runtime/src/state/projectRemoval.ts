@@ -1,9 +1,12 @@
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { isListedThreadLineage, isSideChatThread } from "@t3tools/contracts";
 
 import type { EnvironmentProject, EnvironmentThreadShell } from "./models.ts";
 
 export function planProjectRemoval<
-  Thread extends Pick<EnvironmentThreadShell, "environmentId" | "projectId" | "lineage">,
+  Thread extends Pick<
+    EnvironmentThreadShell,
+    "environmentId" | "projectId" | "lineage" | "sideChat"
+  >,
 >(options: {
   readonly members: ReadonlyArray<
     Pick<EnvironmentProject, "id" | "environmentId" | "title" | "workspaceRoot"> & {
@@ -24,8 +27,9 @@ export function planProjectRemoval<
   );
   // Side chats and subagents go with their parent but never show in thread lists.
   const threadCount =
-    projectThreads.filter((thread) => isListedThreadLineage(thread.lineage)).length +
-    (options.unloadedThreadCount ?? 0);
+    projectThreads.filter(
+      (thread) => isListedThreadLineage(thread.lineage) && !isSideChatThread(thread),
+    ).length + (options.unloadedThreadCount ?? 0);
   const isWholeGroup = members.length === groupMemberCount;
   const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
   const singleMember = members.length === 1 ? members[0]! : null;

@@ -50,6 +50,7 @@ import {
   type FilesystemBrowseResult,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  isSideChatThread,
   resolveEnvironmentMachineKind,
   supportsLessonSideChats,
 } from "@t3tools/contracts";
@@ -538,7 +539,9 @@ function OpenCommandPaletteDialog(props: {
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
-  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  const threads = useVisibleThreadShells().filter(
+    (thread) => !isSidebarHiddenThread(thread) && !isSideChatThread(thread),
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
