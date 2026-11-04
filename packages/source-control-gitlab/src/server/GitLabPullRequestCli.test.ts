@@ -1440,6 +1440,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
+
+  it.effect("keeps merge request references when the issue search fails", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) =>
+        JSON.stringify(input).includes("/issues?")
+          ? Effect.fail(
+              new GitLabCli.GitLabCliCommandError({
+                operation: "execute",
+                command: "glab",
+                cwd: "/w",
+                cause: null,
+              }),
+            )
+          : Effect.succeed(output(JSON.stringify([{ iid: 5, title: "Ship it", state: "opened" }]))),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const page = yield* cli.searchProjectReferences({ cwd: "/w", repository: "acme/web" });
+      expect(page.items.map((item) => item.reference)).toEqual(["!5"]);
+    }),
+  );
 });
 
 it("asks for a numeric reference's iid besides the recent issues and merge requests", () => {
@@ -1454,7 +1474,7 @@ it("asks for a numeric reference's iid besides the recent issues and merge reque
     { kind: "change-request", params: recent },
   ]);
   expect(GitLabPullRequestCli.referenceSearches("crash")).toEqual([
-    { kind: "issue", params: [...recent, ["search", "crash"]] },
-    { kind: "change-request", params: [...recent, ["search", "crash"]] },
+    { kind: "issue", params: [...recent, ["search", "crash"], ["in", "title"]] },
+    { kind: "change-request", params: [...recent, ["search", "crash"], ["in", "title"]] },
   ]);
 });

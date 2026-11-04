@@ -65,8 +65,8 @@ export function pullRequestCompletionKey(
 }
 
 /**
- * The search to send for `trigger` given a debounced key. A key for the other kind is stale, so
- * switching between `@` and `#` sends the current search at once.
+ * The search to send for `trigger` given a debounced key. Until a key for this kind settles, the
+ * host is asked for its unsearched list, which narrows locally, so a burst of typing sends one query.
  */
 export function debouncedPullRequestCompletionSearch(
   trigger: Pick<PullRequestComposerTrigger, "kind" | "query">,
@@ -75,7 +75,7 @@ export function debouncedPullRequestCompletionSearch(
   const prefix = `${trigger.kind}:`;
   return debouncedKey?.startsWith(prefix)
     ? debouncedKey.slice(prefix.length) || undefined
-    : pullRequestCompletionSearch(trigger);
+    : undefined;
 }
 
 export function narrowPullRequestMentions<A extends { login: string; name: string | null }>(

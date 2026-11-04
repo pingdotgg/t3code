@@ -2356,14 +2356,16 @@ export const make = Effect.gen(function* () {
     searchRepositoryReferences: Effect.fn("GitHubPullRequestApi.searchRepositoryReferences")(
       function (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
-        const number = /^\d+$/.test(input.query ?? "") ? Number(input.query) : 0;
+        const parsed = /^\d+$/.test(input.query ?? "") ? Number(input.query) : 0;
+        // GraphQL validates `$number: Int!` even when `@include` skips the lookup.
+        const exact = parsed > 0 && parsed <= 2_147_483_647;
         return client
           .RepositoryReferences({
             owner,
             name,
             q: referenceSearchQuery(input.repository, input.query),
-            number,
-            exact: number > 0 && number <= 2_147_483_647,
+            number: exact ? parsed : 0,
+            exact,
           })
           .pipe(
             graphql({ ...input, operation: "searchRepositoryReferences", allowReserve: true }),

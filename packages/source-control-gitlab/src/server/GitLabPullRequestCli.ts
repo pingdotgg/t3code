@@ -589,7 +589,7 @@ export function referenceSearches(search: string | undefined): ReadonlyArray<{
   const recent: ReadonlyArray<readonly [string, string]> = [
     ["order_by", "updated_at"],
     ["sort", "desc"],
-    ...(numeric ? [] : searchParams(text)),
+    ...(numeric || text.length === 0 ? [] : ([...searchParams(text), ["in", "title"]] as const)),
   ];
   const kinds = ["issue", "change-request"] as const;
   return [
@@ -1684,7 +1684,23 @@ export const make = Effect.gen(function* () {
       function (input) {
         return Effect.forEach(
           referenceSearches(input.search),
-          ({ kind, params }) => projectReferences({ ...input, kind, params }),
+          ({ kind, params }) =>
+            projectReferences({ ...input, kind, params }).pipe(
+              // A project with issues turned off answers 403 for issues; its merge requests still
+              // complete. An unusable CLI or account still reaches the caller.
+              Effect.catchIf(
+                (cause) =>
+                  cause._tag !== "GitLabCliUnavailableError" &&
+                  cause._tag !== "GitLabCliAuthenticationError" &&
+                  cause._tag !== "GitLabCliRateLimitError",
+                (cause) =>
+                  Effect.logWarning("GitLab reference search failed", {
+                    repository: input.repository,
+                    kind,
+                    reason: cause._tag,
+                  }).pipe(Effect.as({ items: [], rawCount: 0 })),
+              ),
+            ),
           { concurrency: "unbounded" },
         ).pipe(Effect.map(mergeReferencePages));
       },

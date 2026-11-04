@@ -541,7 +541,10 @@ export type PullRequestReferenceCandidate = typeof PullRequestReferenceCandidate
 export const PullRequestFilterOptions = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   authors: Schema.Array(PullRequestActor),
-  references: Schema.Array(PullRequestReferenceCandidate),
+  // Servers from before reference completion send no key.
+  references: Schema.Array(PullRequestReferenceCandidate).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   truncated: Schema.Boolean,
 });
 export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
