@@ -1060,6 +1060,21 @@ export function messageFoldRunId(
   return null;
 }
 
+// The agent's message right before a question is what the question asks about, so it stays visible with the answer.
+function questionContextMessageIds(entries: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<string> {
+  const ids = new Set<string>();
+  let lastAssistantMessageId: string | null = null;
+  for (const entry of entries) {
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      lastAssistantMessageId = entry.id;
+    } else if (entry.type === "activity-group" && isUserInputActivityGroup(entry)) {
+      if (lastAssistantMessageId !== null) ids.add(lastAssistantMessageId);
+      lastAssistantMessageId = null;
+    }
+  }
+  return ids;
+}
+
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1148,11 +1163,13 @@ function deriveThreadFeedRunFolds(
       continue;
     }
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
+    const questionContextIds = questionContextMessageIds(group.entries);
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
           (entry) =>
             entry.id !== terminalAssistantId &&
+            !questionContextIds.has(entry.id) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

@@ -1996,6 +1996,13 @@ describe("deriveMessagesTimelineRows", () => {
         },
         command("before", 1, 1),
         {
+          ...base("context", 1, 1),
+          type: "assistant_message" as const,
+          messageId: MessageId.make("context"),
+          text: "Here are the repositories I found",
+          streaming: false,
+        },
+        {
           ...base("question", 2, 2),
           type: "user_input_request" as const,
           requestId,
@@ -2054,11 +2061,18 @@ describe("deriveMessagesTimelineRows", () => {
               : row.kind,
       );
 
-    expect(shape(rows(true))).toEqual(["user:prompt", "fold", "work:question", "assistant:answer"]);
+    expect(shape(rows(true))).toEqual([
+      "user:prompt",
+      "fold",
+      "assistant:context",
+      "work:question",
+      "assistant:answer",
+    ]);
     expect(shape(rows(true, new Set([runId])))).toEqual([
       "user:prompt",
       "fold",
       "work:before",
+      "assistant:context",
       "work:question",
       "work:after",
       "assistant:answer",
@@ -2067,6 +2081,7 @@ describe("deriveMessagesTimelineRows", () => {
       "user:prompt",
       "working",
       "work:before",
+      "assistant:context",
       "work:question",
       "work-live:after + running",
     ]);

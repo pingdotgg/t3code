@@ -421,25 +421,35 @@ describe("buildThreadFeed", () => {
             : {},
         },
       };
+      const context = {
+        ...base("item-context", "2026-06-20T00:00:02.000Z", 2),
+        type: "assistant_message" as const,
+        messageId: MessageId.make("message-context"),
+        text: "Here are the colors I found",
+        streaming: false,
+      };
       const feed = buildThreadFeed([
         projected(userMessage(), 0),
         projected(command(), 1),
-        projected(question, 2),
-        projected(assistantMessage(), 3),
+        projected(context, 2),
+        projected(question, 3),
+        projected(assistantMessage(), 4),
       ]);
       const presented = deriveThreadFeedPresentation(feed, null, new Set());
       expect(presented.map((entry) => entry.type)).toEqual([
         "message",
         "run-fold",
+        "message",
         "activity-group",
         "message",
       ]);
-      expect(presented[2]).toMatchObject({
+      expect(presented[2]).toMatchObject({ message: { text: context.text } });
+      expect(presented[3]).toMatchObject({
         activities: [{ workEntry: { questionAnswer: question.questionAnswer } }],
       });
       expect(
         deriveThreadFeedPresentation(feed, null, new Set([runId])).map((entry) => entry.type),
-      ).toEqual(["message", "run-fold", "activity-group", "activity-group", "message"]);
+      ).toEqual(["message", "run-fold", "activity-group", "message", "activity-group", "message"]);
     },
   );
 
