@@ -182,10 +182,13 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
 
   const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
   // Agents elide segments (`/tmp/.../notes.md`); that names no file the user can open.
+  // Check the path a chip would open, which drops `?`/`#` and is decoded.
+  const openedPath = safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(candidate).path).replace(
+    POSITION_SUFFIX_PATTERN,
+    "",
+  );
   if (
-    withoutPosition
-      .split(PATH_SEPARATOR_PATTERN)
-      .some((segment) => ELIDED_SEGMENT_PATTERN.test(segment))
+    openedPath.split(PATH_SEPARATOR_PATTERN).some((segment) => ELIDED_SEGMENT_PATTERN.test(segment))
   ) {
     return null;
   }
