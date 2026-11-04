@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -64,4 +65,70 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+const LARGE_LOG_WITH_THREAD_LINK = [
+  ...Array.from({ length: 400 }, (_, line) => `2026-11-03T12:00:00Z worker[${line}] retrying job`),
+  `see https://app.t3.codes/threads/${ENVIRONMENT_ID}/thread-abc for context`,
+  ...Array.from({ length: 400 }, (_, line) => `2026-11-03T12:00:01Z worker[${line}] job failed`),
+].join("\n");
+
+async function mountDraftComposer(draftId: DraftId) {
+  await using stack = new AsyncDisposableStack();
+  stack.use(installFakeEnvironment([]));
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make(`thread-${draftId}`),
+    });
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  // AppRoot brings its own router.
+  stack.use(await render(<AppRoot router={router} />, { router: false }));
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+  return stack.move();
+}
+
+function pastePlainText(target: EventTarget, text: string) {
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", text);
+  target.dispatchEvent(
+    new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+  );
+}
+
+async function expectPasteFolded(editor: HTMLElement) {
+  const attachment = page.getByText("pasted-text.txt");
+  // The paste lands either inline in the editor or as an attachment chip.
+  await vi.waitFor(() => expect(editor.textContent || attachment.query()).toBeTruthy());
+  expect(editor.textContent, "the large paste went inline instead of folding").not.toContain(
+    "worker[399] retrying job",
+  );
+  await expect.element(attachment).toBeVisible();
+}
+
+it("folds a large composer paste that mentions a thread link into a pasted-text attachment", async () => {
+  expect(LARGE_LOG_WITH_THREAD_LINK.length).toBeGreaterThan(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES);
+  await using _app = await mountDraftComposer(DraftId.make("draft-30577-composer"));
+  const editor = page.getByTestId("composer-editor").element() as HTMLElement;
+  editor.focus();
+
+  pastePlainText(editor, LARGE_LOG_WITH_THREAD_LINK);
+
+  await expectPasteFolded(editor);
+});
+
+it("folds a large window paste that mentions a thread link into a pasted-text attachment", async () => {
+  await using _app = await mountDraftComposer(DraftId.make("draft-30577-window"));
+  const editor = page.getByTestId("composer-editor").element() as HTMLElement;
+  editor.blur();
+
+  pastePlainText(document.body, LARGE_LOG_WITH_THREAD_LINK);
+
+  await expectPasteFolded(editor);
 });
