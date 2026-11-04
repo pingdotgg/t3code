@@ -4,6 +4,12 @@ import "~/index.css";
 import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({ permitted: true, copy: vi.fn() }));
+
+function setup() {
+  state.permitted = true;
+  state.copy.mockReset();
+}
+
 vi.mock(import("../../state/session"), () => ({
   useEnvironmentScope: ((environmentId: string) =>
     environmentId === "remote-mac" && state.permitted) as never,
@@ -39,8 +45,7 @@ const source: UsageSource = {
 };
 
 it("opens account controls on the originating server and instance", async () => {
-  state.permitted = true;
-  state.copy.mockReset();
+  setup();
   await using screen = await render(
     <UsageAuthRecovery environmentId={environmentId} label="Remote Mac" source={source} />,
     { router: "/usage" },
@@ -53,8 +58,8 @@ it("opens account controls on the originating server and instance", async () => 
 });
 
 it("keeps API-key and CLI recovery distinct and respects provider permissions", async () => {
+  setup();
   state.permitted = false;
-  state.copy.mockReset();
   await using screen = await render(
     <UsageAuthRecovery environmentId={environmentId} label="Remote Mac" source={source} />,
   );
