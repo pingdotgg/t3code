@@ -230,7 +230,11 @@ interface MessagesTimelineProps {
    * or the connection cannot operate the thread.
    */
   onAskInSideChat?:
-    | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
+    | ((
+        citation: AssistantCitation,
+        sourceAnchor?: AssistantCitationSourceAnchor,
+        embedTitle?: string,
+      ) => boolean)
     | undefined;
   askInSideChatPending?: boolean;
   isWorking: boolean;
@@ -1061,6 +1065,26 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenThread,
     onOpenSideChat,
     renderHtmlRender,
+    askInSideChatPending,
+    onAskInSideChatFromEmbed:
+      onAskInSideChat && citationThreadRef
+        ? (messageId, title, excerpt) => {
+            onAskInSideChat(
+              {
+                version: 1,
+                ...citationThreadRef,
+                messageId,
+                text: excerpt,
+                start: 0,
+                end: 0,
+                prefix: "",
+                suffix: "",
+              },
+              undefined,
+              title,
+            );
+          }
+        : undefined,
     turnItemSource,
     workflowOpening,
     onForkFromRun,

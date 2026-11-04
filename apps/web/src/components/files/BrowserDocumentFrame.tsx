@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  SIDE_CHAT_EXCERPT_MAX_CHARS,
   type KeybindingCommand,
   type KeybindingShortcut,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
@@ -12,6 +13,9 @@ import {
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
+  htmlRenderTextRequest,
+  readHtmlRenderSelection,
+  readHtmlRenderTextResult,
   readHtmlRenderContentHeight,
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
@@ -28,9 +32,16 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useImperativeHandle,
+  type Ref,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
+import { MessageCircleQuestionIcon } from "lucide-react";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AskInSideChatButton } from "../chat/AssistantSelectionToolbar";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
@@ -42,7 +53,7 @@ import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 
 /**
@@ -174,8 +185,48 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
   );
 }
 
+export interface HtmlRenderDocumentHandle {
+  readonly askInSideChat: () => void;
+}
+
+export function HtmlRenderAskButton(props: {
+  readonly onClick: () => void;
+  readonly askPending?: boolean | undefined;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Ask in side chat"
+            size="icon-xs"
+            variant="glass"
+            aria-disabled={props.askPending || undefined}
+            aria-description={props.askPending ? "Starting side chat…" : undefined}
+            onClick={() => {
+              if (!props.askPending) props.onClick();
+            }}
+          />
+        }
+      >
+        <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="left">
+        {props.askPending ? "Starting side chat…" : "Ask in side chat"}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
-export function HtmlRenderDocument(props: {
+export function HtmlRenderDocument({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<HtmlRenderDocumentHandle>;
+  readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
+  readonly onBridgeReady?: () => void;
+  readonly askPending?: boolean | undefined;
   readonly src: string;
   readonly title: string;
   readonly className?: string;
@@ -188,6 +239,22 @@ export function HtmlRenderDocument(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
+  const [selection, setSelection] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    overlay: HTMLElement | null;
+  }>();
+  const textRequestId = useRef<string | null>(null);
+  useImperativeHandle(ref, () => ({
+    askInSideChat: () => {
+      textRequestId.current = randomUUID();
+      frameRef.current?.contentWindow?.postMessage(
+        htmlRenderTextRequest(textRequestId.current),
+        "*",
+      );
+    },
+  }));
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
@@ -283,7 +350,49 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
+    const textResult = readHtmlRenderTextResult(event.data);
+    if (textResult !== undefined && textResult.id === textRequestId.current) {
+      textRequestId.current = null;
+      props.onAskInSideChat?.(
+        `${props.title}\n\n${textResult.text}`.slice(0, SIDE_CHAT_EXCERPT_MAX_CHARS),
+      );
+      return;
+    }
+    const selected = readHtmlRenderSelection(event.data);
+    if (selected !== undefined) props.onBridgeReady?.();
+    if (selected?.text === "") {
+      setSelection(undefined);
+      return;
+    }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
+    if (selected !== undefined) {
+      if (!props.onAskInSideChat) {
+        setSelection(undefined);
+        return;
+      }
+      const overlay = frame.closest<HTMLElement>(
+        '[data-slot="dialog-popup"], [data-slot="sheet-popup"]',
+      );
+      const frameRect = frame.getBoundingClientRect();
+      const overlayRect = overlay?.getBoundingClientRect();
+      const scaleX = frame.clientWidth ? frameRect.width / frame.clientWidth : 1;
+      const scaleY = frame.clientHeight ? frameRect.height / frame.clientHeight : 1;
+      setSelection({
+        text: selected.text,
+        x:
+          Math.max(
+            8,
+            Math.min(frameRect.left + selected.rect.x * scaleX, window.innerWidth - 220),
+          ) - (overlayRect?.left ?? 0),
+        y:
+          Math.max(
+            8,
+            Math.min(frameRect.top + selected.rect.y * scaleY - 32, window.innerHeight - 40),
+          ) - (overlayRect?.top ?? 0),
+        overlay,
+      });
+      return;
+    }
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
       open(linkRequest.url, linkRequest);
@@ -312,11 +421,48 @@ export function HtmlRenderDocument(props: {
     const onMessage = (event: MessageEvent) => {
       if (event.source === frame.contentWindow) onFrameMessage(frame, event);
     };
+    const dismiss = () => setSelection(undefined);
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    window.addEventListener("focus", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
   }, []);
+  const tooLong = (selection?.text.length ?? 0) > SIDE_CHAT_EXCERPT_MAX_CHARS;
   return (
     <>
+      {selection && props.onAskInSideChat
+        ? createPortal(
+            <div
+              role="toolbar"
+              aria-label="Selection actions"
+              className={cn(selection.overlay ? "absolute" : "fixed", "z-50")}
+              style={{ left: selection.x, top: selection.y }}
+              onPointerDown={(event) => event.preventDefault()}
+            >
+              <AskInSideChatButton
+                tooLong={tooLong}
+                blockedReason={
+                  tooLong
+                    ? `Side chats take up to ${SIDE_CHAT_EXCERPT_MAX_CHARS.toLocaleString("en-US")} characters`
+                    : props.askPending
+                      ? "Starting side chat…"
+                      : null
+                }
+                onClick={() => {
+                  props.onAskInSideChat?.(selection.text);
+                  setSelection(undefined);
+                }}
+              />
+            </div>,
+            selection.overlay ?? document.body,
+          )
+        : null}
       <iframe
         ref={frameRef}
         src={src}
@@ -328,6 +474,7 @@ export function HtmlRenderDocument(props: {
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
+          setSelection(undefined);
           // Covers a theme change that landed while the page was loading.
           postTheme();
           postShortcuts();

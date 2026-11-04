@@ -666,7 +666,10 @@ export function SideChatPanel(props: {
           <>
             {citation === null ? null : (
               <div className="shrink-0 px-3 pt-2">
-                <SideChatExcerpt text={citation.text} onReveal={reveal} />
+                <SideChatExcerpt
+                  text={citation.text}
+                  onReveal={citation.end > citation.start ? reveal : undefined}
+                />
               </div>
             )}
             <div className="min-h-0 flex-1">
@@ -689,10 +692,11 @@ export function SideChatPanel(props: {
                 }
                 onAskInSideChat={
                   canOperate
-                    ? (asked) =>
+                    ? (asked, _sourceAnchor, embedTitle) =>
                         askInSideChat({
                           lessonRef,
                           citation: asked,
+                          embedTitle,
                           sideChatShells: treeShells,
                           topThreadId: sideChatSurfaceTopThreadId(surface),
                           run: openSideChat,

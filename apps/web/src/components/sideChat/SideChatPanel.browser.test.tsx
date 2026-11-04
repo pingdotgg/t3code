@@ -955,6 +955,30 @@ it("reveals a nested highlight in its parent side chat inside the panel", async 
   expect(citedReplies()).toEqual([SIDE_1_REPLY]);
 });
 
+it("does not reveal embed excerpts as text in the parent reply", async () => {
+  setup();
+  const embedded = {
+    ...NESTED_1,
+    sideChat: {
+      ...NESTED_1.sideChat!,
+      anchor: { ...NESTED_1.sideChat!.anchor, start: 0, end: 0, embedTitle: "State diagram" },
+    },
+  };
+  state.shells = [LESSON_SHELL, SIDE_1, embedded];
+  state.projections = {
+    "side-1": sideChatProjection(SIDE_1),
+    "nested-1": sideChatProjection(embedded),
+  };
+  showSideChat("side-1", "nested-1");
+  await using screen = await renderPanel();
+
+  await expect.element(revealButton(screen)).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Box", { exact: true }).last()).toBeVisible();
+
+  expect(surfaces()).toMatchObject([{ id: "side-chat:side-1", threadId: "nested-1" }]);
+  expect(citedReplies()).toEqual([]);
+});
+
 it("quotes a selection cited inside the panel into the side chat's draft, not the lesson's", async () => {
   setup();
   state.shells = [LESSON_SHELL, SIDE_1];

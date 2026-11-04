@@ -64,7 +64,11 @@ export function SideChatTimeline(props: {
   ) => boolean;
   /** Undefined when the connection cannot operate the thread. */
   readonly onAskInSideChat:
-    | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
+    | ((
+        citation: AssistantCitation,
+        sourceAnchor?: AssistantCitationSourceAnchor,
+        embedTitle?: string,
+      ) => boolean)
     | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
   /** Opens a side chat nested in this one from its mark. */

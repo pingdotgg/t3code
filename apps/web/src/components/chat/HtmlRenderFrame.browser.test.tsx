@@ -28,9 +28,13 @@ describe("HtmlRenderFrame", () => {
         htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
         threadRef={undefined}
         onFullscreenChange={onFullscreenChange}
+        onAskInSideChat={vi.fn()}
       />,
     );
 
+    await expect
+      .element(screen.getByRole("button", { name: "Ask in side chat" }))
+      .not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
     await expect.element(screen.getByRole("dialog")).toBeVisible();
     expect(onFullscreenChange).toHaveBeenLastCalledWith(true);

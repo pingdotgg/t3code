@@ -113,9 +113,27 @@ const withAnchorMessage = (change: Partial<SeedMessage>): ReadonlyArray<SeedMess
   );
 
 describe("thread.side_chat.open", () => {
-  it.effect(
-    "opens a side chat from a highlighted reply without a transfer, pins or title generation",
-    () =>
+  it.effect.each([
+    {
+      name: "a highlighted reply",
+      anchor: observationAnchor(),
+      excerptContext: LESSON_ANCHOR_TEXT,
+    },
+    {
+      name: "an HTML embed",
+      anchor: {
+        ...observationAnchor(),
+        start: 0,
+        end: 0,
+        prefix: "",
+        suffix: "",
+        embedTitle: "State diagram",
+      },
+      excerptContext: "",
+    },
+  ])(
+    "opens a side chat from $name without a transfer, pins or title generation",
+    ({ anchor, excerptContext }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -128,7 +146,14 @@ describe("thread.side_chat.open", () => {
         });
         assert.isDefined((yield* readThread(LESSON_THREAD_ID)).pinnedAt);
 
-        yield* openOnObservation;
+        yield* orchestrator.dispatch(
+          openSideChatCommand({
+            commandId: OPEN_REQUEST_ID,
+            threadId: SIDE_CHAT_THREAD_ID,
+            anchor,
+            excerpt: OBSERVATION_EXCERPT,
+          }),
+        );
 
         const opened = yield* orchestrator.getThreadRecords(SIDE_CHAT_THREAD_ID, [
           "contextTransfers",
@@ -143,9 +168,9 @@ describe("thread.side_chat.open", () => {
         assert.isUndefined(opened.thread.pinnedAt);
         assert.deepEqual(opened.thread.sideChat, {
           lessonThreadId: LESSON_THREAD_ID,
-          anchor: observationAnchor(),
+          anchor,
           excerpt: OBSERVATION_EXCERPT,
-          excerptContext: LESSON_ANCHOR_TEXT,
+          excerptContext,
           label: OBSERVATION_EXCERPT,
           opening: { status: "pending", text: null, requestId: OPEN_REQUEST_ID },
           done: null,

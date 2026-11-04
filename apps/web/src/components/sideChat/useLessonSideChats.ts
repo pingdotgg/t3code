@@ -48,7 +48,11 @@ export function useLessonSideChats(input: {
   readonly askPending: boolean;
   readonly noteWaitLabel: "Adding side-chat note…" | null;
   readonly onAskInSideChat:
-    | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
+    | ((
+        citation: AssistantCitation,
+        sourceAnchor?: AssistantCitationSourceAnchor,
+        embedTitle?: string,
+      ) => boolean)
     | undefined;
 } {
   const { lessonRef, supported, capabilityKnown, activityRunStatus } = input;
@@ -87,10 +91,23 @@ export function useLessonSideChats(input: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Only a side chat that starts waiting opens, so one the user closed while it waits stays closed.
   }, [awaitingId]);
 
-  const ask = useStableCallback((citation: AssistantCitation) => {
-    if (lessonRef === null) return false;
-    return askInSideChat({ lessonRef, citation, sideChatShells: shells, topThreadId: null, run });
-  });
+  const ask = useStableCallback(
+    (
+      citation: AssistantCitation,
+      _sourceAnchor?: AssistantCitationSourceAnchor,
+      embedTitle?: string,
+    ) => {
+      if (lessonRef === null) return false;
+      return askInSideChat({
+        lessonRef,
+        citation,
+        embedTitle,
+        sideChatShells: shells,
+        topThreadId: null,
+        run,
+      });
+    },
+  );
 
   return {
     shells,

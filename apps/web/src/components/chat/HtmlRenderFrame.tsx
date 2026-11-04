@@ -6,12 +6,16 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import {
+  HtmlRenderAskButton,
+  HtmlRenderDocument,
+  type HtmlRenderDocumentHandle,
+} from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -21,11 +25,15 @@ import { observeResize } from "~/lib/observeResize";
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
 export function HtmlRenderFrame(props: {
+  readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
+  readonly askPending?: boolean | undefined;
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
+  const documentRef = useRef<HtmlRenderDocumentHandle>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
   const { attachmentId, title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
@@ -71,6 +79,10 @@ export function HtmlRenderFrame(props: {
       {src !== null ? (
         <>
           <HtmlRenderDocument
+            ref={documentRef}
+            onBridgeReady={() => setBridgeReady(true)}
+            onAskInSideChat={props.onAskInSideChat}
+            askPending={props.askPending}
             src={src}
             title={title}
             threadRef={props.threadRef}
@@ -79,6 +91,12 @@ export function HtmlRenderFrame(props: {
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+            {props.onAskInSideChat && bridgeReady ? (
+              <HtmlRenderAskButton
+                askPending={props.askPending}
+                onClick={() => documentRef.current?.askInSideChat()}
+              />
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -111,7 +129,16 @@ export function HtmlRenderFrame(props: {
             <HtmlRenderDialog
               src={expandedSrc}
               title={title}
+              askPending={props.askPending}
               threadRef={props.threadRef}
+              onAskInSideChat={
+                props.onAskInSideChat
+                  ? (excerpt) => {
+                      props.onAskInSideChat?.(excerpt);
+                      setExpandedSrc(null);
+                    }
+                  : undefined
+              }
               onClose={() => setExpandedSrc(null)}
             />
           ) : null}

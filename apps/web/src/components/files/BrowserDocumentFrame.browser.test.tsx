@@ -1,10 +1,17 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
+import { useRef, useState } from "react";
+import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+import { HtmlRenderDialog } from "../chat/HtmlRenderDialog";
 
-import { HtmlRenderDocument } from "./BrowserDocumentFrame";
+import {
+  HtmlRenderAskButton,
+  HtmlRenderDocument,
+  type HtmlRenderDocumentHandle,
+} from "./BrowserDocumentFrame";
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -140,4 +147,252 @@ it("keeps the first and last selected card rings inside the fitted renderer fram
     expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
     expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.viewportWidth);
   }
+});
+
+function AskableEmbed({
+  src,
+  onAskInSideChat,
+}: {
+  src: string;
+  onAskInSideChat: (text: string) => void;
+}) {
+  const documentRef = useRef<HtmlRenderDocumentHandle>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
+  return (
+    <>
+      <HtmlRenderDocument
+        ref={documentRef}
+        onBridgeReady={() => setBridgeReady(true)}
+        src={src}
+        title="State diagram"
+        onAskInSideChat={onAskInSideChat}
+      />
+      {bridgeReady ? (
+        <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+      ) : null}
+    </>
+  );
+}
+
+it("asks about a trusted selection inside the sandboxed embed", async () => {
+  const html =
+    injectHtmlRenderBootstrap(`<div id="scroller" style="height:80px;overflow:auto"><p style="height:800px">observation space</p></div><script>
+    window.addEventListener("message", function(event) {
+      if (event.data === "clear-selection") { window.getSelection().removeAllRanges(); return; }
+      if (event.data === "scroll-selection") { document.getElementById("scroller").scrollTop = 80; return; }
+      if (event.data === "move-selection") { parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "observation space", rect: { x: 8, y: 100000 } } }, "*"); return; }
+      if (event.data !== "forge-selection") return;
+      parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "forged", rect: { x: 8, y: 8 } } }, "*");
+    });
+  </script>`);
+  const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+  const onAskInSideChat = vi.fn();
+  const onContentHeight = vi.fn();
+  await using screen = await render(
+    <div data-testid="embed-scroll-container" style={{ height: 260, overflow: "auto" }}>
+      <div style={{ paddingLeft: 400 }}>
+        <button type="button">Outside embed</button>
+      </div>
+      <HtmlRenderDocument
+        src={src}
+        title="Selection diagram"
+        onAskInSideChat={onAskInSideChat}
+        onContentHeight={onContentHeight}
+      />
+      <div style={{ height: 400 }} />
+    </div>,
+  );
+  await vi.waitFor(() => expect(onContentHeight).toHaveBeenCalled());
+  const frame = screen.getByTitle("Selection diagram").element() as HTMLIFrameElement;
+  const forged = new Promise<void>((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.data?.params?.text !== "forged") return;
+      window.removeEventListener("message", onMessage);
+      resolve();
+    };
+    window.addEventListener("message", onMessage);
+  });
+  await act(async () => {
+    frame.contentWindow?.postMessage("forge-selection", "*");
+    await forged;
+  });
+  await expect
+    .element(page.getByRole("button", { name: "Ask in side chat" }))
+    .not.toBeInTheDocument();
+  await screen.getByTitle("Selection diagram").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  const ask = page.getByRole("button", { name: "Ask in side chat" });
+  await expect.element(ask).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Cite selection in composer" }))
+    .not.toBeInTheDocument();
+  const scroller = screen.getByTestId("embed-scroll-container").element();
+  const frameTop = frame.getBoundingClientRect().top;
+  scroller.scrollTop = 50;
+  await vi.waitFor(() => expect(frame.getBoundingClientRect().top).toBe(frameTop - 50));
+  expect(document.activeElement).toBe(frame);
+  await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  frame.contentWindow?.postMessage("scroll-selection", "*");
+  await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  await screen.getByRole("button", { name: "Outside embed" }).click();
+  await expect.element(ask).not.toBeInTheDocument();
+  await screen.getByTitle("Selection diagram").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  frame.contentWindow?.postMessage("move-selection", "*");
+  await vi.waitFor(() =>
+    expect(
+      page.getByRole("toolbar", { name: "Selection actions" }).element().getBoundingClientRect()
+        .top,
+    ).toBe(window.innerHeight - 40),
+  );
+  {
+    using _inactive = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(false);
+    frame.contentWindow?.postMessage("clear-selection", "*");
+    await expect.element(ask).not.toBeInTheDocument();
+  }
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  await ask.click();
+  expect(onAskInSideChat).toHaveBeenCalledWith("observation space");
+  await expect.element(ask).not.toBeInTheDocument();
+  await screen.rerender(
+    <HtmlRenderDocument
+      src={src}
+      title="Pending selection"
+      onAskInSideChat={onAskInSideChat}
+      askPending
+    />,
+  );
+  await screen.getByTitle("Pending selection").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toHaveAttribute("aria-disabled", "true");
+  await expect.element(ask).toHaveAttribute("aria-description", "Starting side chat…");
+  (ask.element() as HTMLButtonElement).click();
+  expect(onAskInSideChat).toHaveBeenCalledTimes(1);
+  const longSrc = URL.createObjectURL(
+    new Blob([injectHtmlRenderBootstrap(`<p>${"x".repeat(4001)}</p>`)], { type: "text/html" }),
+  );
+  using _longUrl = { [Symbol.dispose]: () => URL.revokeObjectURL(longSrc) };
+  await screen.rerender(
+    <HtmlRenderDocument
+      key={longSrc}
+      src={longSrc}
+      title="Long selection"
+      onAskInSideChat={onAskInSideChat}
+    />,
+  );
+  await screen.getByTitle("Long selection").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  const shorten = page.getByRole("button", { name: "Shorten selection to ask in side chat" });
+  await expect.element(shorten).toHaveAttribute("aria-disabled", "true");
+  (shorten.element() as HTMLButtonElement).click();
+  expect(onAskInSideChat).toHaveBeenCalledTimes(1);
+});
+
+it("asks about the title and visible embed text from its corner button", async () => {
+  const html = injectHtmlRenderBootstrap(
+    '<p>observation space</p><p hidden>Hidden text</p><script>const secret = "script text";</script>',
+  );
+  const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+  const onAskInSideChat = vi.fn();
+  await using screen = await render(<AskableEmbed src={src} onAskInSideChat={onAskInSideChat} />);
+  await screen.getByRole("button", { name: "Ask in side chat" }).click();
+  await vi.waitFor(() =>
+    expect(onAskInSideChat).toHaveBeenCalledWith("State diagram\n\nobservation space"),
+  );
+  const longSrc = URL.createObjectURL(
+    new Blob([injectHtmlRenderBootstrap(`<p>${"x".repeat(4100)}</p>`)], { type: "text/html" }),
+  );
+  using _longUrl = { [Symbol.dispose]: () => URL.revokeObjectURL(longSrc) };
+  await screen.rerender(
+    <AskableEmbed key={longSrc} src={longSrc} onAskInSideChat={onAskInSideChat} />,
+  );
+  await screen.getByRole("button", { name: "Ask in side chat" }).click();
+  await vi.waitFor(() =>
+    expect(onAskInSideChat).toHaveBeenLastCalledWith(`State diagram\n\n${"x".repeat(3985)}`),
+  );
+  const messages = new AbortController();
+  using _messages = { [Symbol.dispose]: () => messages.abort() };
+  const dialogReady = new Promise<void>((resolve) => {
+    window.addEventListener(
+      "message",
+      (event) => {
+        const frame = document.querySelector<HTMLIFrameElement>('iframe[title="State diagram"]');
+        if (
+          frame &&
+          event.source === frame.contentWindow &&
+          event.data?.method === "ui/notifications/size-changed"
+        )
+          resolve();
+      },
+      { signal: messages.signal },
+    );
+  });
+  await screen.rerender(
+    <HtmlRenderDialog
+      src={src}
+      title="State diagram"
+      onAskInSideChat={onAskInSideChat}
+      onClose={() => undefined}
+    />,
+  );
+  await dialogReady;
+  await page.getByRole("button", { name: "Ask in side chat" }).click();
+  await vi.waitFor(() => expect(onAskInSideChat).toHaveBeenCalledTimes(3));
+  expect(onAskInSideChat).toHaveBeenLastCalledWith("State diagram\n\nobservation space");
+  await page.getByTitle("State diagram", { exact: true }).click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await page
+    .getByRole("toolbar", { name: "Selection actions" })
+    .getByRole("button", { name: "Ask in side chat" })
+    .click();
+  expect(onAskInSideChat).toHaveBeenLastCalledWith("observation space");
+});
+
+it("hides the corner action for an older embed without the selection bridge", async () => {
+  const html = `<p>Older diagram</p><script>parent.postMessage(${JSON.stringify(sizeChanged(321))}, "*");</script>`;
+  const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+  const messages = new AbortController();
+  using _messages = { [Symbol.dispose]: () => messages.abort() };
+  const loaded = new Promise<void>((resolve) => {
+    window.addEventListener(
+      "message",
+      (event) => {
+        const frame = document.querySelector<HTMLIFrameElement>('iframe[title="Older diagram"]');
+        if (
+          event.source === frame?.contentWindow &&
+          event.data?.method === "ui/notifications/size-changed"
+        )
+          resolve();
+      },
+      { signal: messages.signal },
+    );
+  });
+  const onAskInSideChat = vi.fn();
+  await using screen = await render(
+    <HtmlRenderDialog
+      src={src}
+      title="Older diagram"
+      onAskInSideChat={onAskInSideChat}
+      onClose={() => undefined}
+    />,
+  );
+  await act(async () => {
+    await loaded;
+  });
+  await expect
+    .element(screen.getByRole("button", { name: "Ask in side chat" }))
+    .not.toBeInTheDocument();
 });

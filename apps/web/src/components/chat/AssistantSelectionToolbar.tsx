@@ -308,36 +308,60 @@ export function AssistantSelectionToolbar({
         {citeTooLong ? "Shorten selection" : "Cite"}
       </Button>
       {onAskInSideChat ? (
-        <Tooltip
-          onOpenChange={(_open, details) => {
-            // Focus opens the tooltip, which would otherwise swallow the Escape that dismisses.
-            if (details.reason === "escape-key") details.allowPropagation();
-          }}
-        >
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="xs"
-                variant="glass"
-                tabIndex={rovingAction === "ask" ? 0 : -1}
-                aria-disabled={askBlockedReason !== null || undefined}
-                aria-description={askBlockedReason ?? undefined}
-                aria-label={
-                  askTooLong ? "Shorten selection to ask in side chat" : "Ask in side chat"
-                }
-                onFocus={() => setFocusedAction("ask")}
-                onClick={ask}
-              />
-            }
-          >
-            <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
-            {askTooLong ? "Shorten selection" : "Ask in side chat"}
-          </TooltipTrigger>
-          {askBlockedReason ? <TooltipPopup side="top">{askBlockedReason}</TooltipPopup> : null}
-        </Tooltip>
+        <AskInSideChatButton
+          tooLong={askTooLong}
+          blockedReason={askBlockedReason}
+          tabIndex={rovingAction === "ask" ? 0 : -1}
+          onFocus={() => setFocusedAction("ask")}
+          onClick={ask}
+        />
       ) : null}
     </div>,
     sheet ?? document.body,
+  );
+}
+
+export function AskInSideChatButton({
+  tooLong,
+  blockedReason,
+  tabIndex,
+  onFocus,
+  onClick,
+}: {
+  tooLong: boolean;
+  blockedReason: string | null;
+  tabIndex?: number;
+  onFocus?: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip
+      onOpenChange={(_open, details) => {
+        // Focus opens the tooltip, which would otherwise swallow the Escape that dismisses.
+        if (details.reason === "escape-key") details.allowPropagation();
+      }}
+    >
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="glass"
+            tabIndex={tabIndex}
+            aria-disabled={blockedReason !== null || undefined}
+            aria-description={blockedReason ?? undefined}
+            aria-label={tooLong ? "Shorten selection to ask in side chat" : "Ask in side chat"}
+            onFocus={onFocus}
+            onClick={() => {
+              if (blockedReason === null) onClick();
+            }}
+          />
+        }
+      >
+        <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
+        {tooLong ? "Shorten selection" : "Ask in side chat"}
+      </TooltipTrigger>
+      {blockedReason ? <TooltipPopup side="top">{blockedReason}</TooltipPopup> : null}
+    </Tooltip>
   );
 }
