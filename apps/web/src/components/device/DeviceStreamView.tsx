@@ -53,6 +53,19 @@ function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null)
   return w / h;
 }
 
+// A menu Paste targets the element that holds the selection, which a right-click can put
+// anywhere around the screen. The focus stays on the screen.
+function listenForMenuPaste(element: HTMLElement, onPaste: (text: string) => void) {
+  const document = element.ownerDocument;
+  const listener = (event: ClipboardEvent) => {
+    if (document.activeElement !== element || !event.clipboardData) return;
+    event.preventDefault();
+    onPaste(event.clipboardData.getData("text/plain"));
+  };
+  document.addEventListener("paste", listener);
+  return () => document.removeEventListener("paste", listener);
+}
+
 // serve-sim sends raw portrait framebuffers even when iOS reports landscape; rotate the display.
 function screenRotation(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
   if (platform !== "ios" || !screen || screen.width > screen.height) return 0;
@@ -139,24 +152,25 @@ export function DeviceStreamView(props: {
       : NO_FOREGROUND_ATOM,
   );
   const pasteAllowedApp = useRef<string | null>(null);
+  const allowPaste = async (appId: string) => {
+    if (appId === pasteAllowedApp.current) return;
+    // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
+    const result = await runAction({
+      environmentId: props.environmentId,
+      input: {
+        hostId: props.hostId,
+        deviceId: props.deviceId,
+        type: "setPermission",
+        appId,
+        permission: "pasteboard",
+        decision: "grant",
+      },
+    });
+    if (result._tag === "Success") pasteAllowedApp.current = appId;
+  };
   const paste = async (text: string) => {
     if (!client || text === "") return;
-    const appId = foregroundApp?.id;
-    if (appId && appId !== pasteAllowedApp.current) {
-      // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
-      const result = await runAction({
-        environmentId: props.environmentId,
-        input: {
-          hostId: props.hostId,
-          deviceId: props.deviceId,
-          type: "setPermission",
-          appId,
-          permission: "pasteboard",
-          decision: "grant",
-        },
-      });
-      if (result._tag === "Success") pasteAllowedApp.current = appId;
-    }
+    if (foregroundApp?.id) await allowPaste(foregroundApp.id);
     client.sendText(text);
   };
   const canvas = session?.canvas ?? null;
@@ -207,18 +221,10 @@ export function DeviceStreamView(props: {
     };
     update();
     const stopResize = observeResize(element, update);
-    // A menu Paste targets the element that holds the selection, which a right-click can put
-    // anywhere around the screen. The focus stays on the screen.
-    const document = element.ownerDocument;
-    const onPaste = (event: ClipboardEvent) => {
-      if (document.activeElement !== element || !event.clipboardData) return;
-      event.preventDefault();
-      void paste(event.clipboardData.getData("text/plain"));
-    };
-    document.addEventListener("paste", onPaste);
+    const stopPaste = listenForMenuPaste(element, paste);
     return () => {
       stopResize();
-      document.removeEventListener("paste", onPaste);
+      stopPaste();
     };
   };
   const frame = fitDeviceFrame(aspect, host.width, host.height, controlsInset);
