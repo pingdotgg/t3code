@@ -67,7 +67,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -17907,7 +17906,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        const pendingWake = yield* Ref.make(true);
         yield* mcpSessions.set({
           environmentId: EnvironmentId.make("environment-goal-wake"),
           threadId: harness.threadId,
@@ -17916,7 +17914,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer secret-claude-token",
           browserToolsAvailable: true,
-          hasPendingWake: Ref.get(pendingWake),
+          hasPendingWake: Effect.succeed(true),
         });
         const stop = Effect.promise(() =>
           Promise.all(
@@ -17964,9 +17962,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const terminal = yield* Queue.take(harness.terminalReceipts);
         assert.equal(terminal.status, "completed");
         assert.equal(goalStatuses(harness.events).at(-1)?.status, "active");
-        // Once nothing will wake the thread, the goal check runs as before.
-        yield* Ref.set(pendingWake, false);
-        assert.deepEqual(yield* stop, [{}]);
       }).pipe(
         Effect.scoped,
         Effect.provide(

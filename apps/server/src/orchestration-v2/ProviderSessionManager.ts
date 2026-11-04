@@ -4,10 +4,13 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
   ModelSelection,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -70,6 +73,30 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "running",
   "waiting",
 ]);
+
+/** Matches planDelegatedCompletionDelivery: true while a delegated task's result still wakes the thread. */
+export const delegatedTaskWillWake = (records: {
+  readonly thread: Pick<OrchestrationV2AppThread, "archivedAt" | "deletedAt">;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "delegatedCompletion">>;
+  readonly subagents: ReadonlyArray<
+    Pick<OrchestrationV2Subagent, "origin" | "status" | "runId" | "completionDelivery">
+  >;
+}): boolean =>
+  records.thread.archivedAt === null &&
+  records.thread.deletedAt === null &&
+  records.subagents.some((task) => {
+    const run = records.runs.find((candidate) => candidate.id === task.runId);
+    const delivery = task.completionDelivery?.state;
+    return (
+      task.origin === "app_owned" &&
+      isOrchestrationV2WorkActive(task.status) &&
+      run !== undefined &&
+      (run.delegatedCompletion?.disposition ?? "open") === "open" &&
+      delivery !== "acknowledged" &&
+      delivery !== "delivered" &&
+      delivery !== "disposed"
+    );
+  });
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -499,29 +526,10 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
-                  // Matches planDelegatedCompletionDelivery: only tasks whose result still wakes this thread.
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(
-                      Effect.map(
-                        ({ thread, runs, subagents }) =>
-                          thread.archivedAt === null &&
-                          thread.deletedAt === null &&
-                          subagents.some((task) => {
-                            const run = runs.find((candidate) => candidate.id === task.runId);
-                            const delivery = task.completionDelivery?.state;
-                            return (
-                              task.origin === "app_owned" &&
-                              isOrchestrationV2WorkActive(task.status) &&
-                              run !== undefined &&
-                              (run.delegatedCompletion === undefined ||
-                                run.delegatedCompletion.disposition === "open") &&
-                              delivery !== "acknowledged" &&
-                              delivery !== "delivered" &&
-                              delivery !== "disposed"
-                            );
-                          }),
-                      ),
+                      Effect.map(delegatedTaskWillWake),
                       Effect.orElseSucceed(() => false),
                     ),
                 });

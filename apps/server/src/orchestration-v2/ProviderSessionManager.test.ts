@@ -5,8 +5,6 @@ import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
-  EventId,
-  MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -18,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1771,6 +1770,43 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
   }),
 );
 
+it("ProviderSessionManagerV2 counts a delegated task as a wake only while its result can be delivered", () => {
+  const runId = RunId.make("run-delegating");
+  const thread = { archivedAt: null, deletedAt: null };
+  const task = {
+    origin: "app_owned" as const,
+    status: "running" as const,
+    runId,
+    completionDelivery: undefined,
+  };
+  const run = (disposition: "open" | "disposed") => ({
+    id: runId,
+    delegatedCompletion: { disposition, nextGeneration: 1, delivery: null },
+  });
+  assert.isTrue(
+    ProviderSessionManager.delegatedTaskWillWake({
+      thread,
+      runs: [run("open")],
+      subagents: [task],
+    }),
+  );
+  // An interrupted completion wake disposes the cohort, so the result never wakes the thread.
+  assert.isFalse(
+    ProviderSessionManager.delegatedTaskWillWake({
+      thread,
+      runs: [run("disposed")],
+      subagents: [task],
+    }),
+  );
+  assert.isFalse(
+    ProviderSessionManager.delegatedTaskWillWake({
+      thread,
+      runs: [run("open")],
+      subagents: [{ ...task, origin: "provider_native" }],
+    }),
+  );
+});
+
 it.effect(
   "ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close",
   () =>
@@ -1816,75 +1852,6 @@ it.effect(
           new Set(["preview", "orchestration", "worktree", "pull-requests"]),
         );
 
-        // A running delegated task wakes the thread only while its completion can still be delivered.
-        assert.isFalse(yield* captured!.hasPendingWake!);
-        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-        const run = (
-          disposition: "open" | "disposed",
-        ): OrchestrationV2DomainEvent & { readonly type: "run.created" | "run.updated" } => ({
-          id: EventId.make(`event:${runId}:${disposition}`),
-          type: disposition === "open" ? "run.created" : "run.updated",
-          threadId,
-          runId,
-          occurredAt: now,
-          payload: {
-            id: runId,
-            threadId,
-            ordinal: 1,
-            providerInstanceId: modelSelection.instanceId,
-            modelSelection,
-            providerThreadId: null,
-            userMessageId: MessageId.make("message:delegating"),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: "completed",
-            queuePosition: null,
-            requestedAt: now,
-            startedAt: now,
-            completedAt: now,
-            checkpointId: null,
-            contextHandoffId: null,
-            delegatedCompletion: { disposition, nextGeneration: 1, delivery: null },
-          },
-        });
-        yield* eventSink.write({
-          events: [
-            run("open"),
-            {
-              id: yield* idAllocator.allocate.event({ threadId }),
-              type: "subagent.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: idAllocator.derive.nodeFromProviderItem({
-                  driver: CODEX_DRIVER,
-                  nativeItemId: "delegated-task",
-                }),
-                threadId,
-                runId,
-                parentNodeId: idAllocator.derive.rootNode({ runId }),
-                origin: "app_owned",
-                createdBy: "agent",
-                driver: CODEX_DRIVER,
-                providerInstanceId: modelSelection.instanceId,
-                providerThreadId: null,
-                childThreadId: null,
-                nativeTaskRef: null,
-                prompt: "Review the diff",
-                title: "Delegated review",
-                model: null,
-                status: "running",
-                result: null,
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-              },
-            },
-          ],
-        });
-        assert.isTrue(yield* captured!.hasPendingWake!);
-        // An interrupted completion wake disposes the cohort, so the result never wakes the thread.
-        yield* eventSink.write({ events: [run("disposed")] });
         assert.isFalse(yield* captured!.hasPendingWake!);
 
         yield* manager.close(providerSessionId);
