@@ -393,6 +393,21 @@ If nothing on the device can show a format, save or share it to open it elsewher
 50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
 save, or add it to chat.
 
+3D files (`.stl`, `.obj`, `.ply`, `.3mf`, `.glb` and `.gltf`) show a rendered picture of their
+shape instead of their raw bytes. Materials and textures are ignored, so every mesh is drawn in one
+color. A `.gltf` file that keeps its data in separate `.bin` files, or uses Draco or meshopt
+compression, cannot be drawn; export it as `.glb` instead.
+
+On web and desktop, 3D files open in a 3D view. Drag or middle-drag to orbit, hold Shift to pan,
+and scroll or hold Ctrl to zoom. On a trackpad, two fingers orbit and pinching zooms. As in
+Blender, numpad 1, 3 and 7 show the front, right and top (with Ctrl for the opposite side), 5
+switches between perspective and orthographic, and Home or numpad `.` frames the model. Use
+**Show preview image** for a still picture. Files over 64 MB show only the picture.
+
+On mobile, workspace 3D files open in the same 3D view: drag with one finger to orbit, pinch to
+zoom, drag with two fingers to pan, and double-tap to reset the view. Use **Picture** for the
+still image. Attached 3D files open like other unsupported formats.
+
 ## Images and videos in messages
 
 Select an image or video attachment or link to preview it. Playback support depends
