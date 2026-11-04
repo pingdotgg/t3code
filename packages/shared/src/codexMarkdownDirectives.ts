@@ -360,13 +360,19 @@ function renderDirectiveMatches(
 export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
-    !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`) &&
-    !markdown.includes(WEB_CITATION_OPEN)
+    !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`)
   ) {
     return markdown;
   }
 
   return renderDirectiveMatches(markdown, (match) => match.markdown);
+}
+
+// Kept apart from the inline renderer: its href-only callers run on every streamed delta.
+export function renderCodexMarkdownForNativeDisplay(markdown: string): string {
+  return markdown.includes(WEB_CITATION_OPEN)
+    ? renderDirectiveMatches(markdown, (match) => match.markdown)
+    : renderCodexInlineDirectivesAsMarkdown(markdown);
 }
 
 export function renderCodexDirectivesForCopy(markdown: string): string {

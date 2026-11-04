@@ -7,6 +7,7 @@ import {
   remarkCodexDirectives,
   renderCodexDirectivesForCopy,
   renderCodexInlineDirectivesAsMarkdown,
+  renderCodexMarkdownForNativeDisplay,
   splitCodexArtifactTemplateMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { parseMarkdownFileLink } from "./markdownLinks.ts";
@@ -136,7 +137,7 @@ describe.each([
 
 describe.each([
   { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
-  { name: "renderCodexInlineDirectivesAsMarkdown", render: renderCodexInlineDirectivesAsMarkdown },
+  { name: "renderCodexMarkdownForNativeDisplay", render: renderCodexMarkdownForNativeDisplay },
 ])("$name web citation markers", ({ render }) => {
   it.each([
     [WEB_CITATION_MARKDOWN, "Prices rose 3%. Rates held."],

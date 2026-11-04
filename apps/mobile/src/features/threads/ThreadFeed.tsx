@@ -89,7 +89,7 @@ import {
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexDirectivesForCopy,
-  renderCodexInlineDirectivesAsMarkdown,
+  renderCodexMarkdownForNativeDisplay,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -1258,7 +1258,7 @@ function AssistantMarkdownBlocks(props: {
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          markdown={renderCodexMarkdownForNativeDisplay(segment.markdown)}
           skills={props.skills}
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
