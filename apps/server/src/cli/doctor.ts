@@ -9,12 +9,16 @@ import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 
-const formatBytes = (bytes: number) =>
-  bytes >= 1024 ** 3
+// Pick the unit after rounding, so a size just under 1 GiB reads "1.00 GiB", not "1024.0 MiB".
+const formatBytes = (bytes: number) => {
+  const mebibytes = (bytes / 1024 ** 2).toFixed(1);
+  const kibibytes = Math.ceil(bytes / 1024);
+  return Number(mebibytes) >= 1024
     ? `${(bytes / 1024 ** 3).toFixed(2)} GiB`
-    : bytes >= 1024 ** 2
-      ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
-      : `${Math.ceil(bytes / 1024)} KiB`;
+    : kibibytes >= 1024
+      ? `${mebibytes} MiB`
+      : `${kibibytes} KiB`;
+};
 
 export const runDoctor = Effect.fn("runDoctor")(function* (
   databasePath: string,
