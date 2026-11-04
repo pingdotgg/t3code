@@ -10258,7 +10258,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           };
 
         // A workflow member lists its delegations in its own thread, under its coordinator's.
-        const claudeCallerThreadId = Effect.fnUntraced(function* (
+        const claudeCallerThreadId = Effect.fn("ClaudeAdapterV2.claudeCallerThreadId")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           agentId: string,
         ) {
