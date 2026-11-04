@@ -435,6 +435,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [vendorSectionOverrides, setVendorSectionOverrides] = useState(
     () => new Map<string, boolean>(),
   );
+  // Picks keep a docked picker open, so sections open from the model it opened with.
+  const [openedWithModelKey] = useState(activeModelKey);
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -597,8 +599,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
     for (const [instanceId, vendors] of vendorsByTab) {
-      if (vendors.size < 2) continue;
-      vendors.forEach(() => addRow(instanceId));
+      if (vendors.size > 1) vendors.forEach(() => addRow(instanceId));
     }
     return Math.max(0, ...unitsByTab.values());
   })();
@@ -703,19 +704,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return null;
     }
     const defaultVendor =
-      (selectedInstanceId === props.activeInstanceId
-        ? grouped.sections.find((section) =>
-            section.models.some((model) => model.slug === activeModelSlug),
-          )?.vendor
-        : undefined) ?? grouped.sections[0]?.vendor;
+      grouped.sections.find((section) =>
+        section.models.some(
+          (model) => modelPickerModelKey(model.instanceId, model.slug) === openedWithModelKey,
+        ),
+      )?.vendor ?? grouped.sections[0]?.vendor;
     return {
       pinned: grouped.pinned,
       sections: grouped.sections.map((section) => {
         const key = modelPickerVendorSectionKey(selectedInstanceId, section.vendor);
+        const expandedByDefault = section.vendor === defaultVendor;
         return {
           ...section,
           key,
-          isExpanded: vendorSectionOverrides.get(key) ?? section.vendor === defaultVendor,
+          expandedByDefault,
+          isExpanded: vendorSectionOverrides.get(key) ?? expandedByDefault,
         };
       }),
     };
@@ -724,10 +727,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     vendorGroups?.sections.map((section) => [section.key, section] as const),
   );
 
-  const toggleVendorSection = (key: string) => {
-    const section = vendorSectionByKey.get(key);
-    if (!section) return;
-    setVendorSectionOverrides((overrides) => new Map(overrides).set(key, !section.isExpanded));
+  const toggleVendorSection = (section: { key: string; expandedByDefault: boolean }) => {
+    setVendorSectionOverrides((overrides) =>
+      new Map(overrides).set(
+        section.key,
+        !(overrides.get(section.key) ?? section.expandedByDefault),
+      ),
+    );
   };
 
   const { visibleModels, filteredItemKeys, sectionedModelKeys } = (() => {
@@ -791,13 +797,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const allItemKeys = ((): string[] => [
     ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
     ...new Set(
-      flatModels.flatMap((model) => [
-        ...(model.isLegacy ? [modelPickerLegacySectionKey(model.instanceId)] : []),
-        ...(model.subProvider
-          ? [modelPickerVendorSectionKey(model.instanceId, model.subProvider)]
-          : []),
-      ]),
+      flatModels
+        .filter((model) => model.isLegacy)
+        .map((model) => modelPickerLegacySectionKey(model.instanceId)),
     ),
+    ...vendorSectionByKey.keys(),
   ])();
   const filteredModelByKey = ((): ReadonlyMap<string, ModelPickerItem> =>
     new Map(
@@ -947,8 +951,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
-            if (vendorSectionByKey.has(modelKey)) {
-              toggleVendorSection(modelKey);
+            const vendorSection = vendorSectionByKey.get(modelKey);
+            if (vendorSection) {
+              toggleVendorSection(vendorSection);
               return;
             }
             const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
@@ -1041,8 +1046,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
                   e.preventDefault();
                   e.stopPropagation();
-                  if (vendorSectionByKey.has(highlightedModelKeyRef.current)) {
-                    toggleVendorSection(highlightedModelKeyRef.current);
+                  const vendorSection = vendorSectionByKey.get(highlightedModelKeyRef.current);
+                  if (vendorSection) {
+                    toggleVendorSection(vendorSection);
                     return;
                   }
                   const legacyInstanceId = parseModelPickerLegacySectionKey(
@@ -1105,7 +1111,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         {vendorSection.vendor}
                       </span>
                       <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">
+                        <span className="sr-only">, </span>
                         {vendorSection.models.length}
+                        <span className="sr-only"> models</span>
                       </span>
                     </ComboboxItem>
                   );

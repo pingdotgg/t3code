@@ -197,18 +197,24 @@ it("folds an aggregator's vendors into sections that open on click and stay sear
     ],
   ]);
 
-  await using screen = await render(
-    <ProviderModelPicker
-      environmentId={null}
-      activeInstanceId={instanceId}
-      model="anthropic/claude-sonnet"
-      lockedProvider={null}
-      instanceEntries={entries}
-      modelOptionsByInstance={options}
-      triggerAriaLabel="Choose model"
-      onInstanceModelChange={() => {}}
-    />,
-  );
+  function Picker() {
+    const [model, setModel] = useState("anthropic/claude-sonnet");
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={model}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={(_, selected) => setModel(selected)}
+        effortColumn={[]}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
   await screen.getByRole("button", { name: "Choose model" }).click();
   const gptPro = page.getByRole("option", { name: /GPT Pro/ });
   await expect.element(page.getByRole("option", { name: /Claude Sonnet/ })).toBeVisible();
@@ -224,4 +230,10 @@ it("folds an aggregator's vendors into sections that open on click and stay sear
   await openAiSection.click();
   await expect.element(gptPro).toBeVisible();
   await expect.element(openAiSection).toHaveAttribute("aria-expanded", "true");
+
+  await gptPro.click();
+  await expect
+    .element(page.getByRole("option", { name: /^Anthropic/ }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(page.getByRole("option", { name: /Claude Sonnet/ })).toBeVisible();
 });
