@@ -293,7 +293,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait for a T3 thread run to reach a terminal durable state. Pass environmentId for a thread on another environment. Without runId, the latest run at call time is selected; an idle thread returns immediately. A thread blocked on a question returns early with hasPendingQuestion and pendingRequestId for t3_pending_request, or on an approval with pendingApproval. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. Waiting reports status only and does not acknowledge a delegated result.",
+    "Wait for a T3 thread run to reach a terminal durable state. Pass environmentId for a thread on another environment. Without runId, the latest run at call time is selected; an idle thread returns immediately. A thread blocked on a question returns early with hasPendingQuestion and pendingRequestId for t3_pending_request, or on an approval with pendingApproval. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. With untilDelegatedWorkSettled, a terminal status with timedOut=true means the run ended but the thread is not done; workState says why. Waiting reports status only and does not acknowledge a delegated result.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,

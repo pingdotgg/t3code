@@ -406,7 +406,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
     const threadId = ThreadId.make("thread:thread-management:wait-delegated");
     const runId = RunId.make("run:thread-management:wait-delegated");
     const wakeRunId = RunId.make("run:thread-management:wait-delegated:wake");
-    const subscribed = yield* Deferred.make<void>();
+    let subscribed = yield* Deferred.make<void>();
     const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
     const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1_000);
     const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"], end: number) =>
@@ -464,6 +464,31 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
       yield* service.waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 }),
     ).not.toHaveProperty("resultRun");
 
+    // A wait that runs out says why the ended run is not the answer yet.
+    const timedOut = Effect.fnUntraced(function* () {
+      const waiting = yield* service
+        .waitForThread({
+          projectId,
+          threadId,
+          runId,
+          timeoutMs: 1_000,
+          untilDelegatedWorkSettled: true,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(1_000));
+      return yield* Fiber.join(waiting);
+    });
+    expect(yield* timedOut()).toMatchObject({
+      timedOut: true,
+      run: { id: runId, status: "completed" },
+      workState: "waiting_for_children",
+    });
+    // The task finishes; its delivery wakes the thread, whose next run answers.
+    subagents = [{ status: "completed" }];
+    runs = [...runs, run(wakeRunId, 2, "running", 3)];
+    expect(yield* timedOut()).toMatchObject({ timedOut: true, workState: "working" });
+
+    subscribed = yield* Deferred.make<void>();
     const fiber = yield* service
       .waitForThread({
         projectId,
@@ -475,9 +500,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
       .pipe(Effect.forkChild);
     // A wait that returns early fails below instead of hanging here.
     yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
-    // The task finishes; its delivery wakes the thread, whose next run answers.
-    subagents = [{ status: "completed" }];
-    runs = [...runs, run(wakeRunId, 2, "completed", 3)];
+    runs = [runs[0]!, run(wakeRunId, 2, "completed", 3)];
     yield* Queue.offer(events, stored(1, { type: "subagent.updated", payload: {} }));
     const result = yield* Fiber.join(fiber);
 
@@ -485,6 +508,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
       timedOut: false,
       run: { id: runId, status: "completed" },
       resultRun: { id: wakeRunId, status: "completed" },
+      workState: "result_available",
     });
   }),
 );

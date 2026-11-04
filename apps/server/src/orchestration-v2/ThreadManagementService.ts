@@ -197,6 +197,12 @@ export interface ThreadManagementWaitResult {
   readonly timedOut: boolean;
   /** With `untilDelegatedWorkSettled`, once settled: the run with the thread's final answer. */
   readonly resultRun?: OrchestrationV2Run;
+  /**
+   * With `untilDelegatedWorkSettled`, once the selected run ended: `working` while
+   * another run continues the thread, `waiting_for_children` while its tasks or
+   * awaited background work remain, `result_available` once settled.
+   */
+  readonly workState?: ReturnType<typeof delegatedTaskProgress>["state"];
   /** With `untilQuestion`: the live question the thread is blocked on. */
   readonly pendingQuestion?: RuntimeRequestId;
   /** With `untilQuestion`: the oldest live approval the thread is blocked on. */
@@ -1117,13 +1123,18 @@ const make = Effect.gen(function* () {
         progress.resultRun === undefined &&
         records.runs.every((run) => isTerminalRunStatus(run.status))
       ) {
-        return latestRun(records);
+        return { workState: "result_available" as const, resultRun: latestRun(records) };
       }
-      if (progress.state !== "result_available") return undefined;
+      if (progress.state !== "result_available") {
+        return { workState: progress.state, resultRun: undefined };
+      }
+      // A pending result is a restart continuation or delivery about to run.
       const pending = yield* orchestrator
         .delegatedTaskResultPending(input.threadId)
         .pipe(Effect.mapError(loadError));
-      return pending ? undefined : progress.resultRun;
+      return pending
+        ? { workState: "working" as const, resultRun: undefined }
+        : { workState: progress.state, resultRun: progress.resultRun };
     });
     const untilQuestion = input.untilQuestion === true;
     const blockingRequests = getProjectThreadRecords(input, ["runtimeRequests"]).pipe(
@@ -1153,13 +1164,13 @@ const make = Effect.gen(function* () {
       const current =
         outcomeNow.settled && untilDelegatedWorkSettled
           ? yield* delegatedWorkResult.pipe(
-              Effect.map((resultRun) => ({
+              Effect.map((delegated) => ({
                 ...outcomeNow,
-                settled: resultRun !== undefined,
-                resultRun,
+                ...delegated,
+                settled: delegated.resultRun !== undefined,
               })),
             )
-          : { ...outcomeNow, resultRun: undefined };
+          : { ...outcomeNow, resultRun: undefined, workState: undefined };
       const blocked =
         current.settled || !untilQuestion
           ? { pendingQuestion: undefined, pendingApproval: undefined }
@@ -1178,6 +1189,7 @@ const make = Effect.gen(function* () {
       run: current.run,
       timedOut: !current.done,
       ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
+      ...(current.workState === undefined ? {} : { workState: current.workState }),
       ...(current.pendingQuestion === undefined
         ? {}
         : { pendingQuestion: current.pendingQuestion }),

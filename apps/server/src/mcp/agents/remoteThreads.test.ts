@@ -127,7 +127,11 @@ const makeMacBook = (
     createdAt: "2026-10-22T03:40:00.000Z",
     updatedAt: "2026-10-22T03:44:00.000Z",
   });
+  let readsLeft = Infinity;
   const answer = (method: string, args: ReadonlyArray<any>): unknown => {
+    if (readsLeft <= 0 || (method === "getThread" && readsLeft-- <= 0)) {
+      throw new Error("The MacBook did not answer.");
+    }
     switch (method) {
       case "listEnvironments":
         return [
@@ -174,6 +178,10 @@ const makeMacBook = (
     calls,
     answer,
     called: (method: string) => calls.filter((call) => call.method === method),
+    /** Answers `reads` more thread reads, then nothing at all. */
+    stopAnsweringAfter: (reads: number) => {
+      readsLeft = reads;
+    },
   };
 };
 
@@ -505,6 +513,37 @@ it.effect("waiting on a remote child returns when its run completes", () => {
       timedOut: false,
     });
     expect(macbook.called("getThread")).toHaveLength(3);
+  }).pipe(Effect.provide(makeLayer(macbook, newRecord())));
+});
+
+it.effect("a remote wait reports an environment that stops answering instead of failing", () => {
+  const macbook = makeMacBook(["running"]);
+  return Effect.gen(function* () {
+    const clock = yield* makeSteppedClock;
+    const wait = orchestrate("t3_thread_wait", {
+      environmentId: macBook,
+      threadId: child,
+      timeoutMs: 60 * 60 * 1_000,
+    }).pipe(Effect.provideService(Clock.Clock, clock.stepped));
+    macbook.stopAnsweringAfter(1);
+    const fiber = yield* Effect.forkChild(wait);
+    // Each failed poll is tolerated until the last one.
+    expect([yield* clock.step, yield* clock.step, yield* clock.step]).toEqual([
+      1_000, 2_000, 4_000,
+    ]);
+    expect((yield* Fiber.join(fiber)).result).toMatchObject({
+      runId: "run-macbook-1",
+      status: "running",
+      timedOut: true,
+      unreachable: expect.stringContaining("did not answer"),
+    });
+    // Nothing seen yet: the wait still answers, with no run.
+    expect((yield* wait).result).toMatchObject({
+      runId: null,
+      status: "idle",
+      timedOut: true,
+      unreachable: expect.any(String),
+    });
   }).pipe(Effect.provide(makeLayer(macbook, newRecord())));
 });
 
