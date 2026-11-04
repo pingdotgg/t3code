@@ -47,7 +47,14 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -61,7 +68,8 @@ import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn } from "~/lib/utils";
+import { isEditableFocused } from "~/lib/editableFocus";
+import { cn, isMacPlatform } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -915,6 +923,18 @@ function EditableFileSurface({
   );
 }
 
+function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const mac = isMacPlatform(navigator.platform);
+  const selectAll =
+    event.key.toLowerCase() === "a" &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey;
+  if (!selectAll || isEditableFocused(event.target)) return;
+  event.preventDefault();
+  window.getSelection()?.selectAllChildren(event.currentTarget);
+}
+
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -941,7 +961,7 @@ function RenderedMarkdownSurface({
   useFileSaveSession(saveTarget, onPendingChange);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
