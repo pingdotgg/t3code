@@ -76,7 +76,8 @@ export function isMcpGatewayEnabled(): boolean {
 
 export function getMcpGatewayToken(): string {
   const sessionToken = window.sessionStorage.getItem(MCP_GATEWAY_TOKEN_KEY);
-  if (sessionToken !== null) return sessionToken;
+  // Settings saves an empty field too; that must not hide the desktop's durable token.
+  if (sessionToken !== null && sessionToken !== "") return sessionToken;
   return window.desktopBridge?.getMcpGatewayBridgeToken?.() ?? "";
 }
 

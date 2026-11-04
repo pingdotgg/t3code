@@ -37,6 +37,7 @@ import {
   getAppBranding,
   getClientDeviceName,
   getMcpGatewayBridgeToken,
+  ensureMcpGatewayBridgeToken,
   getMcpGatewayLaunchConfig,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
@@ -97,6 +98,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getClientDeviceName);
   yield* ipc.handleSync(getMcpGatewayBridgeToken);
+  yield* ipc.handleSync(ensureMcpGatewayBridgeToken);
   yield* ipc.handleSync(getMcpGatewayLaunchConfig);
   yield* ipc.handle(McpGatewayIpc.configureManagedMcpGateway);
   yield* ipc.handleSync(getRelayTelemetryEnabled);

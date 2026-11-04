@@ -1022,6 +1022,8 @@ export interface DesktopBridge {
   getMcpGatewayLaunchConfig?: () => McpGatewayLaunchConfig | null;
   configureManagedMcpGateway?: (input: { token: string; port: number } | null) => Promise<void>;
   getMcpGatewayBridgeToken?: () => string | null;
+  /** The bridge token, creating a durable one when none is configured; null if it cannot. */
+  ensureMcpGatewayBridgeToken?: () => string | null;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
