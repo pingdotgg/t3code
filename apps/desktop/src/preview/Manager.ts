@@ -1687,6 +1687,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const closedTab = tab.value;
     if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
     if (closedTab.webContentsId != null) {
+      const wc = webContents.fromId(closedTab.webContentsId);
+      if (wc && !wc.isDestroyed()) {
+        yield* attempt({ operation: "closeTab.closeDevTools", tabId, webContentsId: wc.id }, () => {
+          if (wc.isDevToolsOpened()) wc.closeDevTools();
+        }).pipe(Effect.ignore);
+      }
       yield* Effect.all(
         [
           detachControlSession(closedTab.webContentsId, closedTab.serverTab),
@@ -2021,11 +2027,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
-  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
+  // Detached DevTools is a separate OS window; tiling window managers give it no close button.
+  const toggleDevTools = Effect.fn("PreviewManager.toggleDevTools")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
+      yield* attempt({ operation: "closeDevTools", tabId, webContentsId: wc.id }, () =>
+        wc.closeDevTools(),
       );
       return;
     }
@@ -3310,7 +3317,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     hardReload,
     navigate,
     openPictureInPicture,
-    openDevTools,
+    toggleDevTools,
     pickElement,
     prepareWebview,
     reapplyZoom,
@@ -3531,7 +3538,7 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
-    readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly toggleDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -3672,7 +3679,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
     setShown: operations.setShown,
-    openDevTools: operations.openDevTools,
+    toggleDevTools: operations.toggleDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
         .clearCookies(partitions)

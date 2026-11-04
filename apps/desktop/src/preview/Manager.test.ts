@@ -1111,13 +1111,21 @@ describe("PreviewManager", () => {
     const detachListeners = new Set<() => void>();
     let chromiumDetaches = 0;
     let destroyed = false;
+    let devToolsOpened = false;
     const wc = {
       id,
       isDestroyed: () => destroyed,
       isDevToolsOpened: () => {
         if (destroyed) throw new TypeError("Object has been destroyed");
-        return false;
+        return devToolsOpened;
       },
+      openDevTools: vi.fn(() => {
+        devToolsOpened = true;
+      }),
+      closeDevTools: vi.fn(() => {
+        devToolsOpened = false;
+        listeners.get("devtools-closed")?.();
+      }),
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
       getTitle: () => "README.md",
@@ -1167,6 +1175,26 @@ describe("PreviewManager", () => {
       },
     };
   };
+
+  effectIt.effect("toggles preview DevTools closed and closes them with the tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(49);
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_devtools");
+        yield* manager.registerWebview("tab_devtools", 49);
+
+        yield* manager.toggleDevTools("tab_devtools");
+        expect(guest.wc.isDevToolsOpened()).toBe(true);
+        yield* manager.toggleDevTools("tab_devtools");
+        expect(guest.wc.isDevToolsOpened()).toBe(false);
+
+        yield* manager.toggleDevTools("tab_devtools");
+        yield* manager.closeTab("tab_devtools");
+        expect(guest.wc.isDevToolsOpened()).toBe(false);
+      }),
+    ),
+  );
 
   effectIt.effect("reattaches a debugger that Chromium dropped on its own", () =>
     withManager((manager) =>
