@@ -43,7 +43,7 @@ export function ConversationSummariesRouteScreen(
   const navigation = useNavigation();
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <AppBar title="Conversation summaries" sidebar={false} onBack={() => navigation.goBack()} />
+      <AppBar title="Conversation summaries" onBack={() => navigation.goBack()} />
       <ScreenContent>
         {supported && focused ? (
           <SummaryPages

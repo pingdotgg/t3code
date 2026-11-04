@@ -64,18 +64,6 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     });
 });
 
-/** A fixed-length id, so a long key fits in the scratch folder name derived from it. */
-const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
-  namespace: string,
-  key: string,
-) {
-  const crypto = yield* Digest.Digest;
-  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
-  const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
-  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
-  return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
-});
-
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;

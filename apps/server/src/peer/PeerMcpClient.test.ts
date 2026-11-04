@@ -363,15 +363,17 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
         return HttpClientResponse.fromWeb(
           request,
           new Response(
-            index === 7 ? "{}" : index >= 5
-              ? JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: index === 5 ? 1 : 2,
-                  result: {
-                    content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }],
-                  },
-                })
-              : "",
+            index === 7
+              ? "{}"
+              : index >= 5
+                ? JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: index === 5 ? 1 : 2,
+                    result: {
+                      content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }],
+                    },
+                  })
+                : "",
             {
               status,
               headers:

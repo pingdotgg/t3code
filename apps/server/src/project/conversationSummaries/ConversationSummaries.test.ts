@@ -47,7 +47,7 @@ import * as ContextHandoffService from "../../orchestration-v2/ContextHandoffSer
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -112,7 +112,7 @@ const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSetting
         ProjectStore.layer,
         ProjectionStore.layer,
         ThreadSearch.layer,
-        ProjectionMaintenance.layer.pipe(
+        ProjectionReplay.layer.pipe(
           Layer.provideMerge(EventStore.layer),
           Layer.provide(ProjectionStore.layer),
         ),
@@ -479,7 +479,7 @@ it.effect(
       const events = yield* EventStore.EventStoreV2;
       yield* events.append({ events: [messageEvent(0, "Edited request")] });
       yield* projections.apply(messageEvent(0, "Edited request"));
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       yield* maintenance.rebuild;
 
       const described = yield* service.describe({ ...scope, summaryId: summary.id });

@@ -2154,6 +2154,7 @@ it.layer(
                 refresh: Effect.as(refresh, snapshot),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
+                markLimited: () => Effect.void,
               },
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],

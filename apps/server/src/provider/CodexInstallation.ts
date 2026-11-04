@@ -966,6 +966,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           source: "managed",
         }) satisfies ProviderInstallState,
     );
+    if (asset && compareSemverVersions(installed.version, asset.version) < 0)
+      yield* start().pipe(Effect.ignore);
   }).pipe(
     Effect.catch(() =>
       SubscriptionRef.update(

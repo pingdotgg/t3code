@@ -1526,7 +1526,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           const byId = new Map(
             capabilities.providers.map((provider) => [provider.providerInstanceId, provider]),
           );
-          for (const provider of providers.filter((provider) => provider.enabled)) {
+          for (const provider of providers.filter(
+            (provider) => provider.enabled && provider.instanceId !== projectDisabledInstanceId,
+          )) {
             assert.deepEqual(
               byId.get(provider.instanceId)?.models.map((model) => model.id),
               provider.models.map((model) => model.slug),
@@ -1546,7 +1548,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             ],
           }));
           const refreshed = yield* service.capabilities(scope);
-          for (const provider of providers.filter((provider) => provider.enabled)) {
+          for (const provider of providers.filter(
+            (provider) => provider.enabled && provider.instanceId !== projectDisabledInstanceId,
+          )) {
             assert.deepEqual(
               refreshed.providers
                 .find((entry) => entry.providerInstanceId === provider.instanceId)

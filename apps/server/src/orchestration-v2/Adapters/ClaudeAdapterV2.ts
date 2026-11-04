@@ -70,7 +70,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeUtil from "node:util";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The SDK subprocess exposes stderr as a Node readable stream.
-import type { Readable } from "node:stream";
+import type * as NodeStream from "node:stream";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1012,8 +1012,9 @@ export const layerQueryRunner: Layer.Layer<
               ? options.spawnClaudeCodeProcess(spawnOptions)
               : spawnClaudeProcess(spawnOptions, platform, undefined, undefined, options.stderr);
             // Native account spawners retain stderr even though the SDK interface omits it.
-            const stderr = (child as ClaudeSpawnedProcess & { readonly stderr?: Readable | null })
-              .stderr;
+            const stderr = (
+              child as ClaudeSpawnedProcess & { readonly stderr?: NodeStream.Readable | null }
+            ).stderr;
             if (stderr != null) {
               stderr.setEncoding("utf8").on("data", appendStderr);
               stderrClosed = new Promise((resolve) => stderr.once("close", resolve));

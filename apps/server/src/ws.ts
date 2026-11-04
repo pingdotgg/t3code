@@ -3496,13 +3496,21 @@ export const layerWsRpc = (
                     if (changed)
                       return {
                         type: "pstackUpdated" as const,
-                        settings: ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+                        settings: ServerSettings.redactServerSettingsForClient(
+                          settings,
+                          settingsClient,
+                        ),
                         pstackSkills: yield* pstack.catalog,
                       };
                     return {
                       version: 1,
                       type: "settingsUpdated",
-                      payload: { settings: ServerSettings.redactServerSettingsForClient(settings, settingsClient) },
+                      payload: {
+                        settings: ServerSettings.redactServerSettingsForClient(
+                          settings,
+                          settingsClient,
+                        ),
+                      },
                     } satisfies ServerConfigStreamEvent;
                   }),
                 ),

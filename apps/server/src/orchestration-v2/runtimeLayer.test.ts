@@ -2988,7 +2988,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     (outcome) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
         const threadId = ThreadId.make(`ci-watch-${outcome}`);
         const projectId = ProjectId.make(`ci-watch-project-${outcome}`);
         yield* seedProject({

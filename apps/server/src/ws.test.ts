@@ -1234,6 +1234,7 @@ it.effect(
             {},
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
+            { secretReferences: true },
           ).pipe(
             Layer.provide(configRpcServices),
             Layer.provide(

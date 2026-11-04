@@ -448,7 +448,7 @@ it.effect("requires an update before running an older activated managed installa
 it.effect("updates an older supported managed installation to the pinned release on startup", () =>
   Effect.gen(function* () {
     const first = yield* makeHarness();
-    yield* first.installation.start;
+    yield* first.installation.start();
     yield* terminalState(first.installation);
     const executable = yield* first.installation.resolve();
     const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;

@@ -254,7 +254,6 @@ function ProjectLoomScreen(props: {
       <AppBar
         title="Loom"
         subtitle={project?.title ?? props.projectId}
-        sidebar={false}
         onBack={() => navigation.goBack()}
       />
       <ScreenContent>
