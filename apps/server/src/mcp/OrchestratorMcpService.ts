@@ -2380,7 +2380,8 @@ const make = Effect.gen(function* () {
           "Ensured children must inherit the local parent's project and checkout.",
         );
       }
-      const { target: parent, limits } = yield* loadScopedThread(scope, input.parentThreadId);
+      const { limits } = yield* loadScopedThread(scope, input.parentThreadId, false);
+      const parent = yield* loadThreadRecords(input.parentThreadId, ["runs", "subagents"]);
       yield* resolveRuntimeMode(limits.runtimeMode, parent.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, parent.thread.interactionMode);
       const options = input.target.options?.toSorted((a, b) =>
@@ -3413,6 +3414,7 @@ export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
   | SecureRandom.SecureRandom
+  | Digest.Digest
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver
