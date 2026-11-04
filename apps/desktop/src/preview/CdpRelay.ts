@@ -140,8 +140,10 @@ export function createCdpRelayConnection(
   const sessions = new Map<string, RelaySession>([
     [PAGE_SESSION_ID, { kind: "page", owner: page, parent: undefined }],
   ]);
-  /** Child frame and worker sessions, by the debugger that attached them; others are the page's. */
-  const children = new Map<string, RelayedTarget>();
+  const children = new Map<
+    string,
+    { readonly owner: RelayedTarget; readonly parent: string | undefined }
+  >();
   let sessionSequence = 0;
   const newSession = (session: RelaySession) => {
     const sessionId = `t3-preview-${session.kind}-${++sessionSequence}`;
@@ -246,7 +248,16 @@ export function createCdpRelayConnection(
       case "Target.detachFromTarget": {
         const sessionId = command.params?.["sessionId"];
         const session = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
-        if (session?.kind === "page" && sessionId !== session.owner.sessionId) {
+        const child = typeof sessionId === "string" ? children.get(sessionId) : undefined;
+        if (child !== undefined) {
+          await child.owner.target.send(
+            command.method,
+            command.params ?? {},
+            child.parent,
+            undefined,
+          );
+          children.delete(sessionId as string);
+        } else if (session?.kind === "page" && sessionId !== session.owner.sessionId) {
           sessions.delete(sessionId as string);
           session.owner.target.sessionDetached?.(sessionId as string);
         } else if (session?.kind === "browser") {
@@ -275,7 +286,9 @@ export function createCdpRelayConnection(
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const session = sessions.get(command.sessionId!);
     const child = session?.kind === "page" ? undefined : command.sessionId;
-    const owner = session?.kind === "page" ? session.owner : (children.get(child!) ?? page);
+    const owner = session?.kind === "page" ? session.owner : children.get(child!)?.owner;
+    if (owner === undefined) return Promise.reject(new Error("Unknown or detached CDP session"));
+    if (command.method === "Target.detachFromTarget") return browserCommand(command);
     const extra = child === undefined && command.sessionId !== owner.sessionId;
     // Child frames/workers pause on auto-attach until resumed; only a main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
@@ -296,7 +309,7 @@ export function createCdpRelayConnection(
     (method, params, sessionId) => {
       const child = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
       if (method === "Target.attachedToTarget" && typeof child === "string") {
-        children.set(child, relayed);
+        children.set(child, { owner: relayed, parent: sessionId || undefined });
       } else if (method === "Target.detachedFromTarget" && typeof child === "string") {
         children.delete(child);
       }
@@ -321,7 +334,7 @@ export function createCdpRelayConnection(
     if (relayed.removed) return;
     relayed.removed = true;
     targets.delete(relayed);
-    for (const [id, owner] of children) if (owner === relayed) children.delete(id);
+    for (const [id, child] of children) if (child.owner === relayed) children.delete(id);
     const targetId = relayed.targetId;
     if (targetId === null) return;
     for (const [id, session] of sessions) {

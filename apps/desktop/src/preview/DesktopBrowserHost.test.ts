@@ -678,6 +678,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       debuggee.release();
       expect(yield* Queue.take(replies)).toBe(1);
+      debuggee.emit("Target.attachedToTarget", { sessionId: "child-frame" });
       yield* raw({ id: 2, method: "Page.startScreencast", sessionId: "child-frame" });
       expect(yield* Queue.take(replies)).toBe(2);
       yield* TestClock.adjust("1 minute");
@@ -703,11 +704,13 @@ describe("DesktopBrowserHost", () => {
       });
       expect(yield* Queue.take(replies)).toBe(2);
       yield* raw({ id: 3, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      expect(yield* Queue.take(replies)).toBe(3);
       yield* settle;
       debuggee.release();
       yield* settle;
       yield* TestClock.adjust("1 minute");
-      expect(debuggee.focusEmulation).toEqual([true, false]);
+      expect(debuggee.focusEmulation).toEqual([]);
+      expect(debuggee.sent).toEqual([]);
     }).pipe(Effect.scoped),
   );
 

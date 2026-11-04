@@ -53,6 +53,7 @@ describe("CDP relay", () => {
     );
     const written: Array<Record<string, unknown>> = [];
     const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+    relay.event("Target.attachedToTarget", { sessionId: "iframe-session" }, "");
     relay.receive(
       JSON.stringify({ id: 5, method: "Page.captureScreenshot", sessionId: "t3-preview-page" }),
     );
@@ -76,6 +77,7 @@ describe("CDP relay", () => {
   it("resumes paused child frames, so cross-site iframes run", async () => {
     const send = vi.fn(async () => ({}));
     const relay = makeRelay(makeTarget(send), () => {});
+    relay.event("Target.attachedToTarget", { sessionId: "iframe-session" }, "");
     relay.receive(
       JSON.stringify({
         id: 1,
@@ -184,6 +186,59 @@ describe("CDP relay popups", () => {
   });
   const resultOf = (written: Array<Record<string, unknown>>, id: number) =>
     written.find((message) => message["id"] === id)!;
+
+  it.each(["browser", "popup", "child"])(
+    "detaches a popup child through its %s session without affecting the other sessions",
+    async (source) => {
+      const pageSend = vi.fn(async () => ({}));
+      const popupSend = vi.fn(async () => ({}));
+      const written: Array<Record<string, unknown>> = [];
+      const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
+      const popup = relay.addPopup(makePopup("POPUP", popupSend));
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
+      await settle();
+      const popupSession = "t3-preview-popup-1";
+      popup.event("Target.attachedToTarget", { sessionId: "parent-frame" }, "");
+      popup.event("Target.attachedToTarget", { sessionId: "popup-child" }, "parent-frame");
+      popup.event("Target.attachedToTarget", { sessionId: "sibling-frame" }, "");
+      relay.receive(JSON.stringify({ id: 2, method: "DOM.enable", sessionId: "popup-child" }));
+      await settle();
+      expect(popupSend).toHaveBeenLastCalledWith("DOM.enable", {}, "popup-child", undefined);
+
+      const sessionId =
+        source === "browser" ? undefined : source === "popup" ? popupSession : "parent-frame";
+      relay.receive(
+        JSON.stringify({
+          id: 3,
+          method: "Target.detachFromTarget",
+          params: { sessionId: "popup-child" },
+          sessionId,
+        }),
+      );
+      await settle();
+      expect(popupSend).toHaveBeenLastCalledWith(
+        "Target.detachFromTarget",
+        { sessionId: "popup-child" },
+        "parent-frame",
+        undefined,
+      );
+      expect(resultOf(written, 3)).toHaveProperty("result");
+
+      popupSend.mockClear();
+      relay.receive(JSON.stringify({ id: 4, method: "DOM.enable", sessionId: "popup-child" }));
+      relay.receive(JSON.stringify({ id: 5, method: "Page.enable", sessionId: popupSession }));
+      relay.receive(JSON.stringify({ id: 6, method: "DOM.enable", sessionId: "sibling-frame" }));
+      relay.receive(JSON.stringify({ id: 7, method: "Page.enable", sessionId: "t3-preview-page" }));
+      await settle();
+      expect(resultOf(written, 4)).toHaveProperty("error");
+      expect(popupSend.mock.calls).toEqual([
+        ["Page.enable", {}, undefined, undefined],
+        ["DOM.enable", {}, "sibling-frame", undefined],
+      ]);
+      expect(pageSend.mock.calls).toEqual([["Page.enable", {}, undefined, undefined]]);
+      for (const id of [5, 6, 7]) expect(resultOf(written, id)).toHaveProperty("result");
+    },
+  );
 
   it("announces the page's popups after it, as its popups, and routes them separately", async () => {
     const pageSend = vi.fn(async () => ({}));
