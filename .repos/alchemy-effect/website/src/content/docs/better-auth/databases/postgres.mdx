@@ -35,7 +35,7 @@ Configuration resolves during host construction and is bound into the Lambda env
 
 ```typescript title="src/function.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { AuthDatabase } from "./auth-database.ts";
@@ -65,7 +65,7 @@ export default class AuthApi extends AWS.Lambda.Function<AuthApi>()(
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import AuthApi from "./src/function.ts";
 
