@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -271,6 +272,41 @@ it.effect("dates an old pull request by its latest push or comment, the same on 
 );
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect("replaces a read interrupted before its process starts", () =>
+    Effect.gen(function* () {
+      const readingClock = yield* Deferred.make<void>();
+      const baseClock = yield* Clock.Clock;
+      let clockReads = 0;
+      const clock = {
+        ...baseClock,
+        currentTimeMillis: Effect.sync(() => {
+          clockReads += 1;
+          if (clockReads === 2) Deferred.doneUnsafe(readingClock, Effect.void);
+          return baseClock.currentTimeMillisUnsafe();
+        }),
+      };
+      mockedExecute.mockReturnValue(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const read = cli.activityAt({
+        cwd: "/interrupted",
+        pullRequest: {
+          number: 42,
+          location: { project: "platform", repository: "web" },
+          state: "open",
+          revision: "r",
+          updatedAt: null,
+        },
+        maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+      });
+      const owner = yield* Effect.forkChild(read.pipe(Effect.provideService(Clock.Clock, clock)));
+      yield* Effect.raceFirst(Deferred.await(readingClock), Fiber.await(owner));
+      yield* Fiber.interrupt(owner);
+      const replacement = yield* Effect.forkChild(read, { startImmediately: true });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(yield* Fiber.join(replacement)).toBeNull();
+    }),
+  );
+
   it.effect(
     "reads a conversation queued behind a long list at once, and shares one already out",
     () =>

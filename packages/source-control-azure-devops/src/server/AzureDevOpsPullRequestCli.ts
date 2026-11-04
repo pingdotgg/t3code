@@ -451,30 +451,35 @@ export const make = Effect.gen(function* () {
     },
     record: ActivityRecord,
     read: ActivityRead,
-  ) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.flatMap((startedAt) =>
-        invoke({
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+  ) => {
+    let startedAt: number | null = null;
+    return restore(
+      Effect.gen(function* () {
+        startedAt = yield* Clock.currentTimeMillis;
+        const threads = yield* invoke({
           cwd: input.cwd,
           operation: "listThreads",
           resource: "pullRequestThreads",
           routeParameters: pullRequestRoute(input),
           maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
           decode: decodeThreadsJson,
-        }).pipe(
-          Effect.tap((threads) => remember(activityKey(input), threads.activityAt)),
-          Effect.onExit((exit) =>
-            Effect.sync(() => {
-              if (record.reading === read) record.reading = null;
-              // A read nobody saw finish must not count as one; a failed read still does.
-              if (Exit.hasInterrupts(exit)) return;
-              record.readAt = startedAt;
-              if (read.revision !== null) record.revision = read.revision;
-            }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
-          ),
-        ),
+        });
+        yield* remember(activityKey(input), threads.activityAt);
+        return threads;
+      }),
+    ).pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (record.reading === read) record.reading = null;
+          // A read nobody saw finish must not count as one; a failed read still does.
+          if (Exit.hasInterrupts(exit)) return;
+          record.readAt = startedAt;
+          if (read.revision !== null) record.revision = read.revision;
+        }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
       ),
     );
+  };
 
   /**
    * Concurrent readers of one pull request share a single process. A null revision asks for
@@ -488,34 +493,39 @@ export const make = Effect.gen(function* () {
     },
     revision: string | null,
   ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> =>
-    Effect.suspend(() => {
-      const record = activityRecord(activityKey(input));
-      const again = () => readThreads(input, revision);
-      // The reader that started it was interrupted; this one still wants the answer.
-      const join = (read: ActivityRead) =>
-        Deferred.await(read.done).pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, again));
-      const current = record.reading;
-      if (current !== null) {
-        if (revision === null && claim(current)) return runRead(input, record, current);
-        if (revision !== null && current.revision !== revision) {
-          // A read already out may predate this revision; one still waiting will not.
-          if (current.started)
-            return Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again));
-          current.revision = revision;
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const record = activityRecord(activityKey(input));
+        const again = () => readThreads(input, revision);
+        // The reader that started it was interrupted; this one still wants the answer.
+        const join = (read: ActivityRead) =>
+          Deferred.await(read.done).pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, again));
+        const current = record.reading;
+        if (current !== null) {
+          if (revision === null && claim(current)) return runRead(input, record, current, restore);
+          if (revision !== null && current.revision !== revision) {
+            // A read already out may predate this revision; one still waiting will not.
+            if (current.started)
+              return restore(Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again)));
+            current.revision = revision;
+          }
+          return restore(join(current));
         }
-        return join(current);
-      }
-      const read: ActivityRead = { done: Deferred.makeUnsafe(), revision, started: false };
-      record.reading = read;
-      if (revision === null) {
-        read.started = true;
-        return runRead(input, record, read);
-      }
-      return activityReads
-        .withPermits(1)(
-          Effect.suspend(() => (claim(read) ? runRead(input, record, read) : Effect.void)),
-        )
-        .pipe(
+        const read: ActivityRead = { done: Deferred.makeUnsafe(), revision, started: false };
+        record.reading = read;
+        if (revision === null) {
+          read.started = true;
+          return runRead(input, record, read, restore);
+        }
+        return restore(
+          activityReads.withPermits(1)(
+            Effect.uninterruptibleMask((restoreRead) =>
+              Effect.suspend(() =>
+                claim(read) ? runRead(input, record, read, restoreRead) : Effect.void,
+              ),
+            ),
+          ),
+        ).pipe(
           Effect.onInterrupt(() =>
             Effect.suspend(() => {
               if (!claim(read)) return Effect.void;
@@ -523,9 +533,10 @@ export const make = Effect.gen(function* () {
               return Deferred.interrupt(read.done);
             }),
           ),
-          Effect.andThen(join(read)),
+          Effect.andThen(restore(join(read))),
         );
-    });
+      }),
+    );
 
   /** Decoding can shorten a non-final page; advance by raw rows. */
   const listPullRequestPage = (input: {
