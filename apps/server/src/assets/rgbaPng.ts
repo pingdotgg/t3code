@@ -43,3 +43,11 @@ export async function encodeRgbaPng(width: number, height: number, rgba: Uint8Ar
   }
   return png;
 }
+
+/** True when every pixel matches the first, as in thumbnails saved without a viewport. */
+export function isUniformRgba(rgba: Uint8Array) {
+  for (let index = 4; index < rgba.length; index += 1) {
+    if (rgba[index] !== rgba[index & 3]) return false;
+  }
+  return true;
+}

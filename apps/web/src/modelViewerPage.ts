@@ -20,7 +20,8 @@ export interface ModelViewerPageParams {
 
 /**
  * Reads `#src=<url>&name=<file name>&appearance=<light|dark>`. The fragment keeps the signed URL
- * out of server logs. Only same-origin URLs are accepted, and the format comes from the name.
+ * out of server logs. Only same-origin URLs are accepted, and the format comes from the name; for a
+ * `.blend` file the URL serves its exported geometry.
  */
 export function readModelViewerPageParams(location: {
   readonly hash: string;

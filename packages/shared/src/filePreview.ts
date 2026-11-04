@@ -139,10 +139,15 @@ export function binaryPreviewKind(file: {
 /** `gltf` covers both `.gltf` and binary `.glb` files. */
 export type MeshFormat = "stl" | "obj" | "ply" | "3mf" | "gltf";
 
-/** 3D files the server can show as an image, rendered from their geometry. */
-export type ModelPreviewFormat = MeshFormat;
+/**
+ * 3D files the server can show as an image: the thumbnail saved in the file when its format has
+ * one (Blender, including numbered backups like `.blend1`), otherwise a render of its geometry.
+ */
+export type ModelPreviewFormat = "blend" | MeshFormat;
 
 const MODEL_PREVIEW_MIME_TYPES = new Map<string, ModelPreviewFormat>([
+  ["application/x-blender", "blend"],
+  ["application/x-blend", "blend"],
   ["model/stl", "stl"],
   ["model/x.stl-binary", "stl"],
   ["model/x.stl-ascii", "stl"],
@@ -175,8 +180,14 @@ const MODEL_GENERIC_MIME_TYPES = new Set([
 ]);
 
 export function modelPreviewFormat(path: string): ModelPreviewFormat | null {
+  if (/\.blend\d{0,2}$/i.test(path)) return "blend";
   const extension = /\.[a-z0-9]+$/i.exec(path)?.[0].toLowerCase();
   return extension ? (MODEL_PREVIEW_EXTENSIONS.get(extension) ?? null) : null;
+}
+
+/** Formats whose geometry clients can draw in an interactive 3D view. */
+export function isMeshFormat(format: ModelPreviewFormat): format is MeshFormat {
+  return format !== "blend";
 }
 
 export function modelPreviewFormatOf(file: {

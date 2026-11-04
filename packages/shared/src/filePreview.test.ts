@@ -191,7 +191,12 @@ describe("attachment preview classification", () => {
     ["archive.zip", "application/zip", "archive"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "archive"],
-    ["part.stl", "image/png", "image"],
+    ["scene.blend", "", "model"],
+    ["scene.BLEND", "application/octet-stream", "model"],
+    ["scene.blend1", "", "model"],
+    ["download", "application/x-blender", "model"],
+    ["scene.blend", "image/png", "image"],
+    ["scene.blender", "", "unsupported"],
     ["part.STL", "", "model"],
     ["part.stl", "model/stl", "model"],
     ["download", "application/vnd.ms-pki.stl", "model"],
@@ -221,9 +226,14 @@ describe("attachment preview classification", () => {
     },
   );
   it("keeps 3D files unsupported for clients without rich documents", () => {
+    expect(filePreviewKind({ name: "scene.blend" }, { richDocuments: false })).toBe("unsupported");
     expect(filePreviewKind({ name: "part.stl" }, { richDocuments: false })).toBe("unsupported");
   });
   it.each([
+    ["scene.blend", "blend"],
+    ["nested/scene.blend12", "blend"],
+    ["scene.blend123", null],
+    ["scene.blend.txt", null],
     ["nested/part.STL", "stl"],
     ["part.stl.bak", null],
   ])("detects the 3D format of %s", (path, expected) => {
