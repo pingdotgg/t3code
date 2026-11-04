@@ -1,11 +1,13 @@
+import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { CheckboxMark } from "./ui/checkbox";
 
 /**
- * A project row's icon slot. With `selection`, a checkbox takes the icon's place on the highlighted
- * row and stays while the row is checked. Touch has no hover, so it always shows the checkbox.
+ * A project row's icon slot. With `selection`, a checked row marks its icon with a small check, and
+ * a checkbox takes the icon's place on the highlighted row. Touch has no hover, so it always shows
+ * the checkbox.
  */
 export function ProjectRowLeading(props: {
   readonly icon: ReactNode;
@@ -21,14 +23,16 @@ export function ProjectRowLeading(props: {
     <span className="grid shrink-0">
       <span
         className={cn(
-          "col-start-1 row-start-1 flex",
-          selection &&
-            (selection.checked
-              ? "invisible"
-              : "pointer-coarse:invisible pointer-fine:in-data-highlighted:invisible"),
+          "relative col-start-1 row-start-1 flex",
+          selection && "pointer-coarse:invisible pointer-fine:in-data-highlighted:invisible",
         )}
       >
         {props.icon}
+        {selection?.checked ? (
+          <span className="pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
+            <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
+          </span>
+        ) : null}
       </span>
       {selection ? (
         <button
@@ -36,9 +40,7 @@ export function ProjectRowLeading(props: {
           tabIndex={-1}
           aria-hidden="true"
           className={cn(
-            "col-start-1 row-start-1 flex cursor-pointer items-center justify-center",
-            !selection.checked &&
-              "invisible pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
+            "invisible col-start-1 row-start-1 flex cursor-pointer items-center justify-center pointer-coarse:visible pointer-fine:in-data-highlighted:visible",
           )}
           onPointerDown={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.preventDefault()}
