@@ -923,6 +923,7 @@ describe("asking about a change rather than working on it", () => {
 });
 
 describe("adding a remark to the chat", () => {
+  const pullRequest = { number: 42, url: "https://github.com/pingdotgg/t3code/pull/42" };
   const remark = (id: string, body: string): PullRequestComment => ({
     id,
     kind: "issue-comment",
@@ -935,7 +936,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("reads as the remark's author rather than as the pull request itself", () => {
-    const context = buildPullRequestCommentContext(42, {
+    const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",
       comment: remark("c1", "Why not reuse the existing parser?"),
     });
@@ -947,7 +948,10 @@ describe("adding a remark to the chat", () => {
   it("keeps every added remark when a later hand-off lands", () => {
     const added = ["c1", "c2"].flatMap(
       (id) =>
-        buildPullRequestCommentContext(42, { kind: "comment", comment: remark(id, "why?") }) ?? [],
+        buildPullRequestCommentContext(pullRequest, {
+          kind: "comment",
+          comment: remark(id, "why?"),
+        }) ?? [],
     );
     const handedOff = buildAskAboutPullRequestHandoff({
       number: 42,
@@ -960,14 +964,14 @@ describe("adding a remark to the chat", () => {
     }).reviewComments;
 
     expect(handoffReviewComments(added, handedOff).map((comment) => comment.id)).toEqual([
-      "pr-comment:c1",
-      "pr-comment:c2",
+      "pr-comment:https://github.com/pingdotgg/t3code/pull/42:comment:c1",
+      "pr-comment:https://github.com/pingdotgg/t3code/pull/42:comment:c2",
       "pull-request-context:42",
     ]);
   });
 
   it("drops a bot's bookkeeping so it cannot crowd the remark out of the bound", () => {
-    const context = buildPullRequestCommentContext(42, {
+    const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",
       comment: remark(
         "c1",
@@ -979,7 +983,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("keeps a fence written inside a hidden comment hidden", () => {
-    const context = buildPullRequestCommentContext(42, {
+    const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",
       comment: remark("c1", '<!-- state\n```json\n{"secret": 1}\n```\n-->\nLooks good.'),
     });
@@ -988,7 +992,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("closes a fence written with CRLF line endings", () => {
-    const context = buildPullRequestCommentContext(42, {
+    const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",
       comment: remark("c1", "```ts\r\nconst x = 1;\r\n```\r\n<!-- bot -->\r\nRename x."),
     });
@@ -997,7 +1001,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("reads inline code at the start of a line as prose, not as a fence", () => {
-    const context = buildPullRequestCommentContext(42, {
+    const context = buildPullRequestCommentContext(pullRequest, {
       kind: "comment",
       comment: remark("c1", "```x``` is unused <!-- bot -->\nRemove it."),
     });
@@ -1005,9 +1009,29 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toBe("octocat: ```x``` is unused \nRemove it.");
   });
 
+  it("keeps remarks from two repositories apart when their host ids match", () => {
+    const other = { number: 42, url: "https://github.com/octocat/fork/pull/42" };
+    const ids = [pullRequest, other].map(
+      (target) =>
+        buildPullRequestCommentContext(target, { kind: "comment", comment: remark("c1", "why?") })
+          ?.id,
+    );
+
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("brings nothing for a remark an unfinished comment hides", () => {
+    expect(
+      buildPullRequestCommentContext(pullRequest, {
+        kind: "comment",
+        comment: remark("c1", "<!-- bot state left open"),
+      }),
+    ).toBeNull();
+  });
+
   it("brings nothing for a remark with no words in it", () => {
     expect(
-      buildPullRequestCommentContext(42, {
+      buildPullRequestCommentContext(pullRequest, {
         kind: "comment",
         comment: remark("c1", "<!-- bot bookkeeping -->"),
       }),
@@ -1022,7 +1046,7 @@ describe("adding a remark to the chat", () => {
       ...bookkeeping
     } = remark("tc1", "<!-- bot bookkeeping -->");
     expect(
-      buildPullRequestCommentContext(42, {
+      buildPullRequestCommentContext(pullRequest, {
         kind: "thread",
         thread: {
           id: "t1",

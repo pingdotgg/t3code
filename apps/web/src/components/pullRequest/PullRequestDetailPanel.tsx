@@ -1068,14 +1068,15 @@ export function PullRequestDetailPanel({
           )
         : undefined;
     const comment = buildPullRequestCommentContext(
-      detail.number,
+      detail,
       thread === undefined ? subject : { kind: "thread", thread },
     );
     if (comment === null) return;
     const store = useComposerDraftStore.getState();
-    // One reference to the pull request is enough, whichever action put it there.
+    // One reference to the pull request is enough, whichever action put it there. Matched by
+    // URL, as references are, because two repositories can share a number.
     const hasPullRequest = (store.getComposerDraft(attachTarget)?.reviewComments ?? []).some(
-      (existing) => existing.pullRequest?.number === detail.number,
+      (existing) => existing.pullRequest?.url === detail.url,
     );
     if (!hasPullRequest) {
       store.addReviewComment(

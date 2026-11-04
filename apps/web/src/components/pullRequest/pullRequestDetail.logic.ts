@@ -706,7 +706,9 @@ function readableBody(body: string): string | null {
     if (rest.trim() === "" && line.trim() !== "") continue;
     kept.push(rest);
   }
-  return kept.join("\n").trim();
+  // An unfinished comment can still hide every word visibleBody saw.
+  const readable = kept.join("\n").trim();
+  return readable === "" ? null : readable;
 }
 
 /**
@@ -1143,25 +1145,27 @@ export function buildPullRequestReferenceContext(
 export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
 
 /**
- * A review conversation or remark brought into the chat to talk about, not to fix. The composer
- * is left alone for the reader's own question. Like a composer reference it is the reader's chip:
- * it sits outside the `pull-request-` namespace a hand-off sweeps, so several stack and a later
- * hand-off leaves them in place. Null for a remark, or a whole conversation, with no words in it.
+ * A remark or conversation brought into the chat to talk about, not to fix. Its id sits outside
+ * the `pull-request-` namespace hand-offs sweep, and carries the URL because host ids are only
+ * unique within a repository. Null when there are no words in it.
  */
 export function buildPullRequestCommentContext(
-  pullRequestNumber: number,
+  pullRequest: { readonly number: number; readonly url: string },
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
+  const pullRequestNumber = pullRequest.number;
   if (subject.kind === "thread") {
     const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === "" ? null : { ...context, id: `pr-comment:${subject.thread.id}` };
+    return context.text === ""
+      ? null
+      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
   }
   const comment = subject.comment;
   const body = readableBody(comment.body);
   if (body === null) return null;
   const author = comment.author?.login ?? "ghost";
   return {
-    id: `pr-comment:${comment.id}`,
+    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
     sectionTitle: `PR #${pullRequestNumber} conversation`,
     // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
