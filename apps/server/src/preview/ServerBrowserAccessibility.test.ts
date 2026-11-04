@@ -640,3 +640,40 @@ it("opens no frame session for a capture that outlived its subscription", async 
     await mirror.close();
   }
 });
+
+it("keeps a replacement subscription when an earlier startup fails", async () => {
+  const main = fakeSession(() => [node("1", "RootWebArea", { label: "Current page" })], {
+    id: "main",
+  });
+  const page = fakePage(main, new Map());
+  const opening = Promise.withResolvers<void>();
+  const rejected = Promise.withResolvers<never>();
+  let attempts = 0;
+  page.context = () => ({
+    newCDPSession: async () => {
+      if (attempts++ === 0) {
+        opening.resolve();
+        return rejected.promise;
+      }
+      return main;
+    },
+  });
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+  const oldOffer = vi.fn(() => true);
+  const currentOffer = vi.fn(() => true);
+  try {
+    const first = mirror.subscribe("viewer", oldOffer);
+    const failed = expect(first).rejects.toThrow("Old startup failed");
+    await opening.promise;
+    await mirror.unsubscribe("viewer");
+    await mirror.subscribe("viewer", currentOffer);
+    expect(currentOffer).toHaveBeenCalledOnce();
+    rejected.reject(new Error("Old startup failed"));
+    await failed;
+    expect(mirror.active).toBe(true);
+    expect(oldOffer).not.toHaveBeenCalled();
+    expect(main.detach).not.toHaveBeenCalled();
+  } finally {
+    await mirror.close();
+  }
+});

@@ -388,15 +388,16 @@ export class ServerBrowserAccessibility {
 
   async subscribe(id: string, offer: Subscriber["offer"]) {
     if (this.closed) return;
-    this.subscribers.set(id, { offer, pending: true });
+    const subscriber: Subscriber = { offer, pending: true };
+    this.subscribers.set(id, subscriber);
     this.ready ??= this.start();
     try {
       await this.ready;
     } catch (cause) {
-      await this.unsubscribe(id);
+      if (this.subscribers.get(id) === subscriber) await this.unsubscribe(id);
       throw cause;
     }
-    if (!this.subscribers.has(id)) return;
+    if (this.subscribers.get(id) !== subscriber) return;
     if (this.latest) {
       this.deliver();
       return;
@@ -404,7 +405,7 @@ export class ServerBrowserAccessibility {
     try {
       await this.refresh();
     } catch (cause) {
-      await this.unsubscribe(id);
+      if (this.subscribers.get(id) === subscriber) await this.unsubscribe(id);
       throw cause;
     }
   }

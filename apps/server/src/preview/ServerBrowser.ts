@@ -2680,6 +2680,7 @@ const make = Effect.gen(function* () {
     // starts from a still unless a live frame beat it.
     if (!screencastStarted) yield* Effect.promise(pushStill);
     let accessible = false;
+    let accessibilityRequest = 0;
     yield* Effect.addFinalizer(() =>
       Effect.promise(() => tab.accessibility.unsubscribe(viewer.id)),
     );
@@ -2701,6 +2702,7 @@ const make = Effect.gen(function* () {
         Effect.promise(async () => {
           if (enabled === accessible) return;
           accessible = enabled;
+          const request = ++accessibilityRequest;
           if (!enabled) {
             viewer.push({ _tag: "accessibility", document: null });
             await tab.accessibility.unsubscribe(viewer.id);
@@ -2709,6 +2711,7 @@ const make = Effect.gen(function* () {
           await tab.accessibility
             .subscribe(viewer.id, (document) => viewer.offer({ _tag: "accessibility", document }))
             .catch(() => {
+              if (request !== accessibilityRequest) return;
               accessible = false;
               viewer.push({
                 _tag: "accessibilityNotice",

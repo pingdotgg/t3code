@@ -192,6 +192,8 @@ export function ServerBrowserSurface(props: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- PDF transitions release the semantic stream so returning to HTML starts with a fresh document.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Disabling the external stream does not emit a reset when its first capture failed.
+    if (pdfUrl !== null) setAccessibleNotice(null);
     clientRef.current?.accessibility(accessibleView && pdfUrl === null);
   }, [accessibleView, pdfUrl]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);

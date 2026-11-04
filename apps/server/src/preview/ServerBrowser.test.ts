@@ -38,6 +38,7 @@ import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import { ServerBrowserAccessibility } from "./ServerBrowserAccessibility.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
@@ -2585,6 +2586,34 @@ it.live("failed session and browser launches release capacity, as does closing a
         input: {},
       });
       expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a superseded accessibility failure leaves the newer viewer request enabled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+      const started = Promise.withResolvers<void>();
+      const rejected = Promise.withResolvers<never>();
+      using subscribe = vi
+        .spyOn(ServerBrowserAccessibility.prototype, "subscribe")
+        .mockImplementationOnce(async () => {
+          started.resolve();
+          return rejected.promise;
+        })
+        .mockResolvedValue(undefined);
+      const first = yield* Effect.forkChild(operator.accessibility(true));
+      yield* Effect.promise(() => started.promise);
+      yield* operator.accessibility(false);
+      yield* operator.accessibility(true);
+      rejected.reject(new Error("Old startup failed"));
+      yield* Fiber.join(first);
+      const output = yield* Queue.takeAll(operator.output);
+      expect(output.filter((message) => message._tag === "accessibilityNotice")).toEqual([]);
+      yield* operator.accessibility(true);
+      expect(subscribe).toHaveBeenCalledTimes(2);
     }),
   ).pipe(Effect.provide(layer)),
 );

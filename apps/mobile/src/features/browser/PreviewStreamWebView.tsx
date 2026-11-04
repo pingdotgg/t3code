@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
+  useCallback,
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
@@ -268,8 +269,15 @@ function PreviewStreamDocumentView({
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
-  const showAccessible = (next: boolean) =>
-    webView.current?.injectJavaScript(`window.T3PreviewStream?.accessibility(${next}); true;`);
+  const showAccessible = useCallback(
+    (next: boolean) =>
+      webView.current?.injectJavaScript(`window.T3PreviewStream?.accessibility(${next}); true;`),
+    [],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- PDF transitions release the WebView's semantic stream and cached document without changing the user's preference.
+  useLayoutEffect(() => {
+    showAccessible(accessible && pdfUri == null);
+  }, [accessible, pdfUri, showAccessible]);
   // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
   // this view and nulls its WebView ref, so the text can never type into another tab.
   const paste = () =>
@@ -345,7 +353,6 @@ function PreviewStreamDocumentView({
               disabled={pdfUri != null && !accessible}
               onPress={() => {
                 onAccessibleChange(!accessible);
-                showAccessible(!accessible);
               }}
             />
             {control?.canOperate ? (
@@ -426,7 +433,7 @@ function PreviewStreamDocumentView({
                 onPictureInPicture?.(message, message.detail);
                 return;
               case "status":
-                if (message.status === "connecting" && accessible) showAccessible(true);
+                if (message.status === "connecting") showAccessible(accessible && pdfUri == null);
                 clearBootstrapTimer();
                 if (message.status === "error") {
                   fail(message.detail ?? "Browser stream failed.");
