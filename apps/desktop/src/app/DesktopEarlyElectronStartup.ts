@@ -81,11 +81,63 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
-const isWaylandPlatform = (env: NodeJS.ProcessEnv, ozonePlatform: string | null): boolean =>
-  (ozonePlatform ?? trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland";
+const isWaylandPlatform = (
+  env: NodeJS.ProcessEnv,
+  ozonePlatform: string | null,
+  hasLiveWaylandSocket: () => boolean,
+): boolean => {
+  const explicit = (ozonePlatform ?? "").toLowerCase();
+  if (explicit === "wayland") return true;
+  if (explicit) return false;
+  if ((trimNonEmpty(env.XDG_SESSION_TYPE) ?? "").toLowerCase() === "wayland") return true;
+  if (trimNonEmpty(env.WAYLAND_DISPLAY) !== null) return true;
+  return hasLiveWaylandSocket();
+};
+
+const WAYLAND_SOCKET_NAME = /^wayland-\d+$/;
+const WAYLAND_SOCKET_LINE = /\s(\/.*)$/;
+
+const hasLiveWaylandDisplay = (input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly readdirSync: (path: string) => ReadonlyArray<{ name: string; isSocket: () => boolean }>;
+  readonly readUnixSockets: () => string;
+  readonly joinPath: (first: string, second: string) => string;
+}): boolean => {
+  const runtimeDirectory = trimNonEmpty(input.env.XDG_RUNTIME_DIR);
+  if (runtimeDirectory === null) return false;
+  let liveSockets: ReadonlySet<string>;
+  let socketNames: ReadonlyArray<string>;
+  try {
+    liveSockets = new Set(
+      input
+        .readUnixSockets()
+        .split("\n")
+        .flatMap((line) => line.match(WAYLAND_SOCKET_LINE)?.[1] ?? []),
+    );
+    socketNames = input
+      .readdirSync(runtimeDirectory)
+      .filter((entry) => WAYLAND_SOCKET_NAME.test(entry.name) && entry.isSocket())
+      .map((entry) => entry.name);
+  } catch {
+    return false;
+  }
+  return socketNames.some((name) => liveSockets.has(input.joinPath(runtimeDirectory, name)));
+};
 
 const isNvidiaPresent = (existsSync: (path: string) => boolean): boolean =>
   existsSync("/dev/nvidiactl") || existsSync("/dev/nvidia0");
+
+export const makeHasLiveWaylandSocket =
+  (input: {
+    readonly env: NodeJS.ProcessEnv;
+    readonly readdirSync: (
+      path: string,
+    ) => ReadonlyArray<{ name: string; isSocket: () => boolean }>;
+    readonly readUnixSockets: () => string;
+    readonly joinPath: (first: string, second: string) => string;
+  }): (() => boolean) =>
+  () =>
+    hasLiveWaylandDisplay(input);
 
 export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly env: NodeJS.ProcessEnv;
@@ -95,8 +147,12 @@ export function shouldDisableGpuOnNvidiaWayland(input: {
   readonly existsSync: (path: string) => boolean;
   readonly readFileString: (path: string) => string;
   readonly hasSwitch: (name: string) => boolean;
+  readonly hasLiveWaylandSocket?: () => boolean;
 }): boolean {
-  if (!isWaylandPlatform(input.env, input.ozonePlatform)) return false;
+  if (
+    !isWaylandPlatform(input.env, input.ozonePlatform, input.hasLiveWaylandSocket ?? (() => false))
+  )
+    return false;
   if (input.hasSwitch("disable-gpu") || input.hasSwitch("enable-gpu")) return false;
   const settingsPath = resolveEarlyDesktopSettingsPath({
     env: input.env,

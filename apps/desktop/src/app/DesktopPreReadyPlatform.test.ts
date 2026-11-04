@@ -17,6 +17,7 @@ const {
   execFileSyncMock,
   readFileSyncMock,
   existsSyncMock,
+  readdirSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   existsSyncMock: vi.fn(),
+  readdirSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -54,6 +56,7 @@ vi.mock("node:fs", () => ({
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
   existsSync: existsSyncMock,
+  readdirSync: readdirSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -75,6 +78,7 @@ describe("DesktopPreReadyPlatform", () => {
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
     existsSyncMock.mockReset().mockReturnValue(false);
+    readdirSyncMock.mockReset().mockReturnValue([]);
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {

@@ -236,6 +236,32 @@ describe("Linux device scale persistence failures", () => {
       );
     });
 
+    it("detects Wayland via WAYLAND_DISPLAY when session variables are absent", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({ ...base, env: { WAYLAND_DISPLAY: "wayland-0" } }),
+      );
+    });
+
+    it("detects Wayland via live runtime socket when session variables are absent", () => {
+      assert.isTrue(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: {},
+          hasLiveWaylandSocket: () => true,
+        }),
+      );
+    });
+
+    it("stays false when no Wayland signal is present at all", () => {
+      assert.isFalse(
+        shouldDisableGpuOnNvidiaWayland({
+          ...base,
+          env: {},
+          hasLiveWaylandSocket: () => false,
+        }),
+      );
+    });
+
     it("is false without NVIDIA devices", () => {
       assert.isFalse(
         shouldDisableGpuOnNvidiaWayland({
