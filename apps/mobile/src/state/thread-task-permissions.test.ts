@@ -433,6 +433,16 @@ describe("mobile task permissions", () => {
     expect(state.draft.text).toBe("Keep my draft");
   });
 
+  it("sends a goal command with the thread's model, not the draft's", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft.modelSelection = { instanceId: "claudeAgent", model: "claude-sonnet-5-5" };
+    const composer = useThreadComposerState();
+    await composer.onSendCommand("/goal resume");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ modelSelection: state.thread.modelSelection }),
+    );
+  });
+
   it("rechecks the operate grant before queueing a command", async () => {
     state.grantedEnvironments.add("secondary");
     const composer = useThreadComposerState();

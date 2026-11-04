@@ -742,13 +742,13 @@ function ThreadDetailBody(
   const runGoalCommand = async (command: string) => {
     if (goalCommandPending || !props.canOperateThread) return;
     setGoalCommandPending(true);
+    // No `finally`: React Compiler cannot lower it.
     try {
       await props.onSendCommand(command);
     } catch (error) {
       Dialog.alert("Could not update goal", error instanceof Error ? error.message : "Try again.");
-    } finally {
-      setGoalCommandPending(false);
     }
+    setGoalCommandPending(false);
   };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,

@@ -830,7 +830,8 @@ export function useThreadComposerState(input: {
     const thread = selectedThreadShell;
     const threadKey = scopedThreadKey(thread.environmentId, thread.id);
     const draft = getComposerDraftSnapshot(threadKey);
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    // Goal commands belong to the provider that owns the goal, not a model picked in the draft.
+    const modelSelection = thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (
       selectedEnvironmentRuntime?.connectionState === "connected" &&
