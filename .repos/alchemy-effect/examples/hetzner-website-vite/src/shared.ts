@@ -1,5 +1,5 @@
-import * as Hetzner from "alchemy/Hetzner";
-import * as Neon from "alchemy/Neon";
+import * as Hetzner from "@alchemy.run/hetzner";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 
 export const API_PORT = 3001;
