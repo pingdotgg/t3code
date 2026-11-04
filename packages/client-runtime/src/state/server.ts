@@ -1399,6 +1399,7 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input) =>
         requestGuarded(WS_METHODS.serverRefreshProviders, {
           ...input,
+          usage: input.usage ?? false,
           workspaceSnapshotsOnDemand: true,
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
         }),

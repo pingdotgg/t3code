@@ -1,4 +1,7 @@
-import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
+import {
+  usageResponseCheckedAt,
+  UsageAccountIdentity,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -78,6 +81,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
+    let usageIdentity: string | undefined;
     const apiKey = environment.CURSOR_API_KEY?.trim();
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
     // An API key can name a different account from the stored login, so read the key's own.
@@ -89,6 +93,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           message: "Cursor usage for an API key requires the default Cursor endpoint.",
         });
       }
+      usageIdentity = `cursor-api-key:${apiKey}`;
       token = yield* exchangeCursorApiKey(apiKey);
     } else if (!token && credentialStore === "memory") {
       return makeUnavailableUsageLimits({
@@ -134,16 +139,20 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
-    );
+    const response = yield* client
+      .execute(
+        HttpClientRequest.post(
+          `${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+        ).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.setHeaders({
+            "connect-protocol-version": "1",
+            "x-cursor-client-type": "cli",
+          }),
+          HttpClientRequest.bodyJsonUnsafe({}),
+        ),
+      )
+      .pipe(Effect.provideService(UsageAccountIdentity, usageIdentity));
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );

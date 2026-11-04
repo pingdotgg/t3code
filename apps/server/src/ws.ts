@@ -2418,6 +2418,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
+            // Older clients omit usage and expect a quota refresh; current clients opt out for health.
+            const usage = input.usage !== false;
             if (input.refreshModels) {
               yield* providerRegistry.invalidateModelCaches({
                 instanceId: input.instanceId,
@@ -2435,7 +2437,7 @@ export const layerWsRpc = (
               return { providers: yield* providerRegistry.getProviders };
             }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
-            if (input.usage === true && input.instanceId === undefined) {
+            if (usage && input.instanceId === undefined) {
               yield* usageLimitSources.refresh.pipe(
                 Effect.provideService(UsageProviderFilter, input.usageProviders),
               );
@@ -2449,12 +2451,12 @@ export const layerWsRpc = (
                   })
                 : input.reloadSecrets === true
                   ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                  : input.usage === true
+                  : usage
                     ? providerRegistry.refreshUsage(input.instanceId, input.usageProviders)
                     : input.instanceId !== undefined
                       ? providerRegistry.refreshInstance(input.instanceId)
                       : providerRegistry.refresh()
-            ).pipe(Effect.provideService(UsagePolling, input.usage === true));
+            ).pipe(Effect.provideService(UsagePolling, usage));
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {
