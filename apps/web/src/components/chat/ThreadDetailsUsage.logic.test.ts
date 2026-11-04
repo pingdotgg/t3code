@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const now = Date.parse("2026-10-30T12:00:00.000Z");
 const checkedAt = "2026-10-30T11:59:00.000Z";
@@ -111,11 +111,11 @@ function shown(
   if (resolved?.kind !== "hub") return resolved;
   return {
     kind: resolved.kind,
-    hubs: resolved.hubLabels,
     rows: resolved.windows.map((window) => ({
       label: window.label,
       left: window.remainingPercent,
       accounts: window.members.length,
+      from: poolSources(window),
     })),
   };
 }
@@ -143,8 +143,7 @@ describe("resolveThreadDetailsLimits", () => {
     {
       name: "one hub account",
       sources: [hub("Hub", [{ id: "a.json", email: "a@example.com", limits: limitsAt(19) }])],
-      hubs: ["Hub"],
-      rows: [{ label: "Session", left: 81, accounts: 1 }],
+      rows: [{ label: "Session", left: 81, accounts: 1, from: ["Hub"] }],
     },
     {
       name: "several accounts, pooled like Usage → Limits",
@@ -154,8 +153,7 @@ describe("resolveThreadDetailsLimits", () => {
           { id: "b.json", email: "b@example.com", limits: limitsAt(60) },
         ]),
       ],
-      hubs: ["Hub"],
-      rows: [{ label: "Session", left: 60, accounts: 2 }],
+      rows: [{ label: "Session", left: 60, accounts: 2, from: ["Hub"] }],
     },
     {
       name: "one login reported by two hubs, counted once at its freshest reading",
@@ -169,8 +167,7 @@ describe("resolveThreadDetailsLimits", () => {
           },
         ]),
       ],
-      hubs: ["Old", "New"],
-      rows: [{ label: "Session", left: 70, accounts: 1 }],
+      rows: [{ label: "Session", left: 70, accounts: 1, from: ["Old"] }],
     },
     {
       name: "accounts across hubs, skipping a hub that failed to read",
@@ -179,8 +176,7 @@ describe("resolveThreadDetailsLimits", () => {
         hub("Work", [{ id: "b.json", email: "b@example.com", limits: limitsAt(40) }]),
         hub("Down", [], "The hub answered with HTTP 404."),
       ],
-      hubs: ["Home", "Work"],
-      rows: [{ label: "Session", left: 70, accounts: 2 }],
+      rows: [{ label: "Session", left: 70, accounts: 2, from: ["Home", "Work"] }],
     },
     {
       name: "only this driver's readable accounts",
@@ -191,25 +187,22 @@ describe("resolveThreadDetailsLimits", () => {
           { id: "d.json", email: "d@example.com", limits: unsupported },
         ]),
       ],
-      hubs: ["Hub"],
-      rows: [{ label: "Session", left: 50, accounts: 1 }],
+      rows: [{ label: "Session", left: 50, accounts: 1, from: ["Hub"] }],
     },
     {
       name: "a login signed in natively and on a hub, counted once at its freshest reading",
       sources: [hub("Hub", [{ id: "a.json", email: "a@example.com", limits: limitsAt(90) }])],
       natives: [signedIn("claude-a", "a@example.com", limitsAt(30, "2026-10-30T11:59:30.000Z"))],
-      hubs: ["Hub"],
-      rows: [{ label: "Session", left: 70, accounts: 1 }],
+      rows: [{ label: "Session", left: 70, accounts: 1, from: ["Signed-in accounts"] }],
     },
     {
       name: "a signed-in account no hub holds, alongside the hub's",
       sources: [hub("Hub", [{ id: "a.json", email: "a@example.com", limits: limitsAt(20) }])],
       natives: [signedIn("claude-b", "b@example.com", limitsAt(60))],
-      hubs: ["Hub"],
-      rows: [{ label: "Session", left: 60, accounts: 2 }],
+      rows: [{ label: "Session", left: 60, accounts: 2, from: ["Hub", "Signed-in accounts"] }],
     },
-  ])("pools $name when the instance reads no limits", ({ sources, natives, hubs, rows }) => {
-    expect(shown(unsupported, sources, natives)).toEqual({ kind: "hub", hubs, rows });
+  ])("pools $name when the instance reads no limits", ({ sources, natives, rows }) => {
+    expect(shown(unsupported, sources, natives)).toEqual({ kind: "hub", rows });
   });
 
   it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {

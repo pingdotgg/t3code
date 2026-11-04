@@ -16,11 +16,7 @@ import {
 
 export type ThreadDetailsLimits =
   | { readonly kind: "instance"; readonly limits: ServerProviderUsageLimits }
-  | {
-      readonly kind: "hub";
-      readonly windows: readonly LimitPoolWindow[];
-      readonly hubLabels: readonly string[];
-    };
+  | { readonly kind: "hub"; readonly windows: readonly LimitPoolWindow[] };
 
 // collectLimitAccounts keys its input by environment; the card reads one, so any id serves.
 const CARD_ENVIRONMENT = EnvironmentId.make("thread-details");
@@ -28,7 +24,6 @@ const CARD_ENVIRONMENT = EnvironmentId.make("thread-details");
 /**
  * The limits the thread details card shows for one provider instance: its own, or, when it reads
  * none (as when it sends requests through a CLIProxyAPI hub), the pool of its driver's accounts.
- * The hub picks an account per request, so a thread spends the pool rather than any one account.
  */
 export function resolveThreadDetailsLimits(
   providerInstanceId: ProviderInstanceId | null,
@@ -76,13 +71,20 @@ function hubPool(
     (account) => account.driver === driver,
   );
   const [pool] = collectLimitPools(accounts, now);
-  const hubLabels = sources
-    .filter((source) =>
-      source.accounts.some(
-        (account) => account.driver === driver && limitsNotice(account.usageLimits) === null,
-      ),
-    )
-    .map((source) => source.label);
-  if (!pool || hubLabels.length === 0) return null;
-  return { kind: "hub", windows: displayLimitWindows(pool), hubLabels };
+  const hubReadsDriver = sources.some((source) =>
+    source.accounts.some(
+      (account) => account.driver === driver && limitsNotice(account.usageLimits) === null,
+    ),
+  );
+  if (!pool || !hubReadsDriver) return null;
+  return { kind: "hub", windows: displayLimitWindows(pool) };
+}
+
+/** Where a pooled window's readings come from: the hubs holding its hub-only accounts, then signed-in accounts. */
+export function poolSources(window: LimitPoolWindow): string[] {
+  const hubs = window.members.flatMap(({ account }) =>
+    account.environments.length === 0 && account.sourceLabel ? [account.sourceLabel] : [],
+  );
+  const signedIn = window.members.some(({ account }) => account.environments.length > 0);
+  return [...new Set(hubs), ...(signedIn ? ["Signed-in accounts"] : [])];
 }

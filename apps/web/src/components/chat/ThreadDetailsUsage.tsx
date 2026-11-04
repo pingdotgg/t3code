@@ -25,7 +25,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -49,7 +49,7 @@ function limitTone(left: number): UsageTone {
 }
 
 /**
- * The selected provider's limit windows, or its hub accounts' pooled windows when it reads none.
+ * The selected provider's limit windows, or its driver's pooled accounts when it reads none.
  * Each row reads as room left.
  */
 export function ThreadDetailsUsage({
@@ -70,9 +70,7 @@ export function ThreadDetailsUsage({
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         {resolved.kind === "hub" ? (
-          resolved.windows.map((window) => (
-            <PoolRow key={window.id} window={window} hubLabels={resolved.hubLabels} now={now} />
-          ))
+          resolved.windows.map((window) => <PoolRow key={window.id} window={window} now={now} />)
         ) : (
           <InstanceRows limits={resolved.limits} now={now} />
         )}
@@ -195,16 +193,9 @@ function LimitRow({
   );
 }
 
-function PoolRow({
-  window,
-  hubLabels,
-  now,
-}: {
-  readonly window: LimitPoolWindow;
-  readonly hubLabels: readonly string[];
-  readonly now: number;
-}) {
+function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly now: number }) {
   const left = window.remainingPercent;
+  const from = poolSources(window);
   const accounts = window.members.length;
   return (
     <UsageRow
@@ -223,7 +214,9 @@ function PoolRow({
           {window.pace ? (
             <span className="text-muted-foreground">{PACE_LABEL[window.pace]}</span>
           ) : null}
-          <span className="text-muted-foreground">From {hubLabels.join(", ")}</span>
+          {from.length > 0 ? (
+            <span className="text-muted-foreground">From {from.join(", ")}</span>
+          ) : null}
         </>
       }
     />
