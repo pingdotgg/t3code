@@ -197,63 +197,81 @@ describe("readDeviceDetail", () => {
     }),
   );
 
+  const list = (...items: Array<string>) =>
+    `(\n${items.map((item) => `    "${item}",\n`).join("")})\n`;
+  const inputModes: Record<string, unknown> = {
+    en: {
+      UIKeyboardDefaultLanguageInputModes: { en: ["en_US"], en_GB: ["en_GB"] },
+      UIKeyboardSupportedInputModes: {
+        en_US: { HWLayouts: ["US"] },
+        en_GB: { HWLayouts: ["British"] },
+      },
+    },
+    fr: {
+      UIKeyboardDefaultLanguageInputModes: { fr: ["fr_FR"] },
+      UIKeyboardSupportedInputModes: { fr_FR: { Hardware: { Layout: "French" } } },
+    },
+    zh: {
+      UIKeyboardDefaultLanguageInputModes: { zh_Hans: ["zh_Hans-Pinyin@sw=Pinyin-Simplified"] },
+      UIKeyboardSupportedInputModes: { "zh_Hans-Pinyin": { HWLayouts: ["US"] } },
+    },
+  };
+
   it.effect.each([
+    { name: "a French language with no keyboard list", languages: list("fr-FR"), us: false },
+    { name: "an English language in France", languages: list("en-FR", "fr-FR"), us: true },
+    { name: "a British English language", languages: list("en-GB"), us: false },
+    { name: "a Chinese language", languages: list("zh-Hans-CN"), us: true },
     {
-      keyboards: '(\n    "ru_RU@sw=Russian;hw=Russian",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
-      us: false,
-    },
-    {
-      keyboards: '(\n    "fr_FR@sw=AZERTY;hw=Automatic",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
-      us: false,
-    },
-    {
-      keyboards: '(\n    "en_US@sw=QWERTY;hw=Automatic",\n    "fr_FR@sw=AZERTY;hw=Automatic"\n)\n',
+      name: "a keyboard list that iOS ignores",
+      languages: list("en-FR"),
+      keyboards: list("fr_FR@sw=AZERTY;hw=Automatic"),
       us: true,
     },
-    { keyboards: '(\n    "fr_FR@sw=AZERTY;hw=US"\n)\n', us: true },
-  ])("reads whether the first iOS keyboard is US from $keyboards", ({ keyboards, us }) =>
-    Effect.gen(function* () {
-      const { ready } = makeReady((call) =>
-        call.args.join(" ") === "simctl spawn SIM-1 defaults read -g AppleKeyboards"
-          ? { stdout: keyboards }
-          : { code: 1 },
-      );
-      const detail = yield* readDeviceDetail(ready, "ios", udid);
-      expect(detail.settings.usKeyboardLayout).toBe(us);
-    }),
-  );
-
-  it.effect("reads the current iOS keyboard before the first keyboard in the list", () =>
+    {
+      name: "a French keyboard first in the list",
+      languages: list("en-FR"),
+      expanded: true,
+      keyboards: list("fr_FR@sw=AZERTY;hw=Automatic", "en_US@sw=QWERTY;hw=Automatic"),
+      us: false,
+    },
+    {
+      name: "a French keyboard with a US hardware layout",
+      languages: list("fr-FR"),
+      expanded: true,
+      keyboards: list("fr_FR@sw=AZERTY;hw=US"),
+      us: true,
+    },
+    {
+      name: "a current keyboard before the first keyboard in the list",
+      languages: list("ru-RU"),
+      expanded: true,
+      keyboards: list("ru_RU@sw=Russian;hw=Russian"),
+      current: list("en_US@sw=QWERTY;hw=Automatic", "ru_RU@sw=Russian;hw=Russian"),
+      us: true,
+    },
+  ])("reads whether the iOS hardware keyboard is US for $name", (simulator) =>
     Effect.gen(function* () {
       const { ready } = makeReady((call) => {
         const key = call.args.join(" ");
-        if (key.endsWith("-g AppleKeyboards")) {
-          return {
-            stdout:
-              '(\n    "ru_RU@sw=Russian;hw=Russian",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
-          };
+        if (key.endsWith("-g AppleKeyboardsExpanded") && simulator.expanded)
+          return { stdout: "1\n" };
+        if (key.endsWith("-g AppleKeyboards") && simulator.keyboards) {
+          return { stdout: simulator.keyboards };
         }
-        if (key.endsWith("com.apple.keyboard.preferences KeyboardsCurrentAndNext")) {
-          return {
-            stdout:
-              '(\n    "en_US@sw=QWERTY;hw=Automatic",\n    "ru_RU@sw=Russian;hw=Russian"\n)\n',
-          };
+        if (key.endsWith("KeyboardsCurrentAndNext") && simulator.current) {
+          return { stdout: simulator.current };
         }
+        if (key.endsWith("-g AppleLanguages")) return { stdout: simulator.languages };
+        if (key === "simctl getenv SIM-1 SIMULATOR_ROOT") return { stdout: "/runtime\n" };
+        const language =
+          call.command === "plutil" ? call.args.at(-1)?.match(/InputMode_(\w+)/)?.[1] : undefined;
+        if (language && inputModes[language])
+          return { stdout: JSON.stringify(inputModes[language]) };
         return { code: 1 };
       });
       const detail = yield* readDeviceDetail(ready, "ios", udid);
-      expect(detail.settings.usKeyboardLayout).toBe(true);
-    }),
-  );
-
-  it.effect("reads a simulator with no keyboard list as US", () =>
-    Effect.gen(function* () {
-      const { ready } = makeReady(() => ({
-        code: 1,
-        stderr: "Could not find key 'AppleKeyboards' in domain 'kCFPreferencesAnyApplication'.",
-      }));
-      const detail = yield* readDeviceDetail(ready, "ios", udid);
-      expect(detail.settings).toEqual({ usKeyboardLayout: true });
+      expect(detail.settings.usKeyboardLayout).toBe(simulator.us);
     }),
   );
 
