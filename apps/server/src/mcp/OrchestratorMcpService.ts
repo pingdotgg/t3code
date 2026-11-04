@@ -2019,6 +2019,14 @@ const make = Effect.gen(function* () {
       target,
       providers: yield* loadProviders,
     });
+    // Launch refuses a provider the project disables, so every run would fail.
+    const instanceId = resolved.modelSelection.instanceId;
+    if (!(yield* threadManagement.isProviderInstanceEnabledForProject({ projectId, instanceId }))) {
+      return yield* failure(
+        "provider_unavailable",
+        `Provider instance ${instanceId} is not enabled for this project.`,
+      );
+    }
     return resolved.modelSelection;
   });
 

@@ -3024,6 +3024,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     const service = (
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
       stored: ScheduledTask = existing,
+      enabledForProject = true,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3040,6 +3041,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             NodeCrypto.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
+              isProviderInstanceEnabledForProject: () => Effect.succeed(enabledForProject),
             }),
             ServerSettings.layerTest(),
             providerRegistryLayer([codex]),
@@ -3183,6 +3185,23 @@ describe("OrchestratorMcpService provider resolution", () => {
           bound,
         );
         assert.deepEqual(saved, [{ instanceId: codexInstanceId, model: "gpt-5-mini" }]);
+      }),
+    );
+
+    it.effect("refuses a provider the project has disabled, which every run would fail on", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved, existing, false)),
+        );
+        const error = yield* mcp
+          .updateScheduledTask(client, {
+            scheduledTaskId: existing.id,
+            target: { providerInstanceId: codexInstanceId },
+          })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "provider_unavailable");
+        assert.deepEqual(yield* Ref.get(saved), []);
       }),
     );
 
