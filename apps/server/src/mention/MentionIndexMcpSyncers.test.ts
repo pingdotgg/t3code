@@ -43,6 +43,9 @@ url = "https://mcp.figma.com/mcp"
 bearer_token_env_var = "FIGMA_TOKEN"
 http_headers = { "X-Region" = "us" }
 
+[profiles.default]
+command = "should-not-leak"
+
 [mcp_servers.local-jira]
 command = "npx"
 args = ["-y", "jira-mcp"]

@@ -83,11 +83,7 @@ const make = Effect.gen(function* () {
     const scopeKey = mentionIndexScopeKey("thread", projectId);
     const meta = yield* index.scopeMeta(scopeKey);
     const now = yield* Clock.currentTimeMillis;
-    const stale =
-      meta === null ||
-      meta.status === "empty" ||
-      meta.status === "error" ||
-      now - meta.syncedAt > STALE_AFTER_MS;
+    const stale = meta === null || now - meta.syncedAt > STALE_AFTER_MS;
     if (!stale) return;
 
     const key = String(projectId);

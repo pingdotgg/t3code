@@ -258,10 +258,12 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
     current = null;
   };
   for (const line of raw.split(/\r?\n/u)) {
-    const section = line.match(/^\[mcp_servers\.([^\]]+)\]\s*$/u);
+    const section = line.match(/^\[([^\]]+)\]\s*$/u);
     if (section) {
       flush();
-      current = { name: section[1]!.replace(/^"|"$/g, ""), fields: {} };
+      const mcpSection = /^mcp_servers\.(.+)$/u.exec(section[1]!);
+      current =
+        mcpSection === null ? null : { name: mcpSection[1]!.replace(/^"|"$/g, ""), fields: {} };
       continue;
     }
     if (current === null) continue;

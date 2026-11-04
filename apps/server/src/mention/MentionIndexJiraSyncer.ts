@@ -80,6 +80,10 @@ const make = Effect.gen(function* () {
             );
           }
 
+          if (asRecord(payload)?.isError === true) {
+            return yield* Effect.fail(new MentionIndexMcpError("Jira MCP tool returned isError"));
+          }
+
           const now = yield* Clock.currentTimeMillis;
           return extractJiraRows(payload, now).slice(0, MAX_ROWS);
         }),
@@ -109,7 +113,7 @@ const make = Effect.gen(function* () {
     const scopeKey = mentionIndexScopeKey("jira", projectId);
     const meta = yield* index.scopeMeta(scopeKey);
     const now = yield* Clock.currentTimeMillis;
-    const stale = meta === null || meta.status === "error" || now - meta.syncedAt > STALE_AFTER_MS;
+    const stale = meta === null || now - meta.syncedAt > STALE_AFTER_MS;
     if (!stale) return;
 
     const key = String(projectId);
