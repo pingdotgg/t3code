@@ -783,7 +783,11 @@ it.effect("builds the secrets cases, each citing a finding and grading secret ha
     for (const testCase of cases) {
       const sample = makeSample(testCase, base);
       yield* withDevices(sample);
-      buildMessages(sample);
+      assert.include(
+        buildMessages(sample).at(-1)?.content.at(-1)?.text,
+        testCase.prompt,
+        testCase.id,
+      );
       assert.match(String(testCase.source?.finding), /^secret-field-2026-10 /, testCase.id);
       assert.isTrue(testCase.expect.secret?.chatAsk, testCase.id);
       // Consume credit needs declared consumers; every control checks prose over-correction.
