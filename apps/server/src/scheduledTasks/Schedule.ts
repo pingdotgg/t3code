@@ -184,5 +184,12 @@ export function isMissedScheduledRun(
   const start = parseTimeOfDay(schedule.window.start);
   const end = parseTimeOfDay(schedule.window.end);
   if (start === null || end === null) return true;
-  return !isInsideWindow(now, schedule.window.weekdays, start, end);
+  if (!isInsideWindow(now, schedule.window.weekdays, start, end)) return true;
+  const occurrenceStart = DateTime.setParts(now, {
+    hour: start.hour,
+    minute: start.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  return DateTime.toEpochMillis(dueAt) < DateTime.toEpochMillis(occurrenceStart);
 }

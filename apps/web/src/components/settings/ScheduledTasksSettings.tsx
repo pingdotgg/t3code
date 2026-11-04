@@ -2397,7 +2397,8 @@ function ScheduledTaskEditorForm({
                       id="scheduled-task-interval-window-description"
                       className="text-sm text-muted-foreground"
                     >
-                      <T>Run only between these hours on the days below. Off means all day, every day.</T>
+                      <T>Run only between these hours on the days below. Off means all day, every day.
+                      Time uses the environment's time zone, which may differ from your phone's.</T>
                     </p>
                   </div>
                   <Switch
