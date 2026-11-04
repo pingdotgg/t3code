@@ -142,11 +142,20 @@ interface AzureDevOpsActivitySubject {
   readonly updatedAt: string | null;
 }
 
+interface ActivityRead {
+  readonly done: Deferred.Deferred<AzureDevOpsThreads, AzureDevOpsPullRequestCliError>;
+  /** The revision this read dates; null when the conversation itself was asked for. */
+  revision: string | null;
+  /** False while a background read waits for its turn. */
+  started: boolean;
+}
+
 interface ActivityRecord {
   at: string | null;
   readAt: number | null;
+  /** The revision the last finished read dated. */
   revision: string | null;
-  reading: Deferred.Deferred<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> | null;
+  reading: ActivityRead | null;
 }
 
 export interface AzureDevOpsIterationChanges {
@@ -427,49 +436,95 @@ export const make = Effect.gen(function* () {
       record.at = latestAzureDevOpsTime([record.at, at]);
     });
 
-  /** Concurrent readers of one pull request share a single process. */
+  /** Whoever starts a read runs its process; everyone else shares the answer. */
+  const claim = (read: ActivityRead) => {
+    if (read.started) return false;
+    read.started = true;
+    return true;
+  };
+
+  const runRead = (
+    input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    },
+    record: ActivityRecord,
+    read: ActivityRead,
+  ) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((startedAt) =>
+        invoke({
+          cwd: input.cwd,
+          operation: "listThreads",
+          resource: "pullRequestThreads",
+          routeParameters: pullRequestRoute(input),
+          maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+          decode: decodeThreadsJson,
+        }).pipe(
+          Effect.tap((threads) => remember(activityKey(input), threads.activityAt)),
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (record.reading === read) record.reading = null;
+              // A read nobody saw finish must not count as one; a failed read still does.
+              if (Exit.hasInterrupts(exit)) return;
+              record.readAt = startedAt;
+              if (read.revision !== null) record.revision = read.revision;
+            }).pipe(Effect.andThen(Deferred.done(read.done, exit))),
+          ),
+        ),
+      ),
+    );
+
+  /**
+   * Concurrent readers of one pull request share a single process. A null revision asks for
+   * the conversation itself, which runs at once instead of waiting behind background reads.
+   */
   const readThreads = (
     input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     },
-    budgeted: boolean,
+    revision: string | null,
   ): Effect.Effect<AzureDevOpsThreads, AzureDevOpsPullRequestCliError> =>
     Effect.suspend(() => {
-      const key = activityKey(input);
-      const record = activityRecord(key);
-      if (record.reading !== null) {
-        return Deferred.await(record.reading).pipe(
-          // The reader that started it was interrupted; this one still wants the answer.
-          Effect.catchCauseIf(Cause.hasInterruptsOnly, () => readThreads(input, budgeted)),
-        );
+      const record = activityRecord(activityKey(input));
+      const again = () => readThreads(input, revision);
+      // The reader that started it was interrupted; this one still wants the answer.
+      const join = (read: ActivityRead) =>
+        Deferred.await(read.done).pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, again));
+      const current = record.reading;
+      if (current !== null) {
+        if (revision === null && claim(current)) return runRead(input, record, current);
+        if (revision !== null && current.revision !== revision) {
+          // A read already out may predate this revision; one still waiting will not.
+          if (current.started)
+            return Deferred.await(current.done).pipe(Effect.exit, Effect.andThen(again));
+          current.revision = revision;
+        }
+        return join(current);
       }
-      const reading = Deferred.makeUnsafe<AzureDevOpsThreads, AzureDevOpsPullRequestCliError>();
-      record.reading = reading;
-      const read = invoke({
-        cwd: input.cwd,
-        operation: "listThreads",
-        resource: "pullRequestThreads",
-        routeParameters: pullRequestRoute(input),
-        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
-      });
-      const lastReadAt = record.readAt;
-      return Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) => {
-          record.readAt = now;
-          return budgeted ? activityReads.withPermits(1)(read) : read;
-        }),
-        Effect.tap((threads) => remember(key, threads.activityAt)),
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            record.reading = null;
-            // A read nobody saw finish must not count as one; a failed read still does.
-            if (Exit.hasInterrupts(exit)) record.readAt = lastReadAt;
-          }).pipe(Effect.andThen(Deferred.done(reading, exit))),
-        ),
-      );
+      const read: ActivityRead = { done: Deferred.makeUnsafe(), revision, started: false };
+      record.reading = read;
+      if (revision === null) {
+        read.started = true;
+        return runRead(input, record, read);
+      }
+      return activityReads
+        .withPermits(1)(
+          Effect.suspend(() => (claim(read) ? runRead(input, record, read) : Effect.void)),
+        )
+        .pipe(
+          Effect.onInterrupt(() =>
+            Effect.suspend(() => {
+              if (!claim(read)) return Effect.void;
+              if (record.reading === read) record.reading = null;
+              return Deferred.interrupt(read.done);
+            }),
+          ),
+          Effect.andThen(join(read)),
+        );
     });
 
   /** Decoding can shorten a non-final page; advance by raw rows. */
@@ -666,7 +721,7 @@ export const make = Effect.gen(function* () {
     }),
 
     listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
-      return readThreads(input, false).pipe(Effect.map((threads) => threads.comments));
+      return readThreads(input, null).pipe(Effect.map((threads) => threads.comments));
     }),
 
     activityAt: Effect.fn("AzureDevOpsPullRequestCli.activityAt")(function* (input) {
@@ -683,8 +738,7 @@ export const make = Effect.gen(function* () {
           record.readAt !== null &&
           record.revision === pullRequest.revision &&
           now - record.readAt < Duration.toMillis(input.maxAge);
-        record.revision = pullRequest.revision;
-        if (!fresh) yield* Effect.ignore(readThreads(subject, true));
+        if (!fresh) yield* Effect.ignore(readThreads(subject, pullRequest.revision));
       }
       return latestAzureDevOpsTime([pullRequest.updatedAt, activity.get(key)?.at]);
     }),

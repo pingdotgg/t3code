@@ -150,8 +150,8 @@ it.effect("dates an old pull request by its latest push or comment, the same on 
       lastMergeSourceCommit: { commitId: "a".repeat(40) },
     };
     let threads = json({ value: [refUpdate(pushedAt), comment("2026-07-10T10:30:00.1234567Z")] });
-    const threadsAsked = yield* Deferred.make<void>();
-    const threadsAnswer = yield* Deferred.make<void>();
+    let threadsAsked = yield* Deferred.make<void>();
+    let threadsAnswer = yield* Deferred.make<void>();
     mockedRun.mockImplementation(({ args }) => {
       if (args.includes("pullRequestThreads")) {
         return Deferred.succeed(threadsAsked, undefined).pipe(
@@ -222,17 +222,99 @@ it.effect("dates an old pull request by its latest push or comment, the same on 
 
     shown = { ...shown, lastMergeSourceCommit: { commitId: "c".repeat(40) } };
     threads = json({ value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:00:00Z")] });
+    const branchLookup = (state: "open" | "all") =>
+      sourceControl
+        .listChangeRequests({ cwd: "/w", headSelector: "feat/page", state, limit: 1 })
+        .pipe(
+          Effect.map((rows) => rows.map((row) => Option.map(row.updatedAt, DateTime.formatIso))),
+        );
+    // Asking whether the branch has an open pull request needs no date.
+    yield* branchLookup("open");
+    expect(threadReads()).toBe(3);
     expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
     expect(threadReads()).toBe(4);
+    expect(yield* branchLookup("all")).toEqual([Option.some("2026-07-10T11:05:00.000Z")]);
 
     threads = "not json";
     yield* TestClock.adjust("61 seconds");
     expect(yield* summary).toBe("2026-07-10T11:05:00.000Z");
     expect(threadReads()).toBe(5);
+
+    // A push seen while an older read is out is not answered by that read.
+    const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+    const datedAt = (revision: string) =>
+      pullRequests.activityAt({
+        cwd: "/w",
+        pullRequest: {
+          number: 42,
+          location: { project: "platform", repository: "web" },
+          state: "open",
+          revision,
+          updatedAt: null,
+        },
+        maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+      });
+    threadsAsked = yield* Deferred.make<void>();
+    threadsAnswer = yield* Deferred.make<void>();
+    threads = json({ value: [refUpdate("2026-07-10T11:05:00Z"), comment("2026-07-10T11:10:00Z")] });
+    const beforePush = yield* Effect.forkChild(datedAt("before push"));
+    yield* Deferred.await(threadsAsked);
+    threads = json({ value: [refUpdate("2026-07-10T11:20:00Z"), comment("2026-07-10T11:10:00Z")] });
+    const afterPush = yield* Effect.forkChild(datedAt("after push"), { startImmediately: true });
+    yield* Deferred.succeed(threadsAnswer, undefined);
+    yield* Fiber.join(beforePush);
+    expect(yield* Fiber.join(afterPush)).toBe("2026-07-10T11:20:00.000Z");
+    expect(threadReads()).toBe(7);
+    expect(yield* datedAt("after push")).toBe("2026-07-10T11:20:00.000Z");
+    expect(threadReads()).toBe(7);
   }).pipe(Effect.provide(driverServices)),
 );
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect(
+    "reads a conversation queued behind a long list at once, and shares one already out",
+    () =>
+      Effect.gen(function* () {
+        const fourStarted = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let started = 0;
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.gen(function* () {
+            started += 1;
+            if (started === 4) yield* Deferred.succeed(fourStarted, undefined);
+            if (!args.includes("pullRequestId=5")) yield* Deferred.await(release);
+            return output(json({ value: [] }));
+          }),
+        );
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+        const location = { project: "platform", repository: "web" };
+        const pullRequest = (number: number) => ({ cwd: "/queue", location, number });
+        const dated = (number: number) =>
+          cli.activityAt({
+            cwd: "/queue",
+            pullRequest: { number, location, state: "open", revision: "r", updatedAt: null },
+            maxAge: AzureDevOpsPullRequestCli.LISTED_ACTIVITY_MAX_AGE,
+          });
+
+        const list = yield* Effect.forkChild(
+          Effect.forEach([1, 2, 3, 4], dated, { concurrency: "unbounded" }),
+        );
+        yield* Deferred.await(fourStarted);
+        const queued = yield* Effect.forkChild(dated(5), { startImmediately: true });
+        const shared = yield* Effect.forkChild(cli.listThreads(pullRequest(1)), {
+          startImmediately: true,
+        });
+
+        expect(yield* cli.listThreads(pullRequest(5))).toEqual([]);
+        expect(started).toBe(5);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(list);
+        yield* Fiber.join(queued);
+        expect(yield* Fiber.join(shared)).toEqual([]);
+        expect(started).toBe(5);
+      }),
+  );
+
   it.effect("reports the latest pushed source commit even while the trial merge is stale", () =>
     Effect.gen(function* () {
       const previousHead = "a".repeat(40);
