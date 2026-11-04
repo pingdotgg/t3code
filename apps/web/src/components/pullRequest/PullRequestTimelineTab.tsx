@@ -975,7 +975,7 @@ export function PullRequestTimelineTab({
         ref={scrollerRef}
         tabIndex={-1}
         data-workspace-focus-default
-        className="scrollbar-gutter-both h-full overflow-y-auto px-4 pt-5 pb-16 outline-none"
+        className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5 outline-none"
       >
         <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
           <PullRequestGlyph.pullRequest className="mb-2 size-5" />
