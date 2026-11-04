@@ -83,6 +83,7 @@ describe("chat math parsing", () => {
     ["$skill budget $20", []],
     ["$skill formula $x$", ["x"]],
     ["$skill display $$ x $$", ["x"]],
+    ["$x @README.md\t$", ["x @README.md\t"]],
     ["$x$ prompt", ["x"]],
     ["$$x$$", ["x"]],
     ["\\(x\\)", ["x"]],

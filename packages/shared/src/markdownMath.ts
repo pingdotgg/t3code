@@ -52,9 +52,9 @@ export function markdownMathRanges(source: string, tree?: Root) {
 
 /** Messages without these characters skip math parsing entirely. */
 function mayContainMath(text: string): boolean {
-  // Single-dollar math cannot close after whitespace, where serialized skill tokens begin.
+  // Single-dollar math cannot close after a space or line ending; tabs must reach the parser.
   return (
-    (text.indexOf("$") !== text.lastIndexOf("$") && /\$\$|[^ \t\r\n]\$/.test(text)) ||
+    (text.indexOf("$") !== text.lastIndexOf("$") && /\$\$|[^ \r\n]\$/.test(text)) ||
     text.includes("\\(") ||
     text.includes("\\[") ||
     /(?:`{3,}|~{3,})[ \t]*math\b/.test(text)
