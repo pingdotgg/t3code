@@ -1,0 +1,40 @@
+import type * as comprehend from "@distilled.cloud/aws/comprehend";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `comprehend:DescribeEntitiesDetectionJob` — get the
+ * properties (status, input/output config, timings) of an asynchronous
+ * entity detection job started with {@link StartEntitiesDetectionJob}.
+ *
+ * The binding takes no arguments and grants the action on `*` (job APIs
+ * have no resource-level IAM).
+ *
+ * ### Monitoring Analysis Jobs
+ * **Example:** Poll a EntitiesDetection Job
+ * ```typescript
+ * // init
+ * const describeEntitiesDetectionJob = yield* AWS.Comprehend.DescribeEntitiesDetectionJob();
+ *
+ * // runtime
+ * const job = yield* describeEntitiesDetectionJob({ JobId: jobId });
+ * // job.EntitiesDetectionJobProperties?.JobStatus: "SUBMITTED" | "IN_PROGRESS" | "COMPLETED" | …
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeEntitiesDetectionJob extends Binding.Service<
+  DescribeEntitiesDetectionJob,
+  "AWS.Comprehend.DescribeEntitiesDetectionJob",
+  () => Effect.Effect<
+    (
+      request: comprehend.DescribeEntitiesDetectionJobRequest,
+    ) => Effect.Effect<
+      comprehend.DescribeEntitiesDetectionJobResponse,
+      comprehend.DescribeEntitiesDetectionJobError
+    >
+  >
+> {}
+export const DescribeEntitiesDetectionJob = Binding.Service<DescribeEntitiesDetectionJob>(
+  "AWS.Comprehend.DescribeEntitiesDetectionJob",
+);
