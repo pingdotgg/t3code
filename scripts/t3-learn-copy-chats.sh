@@ -119,9 +119,16 @@ in_flight=$(count "$db" "SELECT
 + (SELECT COUNT(*) FROM scheduled_tasks)")
 [ "$in_flight" = 0 ] || { echo "copy still has $in_flight in-flight items; not swapping" >&2; exit 1; }
 
+# Files are copied before the stop, so a missing folder or full disk can't leave the unit down.
+for dir in attachments browser-artifacts; do
+  mkdir -p "$LEARN/userdata/$dir"
+  [ ! -d "$SOURCE/userdata/$dir" ] || cp -a "$SOURCE/userdata/$dir/." "$LEARN/userdata/$dir/"
+done
+
 say "Swapping the new copy into $UNIT..."
+# Restart on any failure, but not on a missing database: a rerun would then delete .previous.
+trap '[ ! -e "$LEARN/userdata/statev2.sqlite" ] || systemctl --user start "$UNIT"' EXIT
 systemctl --user stop "$UNIT"
-mkdir -p "$LEARN/userdata/attachments" "$LEARN/userdata/browser-artifacts"
 rm -f "$LEARN"/userdata/statev2.sqlite.previous*
 for suffix in "" -wal -shm; do
   if [ -e "$LEARN/userdata/statev2.sqlite$suffix" ]; then
@@ -130,9 +137,8 @@ for suffix in "" -wal -shm; do
   if [ -e "$db$suffix" ]; then mv "$db$suffix" "$LEARN/userdata/statev2.sqlite$suffix"; fi
 done
 [ -e "$LEARN/userdata/settings.json" ] || cp "$STAGE/userdata/settings.json" "$LEARN/userdata/settings.json"
-cp -a "$SOURCE/userdata/attachments/." "$LEARN/userdata/attachments/"
-cp -a "$SOURCE/userdata/browser-artifacts/." "$LEARN/userdata/browser-artifacts/"
 started=$(date -u +%Y-%m-%dT%H:%M:%S)
+trap - EXIT
 systemctl --user start "$UNIT"
 for _ in $(seq 1 120); do
   ss -H -ltn "sport = :$PORT" | grep -q . && break
