@@ -358,7 +358,19 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const body = known
           ? url.pathname === "/api/model"
             ? catalog(directory)
-            : { location: { directory: directory ?? "/srv/remote" }, data: [] }
+            : {
+                location: { directory: directory ?? "/srv/remote" },
+                data: [
+                  {
+                    id: "opencode",
+                    integrationID: "opencode",
+                    name: "OpenCode Zen",
+                    activation: "enabled",
+                    package: "@opencode/ai/providers/openai-compatible",
+                    settings: {},
+                  },
+                ],
+              }
           : {
               _tag: "LocationNotFoundError",
               message: `Location not found: ${directory}`,
@@ -394,8 +406,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         { status: "ready", message: "OpenCode 2.0.18 lists 1 model." },
       );
       assert.deepStrictEqual(
-        snapshot?.models.map((model) => model.slug),
-        ["opencode/big-pickle"],
+        snapshot?.models.map((model) => [model.slug, model.subProvider]),
+        [["opencode/big-pickle", "OpenCode Zen"]],
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
