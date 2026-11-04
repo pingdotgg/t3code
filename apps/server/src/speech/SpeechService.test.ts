@@ -182,10 +182,16 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
         { term: "Roberts", aliases: [] },
         { term: "O'Reilly", aliases: ['"the publisher"'] },
         { term: "GitHub", aliases: [] },
+        { term: "McDonald’s", aliases: [] },
+        { term: "King’s Cross", aliases: [] },
       ],
     };
-    const spoken = 'Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub).';
-    const expected = "Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub).";
+    const spoken =
+      'Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
+      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross.";
+    const expected =
+      "Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
+      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross.";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
