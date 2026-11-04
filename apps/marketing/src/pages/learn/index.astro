@@ -1,0 +1,164 @@
+---
+import { getEntry as getContentEntry, render } from "astro:content";
+import Layout from "../../layouts/Layout.astro";
+import { CLUSTERS, clusterPath, entriesIn, entryKey, entryPath } from "../../lib/library";
+import { absoluteUrl, breadcrumbJsonLd } from "../../lib/seo";
+
+const hub = await getContentEntry("library", "index");
+if (!hub) throw new Error("Missing hub page src/content/library/index.md");
+const { Content } = await render(hub);
+
+const collection = {
+  "@type": "CollectionPage",
+  "@id": `${absoluteUrl("/learn")}#collection`,
+  name: hub.data.title,
+  description: hub.data.description,
+  url: absoluteUrl("/learn"),
+  about: { "@id": "https://t3.codes/#software" },
+  isPartOf: { "@id": "https://t3.codes/#website" },
+  hasPart: CLUSTERS.map((cluster) => ({ "@type": "WebPage", name: cluster.title, url: absoluteUrl(clusterPath(cluster.id)) })),
+};
+---
+
+<Layout
+  title={`${hub.data.title} | T3 Code`}
+  description={hub.data.description}
+  jsonLd={[collection, breadcrumbJsonLd([{ name: "T3 Code", path: "/" }, { name: "Learn", path: "/learn" }])]}
+>
+  <div class="hub container">
+    <header class="hub-hero">
+      <p class="eyebrow">Library</p>
+      <h1 class="display">{hub.data.title}</h1>
+      <p class="hub-lede">{hub.data.description}</p>
+    </header>
+
+    <div class="hub-intro"><Content /></div>
+
+    <div class="hub-grid">
+      {CLUSTERS.map((cluster) => (
+        <section class="hub-cluster tile">
+          <h2><a href={clusterPath(cluster.id)}>{cluster.title}</a></h2>
+          <p>{cluster.summary}</p>
+          <ul>
+            {entriesIn(cluster.id).map((entry) => (
+              <li><a href={entryPath(entryKey(entry))}>{entry.title}</a></li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .hub {
+    padding-top: 56px;
+    padding-bottom: 96px;
+  }
+
+  .hub-hero {
+    max-width: 760px;
+  }
+
+  .hub-hero h1 {
+    margin: 14px 0 18px;
+    font-size: clamp(2.4rem, 5vw, 3.6rem);
+  }
+
+  .hub-lede {
+    color: var(--fg-muted);
+    font-size: 1.1rem;
+    line-height: 1.65;
+  }
+
+  .hub-intro {
+    max-width: 760px;
+    margin: 28px 0 48px;
+  }
+
+  .hub-intro :global(p) {
+    color: var(--fg-muted);
+    line-height: 1.75;
+  }
+
+  .hub-intro :global(p + p) {
+    margin-top: 14px;
+  }
+
+  .hub-intro :global(h2) {
+    margin: 36px 0 12px;
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .hub-intro :global(ul) {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding-left: 1.25rem;
+    color: var(--fg-muted);
+    line-height: 1.7;
+  }
+
+  .hub-intro :global(li::marker) {
+    color: var(--accent);
+  }
+
+  .hub-intro :global(a) {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--accent) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+
+  .hub-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 14px;
+  }
+
+  .hub-cluster {
+    padding: 22px 22px 18px;
+  }
+
+  .hub-cluster h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .hub-cluster h2 a:hover {
+    color: #fff;
+  }
+
+  .hub-cluster > p {
+    margin: 6px 0 14px;
+    color: var(--fg-dim);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+
+  .hub-cluster ul {
+    list-style: none;
+    display: grid;
+    gap: 2px;
+  }
+
+  .hub-cluster li a {
+    display: block;
+    padding: 5px 0;
+    color: var(--fg-muted);
+    font-size: 14px;
+  }
+
+  .hub-cluster li a:hover {
+    color: var(--fg);
+  }
+
+  @media (max-width: 420px) {
+    .hub-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
