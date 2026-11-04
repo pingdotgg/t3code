@@ -5478,7 +5478,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           weatherServer({ ui: { resourceUri: MCP_APP_RESOURCE } }),
           ...(collides
             ? [weatherServer(undefined, "weather!"), weatherServer(undefined, "weather?")]
-            : []),
+            : [
+                {
+                  name: "ledger",
+                  status: "connected",
+                  tools: [
+                    { name: "plain" },
+                    { name: "empty", annotations: {} },
+                    {
+                      name: "wipe",
+                      annotations: { readOnly: false, destructive: true, openWorld: false },
+                    },
+                  ],
+                } satisfies ClaudeSdk.McpServerStatus,
+              ]),
         ];
         const started = yield* Queue.unbounded<void>();
         let stalled = false;
@@ -5504,13 +5517,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerThread,
           server: "weather",
         });
+        // Claude Code's annotation names become MCP's hints, so a read-only tool runs without asking.
         assert.deepEqual(tools, [
           {
             name: "get_weather",
             inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
             _meta: { ui: { resourceUri: MCP_APP_RESOURCE } },
           },
         ]);
+        if (!collides) {
+          // Only declared booleans pass through, and a tool that declares none stays bare.
+          const ledgerTools: ReadonlyArray<unknown> = yield* mcpApps.listTools({
+            providerThread,
+            server: "ledger",
+          });
+          assert.deepEqual(ledgerTools, [
+            { name: "plain", inputSchema: { type: "object" } },
+            { name: "empty", inputSchema: { type: "object" } },
+            {
+              name: "wipe",
+              inputSchema: { type: "object" },
+              annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+            },
+          ]);
+        }
         assert.deepEqual(yield* mcpApps.listTools({ providerThread, server: "unknown" }), []);
         const read = yield* mcpApps.readResource({
           providerThread,

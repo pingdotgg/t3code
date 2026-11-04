@@ -73,18 +73,37 @@ export function uniqueClaudeMcpToolName(
 }
 
 /**
+ * Claude Code reports tool annotations under its own names; MCP clients read the `*Hint` ones.
+ * Only the booleans the server declared are passed on.
+ */
+function mcpToolAnnotations(tool: ClaudeMcpStatusTool): Record<string, boolean> | undefined {
+  const { readOnly, destructive, openWorld } = tool.annotations ?? {};
+  const annotations = {
+    ...(typeof readOnly === "boolean" ? { readOnlyHint: readOnly } : {}),
+    ...(typeof destructive === "boolean" ? { destructiveHint: destructive } : {}),
+    ...(typeof openWorld === "boolean" ? { openWorldHint: openWorld } : {}),
+  };
+  return Object.keys(annotations).length === 0 ? undefined : annotations;
+}
+
+/**
  * The status has no input schema, so apps get MCP's minimal one and must not rely on it.
- * Annotations are left out: calls outside a turn skip Claude's permission rules, so T3 asks every time.
+ * Annotations pass through so a card's read-only calls run without asking; every other call
+ * still asks, because calls outside a turn skip Claude Code's permission rules.
  */
 export function claudeMcpToolsForApps(
   server: McpServerStatus,
 ): ReadonlyArray<ProviderAdapter.ProviderAdapterV2McpTool> {
-  return (server.tools ?? []).map((tool) => ({
-    name: tool.name,
-    ...(tool.description === undefined ? {} : { description: tool.description }),
-    inputSchema: { type: "object" },
-    ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
-  }));
+  return (server.tools ?? []).map((tool) => {
+    const annotations = mcpToolAnnotations(tool);
+    return {
+      name: tool.name,
+      ...(tool.description === undefined ? {} : { description: tool.description }),
+      inputSchema: { type: "object" },
+      ...(annotations === undefined ? {} : { annotations }),
+      ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
+    };
+  });
 }
 
 function mcpContentBlocks(content: unknown): ReadonlyArray<unknown> | undefined {
