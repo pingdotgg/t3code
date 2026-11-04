@@ -4642,7 +4642,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         lessonThreadId: anchorThread.sideChat?.lessonThreadId ?? anchorThread.id,
         anchor: command.anchor,
         excerpt: command.excerpt,
-        excerptContext: extractExcerptContext(message.text, command.anchor, command.excerpt),
+        excerptContext:
+          command.anchor.embedTitle === undefined
+            ? extractExcerptContext(message.text, command.anchor, command.excerpt)
+            : "",
         label: deriveSideChatLabel(command.excerpt),
         opening: { status: "pending", text: null, requestId: command.commandId },
         done: null,

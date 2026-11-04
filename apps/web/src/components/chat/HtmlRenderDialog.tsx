@@ -2,16 +2,22 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import {
+  HtmlRenderAskButton,
+  HtmlRenderDocument,
+  type HtmlRenderDocumentHandle,
+} from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 
 export function HtmlRenderDialog(props: {
+  readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
   readonly src: string;
   readonly title: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onClose: () => void;
 }) {
+  const documentRef = useRef<HtmlRenderDocumentHandle>(null);
   const [zoom, setZoom] = useState(1);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   return (
@@ -25,6 +31,11 @@ export function HtmlRenderDialog(props: {
       >
         <DialogTitle className="sr-only">Expanded {props.title} preview</DialogTitle>
         <div className="relative w-[92vw]">
+          {props.onAskInSideChat ? (
+            <div className="absolute right-8 -top-10 z-20">
+              <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+            </div>
+          ) : null}
           <Button
             ref={closeButtonRef}
             aria-label="Close"
@@ -38,6 +49,8 @@ export function HtmlRenderDialog(props: {
           <div className="h-[min(86vh,calc(100vh-160px))] overflow-auto overscroll-contain rounded-lg bg-background p-4 shadow-2xl ring-1 ring-border/70 [container-type:size]">
             <div className="h-[100cqh] w-[100cqw]" style={{ zoom }}>
               <HtmlRenderDocument
+                ref={documentRef}
+                onAskInSideChat={props.onAskInSideChat}
                 src={props.src}
                 title={props.title}
                 threadRef={props.threadRef}

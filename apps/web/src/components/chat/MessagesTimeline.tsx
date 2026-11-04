@@ -70,6 +70,7 @@ import {
   type RememberedTimelinePosition,
   rememberTimelinePosition,
 } from "./timelineScrollAnchoring";
+import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
@@ -230,7 +231,11 @@ interface MessagesTimelineProps {
    * or the connection cannot operate the thread.
    */
   onAskInSideChat?:
-    | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
+    | ((
+        citation: AssistantCitation,
+        sourceAnchor?: AssistantCitationSourceAnchor,
+        embedTitle?: string,
+      ) => boolean)
     | undefined;
   askInSideChatPending?: boolean;
   isWorking: boolean;
@@ -1030,6 +1035,32 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .filter(isVisiblePendingApproval)
       .map((approval) => [approval.requestId, approval]),
   );
+  const embedAnchors = new Map<string, MessageId>();
+  if (onAskInSideChat && citationThreadRef) {
+    const repliesByRun = new Map<RunId, Array<{ messageId: MessageId; index: number }>>();
+    timelineEntries.forEach((entry, index) => {
+      if (
+        entry.kind !== "message" ||
+        entry.message.role !== "assistant" ||
+        entry.message.streaming ||
+        !entry.message.runId
+      )
+        return;
+      const runId = entry.message.runId;
+      const replies = repliesByRun.get(runId) ?? [];
+      replies.push({ messageId: entry.message.id, index });
+      repliesByRun.set(runId, replies);
+    });
+    timelineEntries.forEach((entry, index) => {
+      if (entry.kind !== "html-render" || entry.runId === null) return;
+      const closest = repliesByRun
+        .get(entry.runId)
+        ?.reduce((best, reply) =>
+          Math.abs(reply.index - index) < Math.abs(best.index - index) ? reply : best,
+        );
+      if (closest) embedAnchors.set(entry.id, closest.messageId);
+    });
+  }
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1060,7 +1091,42 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenTurnDiff,
     onOpenThread,
     onOpenSideChat,
-    renderHtmlRender,
+    renderHtmlRender:
+      renderHtmlRender ??
+      (onAskInSideChat && citationThreadRef
+        ? (row) => {
+            const messageId = embedAnchors.get(row.id);
+            return (
+              <HtmlRenderFrame
+                key={row.htmlRender.attachmentId}
+                environmentId={activeThreadEnvironmentId}
+                htmlRender={row.htmlRender}
+                threadRef={citationThreadRef}
+                onFullscreenChange={(fullscreen) => onAppFullscreenChange(row.id, fullscreen)}
+                onAskInSideChat={
+                  messageId === undefined || askInSideChatPending
+                    ? undefined
+                    : (excerpt) => {
+                        onAskInSideChat(
+                          {
+                            version: 1,
+                            ...citationThreadRef,
+                            messageId,
+                            text: excerpt,
+                            start: 0,
+                            end: 0,
+                            prefix: "",
+                            suffix: "",
+                          },
+                          undefined,
+                          row.htmlRender.title,
+                        );
+                      }
+                }
+              />
+            );
+          }
+        : undefined),
     turnItemSource,
     workflowOpening,
     onForkFromRun,

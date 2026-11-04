@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  SIDE_CHAT_EXCERPT_MAX_CHARS,
   type KeybindingCommand,
   type KeybindingShortcut,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
@@ -12,6 +13,9 @@ import {
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
+  htmlRenderTextRequest,
+  readHtmlRenderSelection,
+  readHtmlRenderTextResult,
   readHtmlRenderContentHeight,
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
@@ -28,9 +32,15 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useImperativeHandle,
+  type Ref,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
+import { MessageCircleQuestionIcon } from "lucide-react";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
@@ -42,7 +52,7 @@ import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 
 /**
@@ -174,8 +184,37 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
   );
 }
 
+export interface HtmlRenderDocumentHandle {
+  readonly askInSideChat: () => void;
+}
+
+export function HtmlRenderAskButton(props: { readonly onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Ask in side chat"
+            size="icon-xs"
+            variant="glass"
+            onClick={props.onClick}
+          />
+        }
+      >
+        <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="left">Ask in side chat</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
-export function HtmlRenderDocument(props: {
+export function HtmlRenderDocument({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<HtmlRenderDocumentHandle>;
+  readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
   readonly src: string;
   readonly title: string;
   readonly className?: string;
@@ -188,6 +227,23 @@ export function HtmlRenderDocument(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
+  const [selection, setSelection] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    overlay: HTMLElement | null;
+  }>();
+  const textRequestId = useRef<string | null>(null);
+  useImperativeHandle(ref, () => ({
+    askInSideChat: () => {
+      if (!props.onAskInSideChat) return;
+      textRequestId.current = randomUUID();
+      frameRef.current?.contentWindow?.postMessage(
+        htmlRenderTextRequest(textRequestId.current),
+        "*",
+      );
+    },
+  }));
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
@@ -283,7 +339,40 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
+    const textResult = readHtmlRenderTextResult(event.data);
+    if (textResult !== undefined && textResult.id === textRequestId.current) {
+      textRequestId.current = null;
+      props.onAskInSideChat?.(
+        `${props.title}\n\n${textResult.text}`.slice(0, SIDE_CHAT_EXCERPT_MAX_CHARS),
+      );
+      return;
+    }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
+    const selected = readHtmlRenderSelection(event.data);
+    if (selected !== undefined) {
+      if (!props.onAskInSideChat || selected.text === "") {
+        setSelection(undefined);
+        return;
+      }
+      const overlay = frame.closest<HTMLElement>(
+        '[data-slot="dialog-popup"], [data-slot="sheet-popup"]',
+      );
+      const frameRect = frame.getBoundingClientRect();
+      const overlayRect = overlay?.getBoundingClientRect();
+      const scaleX = frame.clientWidth ? frameRect.width / frame.clientWidth : 1;
+      const scaleY = frame.clientHeight ? frameRect.height / frame.clientHeight : 1;
+      setSelection({
+        text: selected.text,
+        x:
+          Math.max(
+            8,
+            Math.min(frameRect.left + selected.rect.x * scaleX, window.innerWidth - 220),
+          ) - (overlayRect?.left ?? 0),
+        y: Math.max(8, frameRect.top + selected.rect.y * scaleY - 32) - (overlayRect?.top ?? 0),
+        overlay,
+      });
+      return;
+    }
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
       open(linkRequest.url, linkRequest);
@@ -312,11 +401,65 @@ export function HtmlRenderDocument(props: {
     const onMessage = (event: MessageEvent) => {
       if (event.source === frame.contentWindow) onFrameMessage(frame, event);
     };
+    const dismiss = () => setSelection(undefined);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
+  const tooLong = (selection?.text.length ?? 0) > SIDE_CHAT_EXCERPT_MAX_CHARS;
   return (
     <>
+      {selection && props.onAskInSideChat
+        ? createPortal(
+            <div
+              role="toolbar"
+              aria-label="Selection actions"
+              className={cn(selection.overlay ? "absolute" : "fixed", "z-50")}
+              style={{ left: selection.x, top: selection.y }}
+              onPointerDown={(event) => event.preventDefault()}
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="glass"
+                      aria-disabled={tooLong || undefined}
+                      aria-label={
+                        tooLong ? "Shorten selection to ask in side chat" : "Ask in side chat"
+                      }
+                      onClick={() => {
+                        if (tooLong) return;
+                        props.onAskInSideChat?.(selection.text);
+                        setSelection(undefined);
+                      }}
+                    />
+                  }
+                >
+                  <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
+                  {tooLong ? "Shorten selection" : "Ask in side chat"}
+                </TooltipTrigger>
+                {tooLong ? (
+                  <TooltipPopup side="top">
+                    Side chats take up to {SIDE_CHAT_EXCERPT_MAX_CHARS.toLocaleString("en-US")}{" "}
+                    characters
+                  </TooltipPopup>
+                ) : null}
+              </Tooltip>
+            </div>,
+            selection.overlay ?? document.body,
+          )
+        : null}
       <iframe
         ref={frameRef}
         src={src}
@@ -328,9 +471,15 @@ export function HtmlRenderDocument(props: {
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
+          setSelection(undefined);
           // Covers a theme change that landed while the page was loading.
           postTheme();
           postShortcuts();
+          if (textRequestId.current !== null)
+            frameRef.current?.contentWindow?.postMessage(
+              htmlRenderTextRequest(textRequestId.current),
+              "*",
+            );
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
         className={cn("border-0 scheme-light", props.className)}

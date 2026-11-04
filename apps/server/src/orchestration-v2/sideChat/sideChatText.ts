@@ -392,6 +392,7 @@ export function buildSideChatOpeningSummaryText(input: {
   readonly opening: OrchestrationV2SideChatOpening;
   readonly excerpt: string;
   readonly excerptContext: string;
+  readonly embedTitle?: string | undefined;
   readonly lessonTopic: string | null;
   readonly parentOpeningText: string | null;
   readonly sideChatInstructions?: string;
@@ -406,7 +407,14 @@ export function buildSideChatOpeningSummaryText(input: {
   sections.push(
     summary === null ? lessonSummaryUnavailable(lessonTopic) : `${SUMMARY_HEADER}\n${summary}`,
   );
-  sections.push(referenceBlock("Highlighted text", excerpt));
+  sections.push(
+    referenceBlock(
+      input.embedTitle === undefined
+        ? "Highlighted text"
+        : `Highlighted in the embed "${input.embedTitle}"`,
+      excerpt,
+    ),
+  );
   if (excerptContext.trim() !== "") {
     sections.push(referenceBlock("Text around the highlight", excerptContext));
   }

@@ -689,10 +689,11 @@ export function SideChatPanel(props: {
                 }
                 onAskInSideChat={
                   canOperate
-                    ? (asked) =>
+                    ? (asked, _sourceAnchor, embedTitle) =>
                         askInSideChat({
                           lessonRef,
                           citation: asked,
+                          embedTitle,
                           sideChatShells: treeShells,
                           topThreadId: sideChatSurfaceTopThreadId(surface),
                           run: openSideChat,

@@ -440,6 +440,7 @@ export const SIDE_CHAT_NOTES_HANDOFF_TITLE = "Side-chat notes included";
 
 /** Where in the lesson the highlighted text sat. Offsets are UTF-16 positions, as in `AssistantCitation`. */
 export const OrchestrationV2SideChatAnchor = Schema.Struct({
+  embedTitle: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   threadId: ThreadId,
   messageId: MessageId,
   turnItemId: Schema.optional(TurnItemId),

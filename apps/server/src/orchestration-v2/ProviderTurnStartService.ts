@@ -1526,6 +1526,7 @@ export const layer: Layer.Layer<
             opening: lessonSideChat.opening,
             excerpt: lessonSideChat.excerpt,
             excerptContext: lessonSideChat.excerptContext,
+            embedTitle: lessonSideChat.anchor.embedTitle,
             ...sources,
             sideChatInstructions: lessonSideChatSettings.sideChatInstructions,
           }),

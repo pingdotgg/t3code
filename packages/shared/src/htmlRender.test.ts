@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
+  readHtmlRenderSelection,
+  readHtmlRenderTextResult,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
@@ -131,4 +133,32 @@ describe("htmlRenderFromToolItem", () => {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
   });
+});
+
+it.each([
+  {
+    reader: readHtmlRenderSelection,
+    message: {
+      jsonrpc: "2.0",
+      method: "t3/notifications/selection-changed",
+      params: { text: "selected", rect: { x: 1, y: 2, width: 30, height: 14 } },
+    },
+    expected: { text: "selected", rect: { x: 1, y: 2, width: 30, height: 14 } },
+    invalid: {
+      jsonrpc: "2.0",
+      method: "t3/notifications/selection-changed",
+      params: { text: "selected", rect: { x: 1, y: 2, width: -1, height: 14 } },
+    },
+  },
+  {
+    reader: readHtmlRenderTextResult,
+    message: { jsonrpc: "2.0", id: "text-1", result: { text: "Visible text" } },
+    expected: { id: "text-1", text: "Visible text" },
+    invalid: { jsonrpc: "2.0", id: "text-1", result: { text: 7 } },
+  },
+])("decodes the embed bridge payload $message", ({ reader, message, expected, invalid }) => {
+  expect(reader(message)).toEqual(expected);
+  expect(reader(invalid)).toBeUndefined();
+  expect(reader(null)).toBeUndefined();
+  expect(reader({ ...message, jsonrpc: "1.0" })).toBeUndefined();
 });

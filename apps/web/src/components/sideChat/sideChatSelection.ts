@@ -8,8 +8,10 @@ import type {
 /** Where the selection sits, without its text: the side chat keeps the excerpt itself. */
 export function sideChatAnchorFromCitation(
   citation: AssistantCitation,
+  embedTitle?: string,
 ): OrchestrationV2SideChatAnchor {
   return {
+    ...(embedTitle === undefined ? {} : { embedTitle }),
     threadId: citation.threadId,
     messageId: citation.messageId,
     start: citation.start,

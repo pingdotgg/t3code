@@ -35,6 +35,7 @@ export type OpenSideChatRunner = (value: {
 export interface OpenSideChatFromSelectionInput {
   readonly lessonRef: ScopedThreadRef;
   readonly citation: AssistantCitation;
+  readonly embedTitle?: string | undefined;
   /** The lesson's side chats, so a selection that overlaps a highlight reopens its side chat. */
   readonly sideChatShells: ReadonlyArray<EnvironmentThreadShell>;
   /** The top-level side chat whose tab holds the selection, or null for a selection in the lesson. */
@@ -81,7 +82,7 @@ export async function openSideChatFromSelection(
     input: {
       threadId,
       anchorThreadId: citation.threadId,
-      anchor: sideChatAnchorFromCitation(citation),
+      anchor: sideChatAnchorFromCitation(citation, input.embedTitle),
       excerpt: citation.text,
     },
   });
