@@ -384,6 +384,9 @@ import {
   makeThreadErrorSetter,
 } from "./ChatView.logic";
 
+// T3 Learn shows its own side chat instead of upstream's /side, /btw and + menu entry.
+const UPSTREAM_SIDE_CHATS_SHOWN = false;
+
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -2790,6 +2793,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
+    UPSTREAM_SIDE_CHATS_SHOWN &&
     !embedded &&
     canOperateThread &&
     activeThread?.lineage.sideChat !== true &&
@@ -2808,8 +2812,9 @@ export default function ChatView(props: ChatViewProps) {
     runShellCommandStable(command);
   });
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
-  const sideChatDisabledReason =
-    activeThread?.lineage.sideChat === true
+  const sideChatDisabledReason = !UPSTREAM_SIDE_CHATS_SHOWN
+    ? null
+    : activeThread?.lineage.sideChat === true
       ? "Side chats cannot start side chats."
       : isSubagentThread
         ? "Subagent threads cannot start side chats."
