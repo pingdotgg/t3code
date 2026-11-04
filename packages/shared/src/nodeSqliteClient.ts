@@ -526,8 +526,7 @@ const makeReader = Effect.fnUntraced(function* (
 
   const turnOff = (failure: StartFailure) =>
     Effect.suspend(() => {
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-      if (!retire(failure.reader) || pool.unavailable) return Effect.succeed(undefined);
+      if (!retire(failure.reader) || pool.unavailable) return Effect.undefined;
       pool.unavailable = true;
       // Pool state belongs to the client: never log, meter or retry with the failed read's services.
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
@@ -543,8 +542,7 @@ const makeReader = Effect.fnUntraced(function* (
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-    if (pool.unavailable) return Effect.succeed(undefined);
+    if (pool.unavailable) return Effect.undefined;
     return Effect.withFiber((fiber) =>
       (Context.get(fiber.context, ReadOnly) ?? identity)(open),
     ).pipe(
