@@ -132,6 +132,7 @@ export function PullRequestReviewForm({
   return (
     <>
       <Textarea
+        unstyled
         ref={textareaRef}
         rows={3}
         value={body}
@@ -139,7 +140,18 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex justify-end gap-2 px-1.5">
+        <Button
+          size="xs"
+          disabled={
+            pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)
+          }
+          onClick={() => {
+            if (selectedVerdict !== undefined) void submit(selectedVerdict);
+          }}
+        >
+          {pending ? "Submitting..." : "Submit review"}
+        </Button>
         {offered.length > 1 ? (
           <Select
             value={selectedVerdict?.value ?? null}
@@ -148,7 +160,7 @@ export function PullRequestReviewForm({
               if (value !== null) setRequestedVerdict(value);
             }}
           >
-            <SelectTrigger size="xs" className="mr-auto w-auto min-w-0" aria-label="Review verdict">
+            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
               <span className="flex items-center gap-1.5">
                 {selectedVerdict?.icon}
                 {selectedVerdict?.label}
@@ -166,17 +178,6 @@ export function PullRequestReviewForm({
             </SelectPopup>
           </Select>
         ) : null}
-        <Button
-          size="xs"
-          disabled={
-            pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)
-          }
-          onClick={() => {
-            if (selectedVerdict !== undefined) void submit(selectedVerdict);
-          }}
-        >
-          {pending ? "Submitting..." : "Submit review"}
-        </Button>
       </div>
     </>
   );

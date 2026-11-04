@@ -86,6 +86,7 @@ export function PullRequestCommentForm({
   return (
     <div className="space-y-2">
       <Textarea
+        unstyled
         ref={textareaRef}
         // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
@@ -108,7 +109,7 @@ export function PullRequestCommentForm({
           }
         }}
       />
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2 px-1.5">
         {followUpAction === null ? null : (
           <Button
             size="xs"
@@ -146,7 +147,6 @@ export function PullRequestCommentForm({
         )}
         <Button
           size="xs"
-          variant="outline"
           disabled={body.trim().length === 0 || submitting !== null || actionPending}
           onClick={() => void submit("comment")}
         >
