@@ -9,6 +9,7 @@ import {
   FinderIcon,
   type Icon,
   KiroIcon,
+  SublimeTextIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -137,6 +138,11 @@ export function editorIconOptions(platform: string): ReadonlyArray<EditorIconOpt
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: SublimeTextIcon,
+      value: "sublime-text",
       kind: "brand",
     },
     {
