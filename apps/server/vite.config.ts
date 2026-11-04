@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
 
@@ -66,7 +67,7 @@ const packExecutableTargets = packExecutableTarget
 // tsc keeps its incremental state here, so a typecheck after an edit re-checks only the files the
 // edit can reach. The task below keeps the file out of its own inputs and outputs: tsc reads and
 // rewrites it on every run, which would otherwise make Vite+ refuse to cache the task.
-const TYPECHECK_BUILD_INFO = "node_modules/.cache/tsc/typecheck.tsbuildinfo";
+const TYPECHECK_BUILD_INFO = `node_modules/.cache/tsc/typecheck-${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()}.tsbuildinfo`;
 
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
