@@ -68,6 +68,7 @@ function makeLayer(input: {
   readonly item: OrchestrationV2TurnItem | null;
   readonly mcpApps?: ProviderAdapter.ProviderAdapterV2McpApps;
   readonly live?: boolean;
+  readonly retired?: "archived" | "deleted" | "provider-switched";
 }) {
   return McpAppRequests.layer.pipe(
     Layer.provide(
@@ -87,6 +88,10 @@ function makeLayer(input: {
           getThreadRecords: (id: ThreadId) =>
             Effect.succeed({
               thread: {
+                archivedAt: input.retired === "archived" ? DateTime.makeUnsafe(0) : null,
+                deletedAt: input.retired === "deleted" ? DateTime.makeUnsafe(0) : null,
+                activeProviderThreadId:
+                  input.retired === "provider-switched" ? "provider-thread-2" : providerThreadId,
                 lineage:
                   deepParent(id) !== null
                     ? {
@@ -179,6 +184,24 @@ describe("McpAppRequests", () => {
       }
       assert.equal(calls.length, before);
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
+  );
+
+  it.effect.each(["archived", "deleted", "provider-switched"] as const)(
+    "treats a %s thread's app as stopped, even with a live session",
+    (retired) =>
+      Effect.gen(function* () {
+        const requests = yield* McpAppRequests.McpAppRequests;
+        const before = calls.length;
+        assert.equal(
+          yield* reason(requests.callTool({ threadId, itemId, name: "refresh", arguments: {} })),
+          "session-stopped",
+        );
+        assert.equal(
+          yield* reason(requests.toolInfo({ threadId, itemId, name: "refresh" })),
+          "session-stopped",
+        );
+        assert.equal(calls.length, before);
+      }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps, retired }))),
   );
 
   it.effect("keeps each app's latest model context, without a live session", () =>

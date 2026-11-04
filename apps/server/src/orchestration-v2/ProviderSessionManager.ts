@@ -217,7 +217,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
-  readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
+  readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, ProviderThreadLoadKey>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
@@ -301,18 +301,25 @@ function providerThreadRuntimeKey(
     : `${nativeThreadRef.driver}:${nativeThreadRef.nativeId}`;
 }
 
+interface ProviderThreadLoadKey {
+  readonly providerThread: string;
+  readonly config: string;
+}
+
 function providerThreadLoadKey(input: {
   readonly providerThread: Parameters<
     ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]
   >[0]["providerThread"];
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-}): string {
-  return JSON.stringify({
+}): ProviderThreadLoadKey {
+  return {
     providerThread: providerThreadRuntimeKey(input.providerThread),
-    modelSelection: input.modelSelection ?? null,
-    runtimePolicy: input.runtimePolicy ?? null,
-  });
+    config: JSON.stringify({
+      modelSelection: input.modelSelection ?? null,
+      runtimePolicy: input.runtimePolicy ?? null,
+    }),
+  };
 }
 
 export const layerWithOptions = (
@@ -1297,24 +1304,22 @@ export const layerWithOptions = (
           return updated;
         });
 
-      const isProviderThreadLoaded = (input: {
+      const loadedProviderThreadKey = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
-        readonly providerThreadKey: string;
       }) =>
         Ref.get(sessions).pipe(
-          Effect.map(
-            (current) =>
-              current
-                .get(sessionKey(input.providerSessionId))
-                ?.loadedProviderThreadKeyByThread.get(input.threadId) === input.providerThreadKey,
+          Effect.map((current) =>
+            current
+              .get(sessionKey(input.providerSessionId))
+              ?.loadedProviderThreadKeyByThread.get(input.threadId),
           ),
         );
 
       const markProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
-        readonly providerThreadKey: string;
+        readonly providerThreadKey: ProviderThreadLoadKey;
       }) =>
         Ref.update(sessions, (current) => {
           const key = sessionKey(input.providerSessionId);
@@ -1708,6 +1713,62 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        const loadThread = (
+          input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]>[0] & {
+            readonly threadId: ThreadId;
+          },
+          isLoaded: (loaded: ProviderThreadLoadKey | undefined) => boolean,
+        ) =>
+          observeActivity(
+            providerSessionId,
+            ensureThreadAttached({
+              providerSessionId,
+              threadId: input.threadId,
+              providerInstanceId: runtime.instanceId,
+            }),
+          ).pipe(
+            Effect.andThen(
+              holdThreadLoaded({
+                providerSessionId,
+                threadId: input.threadId,
+                providerThread: input.providerThread,
+              }),
+            ),
+            Effect.andThen(
+              loadedProviderThreadKey({ providerSessionId, threadId: input.threadId }),
+            ),
+            Effect.flatMap((loaded) =>
+              isLoaded(loaded)
+                ? Effect.succeed(input.providerThread)
+                : runtime.resumeThread(input).pipe(
+                    Effect.tap((providerThread) =>
+                      markProviderThreadLoaded({
+                        providerSessionId,
+                        threadId: input.threadId,
+                        providerThreadKey: providerThreadLoadKey({ ...input, providerThread }),
+                      }),
+                    ),
+                  ),
+            ),
+          );
+        const mcpApps = runtime.mcpApps;
+        // Any load of this provider thread serves MCP calls; a load made here records no model or
+        // policy, so the next turn still resumes with its own.
+        const withThreadLoaded = <A>(
+          providerThread: OrchestrationV2ProviderThread,
+          call: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
+        ) => {
+          const threadId = providerThread.appThreadId;
+          if (threadId === null) return call;
+          const runtimeKey = providerThreadRuntimeKey(providerThread);
+          return loadThread(
+            { providerThread, threadId },
+            (loaded) => loaded?.providerThread === runtimeKey,
+          ).pipe(
+            Effect.andThen(call),
+            Effect.ensuring(scheduleThreadUnload(providerSessionId, providerThread.id)),
+          );
+        };
         return {
           ...runtime,
           subscribeEvents,
@@ -1741,51 +1802,26 @@ export const layerWithOptions = (
             if (threadId === null || threadId === undefined) {
               return runtime.resumeThread(input);
             }
-            const providerThreadKey = providerThreadLoadKey({
-              providerThread: input.providerThread,
-              ...(input.modelSelection === undefined
-                ? {}
-                : { modelSelection: input.modelSelection }),
-              ...(input.runtimePolicy === undefined ? {} : { runtimePolicy: input.runtimePolicy }),
-            });
-            return observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
-              Effect.andThen(
-                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
-              ),
-              Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
-              ),
-              Effect.tap((providerThread) =>
-                markProviderThreadLoaded({
-                  providerSessionId,
-                  threadId,
-                  providerThreadKey: providerThreadLoadKey({
-                    providerThread,
-                    ...(input.modelSelection === undefined
-                      ? {}
-                      : { modelSelection: input.modelSelection }),
-                    ...(input.runtimePolicy === undefined
-                      ? {}
-                      : { runtimePolicy: input.runtimePolicy }),
-                  }),
-                }),
-              ),
+            const providerThreadKey = providerThreadLoadKey(input);
+            return loadThread(
+              { ...input, threadId },
+              (loaded) =>
+                loaded?.providerThread === providerThreadKey.providerThread &&
+                loaded.config === providerThreadKey.config,
             );
           },
+          ...(mcpApps === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: (input) =>
+                    withThreadLoaded(input.providerThread, mcpApps.listTools(input)),
+                  callTool: (input) =>
+                    withThreadLoaded(input.providerThread, mcpApps.callTool(input)),
+                  readResource: (input) =>
+                    withThreadLoaded(input.providerThread, mcpApps.readResource(input)),
+                },
+              }),
           forkThread: (input) =>
             observeActivity(
               providerSessionId,
