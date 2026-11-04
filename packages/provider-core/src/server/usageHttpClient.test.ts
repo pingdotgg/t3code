@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeUsageHttpClient, usageResponseCheckedAt } from "./usageHttpClient.ts";
@@ -81,5 +83,37 @@ it.effect.each(["seconds", "date", "missing"] as const)(
       yield* TestClock.adjust("1 minute");
       yield* client.execute(request("a", "?manual=2"));
       assert.strictEqual(calls, 3);
+    }),
+);
+
+it.effect.each([200, 503, 429])(
+  "invalidates in-flight successes without losing failed-read backoff (%s)",
+  (status) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      let calls = 0;
+      const client = yield* makeUsageHttpClient(
+        HttpClient.make((input) =>
+          Effect.gen(function* () {
+            calls++;
+            const reading = calls;
+            if (reading === 1) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(finish);
+            }
+            return HttpClientResponse.fromWeb(input, Response.json({ reading }, { status }));
+          }),
+        ),
+      );
+      const pending = yield* client.execute(request("a")).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* client.invalidateSuccessfulReads("https://api.anthropic.com", "Bearer a");
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(pending);
+      const refreshed = yield* client.execute(request("a"));
+      const expected = status < 400 ? 2 : 1;
+      assert.deepStrictEqual(yield* refreshed.json, { reading: expected });
+      assert.strictEqual(calls, expected);
     }),
 );

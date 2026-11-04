@@ -62,7 +62,10 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
         readonly expiresAt: number;
       }
     >();
-    const accounts = new Map<string, { readonly lock: Semaphore.Semaphore; retryAt: number }>();
+    const accounts = new Map<
+      string,
+      { readonly lock: Semaphore.Semaphore; retryAt: number; generation: number }
+    >();
     const cachedClient = HttpClient.transform(client, (read, request) => {
       if (!isUsageUrl(request.url)) return read;
       return Effect.gen(function* () {
@@ -72,7 +75,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
         ]);
         let account = accounts.get(accountKey);
         if (!account) {
-          account = { lock: Semaphore.makeUnsafe(1), retryAt: 0 };
+          account = { lock: Semaphore.makeUnsafe(1), retryAt: 0, generation: 0 };
           accounts.set(accountKey, account);
         }
         const state = account;
@@ -105,6 +108,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                 }),
               );
             }
+            const generation = state.generation;
             const result = yield* read.pipe(
               Effect.flatMap((response) =>
                 Effect.gen(function* () {
@@ -130,11 +134,16 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               Effect.exit,
             );
             const finishedAt = yield* Clock.currentTimeMillis;
-            cached.set(key, {
-              accountKey,
-              result,
-              expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
-            });
+            if (
+              generation === state.generation ||
+              Exit.isFailure(result) ||
+              result.value.status >= 400
+            )
+              cached.set(key, {
+                accountKey,
+                result,
+                expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
+              });
             const saved = yield* result;
             const response = HttpClientResponse.fromWeb(
               request,
@@ -150,6 +159,8 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
       invalidateSuccessfulReads: (origin: string, authorization: string) =>
         Effect.sync(() => {
           const accountKey = encodeKey([origin, authorization]);
+          const account = accounts.get(accountKey);
+          if (account) account.generation++;
           for (const [key, saved] of cached) {
             if (
               saved.accountKey === accountKey &&
