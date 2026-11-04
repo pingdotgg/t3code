@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -3177,7 +3178,7 @@ it.layer(
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            () => Effect.fail(new Error("probe failed")),
+            () => Effect.fail(new Cause.UnknownError("probe failed")),
             { ANTHROPIC_BASE_URL: baseUrl },
           );
           assert.strictEqual(status.status, "warning");
