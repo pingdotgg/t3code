@@ -1,11 +1,7 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import {
-  StackActions,
-  useNavigation,
-  useRoute,
-  type StaticScreenProps,
-} from "@react-navigation/native";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 import { useState } from "react";
 import { Platform, View } from "react-native";
@@ -35,6 +31,7 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
 
 const BREAKDOWN_LABELS = {
   code: "Code",
@@ -402,7 +399,7 @@ function DirectoryRow(props: {
 export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDiffParams>) {
   const params = route.params;
   const navigation = useNavigation();
-  const fileSelectionId = useRoute().key;
+  const jumpScope = pullRequestFileJumpScope(params);
   const files = useChangedFiles(params);
   const { diff, filter, viewed, parsed, loading } = files;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -440,6 +437,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
       </Toolbar>
       <ScreenContent>
         <AnimatedLegendList
+          renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
           className="flex-1"
           data={parsed.kind === "files" ? groupByDirectory(parsed.files, collapsed) : []}
           keyExtractor={(item) => item.key}
@@ -461,15 +459,16 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 <FileRow
                   file={item.file}
                   viewed={viewed.isViewed(item.file.path)}
-                  onPress={() =>
+                  onPress={() => {
+                    requestPullRequestFileJump(jumpScope, item.file.path);
                     navigation.dispatch(
                       StackActions.popTo("PullRequestFile", {
                         ...params,
                         path: item.file.path,
-                        fileSelectionId,
+                        focus: undefined,
                       }),
-                    )
-                  }
+                    );
+                  }}
                 />
               )}
             </Animated.View>

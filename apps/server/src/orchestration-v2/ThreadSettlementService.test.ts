@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -19,11 +20,13 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -464,10 +467,7 @@ describe("autoSettlementSettingsKey", () => {
 
 type AutoSettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }>;
 
-const testCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
 function makeProject(
   id: ProjectId = PROJECT_ID,
@@ -555,6 +555,7 @@ interface HarnessOptions {
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
+  readonly unreadablePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
   readonly onScriptRun?: (
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
@@ -570,6 +571,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReads = yield* Queue.unbounded<number>();
   const candidateReads = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsReadCount = yield* Ref.make(0);
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
@@ -598,9 +600,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       return next;
     });
 
-  const branchPullRequest: GitManager.GitManager["Service"]["branchPullRequest"] = (input) =>
+  const branchPullRequest: GitManager.GitManager["Service"]["branchPullRequest"] = (
+    input,
+    lookupOptions,
+  ) =>
     Ref.update(branchCalls, (calls) => [...calls, input]).pipe(
-      Effect.andThen(options.branchPullRequest?.(input) ?? Effect.succeed(null)),
+      Effect.andThen(options.branchPullRequest?.(input, lookupOptions) ?? Effect.succeed(null)),
     );
   const pullRequestSummary: PullRequestService.PullRequestService["Service"]["summary"] = (
     input,
@@ -636,7 +641,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettings.ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
+    getSettings: Ref.update(settingsReadCount, (count) => count + 1).pipe(
+      Effect.andThen(Ref.get(settings)),
+    ),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
@@ -696,16 +703,28 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
-    Layer.succeed(Crypto.Crypto, testCrypto),
+    Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     FileSystem.layerNoop({
-      exists: (path) => Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),
+      exists: (path) =>
+        options.unreadablePaths?.includes(path)
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "exists",
+                pathOrDescriptor: path,
+              }),
+            )
+          : Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),
     }),
+    Path.layer,
   );
 
   return {
     activation,
     snapshots,
     snapshotReadCount,
+    settingsReadCount,
     snapshotReads,
     candidateReads,
     commands,
@@ -723,7 +742,10 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       number: 42,
       mergedAt: NOW,
     }),
-    layer: ThreadSettlementService.layer.pipe(Layer.provide(layerDependencies)),
+    layer: Layer.effect(
+      ThreadSettlementService.ThreadSettlementServiceV2,
+      ThreadSettlementService.make,
+    ).pipe(Layer.provide(layerDependencies)),
   };
 });
 
@@ -739,6 +761,37 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("skips settings and PR decisions for recent branchless threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const threads = Array.from({ length: 32 }, (_, index) =>
+          makeThread(`recent-${index}`, {
+            updatedAt: DateTime.makeUnsafe(NOW),
+            latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS),
+          }),
+        );
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepEqual(yield* Ref.get(fixture.commands), []);
+          assert.deepEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.equal(yield* Ref.get(fixture.settingsReadCount), 2);
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.deepEqual(
+            new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+            new Set(threads.map((thread) => thread.id)),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -830,6 +883,140 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           const commands = yield* Ref.get(fixture.commands);
           expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("stops settling the rest of a sweep once auto-settlement is turned off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        // Sweeps settle 8 threads at a time, so the ninth starts after a dispatch turned it off.
+        const threads = Array.from({ length: 9 }, (_, index) => makeThread(`idle-${index}`));
+        let disable: Effect.Effect<unknown> = Effect.void;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          onDispatch: () => disable,
+        });
+        disable = fixture.updateSettings({ sidebarAutoSettleAfterDays: null });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const settled = (yield* Ref.get(fixture.commands)).map((command) => command.threadId);
+          expect(settled).not.toContain(threads[8]!.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("looks up a branch in its worktree only while the worktree has .git", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("linked-worktree", {
+              branch: "linked",
+              worktreePath: "/worktrees/linked",
+              latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+            }),
+            // A folder that outlived its .git makes git fail with not_a_repository.
+            makeThread("emptied-worktree", {
+              branch: "emptied",
+              worktreePath: "/worktrees/emptied",
+              latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+            }),
+          ]),
+          existingWorktreePaths: [
+            "/worktrees/linked",
+            "/worktrees/linked/.git",
+            "/worktrees/emptied",
+          ],
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          const cwdByBranch = Object.fromEntries(
+            (yield* Ref.get(fixture.branchCalls)).map((call) => [call.branch, call.cwd]),
+          );
+          expect(cwdByBranch).toEqual({
+            linked: "/worktrees/linked",
+            emptied: "/workspace/project",
+          });
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("does not settle a thread whose worktree cannot be checked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("unreadable-worktree", {
+                branch: "unreadable",
+                worktreePath: "/worktrees/unreadable",
+                latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+              }),
+              // A merged linked pull request still needs the branch recheck before settling.
+              makeThread("unreadable-linked-worktree", {
+                branch: "feature",
+                worktreePath: "/worktrees/unreadable-linked",
+                latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+                linkedPullRequest: {
+                  projectId: PROJECT_ID,
+                  repository: "owner/repository",
+                  number: 41,
+                  url: "https://example.test/owner/repository/pull/41",
+                },
+              }),
+              makeThread("readable-worktree", {
+                branch: "readable",
+                worktreePath: "/worktrees/readable",
+                latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+              }),
+            ],
+            [
+              {
+                ...makeProject(),
+                repositoryIdentity: {
+                  canonicalKey: "example.test/owner/repository",
+                  locator: {
+                    source: "git-remote",
+                    remoteName: "origin",
+                    remoteUrl: "https://example.test/owner/repository.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "owner",
+                  name: "repository",
+                },
+              },
+            ],
+          ),
+          existingWorktreePaths: ["/worktrees/readable", "/worktrees/readable/.git"],
+          unreadablePaths: ["/worktrees/unreadable/.git", "/worktrees/unreadable-linked/.git"],
+          pullRequestSummary: (input) =>
+            Effect.succeed({
+              ...makePullRequestSummary({ ...input, state: "merged" }),
+              mergedAt: NOW,
+            }),
+          branchPullRequest: (input) =>
+            input.cwd.startsWith("/worktrees/unreadable")
+              ? Effect.die(new Error("git: permission denied"))
+              : Effect.succeed(makeBranchPullRequest("merged")),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+            ThreadId.make("readable-worktree"),
+          ]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1046,6 +1233,75 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* reactor.drain;
           // The startup sweep, the first per-thread sweep, and one coalesced rerun.
           assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles an unlinked branch thread its agent merged from a shell, past the cache", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const settled = yield* Deferred.make<void>();
+        const thread = makeThread("shell-merged", {
+          branch: "saved-feature",
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread]),
+          // The host already merged it; only a fresh read sees that past the cached open lookup.
+          branchPullRequest: (_input, lookupOptions) =>
+            Effect.succeed(makeBranchPullRequest(lookupOptions?.refresh ? "merged" : "open")),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+        const at = DateTime.makeUnsafe(NOW);
+        const runId = RunId.make("run:shell-merged");
+        const runEnded: OrchestrationV2DomainEvent = {
+          type: "run.background-work-cancelled",
+          id: EventId.make("event:shell-merged:run-ended"),
+          threadId: thread.id,
+          occurredAt: at,
+          payload: { runId, restartCancelledBackgroundWork: [] },
+        };
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(runEnded);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* fixture.publishEvent({
+            type: "turn-item.updated",
+            id: EventId.make("event:shell-merged:command"),
+            threadId: thread.id,
+            runId,
+            occurredAt: at,
+            payload: {
+              id: TurnItemId.make("item:shell-merged:command"),
+              threadId: thread.id,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: at,
+              completedAt: at,
+              updatedAt: at,
+              type: "command_execution",
+              input: "gh pr merge 42 --squash",
+            },
+          });
+          yield* Deferred.await(settled);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [thread.id],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

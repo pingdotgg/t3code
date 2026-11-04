@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
@@ -44,12 +44,13 @@ export function ThreadPullRequestsSheet(
     project: selectedThreadProject,
     runtime: selectedEnvironmentRuntime,
   });
-  const rowInputs = useMemo(() => ({ lines, actions }), [lines, actions]);
+  const rowInputs = { lines, actions };
   const { singular } = actions.terminology;
   const title = `Linked ${actions.terminology.plural}`;
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
+      {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling. */}
       <LegendList
         data={lines}
         keyExtractor={linkedPullRequestKey}
@@ -110,7 +111,8 @@ export function ThreadPullRequestsSheet(
   return (
     <View collapsable={false} className="flex-1 bg-header">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader
+      <AppBar
+        sheet
         title={title}
         hideBottomBorder
         onBack={() => navigation.goBack()}

@@ -4,6 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
@@ -21,6 +22,7 @@ import {
   sendsTokenInClear,
   usableRoutes,
 } from "./routes.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -39,6 +41,8 @@ export interface EnvironmentConnectionLease {
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
+/** "unprepared" means the route answered its check but could not be prepared. */
+export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
@@ -53,14 +57,12 @@ export class ConnectionDriver extends Context.Service<
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
-    readonly checkRoute: (
-      entry: ConnectionCatalogEntry,
-      route: ConnectionRoute,
-    ) => Effect.Effect<RouteCheck>;
     readonly preflight: (
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<RoutePreflight>;
+    /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
+    readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
@@ -140,27 +142,41 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   const httpClient = yield* HttpClient.HttpClient;
 
-  const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
-    const httpBaseUrl = routeHttpBaseUrl(route);
-    if (httpBaseUrl === null) return Effect.succeed<RouteCheck>("unchecked");
-    // The descriptor is public, so this sends no credential to whatever
-    // answers at a saved LAN address on a different network.
-    return fetchRemoteEnvironmentDescriptor({
+  // The descriptor is public, so this sends no credential to whatever
+  // answers at a saved LAN address on a different network.
+  const checkDescriptor = (httpBaseUrl: string, environmentId: string) =>
+    fetchRemoteEnvironmentDescriptor({
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
     }).pipe(
       Effect.map((descriptor): RouteCheck =>
-        descriptor.environmentId === entry.target.environmentId ? "answered" : "silent",
+        descriptor.environmentId === environmentId ? "answered" : "silent",
       ),
       Effect.orElseSucceed((): RouteCheck => "silent"),
+      // A cached descriptor would answer for a host that cannot be reached.
+      Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+
+  const checkRoute = (entry: ConnectionCatalogEntry, route: ConnectionRoute) => {
+    const httpBaseUrl = routeHttpBaseUrl(route);
+    if (httpBaseUrl === null) return Effect.succeed<RouteCheck>("unchecked");
+    return checkDescriptor(httpBaseUrl, entry.target.environmentId).pipe(
       Effect.withSpan("ConnectionDriver.checkRoute", {
         attributes: { "connection.target.kind": route.target._tag },
       }),
     );
   };
+
+  const checkHost = (prepared: PreparedConnection) =>
+    checkDescriptor(prepared.httpBaseUrl, prepared.environmentId).pipe(
+      Effect.withSpan("ConnectionDriver.checkHost", {
+        attributes: { "connection.target.kind": prepared.target._tag },
+      }),
+    );
 
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
@@ -182,6 +198,20 @@ export const make = Effect.gen(function* () {
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
+        // The server closes a socket when its session expires, unless the same key renewed it.
+        if (prepared.httpAuthorization?._tag === "Dpop") {
+          yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: prepared.environmentId,
+              expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not renew the connection's credential.", { error }),
+              ),
+              Effect.forkScoped,
+            );
+        }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
     );
@@ -192,18 +222,18 @@ export const make = Effect.gen(function* () {
       ? Effect.succeed("silent" as const)
       : checkRoute(entry, route)
     ).pipe(
-      Effect.flatMap((check) =>
-        check === "answered"
-          ? resolver.prepare(routeEntry(entry, route)).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            )
-          : Effect.succeed(false),
+      Effect.filterOrElse(
+        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+        () =>
+          resolver.prepare(routeEntry(entry, route)).pipe(
+            Effect.as<RoutePreflight>("ready"),
+            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+          ),
       ),
       Effect.withSpan("ConnectionDriver.preflight"),
     );
 
-  return ConnectionDriver.of({ connect, checkRoute, preflight });
+  return ConnectionDriver.of({ connect, preflight, checkHost });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

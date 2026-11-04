@@ -1,4 +1,4 @@
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import { cacheName } from "./resources.ts";
@@ -22,6 +22,19 @@ export const savingsQuery = (
   ].join("\n");
 
 const summaryRows = (dataset: string) => savingsQuery(dataset).split("\n").slice(0, -1).join("\n");
+
+// One row per native-client install report (scripts/mobile-native-client.ts), deduplicated by report id.
+const nativeInstalls = (dataset: string) =>
+  [
+    `['${dataset}']`,
+    `| where name == 'TaskCache.task'`,
+    `| extend a = ['attributes.custom']`,
+    `| where tostring(a['task.package']) == '@t3tools/mobile' and tostring(a['task.name']) startswith 'native-client'`,
+    `| extend event_id = tostring(a['cache.event_id']), task = tostring(a['task.name']), source = tostring(a['cache.source']), saved_ms = tolong(a['cache.saved_ms']), host = tostring(['attributes.host.name']), developer = tostring(a['developer.id'])`,
+    `| summarize arg_max(_time, task, source, saved_ms, host, developer) by event_id`,
+  ].join("\n");
+const nativeCounts =
+  "local = countif(source == 'local'), remote = countif(source == 'remote'), built = countif(source == 'executed'), failed = countif(source == 'failed')";
 
 export const Observability = Effect.gen(function* () {
   const name = yield* cacheName;
@@ -149,6 +162,94 @@ export const Observability = Effect.gen(function* () {
       query: (dataset: string) =>
         `${savingsQuery(dataset, "ci", true)}\n| summarize saved_task_hours = sum(saved_task_hours) by environment = iff(ci, "CI", "Developer machines")`,
     },
+    {
+      id: "native-hit-rate",
+      name: "📱 Native client hit rate (%)",
+      type: "Statistic",
+      x: 0,
+      y: 17,
+      w: 3,
+      h: 3,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize ${nativeCounts}\n| project hit_rate = round(100.0 * (local + remote) / (local + remote + built), 1)`,
+    },
+    {
+      id: "native-saved",
+      name: "📱 Native build hours saved",
+      type: "Statistic",
+      x: 3,
+      y: 17,
+      w: 3,
+      h: 3,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize build_hours_saved = round(sum(saved_ms) / 3600000.0, 1)`,
+    },
+    {
+      id: "native-builds",
+      name: "📱 Native builds (cache misses)",
+      type: "Statistic",
+      x: 6,
+      y: 17,
+      w: 3,
+      h: 3,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize builds = countif(source == 'executed')`,
+    },
+    {
+      id: "native-failures",
+      name: "📱 Native install failures",
+      type: "Statistic",
+      x: 9,
+      y: 17,
+      w: 3,
+      h: 3,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize failures = countif(source == 'failed')`,
+    },
+    {
+      id: "native-trend",
+      name: "📱 Native installs: local, shared, built, failed",
+      type: "TimeSeries",
+      x: 0,
+      y: 20,
+      w: 8,
+      h: 5,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize ${nativeCounts} by bin_auto(_time)`,
+    },
+    {
+      id: "native-host",
+      name: "📱 Native installs by machine",
+      type: "Pie",
+      x: 8,
+      y: 20,
+      w: 4,
+      h: 5,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize installs = count() by host\n| order by installs desc`,
+    },
+    {
+      id: "native-platforms",
+      name: "📱 Native clients by platform",
+      type: "Table",
+      x: 0,
+      y: 25,
+      w: 8,
+      h: 4,
+      query: (dataset: string) =>
+        `${nativeInstalls(dataset)}\n| summarize ${nativeCounts}, hours_saved = round(sum(saved_ms) / 3600000.0, 2) by task\n| extend hit_rate = round(100.0 * (local + remote) / (local + remote + built), 1)\n| order by local + remote + built desc`,
+    },
+    {
+      id: "native-shared",
+      name: "📱 Shared cache downloads: hit vs miss",
+      type: "TimeSeries",
+      x: 8,
+      y: 25,
+      w: 4,
+      h: 4,
+      query: (dataset: string) =>
+        `['${dataset}']\n| where name == 'NativeClients.handle' and tostring(['attributes.custom']['native.operation']) == 'download'\n| extend result = tostring(['attributes.custom']['native.result'])\n| summarize hits = countif(result == 'hit'), misses = countif(result == 'miss') by bin_auto(_time)`,
+    },
   ] as const;
   for (const chart of charts) {
     yield* Axiom.View(`CacheSavings-${chart.id}`, {
@@ -161,7 +262,7 @@ export const Observability = Effect.gen(function* () {
   const dashboard = yield* Axiom.Dashboard("CacheSavingsDashboard", {
     dashboard: {
       name: "⚡ Task Cache · Time Back",
-      owner: "",
+      owner: "X-AXIOM-EVERYONE",
       schemaVersion: 2,
       refreshTime: 60,
       description:

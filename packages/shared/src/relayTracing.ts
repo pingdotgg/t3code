@@ -18,8 +18,10 @@ export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly runtime: string;
+  readonly serviceInstanceId: string;
   readonly client: string;
   readonly component?: string;
+  readonly attributes?: Readonly<Record<string, string>> | undefined;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -165,9 +167,11 @@ export function layer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.namespace": "t3code",
+        "service.instance.id": resource.serviceInstanceId,
         "service.runtime": resource.runtime,
         "t3code.component": resource.component ?? "relay-client",
         "t3code.client.surface": resource.client,
+        ...resource.attributes,
       },
     },
   }).pipe(Layer.provide(OtlpSerialization.layerJson));

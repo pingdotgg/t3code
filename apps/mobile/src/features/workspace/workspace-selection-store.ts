@@ -19,7 +19,11 @@ import { workspaceRoutesOf } from "../layout/workspace-overlay-routes";
 import type { WorkspaceSelections } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadShells,
+  startOpeningEnvironmentThread,
+  threadEnvironment,
+} from "../../state/threads";
 import {
   rememberedSettingsPage,
   workspaceSelectionsIn,
@@ -51,7 +55,7 @@ function save() {
 function withoutRouteKeys(saved: WorkspaceSelections | undefined): WorkspaceSelections {
   const omitKey = <Selection extends { readonly key?: string }>({ key: _, ...rest }: Selection) =>
     rest;
-  const { threads, pullRequests, settingsKey: _, ...rest } = saved ?? {};
+  const { threads, pullRequests, settingsKey: _, threadsDraft: _draft, ...rest } = saved ?? {};
   return {
     ...rest,
     ...(threads ? { threads: omitKey(threads) } : {}),
@@ -137,11 +141,17 @@ export function settingsLinkPage() {
  */
 export async function launchWorkspaceURL(): Promise<string | null> {
   if (!REMEMBERS) return null;
-  await Promise.all([
-    hydrateWorkspaceSelections(),
-    firstNativeLayoutMetrics(NATIVE_METRICS_TIMEOUT_MS),
-  ]);
+  const metrics = firstNativeLayoutMetrics(NATIVE_METRICS_TIMEOUT_MS);
+  await hydrateWorkspaceSelections();
   const thread = selections.threads;
+  // Read the chat's cached copy while the layout metrics are still on their way.
+  if (thread) {
+    startOpeningEnvironmentThread(
+      thread.environmentId as EnvironmentId,
+      thread.threadId as ThreadId,
+    );
+  }
+  await metrics;
   if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
   return Linking.createURL(
     `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,

@@ -58,17 +58,24 @@ const failureKeys = [
   ["function", () => () => SOURCE],
 ] as const;
 
-it.each(failureKeys)("bounds transient retries for a %s key", async (_name, createKey) => {
-  const key = createKey();
-  const fetch = vi.fn(async () => {
-    throw new Error("Offline");
-  });
-  const load = createNativeReviewDiffSourceLoader(fetch);
-  await expect(load(key)).rejects.toThrow("Offline");
-  expect(await load(key)).toBeNull();
-  expect(await load(key)).toBeNull();
-  expect(fetch).toHaveBeenCalledTimes(2);
-});
+it.each(failureKeys)(
+  "recovers after two transient failures on a later load for a %s key",
+  async (_name, createKey) => {
+    const key = createKey();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Offline"))
+      .mockRejectedValueOnce(new Error("Still offline"))
+      .mockResolvedValue(SOURCE);
+    const load = createNativeReviewDiffSourceLoader(fetch);
+    await expect(load(key)).rejects.toThrow("Offline");
+    await expect(load(key)).rejects.toThrow("Still offline");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await load(key)).toBe(SOURCE);
+    expect(await load(key)).toBe(SOURCE);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  },
+);
 
 it.each(failureKeys)(
   "remembers permanent unavailability for a %s key",

@@ -89,6 +89,17 @@ function fastMultiplier(entry: LiteLlmEntry): number | null {
   return fast !== null && fast > 0 ? fast : null;
 }
 
+// LiteLLM prefixes for the model makers' own APIs; their price beats a cloud's or reseller's for a bare name.
+const FIRST_PARTY_PROVIDERS = new Set([
+  "anthropic",
+  "deepseek",
+  "gemini",
+  "meta",
+  "mistral",
+  "openai",
+  "xai",
+]);
+
 /** Drops models missing input or output rates to avoid understating cost. */
 export function parseRateTable(document: unknown): RateTable {
   const table = new Map<string, ModelRate>();
@@ -113,18 +124,19 @@ export function parseRateTable(document: unknown): RateTable {
     });
   }
 
-  const aliasCandidates = new Map<string, ModelRate | null>();
+  const aliasCandidates = new Map<string, { rate: ModelRate | null; firstParty: boolean }>();
   for (const [key, rate] of table) {
     const alias = bareModelName(key);
     if (alias.length === 0 || alias === key || table.has(alias)) continue;
+    const firstParty = FIRST_PARTY_PROVIDERS.has(key.slice(0, key.indexOf("/")));
     const held = aliasCandidates.get(alias);
-    if (held === undefined) {
-      aliasCandidates.set(alias, rate);
-    } else if (held !== null && !sameRate(held, rate)) {
-      aliasCandidates.set(alias, null);
+    if (held === undefined || (firstParty && !held.firstParty)) {
+      aliasCandidates.set(alias, { rate, firstParty });
+    } else if (held.rate !== null && firstParty === held.firstParty) {
+      aliasCandidates.set(alias, { rate: mergeAliasRate(held.rate, rate), firstParty });
     }
   }
-  for (const [alias, rate] of aliasCandidates) {
+  for (const [alias, { rate }] of aliasCandidates) {
     if (rate !== null) table.set(alias, rate);
   }
 
@@ -141,12 +153,18 @@ function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {
   );
 }
 
-function sameRate(a: ModelRate, b: ModelRate): boolean {
-  return (
-    sameTokenRates(a, b) &&
-    sameTokenRates(a.fast, b.fast) &&
-    sameTokenRates(a.ultrafast, b.ultrafast)
-  );
+// Resellers often omit speed tiers, so a missing tier fills from the other entry instead of conflicting.
+function mergeAliasRate(a: ModelRate, b: ModelRate): ModelRate | null {
+  const fast = a.fast ?? b.fast;
+  const ultrafast = a.ultrafast ?? b.ultrafast;
+  if (
+    !sameTokenRates(a, b) ||
+    !sameTokenRates(fast, b.fast ?? fast) ||
+    !sameTokenRates(ultrafast, b.ultrafast ?? ultrafast)
+  ) {
+    return null;
+  }
+  return { ...a, fast, ultrafast };
 }
 
 function ratesAt(rate: ModelRate, speed: UsageSpeed): TokenRates {

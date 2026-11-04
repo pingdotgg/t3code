@@ -274,6 +274,20 @@ export const make = Effect.gen(function* () {
           })),
         ),
 
+    getChangeRequestPreview: (input) =>
+      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
+      ),
+
     getChangeRequestSummary: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),

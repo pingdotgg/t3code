@@ -23,15 +23,13 @@ import {
 import { use, useCallback, useRef, useState, type ComponentProps } from "react";
 import { WorkspaceSlotOptionsContext, slotScreenOptions } from "./v5-workspace-context";
 import { StyleSheet, View } from "react-native";
-import { FormSheet, Stack } from "react-native-screens";
+import { Stack } from "react-native-screens";
 import { NativeScrollEdgeEffectsContext } from "./NativeScrollViewMarker";
 import { V5StackHeader } from "./V5StackHeader.ios";
 import type { AppNativeStackNavigationOptions } from "./StackHeader";
 import { NativeColumnContent } from "./NativeColumnContent.ios";
 import {
   nativeStackPopAction,
-  nativeWorkspacePopAction,
-  nativeWorkspacePopCount,
   partitionStackPresentations,
   reconcileStackScreens,
 } from "./workspace-stack-projection";
@@ -139,22 +137,19 @@ export function V5CardStackView(
     },
     [props.navigation, setNativePopSource, setScreens],
   );
-  const removeDismissed = useCallback(
-    (key: string) => {
-      if (!props.navigation.getState().routes.some((route) => route.key === key)) {
-        setScreens((current) => {
-          const descriptors = { ...current.descriptors };
-          delete descriptors[key];
-          return {
-            ...current,
-            routes: current.routes.filter((route) => route.key !== key),
-            descriptors,
-          };
-        });
-      }
-    },
-    [props.navigation, setScreens],
-  );
+  const removeDismissed = (key: string) => {
+    if (!props.navigation.getState().routes.some((route) => route.key === key)) {
+      setScreens((current) => {
+        const descriptors = { ...current.descriptors };
+        delete descriptors[key];
+        return {
+          ...current,
+          routes: current.routes.filter((route) => route.key !== key),
+          descriptors,
+        };
+      });
+    }
+  };
   return (
     <View className="flex-1 bg-screen">
       <Stack.Host>

@@ -4,6 +4,7 @@ import * as NodeReadline from "node:readline";
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -273,13 +274,11 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       line: string,
     ): Effect.fn.Return<void> {
       if (line.trim().length === 0) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
+      const parsed = yield* Effect.try((): unknown => JSON.parse(line)).pipe(Effect.result);
+      if (Result.isFailure(parsed)) {
         return yield* respondWithError(null, "Parse error", -32700);
       }
-      const envelope = asEnvelope(parsed);
+      const envelope = asEnvelope(parsed.success);
       if (envelope === null) return;
       const isResponse = envelope.id !== undefined && ("result" in envelope || "error" in envelope);
       const isSessionHandshake =
@@ -314,7 +313,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
 
     const reader = NodeReadline.createInterface({ input: options.input });
     yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
-      Effect.catchCause(() => Effect.void),
+      Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
   });
@@ -362,7 +361,7 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  let result = await Effect.runPromise(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -370,5 +369,30 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
+  // Terminal callers see both fields, unlike native MCP clients that choose one.
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "structuredContent" in result &&
+    result.structuredContent !== undefined &&
+    "content" in result &&
+    Array.isArray(result.content)
+  ) {
+    const encoded = JSON.stringify(result.structuredContent);
+    result = {
+      ...result,
+      content: result.content.filter(
+        (part: unknown) =>
+          !(
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            part.text === encoded
+          ),
+      ),
+    };
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

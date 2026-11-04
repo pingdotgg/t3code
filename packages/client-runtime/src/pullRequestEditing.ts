@@ -25,6 +25,41 @@ export function canEditPullRequestChangeRequest(detail: EditingSubject): boolean
   );
 }
 
+export function canEditPullRequestMaintainerEdits(
+  detail: Pick<
+    PullRequestDetail,
+    "state" | "capabilities" | "viewerPermissions" | "maintainerCanModify"
+  >,
+): boolean {
+  return (
+    detail.state === "open" &&
+    detail.capabilities.edit?.maintainerEdits === true &&
+    detail.viewerPermissions.maintainerEdits === true &&
+    detail.maintainerCanModify !== undefined
+  );
+}
+
+export interface MaintainerEditsChoice {
+  readonly key: string;
+  readonly observedAt: number | undefined;
+  readonly value: boolean;
+}
+
+/**
+ * A saved choice ends at the first host reading delivered after the save. Readers refresh once it
+ * succeeds, which drops reads still in flight, so that reading started after the write.
+ */
+export function maintainerEditsChoiceInForce(
+  choice: MaintainerEditsChoice | null,
+  key: string,
+  observedAt: number | undefined,
+  saving: boolean,
+): MaintainerEditsChoice | null {
+  if (choice === null || choice.key !== key) return null;
+  if (saving) return choice.observedAt === observedAt ? choice : { ...choice, observedAt };
+  return observedAt !== undefined && choice.observedAt === observedAt ? choice : null;
+}
+
 /** Hosts do not support rewriting review summaries through comment mutations. */
 export function canEditPullRequestComment(
   detail: EditingSubject,

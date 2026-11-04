@@ -10,6 +10,7 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {
         return [
@@ -247,10 +248,16 @@ public final class T3NativeControlsModule: Module {
         userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."]
       )
     }
-    let presentation = T3NativeVideoPresentation(identifier: identifier, url: url, title: title) { [weak self] error in
-      self?.videoPresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let presentation = T3NativeVideoPresentation(
+      identifier: identifier, url: url, title: title,
+      onPlaybackChange: { [weak self] isPlaying in
+        self?.sendEvent("videoPlaybackChange", ["identifier": identifier, "isPlaying": isPlaying])
+      },
+      completion: { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     videoPresentation = presentation
     presentation.present(from: presenter, sources: presentationSources, sourceIdentifier: sourceIdentifier)
   }

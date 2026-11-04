@@ -139,6 +139,7 @@ export function WorkLogDetails({
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const atLiveEdgeRef = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pins the scroller's scrollTop to the bottom after each commit while following live output
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (followLive && atLiveEdgeRef.current && scroller) {

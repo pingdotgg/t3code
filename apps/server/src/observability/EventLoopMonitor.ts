@@ -35,6 +35,7 @@ export class EventLoopMonitor extends Context.Reference<{
    */
   readonly latestNoticeableStall: Effect.Effect<ServerEventLoopStall | undefined>;
 }>("t3/observability/EventLoopMonitor", {
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
   defaultValue: () => ({ latestNoticeableStall: Effect.succeed(undefined) }),
 }) {}
 
@@ -74,7 +75,6 @@ const makeNodeSampler = Effect.gen(function* () {
   let usage = process.resourceUsage();
   let sampledAt = NodePerfHooks.performance.now();
 
-  // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();

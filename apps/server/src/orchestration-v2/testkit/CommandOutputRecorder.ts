@@ -34,14 +34,15 @@ export const layer: Layer.Layer<
       CommandOutputHub.CommandOutputHub,
       CommandOutputHub.CommandOutputHub.of({
         ...hub,
-        append: (input) =>
-          Effect.sync(() => {
+        append: Effect.fn("CommandOutputHub.append")(function (input) {
+          return Effect.sync(() => {
             const previous = recorded.get(input.itemId);
             recorded.set(input.itemId, {
               chunks: (previous?.chunks ?? 0) + 1,
               output: appendTerminalOutput(previous?.output ?? EMPTY_TERMINAL_OUTPUT, input.chunk),
             });
-          }).pipe(Effect.andThen(hub.append(input))),
+          }).pipe(Effect.andThen(hub.append(input)));
+        }),
       }),
     ).pipe(
       Context.add(CommandOutputRecorder, {

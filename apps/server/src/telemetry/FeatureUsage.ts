@@ -14,14 +14,16 @@ const use = (feature: string, variant?: string): FeatureUsage =>
   variant === undefined ? { feature } : { feature, variant };
 
 /**
- * Exclude housekeeping and `message.dispatch`, which `client.turn.requested` already counts.
- * Record at command dispatch so retries that commit no change do not count twice.
+ * Exclude housekeeping. `client.turn.requested` counts every `message.dispatch`; only sending a
+ * guest's message is also a feature. Record at command dispatch so retries do not count twice.
  */
 const COMMAND_FEATURES: {
   readonly [Type in OrchestrationV2Command["type"]]?: (
     command: Extract<OrchestrationV2Command, { readonly type: Type }>,
-  ) => FeatureUsage;
+  ) => FeatureUsage | undefined;
 } = {
+  "message.dispatch": (command) =>
+    command.guestMessageId === undefined ? undefined : { feature: "guest_message.send" },
   "checkpoint.rollback": (command) => ({
     feature: "checkpoint.rollback",
     variant: command.restoreFiles === false ? "conversation_only" : "with_files",
@@ -42,6 +44,8 @@ const COMMAND_FEATURES: {
   "run.interrupt": () => ({ feature: "run.interrupt" }),
   "queued-message.promote-to-steer": () => ({ feature: "queue.steer" }),
   "queued-run.edit": () => ({ feature: "queue.edit" }),
+  "thread.guest-share.close": () => ({ feature: "guest_share.close" }),
+  "thread.guest-message.dismiss": () => ({ feature: "guest_message.dismiss" }),
 };
 
 /**
@@ -66,14 +70,16 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.agentSessionsImport]: () => ({ feature: "agent_session.import" }),
   [WS_METHODS.projectCloneStart]: () => ({ feature: "project.clone" }),
   [WS_METHODS.sourceControlPublishRepository]: () => ({ feature: "repository.publish" }),
+  [WS_METHODS.sourceControlSignInStart]: () => ({ feature: "source_control.sign_in" }),
   [WS_METHODS.serverUpsertKeybinding]: () => ({ feature: "keybinding.customize" }),
+  [WS_METHODS.guestShareCreate]: () => ({ feature: "guest_share.create" }),
 };
 
 /** The feature a dispatched command uses, or undefined when it is not a tracked feature. */
 export function commandFeatureUsage(command: OrchestrationV2Command): FeatureUsage | undefined {
   // TypeScript cannot pair a union's tag with its own entry, so widen once here.
   const mapping = COMMAND_FEATURES[command.type] as
-    | ((command: OrchestrationV2Command) => FeatureUsage)
+    | ((command: OrchestrationV2Command) => FeatureUsage | undefined)
     | undefined;
   return mapping?.(command);
 }

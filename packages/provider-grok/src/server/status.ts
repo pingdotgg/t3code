@@ -9,7 +9,7 @@ import {
 import type { GrokSettings } from "../settings.ts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -58,7 +58,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 // Grok writes the initialize result only after startup work (settings,
 // skill discovery, file watching). From a home directory that work measured
 // 9-14s on CLI 1.0.52, so an 8s cap records a healthy CLI as a failed probe.
@@ -126,6 +126,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
@@ -183,6 +185,11 @@ function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   const selectedDefault =
     advertisedDefaults.find((option) => option.value === currentValue)?.value ??
     advertisedDefaults[0]?.value;
+  // Grok advertises its strongest level first; pickers and effort bars read lowest to highest.
+  const rank = (option: { value: string }) => GROK_EFFORT_RANK.indexOf(option.value);
+  if (options.every((option) => rank(option) >= 0)) {
+    options.sort((left, right) => rank(left) - rank(right));
+  }
   return {
     options: options.map(({ value, label, description }) => ({
       value,
@@ -394,7 +401,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -527,6 +534,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     discoveredModels.length > 0
       ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
       : fallbackModels;
+  // The registry replaces cached models on a ready probe, so a fallback-only list must not be ready.
+  const incompleteMessage = acpFailed
+    ? "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
+    : discoveredModels.length === 0
+      ? "Grok CLI did not list any models. Model options may be incomplete."
+      : undefined;
 
   if (auth.status === "unauthenticated") {
     return buildServerProvider({
@@ -555,14 +568,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     probe: {
       installed: true,
       version,
-      status: acpFailed ? "warning" : "ready",
+      status: incompleteMessage ? "warning" : "ready",
       auth,
-      ...(acpFailed
-        ? {
-            message:
-              "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
-          }
-        : {}),
+      ...(incompleteMessage ? { message: incompleteMessage } : {}),
     },
   });
 });

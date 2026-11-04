@@ -14,11 +14,10 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -129,7 +128,7 @@ export interface GrokAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -358,7 +357,7 @@ export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
 
 export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
@@ -407,40 +406,3 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       ),
   ),
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | Path.Path
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | IdAllocator.IdAllocatorV2
-  | McpProviderSessions.McpProviderSessions
-  | ProviderEventLoggers.ProviderEventLoggers
-  | ProviderHost.ProviderHost
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcess.Environment;
-    const hostPlatform = yield* HostProcess.Platform;
-    const selfInvocation = yield* resolveSelfInvocation();
-    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-    return yield* makeGrokAdapterV2({
-      instanceId: GROK_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_GROK_SETTINGS,
-      environment: hostEnvironment,
-      hostPlatform,
-      selfInvocation,
-      continuationRequests,
-      nativeLogging: (threadId) =>
-        makeNativeLogger({
-          nativeEventLogger: providerEventLoggers.native,
-          provider: GROK_PROVIDER,
-          threadId,
-        }),
-    });
-  }),
-);

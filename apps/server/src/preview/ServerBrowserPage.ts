@@ -33,8 +33,8 @@ export class ServerBrowserOperationError extends Error {
   readonly tag: string;
   readonly detail: unknown;
 
-  constructor(tag: string, message: string, detail?: unknown) {
-    super(message);
+  constructor(tag: string, message: string, detail?: unknown, options?: ErrorOptions) {
+    super(message, options);
     this.tag = tag;
     this.detail = detail;
   }
@@ -72,6 +72,8 @@ export const toOperationError = (
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const TARGET_COUNT_MS = 250;
+const MAX_TARGET_CHARS = 200;
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
 // A compact runtime namespace prevents old refs from aliasing after a server restart.
@@ -174,7 +176,6 @@ export const withoutDataPayload = (url: string) => {
         : ({ t: "\t", n: "\n", r: "\r", '"': '"', "\\": "\\" }[code] ?? "\u0001"),
     )
     .replace(/[\t\n\r]/g, "")
-    // eslint-disable-next-line no-control-regex -- URL parsing ignores these controls.
     .replace(/^[\u0000-\u0020]+/, "");
   const parsed = /^data:([^,;]*)/i.exec(value);
   if (!parsed) return url;
@@ -411,8 +412,6 @@ const pngSize = (base64: string) => {
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
 
-type Viewport = { readonly width: number; readonly height: number };
-
 /**
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
@@ -439,13 +438,7 @@ const readPageMetrics = async (cdp: CDPSession) => {
         readonly width: number;
         readonly height: number;
       };
-      return {
-        ratio,
-        width,
-        height,
-        zoom,
-        offset: { x: cssVisualViewport.pageX * zoom, y: cssVisualViewport.pageY * zoom },
-      };
+      return { ratio, width, height, zoom };
     }
   }
   throw new Error(
@@ -453,39 +446,54 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+// Never pass a clip scale: Chromium mirrors the top-left of the page into a `backdrop-filter`
+// in any capture it shrinks.
 export const captureViewport = async (
-  page: Page,
   cdp: CDPSession,
-  options: {
-    readonly format: "png" | "jpeg";
-    readonly quality?: number;
-    readonly scale: number;
-    readonly viewport?: Viewport;
-    readonly offset?: { readonly x: number; readonly y: number } | undefined;
-  },
+  options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  let clip;
-  if (options.scale < 1) {
-    const viewport = options.viewport ?? page.viewportSize() ?? { width: 1280, height: 800 };
-    let offset = options.offset;
-    if (!offset) {
-      const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
-      const zoom = cssVisualViewport.zoom ?? 1;
-      offset = { x: cssVisualViewport.pageX * zoom, y: cssVisualViewport.pageY * zoom };
-    }
-    clip = {
-      ...offset,
-      ...viewport,
-      scale: options.scale,
-    };
-  }
   const { data } = await cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
-    ...(clip ? { clip } : {}),
   });
   return data;
+};
+
+/** Runs in the page's own isolated world, as the server has no image library. */
+const SHRINK_PNG = `async function (png, width, height) {
+  const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  // Namespaced, as an XML document's createElement makes a plain element with no getContext.
+  const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.imageSmoothingQuality = "high";
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
+}`;
+
+const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
+  const size = pngSize(png);
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: "t3-preview-screenshot",
+  });
+  const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
+    functionDeclaration: SHRINK_PNG,
+    executionContextId,
+    arguments: [
+      { value: png },
+      { value: Math.round(size.width * scale) },
+      { value: Math.round(size.height * scale) },
+    ],
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (exceptionDetails) throw new Error("The snapshot could not shrink its screenshot.");
+  return result.value as string;
 };
 
 type SnapshotInput = {
@@ -498,17 +506,16 @@ type SnapshotInput = {
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
 };
 
-/** The scale a page renders at and its viewport in device-independent pixels, a clip's units. */
+/** The scale a page renders at and its viewport in device-independent pixels. */
 const renderingOf = async (input: SnapshotInput) => {
   if (input.renderScale !== "display") {
     const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
-    return { renderScale: input.renderScale, viewport, offset: undefined };
+    return { renderScale: input.renderScale, viewport };
   }
   // The display ratio a desktop page reports includes its page zoom, and its sizes are CSS pixels.
   const page = await readPageMetrics(input.cdp);
   return {
     renderScale: page.ratio / page.zoom,
-    offset: page.offset,
     viewport: {
       width: Math.round(page.width * page.zoom),
       height: Math.round(page.height * page.zoom),
@@ -520,7 +527,7 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
 ): Promise<PreviewAutomationSnapshot> => {
-  const { renderScale, viewport, offset } = await renderingOf(input);
+  const { renderScale, viewport } = await renderingOf(input);
   // A late metrics reply must not begin a capture after viewers have resumed.
   if (Date.now() >= deadline) throw tooBusy();
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * renderScale));
@@ -537,7 +544,9 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale, viewport, offset }),
+    captureViewport(input.cdp, { format: "png" }).then((png) =>
+      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+    ),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -576,6 +585,7 @@ const capture = async (
     });
   return {
     ...page,
+    url: withoutDataPayload(page.url),
     // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
@@ -626,6 +636,58 @@ export const click = async (
 ): Promise<{ readonly x: number; readonly y: number }> => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
+  try {
+    return await clickTarget(page, locator, input, timeout, pointer);
+  } catch (cause) {
+    throw locator === null ? cause : await namedTargetTimeout(locator, input, cause);
+  }
+};
+
+/**
+ * Playwright's timeout names neither the target nor why it waited. Counting only after the
+ * wait failed keeps auto-wait intact, but the count describes the page after the timeout, not
+ * what the click did: Playwright can dispatch the click and then time out waiting for the
+ * navigation it started.
+ */
+const namedTargetTimeout = async (
+  locator: Locator,
+  input: { readonly locator?: string | undefined; readonly selector?: string | undefined },
+  cause: unknown,
+) => {
+  if (!(cause instanceof Error && cause.name === "TimeoutError")) return cause;
+  const selector = JSON.stringify(input.locator ?? input.selector);
+  // The warning leads and the target is capped, so a reply cut short still carries the warning.
+  const target =
+    selector.length > MAX_TARGET_CHARS ? `${selector.slice(0, MAX_TARGET_CHARS)}...` : selector;
+  // The host's reply must still beat the broker's short grace after the operation timeout.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const matches = await Promise.race([
+    locator.count().catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), TARGET_COUNT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  const reason =
+    matches === undefined
+      ? `The click may have happened; check the page before retrying. Whether ${target} still matches an element is unknown.`
+      : matches === 0
+        ? `The click may have happened and removed its target or navigated; check the page before retrying. No element matches ${target} after the timeout; take a fresh snapshot and use its locator.`
+        : `The click may have happened; check the page before retrying. ${target} still matches an element after the timeout.`;
+  return new ServerBrowserOperationError(
+    "PreviewAutomationTimeoutError",
+    reason,
+    { reason },
+    { cause },
+  );
+};
+
+const clickTarget = async (
+  page: Page,
+  locator: Locator | null,
+  input: PreviewAutomationClickInput,
+  timeout: number,
+  pointer: PointerReporter,
+) => {
   const point = await targetPoint(page, locator, input, timeout);
   await pointer(point, "click");
   const options = { button: input.button ?? "left", clickCount: input.clickCount ?? 1 } as const;
@@ -887,7 +949,8 @@ const NET_ERROR_CODES: Readonly<Record<string, number>> = {
 };
 
 export const parseNetError = (errorText: string) => {
-  const description = /ERR_[A-Z_]+/.exec(errorText)?.[0] ?? errorText;
+  // Names can hold digits, as in ERR_HTTP2_PROTOCOL_ERROR.
+  const description = /ERR_[A-Z\d_]+/.exec(errorText)?.[0] ?? errorText;
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
 };
 

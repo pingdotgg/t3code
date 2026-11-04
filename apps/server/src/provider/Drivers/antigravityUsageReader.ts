@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime, which the cache fingerprint needs.
 import * as NodeFSP from "node:fs/promises";
+import { pipe } from "effect/Function";
 
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -100,6 +101,12 @@ const MODEL_IDS: Record<number, string> = {
   1084: "gemini-3-flash-preview",
   1047: "gemini-3-flash-preview",
 };
+
+// ACP slugs append the thinking level, which shares the base model's price.
+function withRateModel(record: UsageRecord): UsageRecord {
+  const rateModel = record.model.replace(/-(?:low|medium|high)$/, "");
+  return rateModel === record.model ? record : { ...record, rateModel };
+}
 
 function modelName(name: string, id: number): string {
   if (name) {
@@ -238,7 +245,9 @@ const readDatabase = Effect.fn("readDatabase")(function* (
       for (const row of yield* sql.unsafe<{ readonly data: unknown }>(
         "SELECT data FROM trajectory_metadata_blob",
       )) {
-        trajectoryTimestamp ??= yield* decode(() => timestamp(nested(fields(blob(row.data)), 2)));
+        trajectoryTimestamp ??= yield* decode(() =>
+          pipe(blob(row.data), fields, (message) => nested(message, 2), timestamp),
+        );
       }
     }
     const steps = tables.has("steps")
@@ -470,7 +479,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
   }
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
-      files[group.fileIndex]!.records.push(group.record);
+      files[group.fileIndex]!.records.push(withRateModel(group.record));
     }
   }
   return { files, errors };

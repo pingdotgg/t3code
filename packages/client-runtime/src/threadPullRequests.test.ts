@@ -104,6 +104,55 @@ describe("threadPullRequestKeysEqual", () => {
 });
 
 describe("resolveThreadCurrentPullRequest", () => {
+  it("selects the same terminal link as stable sorting across input orders", () => {
+    const dates = ["invalid", "1969-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"];
+    for (let offset = 0; offset < dates.length; offset++) {
+      const links = Array.from({ length: 12 }, (_, index) =>
+        link(index + 1, {
+          snapshot: snapshot({
+            state: "merged",
+            updatedAt: dates[(index + offset) % dates.length]!,
+          }),
+        }),
+      );
+      for (const input of [links, [...links].sort((left, right) => right.number - left.number)]) {
+        const expected = [...input].sort(
+          (left, right) =>
+            (Date.parse(right.snapshot?.updatedAt ?? right.linkedAt) || 0) -
+            (Date.parse(left.snapshot?.updatedAt ?? left.linkedAt) || 0),
+        )[0];
+        expect(resolveThreadCurrentPullRequest(input)).toEqual({ kind: "single", link: expected });
+      }
+    }
+  });
+
+  it("preserves input order when open chains have equal link dates", () => {
+    const linkedAt = "2026-01-01T00:00:00.000Z";
+    const current = resolveThreadCurrentPullRequest([
+      link(3, { linkedAt }),
+      link(1, { linkedAt }),
+      link(2, { linkedAt }),
+    ]);
+    expect(current?.kind === "stack" ? current.open.map((entry) => entry.number) : null).toEqual([
+      3, 1, 2,
+    ]);
+  });
+
+  it("keeps the first terminal link on ties and treats invalid update dates as zero", () => {
+    const first = link(3, { snapshot: snapshot({ state: "merged", updatedAt: "invalid" }) });
+    const second = link(1, {
+      snapshot: snapshot({ state: "closed", updatedAt: "1970-01-01T00:00:00.000Z" }),
+    });
+    expect(resolveThreadCurrentPullRequest([first, second])).toEqual({
+      kind: "single",
+      link: first,
+    });
+    expect(resolveThreadCurrentPullRequest([second, first])).toEqual({
+      kind: "single",
+      link: second,
+    });
+  });
+
   it("prefers the single open link over terminal ones", () => {
     const current = resolveThreadCurrentPullRequest([
       link(1, { snapshot: snapshot({ state: "merged" }) }),
