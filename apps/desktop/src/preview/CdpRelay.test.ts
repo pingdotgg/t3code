@@ -169,6 +169,20 @@ describe("CDP relay extra sessions", () => {
     written.length = 0;
     relay.event("Page.screencastFrame", { data: "x" }, undefined);
     expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);
+    relay.receive(
+      JSON.stringify({
+        id: 6,
+        method: "Target.detachFromTarget",
+        params: { sessionId: extra },
+        sessionId: browserSession,
+      }),
+    );
+    await settle();
+    expect(written).toContainEqual({
+      method: "Target.detachedFromTarget",
+      params: { sessionId: extra, targetId: "GUEST-TARGET" },
+      sessionId: browserSession,
+    });
   });
 });
 
@@ -193,7 +207,7 @@ describe("CDP relay popups", () => {
     const closePopup = vi.fn();
     const written: Array<Record<string, unknown>> = [];
     const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
-    relay.addPopup(makePopup("POPUP", popupSend, closePopup));
+    const popup = relay.addPopup(makePopup("POPUP", popupSend, closePopup));
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
     await settle();
     relay.receive(
@@ -212,6 +226,10 @@ describe("CDP relay popups", () => {
     );
     await settle();
     expect(resultOf(written, 2)).toHaveProperty("result");
+    expect(written).toContainEqual({
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "t3-preview-popup-1", targetId: "POPUP" },
+    });
     relay.receive(
       JSON.stringify({ id: 4, method: "Runtime.evaluate", sessionId: "t3-preview-popup-1" }),
     );
@@ -222,6 +240,18 @@ describe("CDP relay popups", () => {
     expect(closePopup).not.toHaveBeenCalled();
     expect(pageSend).toHaveBeenCalledExactlyOnceWith("Page.enable", {}, undefined, undefined);
     expect(resultOf(written, 5)).toHaveProperty("result");
+    relay.receive(JSON.stringify({ id: 6, method: "Target.getTargets" }));
+    await settle();
+    expect(resultOf(written, 6)["result"]).toMatchObject({
+      targetInfos: [
+        { targetId: "GUEST-TARGET", attached: true },
+        { targetId: "POPUP", attached: false },
+      ],
+    });
+    popup.remove();
+    expect(
+      written.filter((message) => message["method"] === "Target.detachedFromTarget"),
+    ).toHaveLength(1);
   });
 
   it.each(["browser", "popup", "child"])(

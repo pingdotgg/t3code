@@ -14,7 +14,7 @@ import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
+  Schema.fromJsonString(Schema.Struct({ id: Schema.optionalKey(Schema.Number) })),
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
 /** Sends a page command whose id the fake debugger records as it receives it. */
@@ -130,9 +130,11 @@ const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
     const replies = yield* Queue.unbounded<number>();
     yield* host.events.pipe(
       Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
-      Stream.runForEach((event) =>
-        event.type === "cdp" ? Queue.offer(replies, decodeCdpReply(event.message).id) : Effect.void,
-      ),
+      Stream.runForEach((event) => {
+        if (event.type !== "cdp") return Effect.void;
+        const { id } = decodeCdpReply(event.message);
+        return id === undefined ? Effect.void : Queue.offer(replies, id);
+      }),
       Effect.forkScoped,
     );
     yield* Effect.yieldNow;

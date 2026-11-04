@@ -156,7 +156,9 @@ export function createCdpRelayConnection(
     type: "page",
     title: relayed.target.title(),
     url: relayed.target.url(),
-    attached: true,
+    attached: [...sessions.values()].some(
+      (session) => session.kind === "page" && session.owner === relayed,
+    ),
     ...(relayed === page
       ? { canAccessOpener: false }
       : { canAccessOpener: true, openerId: await target.targetId() }),
@@ -167,7 +169,11 @@ export function createCdpRelayConnection(
     sessions.set(relayed.sessionId, { kind: "page", owner: relayed, parent: undefined });
     return {
       method: "Target.attachedToTarget",
-      params: { sessionId: relayed.sessionId, targetInfo: info, waitingForDebugger: false },
+      params: {
+        sessionId: relayed.sessionId,
+        targetInfo: { ...info, attached: true },
+        waitingForDebugger: false,
+      },
     };
   };
   /** Popups follow the page, one at a time, so Playwright already knows their opener. */
@@ -258,8 +264,14 @@ export function createCdpRelayConnection(
           );
           children.delete(sessionId as string);
         } else if (session?.kind === "page" && sessionId !== PAGE_SESSION_ID) {
+          const targetId = session.owner.targetId ?? (await session.owner.target.targetId());
           sessions.delete(sessionId as string);
           session.owner.target.sessionDetached?.(sessionId as string);
+          send({
+            method: "Target.detachedFromTarget",
+            params: { sessionId, targetId },
+            ...(session.parent === undefined ? {} : { sessionId: session.parent }),
+          });
         } else if (session?.kind === "browser") {
           sessions.delete(sessionId as string);
         }
