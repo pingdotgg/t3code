@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  limitsNotice,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1346,6 +1347,8 @@ describe("/usage-limits", () => {
       ),
     ).toEqual(["hub:duplicate", "hub:oss"]);
     const failed = provider({ usageLimits: { ...limits, unavailable: { reason: "probeFailed" } } });
+    expect(limitsNotice(failed.usageLimits!)).toBeNull();
+    expect(limitsNotice({ ...failed.usageLimits!, windows: [] })).toBe("Could not read limits.");
     expect(
       collectProviderUsageLimits(selected.instanceId, [failed], sources, now)?.accounts.map(
         (account) => account.id,

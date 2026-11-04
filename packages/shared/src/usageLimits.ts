@@ -618,10 +618,14 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }
-  if (limits.unavailable?.reason === "probeFailed") {
+  if (limits.unavailable?.reason === "probeFailed" && limits.windows.length === 0) {
     return limits.unavailable.message ?? "Could not read limits.";
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
+}
+
+function isCleanRead(limits: ServerProviderUsageLimits): boolean {
+  return !limits.unavailable && limitsNotice(limits) === null;
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {
@@ -772,8 +776,8 @@ export function collectProviderUsageLimits(
     const snapshot = { provider, limits: provider.usageLimits };
     const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
-    const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
-    const usable = limitsNotice(snapshot.limits) === null;
+    const previousUsable = previous ? isCleanRead(previous.usage.limits) : false;
+    const usable = isCleanRead(snapshot.limits);
     const providerWins =
       !previous ||
       (usable && !previousUsable) ||

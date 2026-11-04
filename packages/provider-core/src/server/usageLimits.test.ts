@@ -118,5 +118,14 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+    const streamed = {
+      checkedAt,
+      windows: [weekly],
+      unavailable: { reason: "probeFailed" as const },
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: streamed, probed: failed })).toBe(streamed);
+    expect(
+      resolveUsageLimitsAfterProbe({ published: { ...streamed, windows: [] }, probed: failed }),
+    ).toBe(failed);
   });
 });
