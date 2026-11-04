@@ -1,16 +1,17 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { mockJaegerBinding } from "../../../../shared/tracing.ts";
+import type { JaegerTracing } from "../../../../shared/types.ts";
 import {
   flagIsEnabled,
   SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING,
 } from "../compatibility-flags.ts";
 import { CACHE_CONTROL_BROWSER } from "../constants.ts";
 import { HEADERS_VERSION } from "../handler.ts";
-import { generateRulesMatcher, replacer } from "./rules-engine.ts";
-import type { AssetConfig, JaegerTracing } from "../../../../shared/types.ts";
 import type { AssetIntentWithResolver } from "../handler.ts";
+import type { NormalizedAssetConfig } from "../types.ts";
 import type { Env } from "../worker.ts";
+import { generateRulesMatcher, replacer } from "./rules-engine.ts";
 
 /**
  * Returns a Headers object that contains additional headers (to those
@@ -23,7 +24,7 @@ export function getAssetHeaders(
   contentType: string | undefined,
   cacheStatus: string,
   request: Request,
-  configuration: Required<AssetConfig>,
+  configuration: NormalizedAssetConfig,
 ) {
   const headers = new Headers({
     ETag: `"${eTag}"`,
@@ -44,10 +45,7 @@ export function getAssetHeaders(
   if (
     configuration.debug &&
     resolver === "not-found" &&
-    flagIsEnabled(
-      configuration,
-      SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING,
-    )
+    flagIsEnabled(configuration, SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING)
   ) {
     headers.append(
       "X-Mf-Additional-Response-Log",
@@ -65,16 +63,14 @@ function isCacheable(request: Request) {
 export function attachCustomHeaders(
   request: Request,
   response: Response,
-  configuration: Required<AssetConfig>,
+  configuration: NormalizedAssetConfig,
   env: Env,
 ) {
   const jaeger: JaegerTracing = env.JAEGER ?? mockJaegerBinding();
   return jaeger.enterSpan("add_headers", (span) => {
     // Iterate through rules and find rules that match the path
     const headersMatcher = generateRulesMatcher(
-      configuration.headers?.version === HEADERS_VERSION
-        ? configuration.headers.rules
-        : {},
+      configuration.headers?.version === HEADERS_VERSION ? configuration.headers.rules : {},
       ({ set = {}, unset = [] }, replacements) => {
         const replacedSet: Record<string, string> = {};
         Object.entries(set).forEach(([key, value]) => {

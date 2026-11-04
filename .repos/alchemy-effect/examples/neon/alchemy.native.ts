@@ -1,8 +1,8 @@
+import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
-import * as Neon from "alchemy/Neon";
 import * as Effect from "effect/Effect";
-import { resources } from "./src/resources.ts";
 import { features } from "./src/features.ts";
+import { resources } from "./src/resources.ts";
 import { website } from "./src/website.ts";
 
 export default Alchemy.Stack(
