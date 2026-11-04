@@ -18,6 +18,7 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 import { pipe } from "effect/Function";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ComputerTaskHosts } from "./components/ComputerTaskHosts";
@@ -131,6 +132,7 @@ const appLinking = {
     `${getAppScheme()}://`,
     `${getAppSchemeDev()}://`,
     `${getAppSchemePreview()}://`,
+    DEFAULT_HOSTED_APP_URL,
   ],
   // Keep the compact thread list available beneath a directly opened thread.
   config: { initialRouteName: "Home" },

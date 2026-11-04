@@ -24,6 +24,7 @@ import {
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
@@ -35,8 +36,13 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+// Only observability: a value the server migrates on load elsewhere in the file must not drop it.
+const ServerObservabilitySettingsJson = fromLenientJson(
+  Schema.Struct({ observability: ServerSettings.fields.observability }),
+);
+const decodeServerObservabilitySettingsJson = Schema.decodeUnknownOption(
+  ServerObservabilitySettingsJson,
+);
 
 export function resolveProjectAgentBrowserAccess(
   settings: Pick<
@@ -232,7 +238,7 @@ function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  const decoded = decodeServerSettingsJson(raw);
+  const decoded = decodeServerObservabilitySettingsJson(raw);
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
@@ -294,6 +300,15 @@ export function resolveNewThreadRuntimeMode(
     explicitRuntimeMode ?? providerDefault ?? settings?.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE
   );
 }
+
+// Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
+const byHost = (tokens: unknown) =>
+  Object.fromEntries(
+    Object.entries(Predicate.isObject(tokens) ? tokens : {}).map(([host, token]) => [
+      host.trim().toLowerCase(),
+      token,
+    ]),
+  );
 
 const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
 
@@ -606,10 +621,26 @@ export function applyServerSettingsPatch(
           sourceControlHosts: {
             ...current.sourceControlHosts,
             ...Object.fromEntries(
-              Object.entries(sourceControlHostsPatch).map(([kind, fields]) => [
-                kind,
-                { ...current.sourceControlHosts[kind], ...fields },
-              ]),
+              Object.entries(sourceControlHostsPatch).map(([kind, fields]) => {
+                const saved = current.sourceControlHosts[kind];
+                return [
+                  kind,
+                  {
+                    ...saved,
+                    ...fields,
+                    // Older clients send the whole token map; a host missing from it keeps its saved
+                    // token. An empty map still clears them all.
+                    ...(Predicate.isObject(fields.tokens) && Object.keys(fields.tokens).length > 0
+                      ? {
+                          tokens: {
+                            ...byHost(saved?.tokens),
+                            ...byHost(fields.tokens),
+                          },
+                        }
+                      : {}),
+                  },
+                ];
+              }),
             ),
           },
         }

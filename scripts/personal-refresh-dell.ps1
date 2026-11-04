@@ -53,9 +53,14 @@ if (-not $exe) { throw "MT Code exe not found after install" }
 # reports whether a window actually appeared.
 $launcher = Join-Path $PSScriptRoot "personal-launch-gui.ps1"
 if (Test-Path $launcher) {
+  # Under "Stop", PowerShell 5.1 turns any stderr line of a 2>&1 native call into a terminating
+  # error; a failed GUI check must not fail an install the caller verifies by version anyway.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ExePath $exe.FullName 2>&1 |
     ForEach-Object { Write-Output $_ }
   if ($LASTEXITCODE -ne 0) { Write-Output "DELL_GUI_NOT_SHOWN is anyone logged on?" }
+  $ErrorActionPreference = $prevEap
 } else {
   Write-Output "no launcher beside this script; falling back to a session 0 start"
   Start-Process $exe.FullName

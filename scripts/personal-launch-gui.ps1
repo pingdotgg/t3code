@@ -99,7 +99,12 @@ public class T3Windows {
 # so the task starts the app rather than handing focus to an instance nobody can see.
 $installDir = (Split-Path -Parent $ExePath) + "\"
 function Get-InstalledAppProcess {
-  Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase) }
+  # Path re-reads MainModule on every access, so a process exiting mid-filter turns a second read
+  # into $null; read it once and treat any failure as "not ours".
+  Get-Process | Where-Object {
+    $path = try { $_.Path } catch { $null }
+    $path -and $path.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase)
+  }
 }
 Get-InstalledAppProcess | ForEach-Object { [void]$_.CloseMainWindow() }
 for ($i = 0; $i -lt 10 -and (Get-InstalledAppProcess); $i++) { Start-Sleep -Milliseconds 500 }

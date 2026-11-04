@@ -79,7 +79,9 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
   });
 }
 
-function makeHangingProcess(): ChildProcessSpawner.ChildProcessHandle {
+function makeStuckProcess(
+  kill: ChildProcessSpawner.ChildProcessHandle["kill"],
+): ChildProcessSpawner.ChildProcessHandle {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(124),
     stdout: Stream.never,
@@ -87,12 +89,22 @@ function makeHangingProcess(): ChildProcessSpawner.ChildProcessHandle {
     all: Stream.never,
     exitCode: Effect.never,
     isRunning: Effect.succeed(true),
-    kill: () => Effect.void,
+    kill,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
   });
+}
+
+/** Never exits on its own, but dies when killed. */
+function makeHangingProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return makeStuckProcess(() => Effect.void);
+}
+
+/** Never exits and survives the kill (stuck in the kernel). */
+function makeHungProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return makeStuckProcess(() => Effect.never);
 }
 
 function withProcessEnv<A, E, R>(
@@ -763,6 +775,36 @@ describe("DesktopShellEnvironment", () => {
         assert.include(env.PATH, "C:\\Working");
         assert.include(env.PATH, "C:\\Windows\\System32");
       }),
+  );
+
+  it.effect("gives up on a Windows shell that survives the kill", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      // Both PowerShell probes spawn pwsh, time out, then spawn powershell. Each probe's timeout
+      // is armed before its spawn runs, so waiting for the spawns keeps the clock in step.
+      const spawned = yield* Effect.forEach([0, 1, 2, 3], () => Deferred.make<void>());
+      const fiber = yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
+        platform: "win32",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          const spawn = spawned[commands.length];
+          commands.push(command._tag === "StandardCommand" ? command.command : "");
+          return (spawn ? Deferred.succeed(spawn, undefined) : Effect.void).pipe(
+            Effect.andThen(
+              Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never),
+            ),
+          );
+        }),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.forEach(spawned.slice(0, 2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.forEach(spawned.slice(2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(fiber);
+      assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>

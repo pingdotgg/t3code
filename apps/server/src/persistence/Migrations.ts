@@ -119,6 +119,8 @@ import Migration0085 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 import Migration0086 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 // Upstream 078 (drop orchestration event correlation index); registered as the next free fork id.
 import Migration0087 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
+// Upstream 079 (delegated recovery indexes); registered as the next free fork id.
+import Migration0088 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -224,6 +226,8 @@ const migrationEntries = [
   [86, "RepairBooleanSettledOverride", Migration0086],
   // Upstream 078 (drop orchestration event correlation index); next free fork id.
   [87, "DropOrchestrationEventCorrelationIndex", Migration0087],
+  // Upstream 079 (delegated recovery indexes); next free fork id.
+  [88, "DelegatedRecoveryIndexes", Migration0088],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

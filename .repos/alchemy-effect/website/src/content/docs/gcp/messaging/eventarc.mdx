@@ -1,0 +1,89 @@
+---
+title: Eventarc
+description: React to Firestore changes, Cloud Storage events, and audit-logged Google API calls with GCP.Eventarc.consumeEvents.
+---
+
+Eventarc delivers events from Google services as CloudEvents: a
+Firestore document was created, an object was written, an API was
+called. `consumeEvents` creates the trigger and runs your handler for
+each event.
+
+## React to new Firestore documents
+
+```typescript
+// src/Auditor.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Shop } from "./resources.ts";
+
+export default class Auditor extends GCP.Function<Auditor>()(
+  "Auditor",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const shop = yield* Shop;
+    const db = yield* GCP.Firestore.WriteDatabase(shop);
+
+    yield* GCP.Eventarc.consumeEvents(
+      "OrderCreated",
+      {
+        location: "us-central1",
+        eventFilters: [
+          { attribute: "type", value: "google.cloud.firestore.document.v1.created" },
+          { attribute: "database", value: shop.databaseId },
+          { attribute: "document", value: "orders/{id}", operator: "match-path-pattern" },
+        ],
+      },
+      (event) =>
+        db.set(`audit/${event.id}`, { document: event.attributes.document ?? "" }).pipe(
+          Effect.orDie,
+        ),
+    );
+
+    return { fetch: Effect.succeed(HttpServerResponse.text("ok")) };
+  }).pipe(
+    Effect.provide(GCP.Firestore.WriteDatabaseHttp),
+    Effect.provide(GCP.Run.EventarcEventSource),
+  ),
+) {}
+```
+
+`eventFilters` choose which events you get. `event.attributes` names
+the document; `event.data` holds the change itself.
+
+## Match the database's location
+
+Firestore only sends events to triggers in the database's own
+location. Pin both:
+
+```typescript
+// src/resources.ts
+export const Shop = GCP.Firestore.Database("Shop", {
+  location: "us-central1",
+  type: "FIRESTORE_NATIVE",
+});
+```
+
+## The service stays private
+
+The trigger signs each delivery with the service's own identity, and
+Alchemy grants that identity what it needs to receive events. Nobody
+else can call the event path.
+
+## Handle repeats
+
+Eventarc delivers at least once. Use `set` keyed by the event, or
+`create` and ignore `DocumentAlreadyExists`, so a second delivery
+changes nothing.
+
+## Example
+
+[`examples/gcp-eventarc-firestore`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-eventarc-firestore)
+writes an audit entry for every new order.
+
+## Where next
+
+- [Firestore](/gcp/data/firestore) — the database that emits the
+  events.
+- [Eventarc reference](/providers/gcp/eventarc#trigger) — triggers,
+  channels, and pipelines.

@@ -79,9 +79,14 @@ if ($exe) {
   # user's session instead and reports whether a window actually appeared.
   $launcher = Join-Path $PSScriptRoot "personal-launch-gui.ps1"
   if (Test-Path $launcher) {
+    # Under "Stop", PowerShell 5.1 turns any stderr line of a 2>&1 native call into a terminating
+    # error; a failed GUI check must not fail an install the caller verifies by version anyway.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ExePath $exe.FullName 2>&1 |
       ForEach-Object { Log $_ }
     if ($LASTEXITCODE -ne 0) { Log "the GUI could not be shown -- is anyone logged on?" }
+    $ErrorActionPreference = $prevEap
   } else {
     Log "no launcher beside this script; falling back to a session 0 start"
     Start-Process $exe.FullName
