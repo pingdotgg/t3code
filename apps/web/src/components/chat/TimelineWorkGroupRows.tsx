@@ -1014,7 +1014,7 @@ function CollapsedWorkingWindow({
   const contentRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
-  const prependRef = useRef<{ height: number; top: number } | null>(null);
+  const prependRef = useRef<{ height: number; top: number; inSpacer: boolean } | null>(null);
   const [following, setFollowing] = useState(true);
   const [start, setStart] = useState(() => Math.max(0, items.length - WORKING_WINDOW_TAIL));
   const getViewport = () =>
@@ -1026,7 +1026,8 @@ function CollapsedWorkingWindow({
     if (!prepend) return;
     const viewport = getViewport();
     if (!viewport) return;
-    viewport.scrollTop = prepend.top + viewport.scrollHeight - prepend.height;
+    viewport.scrollTop =
+      prepend.top + (prepend.inSpacer ? 0 : viewport.scrollHeight - prepend.height);
     prependRef.current = null;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- content can grow between renders while markdown and command output stream
@@ -1051,7 +1052,11 @@ function CollapsedWorkingWindow({
     const observer = new IntersectionObserver(
       (entries) => {
         if (prependRef.current || !entries.some((entry) => entry.isIntersecting)) return;
-        prependRef.current = { height: viewport.scrollHeight, top: viewport.scrollTop };
+        prependRef.current = {
+          height: viewport.scrollHeight,
+          top: viewport.scrollTop,
+          inSpacer: viewport.scrollTop < spacer.offsetHeight,
+        };
         setStart((current) => Math.max(0, current - WORKING_HISTORY_BATCH));
       },
       { root: viewport, rootMargin: "80px 0px" },

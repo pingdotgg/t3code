@@ -409,6 +409,13 @@ describe("MessagesTimeline work rows", () => {
     await expect
       .element(screen.getByRole("button", { name: "Jump to latest" }))
       .not.toBeInTheDocument();
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await expect.element(screen.getByText("History answer 0", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(viewport.scrollTop).toBe(0));
+    await screen.getByRole("button", { name: "Jump to latest" }).click();
     const barTops = new Set<number>();
     const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
     resizes.observe(history);
