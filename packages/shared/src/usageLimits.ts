@@ -519,13 +519,26 @@ const BLOCKS: Record<
   claudeAgent: (blocker, reported) => reported.kind === "session" && blocker.id === "seven_day",
   codex: (blocker, reported) => reported.kind === "session" && blocker.kind === "weekly",
   opencode: (blocker, reported) =>
-    blocker.id === "go_monthly" && (reported.id === "go_rolling" || reported.id === "go_weekly"),
+    blocker.id === "go_monthly"
+      ? reported.id === "go_rolling" || reported.id === "go_weekly"
+      : blocker.id === "go_weekly" && reported.id === "go_rolling",
 };
 
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
   const blocks = BLOCKS[account.driver];
+  // With several spent blockers, quota returns only when the last of them resets.
   const blocker = blocks
-    ? account.limits.windows.find((window) => window.usedPercent >= 100 && blocks(window, reported))
+    ? account.limits.windows
+        .filter((window) => window.usedPercent >= 100 && blocks(window, reported))
+        .reduce<ServerProviderUsageWindow | undefined>(
+          (latest, window) =>
+            latest &&
+            (resetMillis(latest) ?? Number.POSITIVE_INFINITY) >=
+              (resetMillis(window) ?? Number.POSITIVE_INFINITY)
+              ? latest
+              : window,
+          undefined,
+        )
     : undefined;
   if (!blocker) return { account, window: reported, refillPercent: reported.usedPercent };
 
