@@ -528,13 +528,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
-    const workspaceProbeCache = yield* Ref.make(
-      new Map<
+    const workspaceProbeCache = yield* Ref.make<{
+      readonly generation: number;
+      readonly entries: ReadonlyMap<
         string,
         { readonly snapshot: ProviderWorkspaceSnapshot; readonly expiresAt: number }
-      >(),
-    );
-    const clearWorkspaceProbeCache = Ref.set(workspaceProbeCache, new Map());
+      >;
+    }>({ generation: 0, entries: new Map() });
+    const invalidateWorkspaceProbeCache = Ref.update(workspaceProbeCache, (current) => ({
+      generation: current.generation + 1,
+      entries: new Map(),
+    }));
     if (Option.isSome(runtimeCoordinator)) {
       yield* runtimeCoordinator.value.clearAvailableCommands(instanceId);
       yield* runtimeCoordinator.value.clearLiveConfiguration(instanceId);
@@ -543,7 +547,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .clearAvailableCommands(instanceId)
           .pipe(
             Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId)),
-            Effect.andThen(clearWorkspaceProbeCache),
+            Effect.andThen(invalidateWorkspaceProbeCache),
           ),
       );
     }
@@ -658,8 +662,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const machineSnapshot = yield* snapshot.getSnapshot;
       if (!effectiveConfig.enabled || !machineSnapshot.installed) return machineSnapshot;
       const now = yield* Clock.currentTimeMillis;
-      const cached = (yield* Ref.get(workspaceProbeCache)).get(cwd);
+      const cacheState = yield* Ref.get(workspaceProbeCache);
+      const cached = cacheState.entries.get(cwd);
       if (cached && cached.expiresAt > now) return cached.snapshot;
+      const generation = cacheState.generation;
       const probed = yield* workspaceProbePermits.withPermits(2)(
         probeAcpRegistryWorkspaceForCwd(
           {
@@ -677,10 +683,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ),
       );
       if (probed.slashCommandsPending !== true) {
-        yield* Ref.update(workspaceProbeCache, (cache) => {
-          const next = cache.size >= WORKSPACE_PROBE_CACHE_MAX ? new Map() : new Map(cache);
-          next.set(cwd, { snapshot: probed, expiresAt: now + PROBE_SUCCESS_TTL_MS });
-          return next;
+        yield* Ref.update(workspaceProbeCache, (state) => {
+          if (state.generation !== generation) return state;
+          const entries =
+            state.entries.size >= WORKSPACE_PROBE_CACHE_MAX ? new Map() : new Map(state.entries);
+          entries.set(cwd, { snapshot: probed, expiresAt: now + PROBE_SUCCESS_TTL_MS });
+          return { generation: state.generation, entries };
         });
       }
       return probed;
@@ -859,7 +867,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .clearLiveConfiguration(instanceId)
           .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
       : Effect.void;
-    const clearWorkspaceState = clearLiveState.pipe(Effect.andThen(clearWorkspaceProbeCache));
+    const clearWorkspaceState = clearLiveState.pipe(Effect.andThen(invalidateWorkspaceProbeCache));
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -903,7 +911,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
       snapshotForCwd,
-      invalidateCaches: invalidateEnrichmentCache.pipe(Effect.andThen(clearWorkspaceProbeCache)),
+      invalidateCaches: invalidateEnrichmentCache.pipe(
+        Effect.andThen(invalidateWorkspaceProbeCache),
+      ),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {
