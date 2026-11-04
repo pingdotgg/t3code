@@ -50,7 +50,7 @@ export function generateSpeechCatalog(
   const models = data.models.flatMap((model) => {
     if (
       model.role !== "asr" ||
-      /^cc-by-nc(?:-sa|-nd)?-\d+\.\d+$/i.test(model.license.trim()) ||
+      /(?:^|[^a-z0-9])nc(?:$|[^a-z0-9])/i.test(model.license) ||
       !ASR_FAMILIES.has(model.family) ||
       compareEngineVersions(model.minEngine ?? data.transcribeCpp, engineVersion) > 0
     )

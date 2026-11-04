@@ -44,6 +44,9 @@ it("filters roles, explicit NC licenses, future engines, unknown architectures a
     { license: "cc-by-nc-4.0" },
     { license: "CC-BY-NC-SA-4.0" },
     { license: "cc-by-nc-nd-3.0" },
+    { license: "cc-by-nc" },
+    { license: "CC BY-NC 4.0" },
+    { license: "custom_NC" },
     { minEngine: "0.4.2" },
     { minEngine: "0.5.0" },
     { family: "future_arch" },
@@ -57,7 +60,7 @@ it("filters roles, explicit NC licenses, future engines, unknown architectures a
   ]) {
     expect(generate([{ ...model, ...override }]).models).toEqual([]);
   }
-  for (const license of ["other", "apache-2.0", "cc-by-4.0", "cc-by-sa-4.0"]) {
+  for (const license of ["other", "apache-2.0", "cc-by-4.0", "cc-by-sa-4.0", "unlicense"]) {
     expect(generate([{ ...model, license, minEngine: "0.4.1" }]).models).toHaveLength(1);
   }
 });
