@@ -1195,6 +1195,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onImageExpand={ctx.onImageExpand}
     />
   );
 });

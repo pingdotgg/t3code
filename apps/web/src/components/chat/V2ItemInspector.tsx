@@ -255,6 +255,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
               threadId: props.projectedItem.sourceThreadId,
             }}
             lineBreaks
+            onImageExpand={props.onImageExpand}
           />
         </div>
       ) : null}
