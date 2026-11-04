@@ -9,7 +9,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import { normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Mac from "effect/crypto/Mac";
-import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
@@ -80,30 +79,6 @@ export function base64UrlEncode(input: string | Uint8Array): string {
 export function base64UrlDecodeUtf8(input: string): string {
   return Result.getOrThrow(Base64Url.decodeString(input));
 }
-
-const hmacKey = (secret: Uint8Array) => Mac.key(Mac.hmacSha256, secret).pipe(Effect.orDie);
-
-// Untraced: every authenticated request signs or verifies at least one token.
-export const signPayload = Effect.fnUntraced(function* (payload: string, secret: Uint8Array) {
-  const mac = yield* Mac.Mac;
-  const tag = yield* mac
-    .sign(yield* hmacKey(secret), new TextEncoder().encode(payload))
-    .pipe(Effect.orDie);
-  return Base64Url.encode(tag);
-});
-
-export const verifyPayloadSignature = Effect.fnUntraced(function* (
-  payload: string,
-  signature: string,
-  secret: Uint8Array,
-) {
-  const tag = Base64Url.decode(signature);
-  if (Result.isFailure(tag)) return false;
-  const mac = yield* Mac.Mac;
-  return yield* mac
-    .verify(yield* hmacKey(secret), tag.success, new TextEncoder().encode(payload))
-    .pipe(Effect.orDie);
-});
 
 export function timingSafeEqualBase64Url(left: string, right: string): boolean {
   const leftBytes = Base64Url.decode(left);
