@@ -2,12 +2,14 @@ import {
   formatProviderSubagentStatus,
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
+import { NativeChildWorkSheet } from "./NativeChildWorkSheet";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export function ProviderSubagentBar(props: {
@@ -16,7 +18,10 @@ export function ProviderSubagentBar(props: {
   readonly effortLabel: string | null;
   readonly status: ProviderSubagentStatus | null;
   readonly onOpenParent: (() => void) | null;
+  /** Set for providers whose children T3 reads on demand instead of streaming. */
+  readonly inspect: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
 }) {
+  const [inspecting, setInspecting] = useState(false);
   const live = props.status !== null && isOrchestrationV2WorkActive(props.status.status);
   const nowMs = useVisibleSecondClock(live);
   const statusLabel = formatProviderSubagentStatus(props.status, nowMs);
@@ -59,8 +64,14 @@ export function ProviderSubagentBar(props: {
           {statusLabel} · Runs on its own
         </Text>
       </View>
+      {props.inspect ? (
+        <Button label="Work" tone="secondary" onPress={() => setInspecting(true)} />
+      ) : null}
       {props.onOpenParent ? (
         <Button label="Open parent" tone="secondary" onPress={props.onOpenParent} />
+      ) : null}
+      {props.inspect && inspecting ? (
+        <NativeChildWorkSheet {...props.inspect} onClose={() => setInspecting(false)} />
       ) : null}
     </View>
   );

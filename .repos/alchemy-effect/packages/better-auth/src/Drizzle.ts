@@ -6,11 +6,7 @@ import * as Scope from "effect/Scope";
 import { Database, type DatabaseInput, type Provider } from "./Database.ts";
 
 type DrizzleDatabase = Parameters<typeof drizzleAdapter>[0];
-type DrizzleDatabaseEffect = Effect.Effect<
-  DrizzleDatabase,
-  never,
-  RuntimeContext | Scope.Scope
->;
+type DrizzleDatabaseEffect = Effect.Effect<DrizzleDatabase, never, RuntimeContext | Scope.Scope>;
 
 const isDatabaseEffect = (
   value: DrizzleDatabase | DrizzleDatabaseEffect,
@@ -80,20 +76,14 @@ export const Drizzle = (
   config: DrizzleLayerConfig,
 ): Layer.Layer<Database> =>
   Layer.sync(Database, () => ({
-    provider: (config.provider === "pg"
-      ? "postgres"
-      : config.provider) as Provider,
+    provider: (config.provider === "pg" ? "postgres" : config.provider) as Provider,
     runtime: Effect.gen(function* () {
       const database = isDatabaseEffect(db) ? yield* db : db;
       return drizzleAdapter(database, {
         provider: config.provider,
         ...(config.schema !== undefined ? { schema: config.schema } : {}),
-        ...(config.usePlural !== undefined
-          ? { usePlural: config.usePlural }
-          : {}),
-        ...(config.camelCase !== undefined
-          ? { camelCase: config.camelCase }
-          : {}),
+        ...(config.usePlural !== undefined ? { usePlural: config.usePlural } : {}),
+        ...(config.camelCase !== undefined ? { camelCase: config.camelCase } : {}),
       }) as DatabaseInput;
     }),
   }));

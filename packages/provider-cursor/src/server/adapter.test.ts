@@ -33,7 +33,9 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { ConfigurationError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -217,7 +219,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isFalse(sentWithMcpOverride);
+        assert.isTrue(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -508,11 +510,11 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("fails standalone SDK transport diagnostics and compacts with SDK summarize", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
-      const sentMessages: Array<string> = [];
+      const summarizeRequests: Array<boolean> = [];
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
@@ -536,9 +538,7 @@ describe("CursorAdapterV2", () => {
               send: (input) =>
                 Effect.sync(() => {
                   sendCalls += 1;
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
+                  summarizeRequests.push(input.summarize === true);
                   const runId = `native-cursor-run-${sendCalls}`;
                   return {
                     agentId: "native-cursor-error",
@@ -549,9 +549,10 @@ describe("CursorAdapterV2", () => {
                       status: "finished" as const,
                       model: { id: "composer-2.5" },
                       durationMs: 1,
-                      ...(sendCalls === 1
-                        ? { result: "Error: RetriableError: WritableIterable is closed" }
-                        : {}),
+                      result:
+                        sendCalls === 1
+                          ? "Error: RetriableError: WritableIterable is closed"
+                          : "Summary of the conversation so far",
                     }),
                     cancel: Effect.void,
                   };
@@ -644,11 +645,12 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const compactionEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.equal(sentMessages[1], "/compress");
+      assert.deepEqual(summarizeRequests, [false, true]);
+      assert.notInclude(JSON.stringify(compactionEvents), "Summary of the conversation so far");
     }).pipe(
       Effect.scoped,
       Effect.provide(

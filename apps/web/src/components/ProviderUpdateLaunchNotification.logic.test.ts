@@ -333,8 +333,12 @@ describe("getProviderUpdateRunToastView", () => {
     expect(
       getProviderUpdateRunToastView([
         run("Linux", "opencode", AsyncResult.success({ providers: [updated] })),
+        run("Laptop", "opencode", AsyncResult.success({ providers: [updated] })),
       ]),
-    ).toMatchObject({ type: "success", description: message });
+    ).toMatchObject({
+      type: "success",
+      description: `Linux · OpenCode: ${message}\nLaptop · OpenCode: ${message}`,
+    });
     expect(
       getProviderUpdateSidebarPillView([updated], {
         visibleAfterIso: sessionStartedAt,
@@ -376,7 +380,7 @@ describe("getProviderUpdateRunToastView", () => {
       type: "error",
       title: "2 of 3 provider updates failed",
       description:
-        "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed\nProvider updated.",
+        "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed\nMac Studio · Codex: Provider updated.",
     });
   });
 });

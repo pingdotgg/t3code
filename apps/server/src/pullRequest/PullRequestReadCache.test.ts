@@ -1,13 +1,19 @@
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { PullRequestOperationError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as TestClock from "effect/testing/TestClock";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 NodeV8.setFlagsFromString("--expose-gc");
@@ -16,7 +22,7 @@ const collectGarbage = NodeVM.runInNewContext("gc") as () => void;
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
 
-it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem cache", (it) => {
   it.effect("clears in-flight reads before a new service can reuse them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -43,6 +49,24 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       yield* Fiber.join(invalidate);
       const restarted = yield* cacheLayer(directory);
       assert.strictEqual(yield* restarted.get("summary", Effect.succeed("new"), ["pr"]), "new");
+    }),
+  );
+
+  it.effect("prunes expired entry files the store wrote", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+      const cache = yield* cacheLayer(directory);
+      yield* cache.get("summary", Effect.succeed("value"));
+      const [entry] = yield* fs.readDirectory(directory);
+      assert.isDefined(entry);
+      const info = yield* fs.stat(path.join(directory, entry));
+      yield* TestClock.setTime(
+        Option.getOrThrow(info.mtime).getTime() + Duration.toMillis(Duration.days(2)),
+      );
+      yield* PullRequestReadCache.pruneExpiredEntryFiles(directory);
+      assert.deepStrictEqual(yield* fs.readDirectory(directory), []);
     }),
   );
 
