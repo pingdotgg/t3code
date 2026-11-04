@@ -280,6 +280,22 @@ describe("CursorAdapterV2", () => {
 
   it.effect.each([
     ...([true, false] as const).map((isRetryable) => ({
+      reason: `a returned SDK error with retryable=${isRetryable}`,
+      updates: [],
+      answers: undefined,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "Connection stalled", code: "connection_stalled", isRetryable },
+      }),
+      failure: {
+        class: "provider_error",
+        message: "Connection stalled",
+        code: "connection_stalled",
+        retryable: isRetryable,
+      },
+    })),
+    ...([true, false] as const).map((isRetryable) => ({
       reason: `the SDK network failure with retryable=${isRetryable}`,
       updates: [],
       answers: undefined,
