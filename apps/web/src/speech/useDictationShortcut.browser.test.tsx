@@ -3,6 +3,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { useDictationShortcut } from "./useDictationShortcut";
 
+vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
+
 function Probe({ speech }: { speech: Parameters<typeof useDictationShortcut>[0]["speech"] }) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -55,5 +57,26 @@ it("stops on a new press when the OS omitted keyup, but ignores autorepeat", asy
   press(true);
   expect(speech.stop).not.toHaveBeenCalled();
   press();
+  expect(speech.stop).toHaveBeenCalledOnce();
+});
+
+it("finishes a released hold after startup even if the chord was pressed again while preparing", async () => {
+  const speech = actions(true);
+  let finishStart!: () => void;
+  const startup = new Promise<void>((resolve) => {
+    finishStart = resolve;
+  });
+  speech.start.mockReturnValue(startup);
+  await using screen = await render(<Probe speech={speech} />);
+  press();
+  await screen.rerender(
+    <Probe speech={{ ...speech, state: { ...speech.state, phase: "preparing" } }} />,
+  );
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  press();
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  finishStart();
+  await startup;
+  expect(speech.start).toHaveBeenCalledOnce();
   expect(speech.stop).toHaveBeenCalledOnce();
 });
