@@ -27,8 +27,8 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import type { BrowserContext, Page } from "playwright-core";
-import { beforeEach, expect, vi } from "vite-plus/test";
+import type { BrowserContext, CDPSession, Page } from "playwright-core";
+import { beforeEach, expect, it as test, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -37,6 +37,7 @@ import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
@@ -91,9 +92,6 @@ function makeRenderer() {
   return {
     /** A page script that never yields; Chromium stops it on `Runtime.terminateExecution`. */
     busyScript: null as PromiseWithResolvers<void> | null,
-    /** When set, Chromium answers `Runtime.terminateExecution` only once this resolves. */
-    terminationAck: null as PromiseWithResolvers<void> | null,
-    terminationRequested: Promise.withResolvers<void>(),
     gotoStarted: Promise.withResolvers<void>(),
     /** Rejecting these stands in for Playwright's goto timeout while the script runs. */
     stalledGotos: [] as Array<(cause: Error) => void>,
@@ -115,8 +113,6 @@ function makeSession(
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       const busyScript = renderer?.busyScript;
       if (method === "Runtime.terminateExecution" && busyScript) {
-        renderer.terminationRequested.resolve();
-        if (renderer.terminationAck) await renderer.terminationAck.promise;
         renderer.busyScript = null;
         busyScript.resolve();
         return {};
@@ -766,63 +762,47 @@ it.live.each(["load", "none"] as const)(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live.each([
-  { case: "acknowledged", timeoutMs: 5_000, acknowledge: true, gotoTimeoutAtMost: 4_000 },
-  // 1s probe, then the 1s acknowledgement window: navigating sooner would hit the busy renderer.
-  { case: "never acknowledged", timeoutMs: 5_000, acknowledge: false, gotoTimeoutAtMost: 3_000 },
-  // 1s probe, then only the 200ms the budget has left.
-  {
-    case: "never acknowledged, short budget",
-    timeoutMs: 1_200,
-    acknowledge: false,
-    gotoTimeoutAtMost: 200,
-  },
-])(
-  "an agent navigation waits for the busy script to stop ($case)",
-  ({ timeoutMs, acknowledge, gotoTimeoutAtMost }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { broker, tabId } = yield* ready;
-        yield* broker.invoke({
-          scope,
-          tabId,
-          operation: "navigate",
-          input: { url: "http://localhost:5173/busy" },
-        });
-        const { page, renderer } = contexts[0]!;
-        renderer.busyScript = Promise.withResolvers<void>();
-        renderer.terminationAck = Promise.withResolvers<void>();
-        renderer.terminationRequested = Promise.withResolvers<void>();
-        renderer.gotoStarted = Promise.withResolvers<void>();
-
-        const navigation = yield* broker
-          .invoke({
-            scope,
-            tabId,
-            operation: "navigate",
-            input: { url: "http://localhost:5173/next", readiness: "none", timeoutMs },
-          })
-          .pipe(Effect.exit, Effect.forkScoped);
-        yield* Effect.promise(() => renderer.terminationRequested.promise);
-        if (acknowledge) renderer.terminationAck.resolve();
-        yield* Effect.promise(() => renderer.gotoStarted.promise);
-        const [url, gotoOptions] = page.goto.mock.calls.at(-1)!;
-        expect(url).toBe("http://localhost:5173/next");
-        // An acknowledged termination leaves a renderer that commits instead of stalling.
-        expect(renderer.stalledGotos).toHaveLength(acknowledge ? 0 : 1);
-        // Waiting for the script to stop comes out of the navigation's own budget.
-        expect(gotoOptions?.timeout).toBeLessThanOrEqual(gotoTimeoutAtMost);
-
-        renderer.terminationAck.resolve();
-        for (const timeOut of renderer.stalledGotos.splice(0)) {
-          timeOut(
-            Object.assign(new Error("page.goto: Timeout exceeded."), { name: "TimeoutError" }),
-          );
-        }
-        yield* Fiber.join(navigation);
-      }),
-    ).pipe(Effect.provide(layer)),
-);
+test.each([
+  { case: "acknowledged", budgetMs: 5_000, acknowledge: true },
+  { case: "never acknowledged", budgetMs: 5_000, acknowledge: false },
+  { case: "never acknowledged, short budget", budgetMs: 1_200, acknowledge: false },
+])("waits for script termination within its budget ($case)", async ({ budgetMs, acknowledge }) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const evaluation = Promise.withResolvers<Record<string, unknown>>();
+    const termination = Promise.withResolvers<Record<string, unknown>>();
+    const send = vi.fn((method: string) =>
+      method === "Runtime.evaluate" ? evaluation.promise : termination.promise,
+    );
+    let completed = false;
+    const recovery = ServerBrowserPage.stopUnresponsiveScript(
+      { send } as unknown as CDPSession,
+      budgetMs,
+    ).then(() => {
+      completed = true;
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(send).toHaveBeenLastCalledWith("Runtime.terminateExecution");
+    expect(completed).toBe(false);
+    if (acknowledge) {
+      termination.resolve({});
+    } else {
+      const remaining = Math.min(1_000, budgetMs - 1_000);
+      await vi.advanceTimersByTimeAsync(remaining - 1);
+      expect(completed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    await recovery;
+    expect(completed).toBe(true);
+    termination.resolve({});
+    evaluation.resolve({});
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
   Effect.scoped(

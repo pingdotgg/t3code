@@ -883,7 +883,7 @@ export const evaluate = async (
 /**
  * A same-site navigation cannot commit while the page's script never yields. Terminate only after a
  * probe goes unanswered: on an idle renderer V8 terminates the next script, possibly the new page's.
- * Resolves once the script has stopped, so the navigation that follows starts on a yielded renderer.
+ * Waits for termination acknowledgement within the remaining budget; a timeout can leave it pending.
  */
 export const stopUnresponsiveScript = (
   cdp: CDPSession,
