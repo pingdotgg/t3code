@@ -130,6 +130,7 @@ import {
   turnFoldStartsOpen,
   withRunGroupsOpen,
   withTurnFoldOpen,
+  liveRunlessTurnFoldRunId,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -680,7 +681,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     (row) => row.kind === "working" && row.window?.historyOpen === true,
   );
   if (rows.some((row) => row.kind === "working")) {
-    const historyRunId = workingHistoryOpen ? (latestRun?.runId ?? null) : null;
+    const historyRunId = workingHistoryOpen
+      ? ((runlessWorkActive ? liveRunlessTurnFoldRunId(timelineEntries) : null) ??
+        latestRun?.runId ??
+        null)
+      : null;
     if (historyRunId !== openHistoryRunId) setOpenHistoryRunId(historyRunId);
   } else if (openHistoryRunId !== null) {
     const fold = rows.find((row) => row.kind === "turn-fold" && row.runId === openHistoryRunId);
