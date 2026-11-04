@@ -151,11 +151,10 @@ export function DeviceStreamView(props: {
       ? deviceForegroundAtom({ access, platform: props.platform, deviceId: props.deviceId })
       : NO_FOREGROUND_ATOM,
   );
-  const pasteAllowedApp = useRef<string | null>(null);
-  const allowPaste = async (appId: string) => {
-    if (appId === pasteAllowedApp.current) return;
-    // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
-    const result = await runAction({
+  // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
+  // A reinstall resets the grant, so ask again on each paste.
+  const allowPaste = (appId: string) =>
+    runAction({
       environmentId: props.environmentId,
       input: {
         hostId: props.hostId,
@@ -166,8 +165,6 @@ export function DeviceStreamView(props: {
         decision: "grant",
       },
     });
-    if (result._tag === "Success") pasteAllowedApp.current = appId;
-  };
   const paste = async (text: string) => {
     if (!client || text === "") return;
     if (foregroundApp?.id) await allowPaste(foregroundApp.id);

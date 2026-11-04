@@ -28,6 +28,7 @@ import { DeviceStreamView } from "./DeviceStreamView";
 const runAction = vi.fn((_value: unknown) => Promise.resolve({ _tag: "Success" }) as never);
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
+  runAction.mockClear();
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
   const pastes: unknown[] = [];
@@ -234,7 +235,7 @@ it("pastes into the foreground iOS app when a menu paste targets text outside th
   const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData });
   screen.getByText("Input connected", { exact: true }).element().dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
-  await expect.poll(() => input.pastes).toEqual([{ requestId: 1, text: "code 42" }]);
+  await vi.waitFor(() => expect(input.pastes).toEqual([{ requestId: 1, text: "code 42" }]));
   expect(runAction).toHaveBeenCalledWith(
     expect.objectContaining({
       input: {
@@ -247,4 +248,10 @@ it("pastes into the foreground iOS app when a menu paste targets text outside th
       },
     }),
   );
+  screen
+    .getByText("Input connected", { exact: true })
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+  await vi.waitFor(() => expect(input.pastes).toHaveLength(2));
+  expect(runAction).toHaveBeenCalledTimes(2);
 });
