@@ -102,7 +102,8 @@ export function AndroidWorkspaceNavigation(props: {
     (props.paneWidth ?? window.width) -
     (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
-  if (!rail && keyboardVisible) return null;
+  // In split view the bar rides the sidebar, which the keyboard slides away with it.
+  if (!rail && keyboardVisible && !layout.usesSplitView) return null;
 
   return (
     <View

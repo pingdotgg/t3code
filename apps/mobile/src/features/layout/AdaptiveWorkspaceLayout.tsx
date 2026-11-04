@@ -861,10 +861,10 @@ function AdaptiveWorkspaceLayoutContent(
   }));
   // The content keeps the width React laid it out at and rides the sidebar's edge, so a keyboard
   // transition relays nothing out per frame, the way UIKit animates the iOS split view.
-  // While the keyboard is moving, the detail card continues past its right edge, so the strip the
-  // narrower settled column leaves on the way back shows the card instead of the row behind it.
+  // Until React commits the wider layout, the detail card continues past its right edge, so the
+  // strip the narrower column leaves shows the card instead of the row behind it.
   const contentOverhangStyle = useAnimatedStyle(() => ({
-    opacity: keyboardHold.value && keyboardProgress.value > 0 && keyboardProgress.value < 1 ? 1 : 0,
+    opacity: keyboardHold.value && keyboardProgress.value > 0 ? 1 : 0,
     transform: [
       {
         translateX: keyboardHold.value ? drawnSidebarWidth.value - renderedSidebarWidth.value : 0,
@@ -895,18 +895,30 @@ function AdaptiveWorkspaceLayoutContent(
   );
   // Android can resize the native row before React removes its split panes on a fold.
   const androidSplit = Platform.OS === "android" && layout.usesSplitView;
-  // Held by the keyboard, the sidebar leaves the row, so the column spans its room too.
+  // Held by the keyboard, the column keeps its resting width and stops clipping, so nothing in
+  // the row relays out when the slide starts; the content slides out of it instead.
   const androidContentSlotStyle = useAnimatedStyle(() => ({
     width: !androidSplit
       ? ("100%" as const)
       : keyboardHoldsSidebar
-        ? Math.max(0, viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value)
+        ? Math.max(
+            0,
+            viewportWidth -
+              renderedRailWidth.value -
+              renderedSidebarWidth.value -
+              renderedInspectorWidth.value,
+          )
         : renderedContentWidth.value,
   }));
   // While the sidebar animates, clip the settled navigator instead of reflowing its text every frame.
+  // Held by the keyboard it lifts entirely: the content outgrows its column, and a cap that
+  // follows React's width would clip the wider layout for the frame it lands.
   const androidNavigatorLimit = useAnimatedStyle(() => ({
-    maxWidth:
-      androidSplit && contentTargetWidth !== null && renderedContentWidth.value < contentTargetWidth
+    maxWidth: keyboardHold.value
+      ? viewportWidth
+      : androidSplit &&
+          contentTargetWidth !== null &&
+          renderedContentWidth.value < contentTargetWidth
         ? contentTargetWidth
         : ("100%" as const),
   }));
@@ -1015,10 +1027,7 @@ function AdaptiveWorkspaceLayoutContent(
                   { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 },
                   floatingSidebarAnimatedStyle,
                 ]
-              : // Out of the row while the keyboard slides it.
-                keyboardHoldsSidebar
-                ? { position: "absolute", top: 0, bottom: 0, left: navigationRailWidth }
-                : null,
+              : null,
             sidebarAnimatedStyle,
           ]}
         >
@@ -1054,7 +1063,7 @@ function AdaptiveWorkspaceLayoutContent(
         className={
           Platform.OS === "android"
             ? keyboardHoldsSidebar
-              ? "max-w-full shrink-0 overflow-hidden"
+              ? "max-w-full shrink-0"
               : "max-w-full shrink-0 overflow-hidden bg-header"
             : "flex-1 overflow-hidden bg-screen"
         }
@@ -1067,23 +1076,16 @@ function AdaptiveWorkspaceLayoutContent(
           collapsable={false}
           // The animated style stays attached so its shift resets when the keyboard lets go.
           style={[
-            keyboardHoldsSidebar && contentTargetWidth !== null
+            contentTargetWidth !== null
               ? {
-                  position: "absolute",
-                  top: 0,
-                  bottom: 0,
-                  // React places it at the sidebar's resting edge; only the keyboard's share moves.
-                  left: keyboardSidebarRest,
+                  flex: 1,
                   width: contentTargetWidth,
+                  // Held by the keyboard, the content outgrows the column it slides out of from
+                  // its start edge; anchoring its end would push it off the other side.
+                  alignSelf: contentAnchor.end && !keyboardHoldsSidebar ? "flex-end" : "flex-start",
+                  marginRight: contentAnchor.end && !keyboardHoldsSidebar ? contentEndGap : 0,
                 }
-              : contentTargetWidth !== null
-                ? {
-                    flex: 1,
-                    width: contentTargetWidth,
-                    alignSelf: contentAnchor.end ? "flex-end" : "flex-start",
-                    marginRight: contentAnchor.end ? contentEndGap : 0,
-                  }
-                : { flex: 1 },
+              : { flex: 1 },
             Platform.OS === "android" ? androidNavigatorLimit : undefined,
             contentKeyboardStyle,
           ]}
@@ -1139,7 +1141,7 @@ function AdaptiveWorkspaceLayoutContent(
               className="absolute top-0 bg-header"
               style={[
                 {
-                  left: keyboardSidebarRest + contentTargetWidth,
+                  left: contentTargetWidth,
                   width: keyboardSidebarRest + contentEndGap,
                   height: threadHeaderHeight,
                 },
@@ -1152,7 +1154,7 @@ function AdaptiveWorkspaceLayoutContent(
               style={[
                 {
                   // Starts under the card's rounded corner so the two read as one card.
-                  left: keyboardSidebarRest + contentTargetWidth - 28,
+                  left: contentTargetWidth - 28,
                   width: keyboardSidebarRest + 28,
                   top: threadHeaderHeight,
                 },
