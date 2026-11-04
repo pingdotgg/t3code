@@ -251,7 +251,10 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
-      /** Read through GraphQL, which narrows more filters; see `supportsGraphqlList`. */
+      /**
+       * Read a first page through GraphQL, which narrows more filters; see `supportsGraphqlList`.
+       * A cursor keeps the API that handed it out.
+       */
       readonly graphql?: boolean;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
@@ -615,7 +618,8 @@ function graphqlListQuery(input: {
       ? []
       : [["draft", "Boolean", filters.draft === "only"] as const]),
     ...(filters.review === "approved" ? [["approvedBy", "[String!]", ["Any"]] as const] : []),
-    ...(filters.review === "changes-requested"
+    // Beside `reviewerUsername`, GitLab matches review states on that reviewer alone.
+    ...(filters.review === "changes-requested" && input.involvement !== "reviewing"
       ? [["reviewStates", "[MergeRequestReviewState!]", ["REQUESTED_CHANGES"]] as const]
       : []),
   ];
@@ -1518,13 +1522,12 @@ export const make = Effect.gen(function* () {
       const rest = Effect.suspend(() =>
         listPage({ ...input, page, collected: [], cursorAdvance: 0 }),
       );
-      // A cursor REST handed out holds only an offset, which GraphQL cannot resume from.
-      if (
-        input.graphql !== true ||
-        (input.cursor !== undefined && input.cursor.resumeAfter === undefined)
-      ) {
-        return rest;
-      }
+      // A cursor's offset means something only to the API that handed it out.
+      const viaGraphql =
+        input.cursor === undefined
+          ? input.graphql === true
+          : input.cursor.resumeAfter !== undefined;
+      if (!viaGraphql) return rest;
       const graphql = graphqlListPage({
         ...input,
         after: input.cursor?.resumeAfter,

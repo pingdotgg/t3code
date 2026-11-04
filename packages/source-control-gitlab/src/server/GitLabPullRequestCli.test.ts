@@ -295,7 +295,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
     "lists through GraphQL with the filters GitLab narrows there, declaring only those",
     () =>
       Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(
+        mockedExecute.mockReturnValue(
           Effect.succeed(output(graphqlListPage([1], { hasNextPage: false, endCursor: null }))),
         );
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -304,7 +304,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           cwd: "/w",
           repository: "acme/web",
           state: "open",
-          involvement: "reviewing",
+          involvement: "all",
           viewer: "bilal",
           limit: 10,
           query: " page ",
@@ -330,7 +330,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
           after: "eyJpZCI6IjEifQ",
           state: "opened",
           authorUsername: "octocat",
-          reviewerUsername: "bilal",
           search: "page",
           labels: ["bug"],
           draft: false,
@@ -340,6 +339,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
         expect(query).toContain("reviewStates: $reviewStates");
         expect(query).toContain("not: { labels: $notLabels }");
         expect(query).not.toContain("$approvedBy");
+
+        // Beside a reviewer, GitLab would match only that reviewer's own state.
+        yield* cli.listMergeRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "bilal",
+          limit: 10,
+          graphql: true,
+          filters: { review: "changes-requested" },
+        });
+        expect(graphqlRequestOf(1).variables).toMatchObject({ reviewerUsername: "bilal" });
+        expect(graphqlRequestOf(1).variables).not.toHaveProperty("reviewStates");
       }),
   );
 
@@ -395,13 +408,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
           involvement: "all",
           viewer: "bilal",
           limit: 10,
-          graphql: true,
+          // A cursor, not the host's current answer, picks the API.
+          graphql: cursor?.resumeAfter === undefined,
           ...(cursor === undefined ? {} : { cursor }),
         });
 
       yield* list({ updatedBefore: "2026-07-03T00:00:00Z", delivered: 10 });
       const fellBack = yield* list();
-      // A resumed GraphQL read fails instead, since REST would read `delivered` as an offset.
+      // A resumed GraphQL read stays on GraphQL and fails, since REST would read `delivered` as an offset.
       const resumed = yield* Effect.result(
         list({ updatedBefore: "2026-07-03T00:00:00Z", delivered: 10, resumeAfter: "c1" }),
       );
