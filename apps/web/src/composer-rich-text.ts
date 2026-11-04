@@ -26,7 +26,14 @@ function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): v
   }
 }
 
+/** Words containing a slash or ending in a file extension are URLs, paths, or filenames. */
+const LITERAL_UNDERSCORE_WORD = /\/|\.[a-z][a-z0-9]*\W*$/i;
+
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
+  const literalWords = Array.from(text.matchAll(/\S+/g)).filter((word) =>
+    LITERAL_UNDERSCORE_WORD.test(word[0]),
+  );
+  let literalWord = 0;
   const root: RichTextSpan[] = [];
   const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
   const current = () => stack.at(-1)?.spans ?? root;
@@ -62,6 +69,15 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     }
     let end = index;
     while (text[end] === char) end += 1;
+    if (char === "_") {
+      let word = literalWords[literalWord];
+      while (word && word.index + word[0].length <= index) word = literalWords[++literalWord];
+      if (word && word.index <= index) {
+        pushSpan(current(), text.slice(index, end), []);
+        index = end;
+        continue;
+      }
+    }
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
     const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));

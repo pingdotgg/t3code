@@ -220,6 +220,61 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+// regression: #25180 pasted plain text was re-read as Markdown and sent rewritten
+it.each([
+  {
+    name: "underscores in a URL and a path",
+    value: "",
+    caret: 1,
+    pasted: "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+    expected: "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+  },
+  {
+    name: "Markdown inside inline code",
+    value: "`xy`",
+    caret: 2,
+    pasted: "a_b_ **c**",
+    expected: "`xa_b_ **c**y`",
+  },
+  {
+    name: "bold markers inside a pasted code span",
+    value: "",
+    caret: 1,
+    pasted: "see `**x**` now",
+    expected: "see `**x**` now",
+  },
+])("sends pasted $name exactly as pasted", async ({ value, caret, pasted, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+});
+
+// regression: #25180 a multiline or backtick paste into a code span serialized as a span the parser cannot rebuild
+it.each([" _a_\nb", "`__z__`"])(
+  "rebuilds a paste of %j into a code span unchanged",
+  async (pasted) => {
+    await using screen = await mountEditor("`xy`");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection(2);
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", pasted);
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    const { value } = serializeEditorDoc(editor.state.doc);
+    await using rebuilt = await mountEditor(value);
+    expect(serializeEditorDoc(rebuilt.editor.state.doc).value).toBe(value);
+  },
+);
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);
