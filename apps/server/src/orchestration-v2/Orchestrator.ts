@@ -2106,6 +2106,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: queuedProviderThread.id,
         ordinal,
         status: "starting",
+        workspaceCwd: checkpointScope.cwd,
         queuePosition: null,
         startedAt: null,
         contextHandoffId: activeHandoff?.id ?? null,
@@ -5290,6 +5291,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       userMessageId: input.messageId,
       status: "starting",
       contextHandoffId: restartHandoff?.id ?? targetRun.contextHandoffId,
+      workspaceCwd: checkpointScope.cwd,
     };
     const nextAttempt: OrchestrationV2RunAttempt = {
       id: nextAttemptId,
@@ -6124,6 +6126,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
+        ...(checkpointScope === null ? {} : { workspaceCwd: checkpointScope.cwd }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -6490,6 +6493,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : {}),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection.runs, command),
+        ...(checkpointScope === null ? {} : { workspaceCwd: checkpointScope.cwd }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -7242,6 +7246,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection.runs, command),
+      workspaceCwd: checkpointScope.cwd,
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,
@@ -10160,7 +10165,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: state.rootNode.id,
         providerInstanceId: state.run.providerInstanceId,
         occurredAt: now,
-        payload: { ...state.run, status: "starting" },
+        payload: { ...state.run, status: "starting", workspaceCwd: checkpointScope.cwd },
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,

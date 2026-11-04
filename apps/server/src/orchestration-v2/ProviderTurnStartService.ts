@@ -1453,6 +1453,8 @@ export const layer: Layer.Layer<
         ...run,
         status: "running",
         startedAt: now,
+        // The thread's scope follows its latest root run; this run's checkpoints stay here.
+        workspaceCwd: checkpointScope.cwd,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,

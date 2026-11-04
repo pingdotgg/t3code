@@ -19,8 +19,13 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -28,6 +33,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
@@ -1436,6 +1442,181 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
         const queued = projection.runs.find((run) => run.id === queuedRun.id);
         assert.equal(queued?.status, "queued");
         assert.isTrue(queued?.queueHeld);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// A worktree of the workspace's repo on a branch of its own: it shares the repo's refs.
+const repoWorktree = (cwd: string, branch: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: `t3-orchestrator-v2-${branch}-` });
+    const worktree = path.join(parent, "worktree");
+    const added = yield* spawner.exitCode(
+      ChildProcess.make("git", ["worktree", "add", "-b", branch, worktree], { cwd }),
+    );
+    assert.equal(Number(added), 0);
+    return worktree;
+  });
+
+// The next root run re-creates the thread's scope in the switched-to worktree before the stopped
+// run's capture: sent after Stop, or queued while the run ends (branch selector). Without the run's
+// own workspace, another repo loses its thread-start baseline; a worktree of the same repo gives it
+// the other worktree's tree.
+it.effect.each(
+  (["sent after Stop", "queued while it ends"] as const).flatMap((flow) =>
+    (["another repo", "a worktree of the same repo"] as const).map((switchedTo) => ({
+      flow,
+      switchedTo,
+    })),
+  ),
+)(
+  "a stopped run's checkpoint is its own after a worktree switch ($flow, $switchedTo)",
+  ({ flow, switchedTo }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `own-workspace-${flow}-${switchedTo}`.replaceAll(" ", "-");
+        const { cwd, events, started, layer, startFirstTurn } =
+          yield* nextTurnSelectionHarness(name);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const other =
+            switchedTo === "another repo"
+              ? yield* checkpointWorkspace(`${name}-other`)
+              : yield* repoWorktree(cwd, "switched");
+          const threadId = yield* startFirstTurn;
+          const first = started[0]!;
+          yield* fs.writeFileString(path.join(cwd, "edited-by-first.txt"), "first\n");
+          const switchWorktree = orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("switch"),
+            threadId,
+            worktreePath: other,
+          });
+          const sendNext = orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("next"),
+            threadId,
+            messageId: MessageId.make("message:next"),
+            text: "next",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          if (flow === "sent after Stop") {
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("stop"),
+              threadId,
+              runId: first.runId,
+            });
+            // Delivering the interrupt stops the run and queues its checkpoint capture behind it.
+            assert.isTrue(yield* worker.runOnce);
+            yield* switchWorktree;
+            yield* sendNext;
+            yield* worker.drain();
+          } else {
+            yield* switchWorktree;
+            yield* sendNext;
+            // The session the selector stopped ends the turn.
+            const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+            const stopped = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === first.runId &&
+                  event.payload.status === "interrupted",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            yield* Queue.offer(events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...turn, status: "interrupted", completedAt: yield* DateTime.now },
+            });
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              runOrdinal: first.runOrdinal,
+              status: "interrupted",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(stopped);
+            yield* worker.drain();
+            yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+          }
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.checkpointScopes[0]?.cwd, other);
+          const threadStart = projection.checkpoints.find(
+            (checkpoint) => checkpoint.ordinalWithinScope === 0,
+          );
+          const stopped = projection.checkpoints.find(
+            (checkpoint) => checkpoint.runId === first.runId,
+          );
+          // Revert to thread start stays available, and the stopped run's checkpoint is its own.
+          assert.equal(threadStart?.status, "ready");
+          assert.equal(stopped?.status, "ready");
+          assert.deepEqual(
+            stopped?.files.map((file) => file.path),
+            ["edited-by-first.txt"],
+          );
+        }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
+      }),
+    ),
+);
+
+it.effect("a run records its workspace when it is scoped, before its turn starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cwd, layer } = yield* nextTurnSelectionHarness("workspace-when-scoped");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("thread:workspace-when-scoped");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make("project:workspace-when-scoped"),
+          title: "Workspace when scoped",
+          modelSelection: runSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("first"),
+          threadId,
+          messageId: MessageId.make("message:first"),
+          text: "first",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        // Its turn has not started (the effect worker has not run), so Stop could still end it.
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.runs[0]?.status, "starting");
+        assert.equal(projection.runs[0]?.workspaceCwd, cwd);
       }).pipe(Effect.provide(layer));
     }),
   ),

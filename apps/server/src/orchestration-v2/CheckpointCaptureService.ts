@@ -100,6 +100,9 @@ export const layer: Layer.Layer<
       }
 
       const capturedAt = yield* DateTime.now;
+      // The run's checkpoints are taken where it ran: the thread's scope follows its latest root run
+      // and may name another worktree by now. Runs recorded without a workspace use the scope's.
+      const runScope = run.workspaceCwd === undefined ? scope : { ...scope, cwd: run.workspaceCwd };
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
@@ -107,19 +110,19 @@ export const layer: Layer.Layer<
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
           : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
+              scope: runScope,
               ordinalWithinScope: 0,
               forceMissing: sideChat,
             });
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
         : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
+            scope: runScope,
             ordinalWithinScope: baselineOrdinalWithinScope,
             forceMissing: sideChat,
           });
       const checkpoint = yield* checkpoints.capture({
-        scope,
+        scope: runScope,
         runId: run.id,
         nodeId: rootNode.id,
         ordinalWithinScope: run.ordinal,

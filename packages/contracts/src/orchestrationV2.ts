@@ -705,6 +705,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** The workspace the run started in; its checkpoints are taken there. Absent on older runs. */
+  workspaceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
