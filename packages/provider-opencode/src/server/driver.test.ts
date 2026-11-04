@@ -9,6 +9,7 @@ import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  type ResolvedProviderInstanceEnvironment,
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
+import * as Sink from "effect/Sink";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -70,11 +72,15 @@ const layer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
-const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
+const create = (
+  config: Partial<OpenCodeSettings>,
+  http: HttpClient.HttpClient,
+  environment: ResolvedProviderInstanceEnvironment = [],
+) =>
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
+    environment,
     enabled: true,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
@@ -191,12 +197,44 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             body: OPENCODE_2_RESPONSES["/api/info"].body.replace("2.0.18", "2.0.32"),
           },
         };
-        const latestVersions = yield* ProviderLatestVersions.make([["@opencode/cli", "2.1.3"]]);
+        const latestVersions = yield* ProviderLatestVersions.make([["@opencode/cli", "9.9.9"]]);
+        const npmPath = NodePath.join(NodePath.dirname(binaryPath), "npm");
+        yield* (yield* FileSystem.FileSystem).writeFileString(npmPath, "fixture");
+        yield* (yield* FileSystem.FileSystem).chmod(npmPath, 0o755);
+        const spawner = ChildProcessSpawner.make((command) => {
+          assert.strictEqual(command._tag, "StandardCommand");
+          if (command._tag !== "StandardCommand") return Effect.die("unexpected pipeline");
+          assert.strictEqual(command.command, npmPath);
+          assert.deepStrictEqual(command.args, [
+            "view",
+            "--global",
+            "--json",
+            "@opencode/cli@latest",
+            "version",
+          ]);
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.encodeText(Stream.make('"2.1.3"')),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
         const instance = yield* create(
           { binaryPath, serverUrl },
           replayOpenCodeServer(responses, ""),
+          [{ name: "PATH", value: NodePath.dirname(binaryPath), sensitive: false }],
         ).pipe(
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
         );
         const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });

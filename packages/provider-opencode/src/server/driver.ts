@@ -236,7 +236,9 @@ export const OpenCodeDriver: ProviderDriver<
             ? Effect.succeed(noUpdate)
             : isExternalServer
               ? // Even loopback URLs can point to another installation or a forwarded server.
-                openCodeUpdateFor(generation.value).resolve(null)
+                resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                  binaryPath: null,
+                }).pipe(Effect.provideService(HostProcess.Environment, processEnv))
               : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
                   binaryPath: effectiveConfig.binaryPath,
                   env: processEnv,
