@@ -2311,6 +2311,108 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   },
 );
 
+// The run-update listener mirrors a follow-up's status onto its task outside any test fiber, so
+// its statements are recorded from the layer down, for one parent thread at a time.
+let recordReadsOf: ThreadId | undefined;
+const recordedReads: Array<string> = [];
+const layerRecordingReads = Layer.succeed(Statement.CurrentTransformer, (statement) => {
+  const [query, params] = statement.compile();
+  if (recordReadsOf !== undefined && params.includes(recordReadsOf)) recordedReads.push(query);
+  return Effect.succeed(statement);
+});
+
+it.layer(
+  Layer.merge(layerTest, ProviderContinuationRequests.layer).pipe(
+    Layer.provide(layerRecordingReads),
+  ),
+)("subagent follow-up status", (it) => {
+  it.effect("mirrors a follow-up's status reading only its task's node and card", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const parentThreadId = ThreadId.make("thread:narrow-status-parent");
+      const projectId = ProjectId.make("project:narrow-status");
+      const parentRunId = RunId.make("run:narrow-status-parent");
+      const rootNodeId = NodeId.make("node:narrow-status-parent");
+      yield* seedParentWithTerminalTask({
+        threadId: parentThreadId,
+        projectId,
+        runId: parentRunId,
+        rootNodeId,
+        taskId: NodeId.make("node:narrow-status-seed"),
+        deliveryState: "acknowledged",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId,
+        projectId,
+        parentRunId,
+        rootNodeId,
+        name: "narrow-status-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      for (const name of ["active", "queued"]) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make(`command:narrow-status:${name}`),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: MessageId.make(`message:narrow-status:${name}`),
+          text: name,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+      }
+      const queued = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+        (run) => run.ordinal === 3,
+      )!;
+      assert.equal(queued.status, "queued");
+      const afterSequence = yield* eventSink.latestSequence();
+      recordReadsOf = parentThreadId;
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        threadId: child.childThreadId,
+        commandId: CommandId.make("command:narrow-status:stop"),
+      });
+      yield* eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.id === queued.delegatedTaskId &&
+            stored.event.payload.status === "idle",
+        ),
+        Stream.take(1),
+        Stream.runHead,
+      );
+      recordReadsOf = undefined;
+      const paused = yield* orchestrator.getThreadProjection(parentThreadId);
+      assert.equal(paused.nodes.find((row) => row.id === queued.delegatedTaskId)?.status, "idle");
+      assert.equal(
+        paused.turnItems.find(
+          (row) => row.type === "subagent" && row.subagentId === queued.delegatedTaskId,
+        )?.status,
+        "idle",
+      );
+      const nodeReads = recordedReads.filter((query) =>
+        /SELECT payload_json\s+FROM orchestration_v2_projection_(nodes|turn_items)\b/.test(query),
+      );
+      assert.isNotEmpty(nodeReads);
+      assert.deepEqual(
+        nodeReads.filter((query) => !/AND (node\.)?node_id IN/.test(query)),
+        [],
+        "a parent node or card read is not narrowed",
+      );
+    }),
+  );
+});
+
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("queues a child result without creating a provider history handoff", () =>
     Effect.gen(function* () {
@@ -2404,11 +2506,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  // Finalizing a child reads, from its parent, only that child's tasks and the transfers it sent,
-  // and the other tasks of a delivery it joins by id.
+  // Finalizing a child reads, from its parent, only that child's task, node, card and the transfers
+  // it sent, and the message and other tasks of a delivery it joins by id.
   it.effect("finalizing a delegated child reads only that child's records from its parent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:narrow-finalize-parent");
       const projectId = ProjectId.make("project:narrow-finalize");
@@ -2450,12 +2553,81 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         runStatus: "completed",
         now,
       });
+      const cards = [
+        { taskId: siblingTaskId, status: "completed" as const, ordinal: 100 },
+        { taskId: child.taskId, status: "running" as const, ordinal: 101 },
+      ];
+      yield* sink.write({
+        commandId: CommandId.make("command:narrow-finalize-cards"),
+        events: cards.flatMap(({ taskId, status, ordinal }) => [
+          {
+            id: EventId.make(`event:narrow-finalize-node:${taskId}`),
+            type: "node.updated" as const,
+            threadId,
+            runId,
+            nodeId: taskId,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId,
+              runId,
+              parentNodeId: rootNodeId,
+              rootNodeId,
+              kind: "subagent" as const,
+              status,
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: status === "completed" ? now : null,
+            },
+          },
+          {
+            id: EventId.make(`event:narrow-finalize-card:${taskId}`),
+            type: "turn-item.updated" as const,
+            threadId,
+            runId,
+            nodeId: taskId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`turn-item:narrow-finalize:${taskId}`),
+              type: "subagent" as const,
+              threadId,
+              runId,
+              nodeId: taskId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status,
+              title: null,
+              startedAt: now,
+              completedAt: status === "completed" ? now : null,
+              updatedAt: now,
+              subagentId: taskId,
+              origin: "app_owned" as const,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              childThreadId: taskId === child.taskId ? child.childThreadId : null,
+              prompt: `Run ${taskId}.`,
+              result: status === "completed" ? "child finished" : null,
+            },
+          },
+        ]),
+      });
       const parentReads: Array<string> = [];
       const observe: Statement.Transformer = (statement) => {
         const [query, params] = statement.compile();
         if (
           params.includes(threadId) &&
-          /FROM orchestration_v2_projection_(subagents|context_transfers)\b/.test(query)
+          (/FROM orchestration_v2_projection_(subagents|context_transfers)\b/.test(query) ||
+            /SELECT payload_json\s+FROM orchestration_v2_projection_(nodes|turn_items|messages)\b/.test(
+              query,
+            ))
         ) {
           parentReads.push(query);
         }
@@ -2485,6 +2657,30 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         transferReads.filter((query) => !/AND source_thread_id (=|IN)/.test(query)),
         [],
         "a parent context-transfer read is not narrowed",
+      );
+      // Nodes and cards by the task's node, messages by id.
+      for (const [table, narrowed] of [
+        ["nodes", /AND node\.node_id IN/],
+        ["turn_items", /AND node_id IN/],
+        ["messages", /AND message_id IN/],
+      ] as const) {
+        const reads = parentReads.filter((query) =>
+          query.includes(`FROM orchestration_v2_projection_${table}`),
+        );
+        assert.isNotEmpty(reads, table);
+        assert.deepEqual(
+          reads.filter((query) => !narrowed.test(query)),
+          [],
+          `a parent ${table} read is not narrowed`,
+        );
+      }
+      // The child's node and card still end with its task.
+      assert.equal(projection.nodes.find((row) => row.id === child.taskId)?.status, "completed");
+      assert.equal(
+        projection.turnItems.find(
+          (row) => row.type === "subagent" && row.subagentId === child.taskId,
+        )?.status,
+        "completed",
       );
       // The delivery the child joins still names the sibling it was opened for.
       const message = projection.messages.find((candidate) => candidate.id === messageId);

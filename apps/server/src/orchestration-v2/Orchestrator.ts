@@ -12477,7 +12477,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const parent = yield* projectionStore.getThreadRecords(
           childControls.thread.lineage.parentThreadId,
           ["nodes", "turnItems"],
-          { turnItemTypes: ["subagent"] },
+          { turnItemTypes: ["subagent"], nodeIds: [task.id], turnItemNodeIds: [task.id] },
         );
         const now = yield* DateTime.now;
         const scope = {
@@ -12544,15 +12544,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
-      // Only this child's tasks and result transfers; a delivery's other tasks are read by id below.
+      // Only this child's tasks, node, card and result transfers; a delivery is read by id below.
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        ["runs", "messages", "subagents", "nodes", "turnItems", "contextTransfers"],
+        ["runs", "subagents", "nodes", "turnItems", "contextTransfers"],
         {
           turnItemTypes: ["subagent"],
-          messageRoles: ["user"],
           subagentChildThreadIds: [childThreadId],
           contextTransferSourceThreadIds: [childThreadId],
+          nodeIds: [options.task.id],
+          turnItemNodeIds: [options.task.id],
         },
       );
       const task = parentProjection.subagents.find(
@@ -12594,20 +12595,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
-      // The delivery this result may join names its other tasks in its text.
-      const deliveryTaskIds = (parentRun?.delegatedCompletion?.delivery?.taskIds ?? []).filter(
-        (taskId) => !parentProjection.subagents.some((candidate) => candidate.id === taskId),
-      );
-      const deliveryTasks =
-        deliveryTaskIds.length === 0
-          ? []
-          : (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
-              subagentIds: deliveryTaskIds,
-            })).subagents;
+      // The delivery this result may join: its message, and the other tasks its text names.
+      const delivery = parentRun?.delegatedCompletion?.delivery ?? null;
+      const deliveryRecords =
+        delivery === null
+          ? { messages: [], subagents: [] }
+          : yield* projectionStore.getThreadRecords(parentThreadId, ["messages", "subagents"], {
+              messageRoles: ["user"],
+              messageIds: [delivery.messageId],
+              subagentIds: delivery.taskIds.filter(
+                (taskId) =>
+                  !parentProjection.subagents.some((candidate) => candidate.id === taskId),
+              ),
+            });
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection: {
           ...parentProjection,
-          subagents: [...parentProjection.subagents, ...deliveryTasks],
+          messages: deliveryRecords.messages,
+          subagents: [...parentProjection.subagents, ...deliveryRecords.subagents],
         },
         parentRun,
         task,
