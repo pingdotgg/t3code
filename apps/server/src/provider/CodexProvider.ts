@@ -27,7 +27,11 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import {
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  ServerSettingsError,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 
 import {
   codexModelFamily,
@@ -381,6 +385,82 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 const decodeCodexModelsCacheStamp = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ fetched_at: Schema.String })),
 );
+const CodexModelsCacheEntry = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  display_name: Schema.optional(Schema.String),
+  visibility: Schema.optional(Schema.String),
+  supported_in_api: Schema.optional(Schema.Boolean),
+  supported_reasoning_levels: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        effort: Schema.String,
+        description: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  default_reasoning_level: Schema.optional(Schema.NullOr(Schema.String)),
+  service_tiers: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        name: Schema.optional(Schema.String),
+        description: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  default_service_tier: Schema.optional(Schema.NullOr(Schema.String)),
+  additional_speed_tiers: Schema.optional(Schema.Array(Schema.String)),
+});
+const decodeCodexModelsCache = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ models: Schema.Array(CodexModelsCacheEntry) })),
+);
+
+function codexModelFromCache(entry: typeof CodexModelsCacheEntry.Type): ServerProviderModel {
+  const reasoningLevels = entry.supported_reasoning_levels ?? [];
+  const displayName = entry.display_name ?? entry.slug;
+  return {
+    slug: entry.slug,
+    name: formatCodexModelName(displayName),
+    isCustom: false,
+    capabilities: mapCodexModelCapabilities({
+      additionalSpeedTiers: entry.additional_speed_tiers ?? [],
+      defaultReasoningEffort:
+        entry.default_reasoning_level ?? reasoningLevels[0]?.effort ?? "medium",
+      defaultServiceTier: entry.default_service_tier ?? null,
+      description: "",
+      displayName,
+      hidden: false,
+      id: entry.slug,
+      isDefault: false,
+      model: entry.slug,
+      serviceTiers: (entry.service_tiers ?? []).map((tier) => ({
+        id: tier.id,
+        name: tier.name ?? tier.id,
+        description: tier.description ?? "",
+      })),
+      supportedReasoningEfforts: reasoningLevels.map((level) => ({
+        reasoningEffort: level.effort,
+        description: level.description ?? "",
+      })),
+    }),
+  };
+}
+
+const readCodexModelsCache = Effect.fn("readCodexModelsCache")(function* (codexHome: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fileSystem
+    .readFileString(path.join(codexHome, "models_cache.json"))
+    .pipe(Effect.option);
+  return Option.flatMap(text, decodeCodexModelsCache).pipe(
+    Option.map((cache): ReadonlyArray<ServerProviderModel> =>
+      cache.models
+        .filter((model) => model.visibility !== "hide" && model.supported_in_api !== false)
+        .map(codexModelFromCache),
+    ),
+    Option.getOrElse((): ReadonlyArray<ServerProviderModel> => []),
+  );
+});
 
 const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")(function* (
   codexHome: string,
@@ -409,23 +489,42 @@ const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   );
 });
 
+function mergeCachedCodexModels(
+  models: ReadonlyArray<ServerProviderModel>,
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const knownSlugs = new Set(models.map((model) => model.slug));
+  return [...models, ...cachedModels.filter((model) => !knownSlugs.has(model.slug))];
+}
+
 /**
  * Every Codex client on the machine shares that file, and the backend tailors
  * the catalog to each client's originator: the plain CLI does not get Sol
  * Ultrafast. App-server refreshes the catalog online at startup, so wait until
  * a write newer than this process's spawn lands, then list again.
+ *
+ * A custom model provider (OpenRouter, a local gateway) gets its catalog from
+ * that provider. When its refresh fails, Codex answers with its bundled OpenAI
+ * models instead of the user's models. Keep the last catalog Codex wrote in
+ * that case rather than replacing the picker with models the provider cannot
+ * serve.
  */
-const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
+const requestRefreshedCodexModels = Effect.fn("requestRefreshedCodexModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
   readonly codexHome: string;
   readonly spawnedAtMs: number;
   readonly deadlineMs: number;
+  readonly fallback: "initial" | "catalog-cache";
 }) {
   const models = yield* withCodexDiscoveryDeadline(
     requestAllCodexModels(input.client),
     input.deadlineMs,
   );
   if (models === undefined) return undefined;
+  const fallbackModels = Effect.gen(function* () {
+    if (input.fallback === "initial") return models;
+    return mergeCachedCodexModels(models, yield* readCodexModelsCache(input.codexHome));
+  });
   const refreshed = yield* withCodexDiscoveryDeadline(
     readCodexModelsCacheFetchedAt(input.codexHome).pipe(
       Effect.repeat({
@@ -440,11 +539,11 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
     yield* Effect.logWarning(
       "Codex did not refresh its model catalog in time; using the cached catalog.",
     );
-    return models;
+    return yield* fallbackModels;
   }
   return (
     (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
-    models
+    (yield* fallbackModels)
   );
 });
 
@@ -551,26 +650,40 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
+  // The shared catalog must exclude config from the server's launch project.
+  const configResponse = yield* withCodexDiscoveryDeadline(
+    client.request("config/read", { includeLayers: false }),
+    deadlineMs,
+    CODEX_CONFIG_PROBE_TIMEOUT_MS,
+  ).pipe(
+    Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
+  );
+  const configuredModelProvider = configResponse?.config.model_provider?.trim();
+  const usesCustomModelProvider =
+    configuredModelProvider !== undefined &&
+    configuredModelProvider.length > 0 &&
+    configuredModelProvider !== "openai";
+  const modelsEffect = usesCustomModelProvider
+    ? requestRefreshedCodexModels({
+        client,
+        codexHome: initialize.codexHome,
+        spawnedAtMs,
+        deadlineMs,
+        fallback: "catalog-cache",
+      })
+    : accountResponse.account?.type === "chatgpt"
+      ? requestRefreshedCodexModels({
+          client,
+          codexHome: initialize.codexHome,
+          spawnedAtMs,
+          deadlineMs,
+          fallback: "initial",
+        })
+      : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs);
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
-      accountResponse.account?.type === "chatgpt"
-        ? requestCodexChatGptModels({
-            client,
-            codexHome: initialize.codexHome,
-            spawnedAtMs,
-            deadlineMs,
-          })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
-      // The shared catalog must exclude config from the server's launch project.
-      withCodexDiscoveryDeadline(
-        client.request("config/read", { includeLayers: false }),
-        deadlineMs,
-        CODEX_CONFIG_PROBE_TIMEOUT_MS,
-      ).pipe(
-        Effect.map((response) => response?.config.service_tier ?? undefined),
-        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
-      ),
+      modelsEffect,
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       input.skipNativeUsage
@@ -605,7 +718,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
+    serviceTier: configResponse?.config.service_tier ?? undefined,
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
