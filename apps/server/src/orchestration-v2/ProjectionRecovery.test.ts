@@ -580,6 +580,9 @@ it.effect("recovers only recorded follow-up results with SQLite projections", ()
     });
     yield* createRun(child, "completed", { ordinal: 2 });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      WHERE thread_id = ${child} AND ordinal = 2`;
     const taskId = NodeId.make("node:followup");
     yield* createRun(child, "completed", { ordinal: 3, delegatedTaskId: taskId });
     yield* createRun(child, "running", { ordinal: 4 });
@@ -611,6 +614,40 @@ it.effect("recovers only recorded follow-up results with SQLite projections", ()
       occurredAt: now,
       payload: task,
     });
+    const [storedTask] = yield* sql<{ payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_projection_subagents WHERE subagent_id = ${taskId}
+    `;
+    yield* sql`UPDATE orchestration_v2_projection_subagents SET payload_json = '{broken'
+      WHERE subagent_id = ${taskId}`;
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    yield* sql`UPDATE orchestration_v2_projection_subagents SET payload_json = ${storedTask!.payload_json}
+      WHERE subagent_id = ${taskId}`;
+    for (const status of [
+      "completed",
+      "interrupted",
+      "failed",
+      "cancelled",
+      "rolled_back",
+    ] as const) {
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = ${status}
+        WHERE thread_id = ${child} AND ordinal = 3`;
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [child]);
+    }
+    for (const [origin, childThreadId, result, expected] of [
+      ["provider_native", child, null, []],
+      ["app_owned", parent, null, []],
+      ["app_owned", child, "", []],
+      ["app_owned", child, null, [child]],
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`event:followup-transition:${origin}:${childThreadId}:${result}`),
+        type: "subagent.updated",
+        threadId: parent,
+        occurredAt: now,
+        payload: { ...task, origin, childThreadId, result },
+      });
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), expected);
+    }
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [child]);
     yield* projections.apply({
       id: EventId.make("event:followup-settled"),

@@ -4125,17 +4125,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND (EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_runs AS requested
                     JOIN orchestration_v2_projection_subagents AS task
-                      ON task.subagent_id = json_extract(requested.payload_json, '$.delegatedTaskId')
+                      ON task.subagent_id = CASE WHEN json_valid(requested.payload_json)
+                        THEN json_extract(requested.payload_json, '$.delegatedTaskId') END
                     WHERE requested.thread_id = child.thread_id
                       AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                       AND task.child_thread_id = child.thread_id
-                      AND json_extract(task.payload_json, '$.origin') = 'app_owned'
-                      AND json_extract(task.payload_json, '$.result') IS NULL
+                      AND CASE WHEN json_valid(task.payload_json) THEN
+                        json_extract(task.payload_json, '$.origin') = 'app_owned'
+                        AND json_extract(task.payload_json, '$.result') IS NULL
+                        ELSE 0 END
                   ) OR (
                     -- The original task still waits for the latest unheld work.
                     (SELECT status FROM orchestration_v2_projection_runs
                      WHERE thread_id = child.thread_id
-                       AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
+                       AND NOT (status = 'queued' AND CASE WHEN json_valid(payload_json)
+                         THEN json_extract(payload_json, '$.queueHeld') IS 1 ELSE 0 END)
                      ORDER BY ordinal DESC LIMIT 1
                     ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                     AND NOT EXISTS (
