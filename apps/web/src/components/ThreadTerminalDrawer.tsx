@@ -33,6 +33,7 @@ import {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -81,7 +82,7 @@ import {
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
-import { getFileMetadataQueryAtom, useFileMetadata } from "../hooks/useFileMetadata";
+import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { attachedTerminalSessionAtom } from "../state/terminalSessions";
@@ -530,20 +531,20 @@ function TerminalSessionViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const [linkPath, setLinkPath] = useState<string | null>(null);
-  const linkMetadata = useFileMetadata(
-    linkPath === null ? null : environmentId,
-    linkPath ?? "",
-    cwd,
-  );
+  const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const linkMetadataQuery =
+    linkPath !== null && canOpenHostEditor && canReadFilesystem
+      ? getFileMetadataQueryAtom(environmentId, linkPath, cwd, metadataThreadRef)
+      : null;
   const canActivateTerminalLink = useEffectEvent((text: string) => {
     if (isTerminalUrl(text)) return true;
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-    return (
-      text === linkPath && (linkMetadata?.kind === "file" || linkMetadata?.kind === "directory")
-    );
+    if (text !== linkPath || !linkMetadataQuery) return false;
+    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
+    return metadata?.kind === "file" || metadata?.kind === "directory";
   });
-  const metadataThreadRef = useContext(FileMetadataThreadContext);
   const validateTerminalLink = useEffectEvent(async (text: string) => {
     if (isTerminalUrl(text)) return true;
     if (
@@ -668,9 +669,16 @@ function TerminalSessionViewport({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the imperative terminal's hovered link after filesystem metadata or editor permissions change
   useEffect(() => {
-    terminalRef.current?.refreshLinkActivation();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The surface re-reads these values through canActivateTerminalLink's Effect Event.
-  }, [canOpenHostEditor, linkPath, linkMetadata]);
+    if (!linkMetadataQuery) {
+      terminalRef.current?.refreshLinkActivation();
+      return;
+    }
+    return appAtomRegistry.subscribe(
+      linkMetadataQuery,
+      () => terminalRef.current?.refreshLinkActivation(),
+      { immediate: true },
+    );
+  }, [linkMetadataQuery]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
