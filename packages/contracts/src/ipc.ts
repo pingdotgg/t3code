@@ -329,6 +329,11 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
   supported: Schema.Boolean,
   installedPath: Schema.NullOr(Schema.String),
   onPath: Schema.Boolean,
+  wslSupported: Schema.Boolean,
+  wslBackendEnabled: Schema.Boolean,
+  wslInstalledPath: Schema.NullOr(Schema.String),
+  wslInstalledDistro: Schema.NullOr(Schema.String),
+  wslStatusUnavailable: Schema.Boolean,
   shadowedBy: Schema.optionalKey(Schema.String),
   /** The app's bundled `t3` launcher, which runs without Node or a PATH entry. */
   launcherPath: Schema.NullOr(Schema.String),
@@ -1120,6 +1125,8 @@ export interface DesktopBridge {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
+    installWsl: () => Promise<DesktopCliCommandState>;
+    uninstallWsl: () => Promise<DesktopCliCommandState>;
   };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;

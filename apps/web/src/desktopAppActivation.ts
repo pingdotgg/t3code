@@ -6,8 +6,15 @@ import type {
   ExecutionEnvironmentPlatformOs,
   ProjectId,
   ScopedProjectRef,
+  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
+
+export const desktopAppActivationPendingAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("desktop:app-activation:pending"),
+);
 
 export interface DesktopAppActivationProject {
   readonly id: ProjectId;
@@ -20,8 +27,24 @@ export interface DesktopAppActivationTarget {
   readonly platform: ExecutionEnvironmentPlatformOs;
 }
 
+export function openedProjectDraft(
+  project: ScopedProjectRef,
+  draft: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly promotedTo?: ScopedThreadRef | null;
+  } | null,
+): { readonly threadId: ThreadId } | null {
+  return draft?.environmentId === project.environmentId &&
+    draft.projectId === project.projectId &&
+    draft.promotedTo == null
+    ? { threadId: draft.threadId }
+    : null;
+}
+
 export interface DesktopAppActivationDependencies {
-  readonly getTarget: () => DesktopAppActivationTarget | null;
+  readonly getTarget: (request: DesktopAppActivationRequest) => DesktopAppActivationTarget | null;
   readonly findProject: (
     environmentId: EnvironmentId,
     workspaceRoot: string,
@@ -34,6 +57,29 @@ export interface DesktopAppActivationDependencies {
   readonly openThread: (
     projectRef: ScopedProjectRef,
   ) => Promise<{ readonly threadId: ThreadId } | null>;
+}
+
+export function findWslActivationTarget(
+  distro: string,
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly backendId: string | null;
+    readonly connected: boolean;
+    readonly platform: ExecutionEnvironmentPlatformOs | null;
+  }>,
+  bootstraps: ReadonlyArray<{ readonly id: string; readonly runningDistro?: string | null }>,
+): DesktopAppActivationTarget | null {
+  const target = environments.find((environment) => {
+    const bootstrap = bootstraps.find((entry) => entry.id === environment.backendId);
+    return (
+      environment.connected &&
+      environment.platform !== null &&
+      bootstrap?.runningDistro?.toLowerCase() === distro.toLowerCase()
+    );
+  });
+  return target?.platform
+    ? { environmentId: target.environmentId, platform: target.platform }
+    : null;
 }
 
 function failure(
@@ -58,12 +104,14 @@ export async function handleDesktopAppActivationRequest(
   request: DesktopAppActivationRequest,
   dependencies: DesktopAppActivationDependencies,
 ): Promise<DesktopAppActivationResponse> {
-  const target = dependencies.getTarget();
+  const target = dependencies.getTarget(request);
   if (target === null) {
     return failure(
       request.requestId,
       "environment-unavailable",
-      "The desktop app's primary local environment is not connected.",
+      request.wslDistro
+        ? `The WSL environment for ${request.wslDistro} is not connected. Enable it in Settings → Sharing & access and try again.`
+        : "The desktop app's primary local environment is not connected.",
     );
   }
 

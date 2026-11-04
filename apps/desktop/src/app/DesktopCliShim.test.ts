@@ -6,7 +6,12 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
+import {
+  type CliShimTarget,
+  renderCliShim,
+  renderWslCliInstallScript,
+  renderWslCliShim,
+} from "./DesktopCliShim.ts";
 
 const directories: Array<string> = [];
 afterEach(() => {
@@ -64,6 +69,38 @@ const fakeAppImage = (canMount = true) => {
 };
 
 describe("renderCliShim", () => {
+  it("forwards WSL distro and Linux cwd to the Windows desktop CLI", () => {
+    const script = renderWslCliShim("/mnt/c/Users/test/.t3/bin/t3.cmd");
+    expect(script).toContain("Usage: t3 app [project-directory]");
+    expect(script).toContain('workspace_root=$(CDPATH= cd -- "${project:-.}" && pwd)');
+    expect(script).toContain('T3CODE_WSL_DISTRO="${WSL_DISTRO_NAME:?Run this command inside WSL}"');
+    expect(script).toContain('T3CODE_WSL_WORKSPACE_ROOT="$workspace_root"');
+    expect(script).toContain("unset T3CODE_HOME T3CODE_WSL_WORKSPACE_ROOT T3CODE_WSL_BASE_DIR");
+    expect(script).toContain("T3CODE_WSL_WORKSPACE_ROOT/w");
+    expect(script).toContain("exec powershell.exe -NoProfile -NonInteractive -EncodedCommand");
+  });
+
+  it("only replaces or removes its own WSL command shim", () => {
+    const install = renderWslCliInstallScript({
+      action: "install",
+      windowsCliPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
+    });
+    const uninstall = renderWslCliInstallScript({
+      action: "uninstall",
+      windowsCliPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
+    });
+
+    expect(install).toContain(
+      'if [ -L "$target" ] || { [ -e "$target" ] && ! grep -Fq "$marker" "$target"; }',
+    );
+    expect(install).toContain("exit 73");
+    expect(install).toContain("existing=$(command -v t3 || :)");
+    expect(install).toContain('chmod 755 "$target"');
+    expect(uninstall).toContain(
+      'if [ -f "$target" ] && grep -Fq "$marker" "$target"; then rm "$target"; fi',
+    );
+  });
+
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });

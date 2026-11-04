@@ -70,11 +70,12 @@ export class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppR
     code: DesktopAppActivationErrorCode,
     requestId: Schema.String,
     workspaceRoot: Schema.String,
+    reason: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `T3 Code could not open ${this.workspaceRoot} (${this.code}).`;
+    return `T3 Code could not open ${this.workspaceRoot} (${this.code}). ${this.reason}`;
   }
 }
 
@@ -193,6 +194,18 @@ async function sendDesktopAppActivationRequest(input: {
 
 const appEnvironment = Config.all({
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  wslDistro: Config.String("T3CODE_WSL_DISTRO").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  wslWorkspaceRoot: Config.String("T3CODE_WSL_WORKSPACE_ROOT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  wslBaseDir: Config.String("T3CODE_WSL_BASE_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   sshConnection: Config.String("SSH_CONNECTION").pipe(Config.option),
   sshTty: Config.String("SSH_TTY").pipe(Config.option),
 });
@@ -211,12 +224,18 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   }
 
   const path = yield* Path.Path;
-  const configuredBaseDir = Option.getOrUndefined(flags.baseDir) ?? environment.t3Home;
+  const configuredBaseDir =
+    Option.getOrUndefined(flags.baseDir) ?? environment.wslBaseDir ?? environment.t3Home;
   const baseDir = yield* resolveBaseDir(configuredBaseDir);
-  const allowDevFallback = Option.isNone(flags.baseDir) && !environment.t3Home?.trim();
+  const allowDevFallback =
+    Option.isNone(flags.baseDir) && !environment.wslBaseDir?.trim() && !environment.t3Home?.trim();
+  const wslDistro = environment.wslDistro;
   const rawWorkspaceRoot =
-    Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcess.WorkingDirectory);
-  const workspaceRoot = path.resolve(yield* expandHomePath(rawWorkspaceRoot));
+    environment.wslWorkspaceRoot ??
+    Option.getOrUndefined(flags.workspaceRoot) ??
+    (yield* HostProcess.WorkingDirectory);
+  const expandedWorkspaceRoot = yield* expandHomePath(rawWorkspaceRoot);
+  const workspaceRoot = wslDistro ? expandedWorkspaceRoot : path.resolve(expandedWorkspaceRoot);
   const userId = yield* HostProcess.UserId;
   const resolveAddress = (stateSubdirectory: "userdata" | "dev") =>
     resolveDesktopAppControlAddress({
@@ -233,7 +252,8 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     requestId,
     type: "open-workspace",
     workspaceRoot,
-    platform: hostPlatform,
+    platform: wslDistro ? "linux" : hostPlatform,
+    ...(wslDistro === undefined ? {} : { wslDistro }),
   };
   const address = resolveAddress("userdata");
   const fallbackAddress = allowDevFallback ? resolveAddress("dev") : undefined;
@@ -262,6 +282,7 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
       code: response.code,
       requestId: response.requestId,
       workspaceRoot,
+      reason: response.message,
       cause: response,
     });
   }

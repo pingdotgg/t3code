@@ -95,6 +95,7 @@ import {
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
+import { refreshDesktopCliCommandState } from "~/state/desktopCliCommand";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
@@ -665,6 +666,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
       await apply();
       refreshDesktopWslState();
     });
+    refreshDesktopCliCommandState();
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
       const message = error instanceof Error ? error.message : "Failed to update WSL backend.";

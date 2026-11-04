@@ -1,8 +1,16 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { DesktopAppActivationRequest } from "@t3tools/contracts";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopAppActivationRequest } from "@t3tools/contracts";
+import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
-import { handleDesktopAppActivationRequest } from "../../desktopAppActivation";
+import {
+  findWslActivationTarget,
+  handleDesktopAppActivationRequest,
+  openedProjectDraft,
+  desktopAppActivationPendingAtom,
+} from "../../desktopAppActivation";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { desktopLocalBackendId } from "../../connection/desktopLocal";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import {
   findProjectByPath,
@@ -10,21 +18,26 @@ import {
 } from "@t3tools/client-runtime/state/projects";
 import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { resolveThreadRouteTarget } from "../../threadRoutes";
 
 export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
+  const { environments } = useEnvironments();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
   const openThread = useNewThreadHandler();
+  const router = useRouter();
   const queueRef = useRef(Promise.resolve());
+  const pendingRef = useRef(0);
   const activation = window.desktopBridge?.appActivation;
   const shellHasSnapshot = useEnvironmentShellHasSnapshot(
     primaryEnvironment?.environmentId ?? null,
@@ -37,7 +50,31 @@ export function DesktopAppActivationCoordinator() {
 
   const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
-      getTarget: () => {
+      getTarget: (request) => {
+        if (request.wslDistro !== undefined) {
+          const distro = request.wslDistro;
+          let bootstraps: ReturnType<
+            NonNullable<typeof window.desktopBridge>["getLocalEnvironmentBootstraps"]
+          >;
+          try {
+            bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
+          } catch {
+            return null;
+          }
+          return findWslActivationTarget(
+            distro,
+            environments.map((environment) => ({
+              environmentId: environment.environmentId,
+              backendId:
+                environment.environmentId === primaryEnvironment?.environmentId
+                  ? PRIMARY_LOCAL_ENVIRONMENT_ID
+                  : desktopLocalBackendId(environment.entry.target),
+              connected: environment.connection.phase === "connected",
+              platform: environment.serverConfig?.environment.platform.os ?? null,
+            })),
+            bootstraps,
+          );
+        }
         if (
           primaryEnvironment?.connection.phase !== "connected" ||
           primaryEnvironment.serverConfig === null
@@ -75,7 +112,7 @@ export function DesktopAppActivationCoordinator() {
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: (projectRef) => {
+      openThread: async (projectRef) => {
         const project = readProjects().find(
           (candidate) =>
             candidate.environmentId === projectRef.environmentId &&
@@ -88,7 +125,16 @@ export function DesktopAppActivationCoordinator() {
             input: { projectId: projectRef.projectId, archived: false },
           }).then((result) => reportProjectFailure("Failed to unarchive project", result));
         }
-        return openThread(projectRef);
+        const opened = await openThread(projectRef);
+        if (opened !== null) return opened;
+        const params = router.state.matches[router.state.matches.length - 1]?.params ?? {};
+        const target = resolveThreadRouteTarget(params);
+        return openedProjectDraft(
+          projectRef,
+          target?.kind === "draft"
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+            : null,
+        );
       },
     }),
   );
@@ -99,11 +145,18 @@ export function DesktopAppActivationCoordinator() {
 
     let subscribed = true;
     const unsubscribe = activation.onRequest((request) => {
+      pendingRef.current += 1;
+      appAtomRegistry.set(desktopAppActivationPendingAtom, true);
       queueRef.current = queueRef.current.then(async () => {
         const response = await processRequest(request);
         await activation.complete(response);
       });
-      queueRef.current = queueRef.current.catch(() => undefined);
+      queueRef.current = queueRef.current
+        .catch(() => undefined)
+        .finally(() => {
+          pendingRef.current -= 1;
+          if (pendingRef.current === 0) appAtomRegistry.set(desktopAppActivationPendingAtom, false);
+        });
     });
     // Skip readiness if React runs cleanup before this subscription can receive requests.
     queueMicrotask(() => {

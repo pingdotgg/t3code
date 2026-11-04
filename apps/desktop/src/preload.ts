@@ -276,6 +276,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),
     uninstall: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_UNINSTALL_CHANNEL),
+    installWsl: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_WSL_CHANNEL),
+    uninstallWsl: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_UNINSTALL_WSL_CHANNEL),
   },
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {

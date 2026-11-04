@@ -17,7 +17,7 @@ export function CliCommandSettingsRow() {
   const state = query.data;
   const [pending, setPending] = useState(false);
 
-  const change = (action: "install" | "uninstall") => {
+  const change = (action: "install" | "uninstall" | "installWsl" | "uninstallWsl") => {
     if (!bridge || pending) return;
     setPending(true);
     void bridge[action]()
@@ -26,7 +26,10 @@ export function CliCommandSettingsRow() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: action === "install" ? "Could not install t3" : "Could not remove t3",
+            title:
+              action === "install" || action === "installWsl"
+                ? "Could not install t3"
+                : "Could not remove t3",
             description: error instanceof Error ? error.message : "Something went wrong.",
           }),
         );
@@ -36,6 +39,7 @@ export function CliCommandSettingsRow() {
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
+  const wslInstalled = state.wslInstalledPath !== null;
   const description = state.shadowedBy
     ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
     : !installed
@@ -45,19 +49,46 @@ export function CliCommandSettingsRow() {
         : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;
 
   return (
-    <SettingsRow
-      {...searchableSetting("cli-command")}
-      description={description}
-      control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending || query.isPending}
-          onClick={() => change(installed ? "uninstall" : "install")}
-        >
-          {installed ? "Remove" : "Install"}
-        </Button>
-      }
-    />
+    <>
+      <SettingsRow
+        {...searchableSetting("cli-command")}
+        description={description}
+        control={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending || query.isPending}
+            onClick={() => change(installed ? "uninstall" : "install")}
+          >
+            {installed ? "Remove" : "Install"}
+          </Button>
+        }
+      />
+      {state.wslSupported ? (
+        <SettingsRow
+          {...searchableSetting("wsl-cli-command")}
+          title="t3 command in WSL"
+          description={
+            state.wslStatusUnavailable
+              ? `Could not check the t3 command in ${state.wslInstalledDistro ?? "WSL"}. Check that the distro is available.`
+              : wslInstalled
+                ? `Installed at ${state.wslInstalledPath} in ${state.wslInstalledDistro ?? "WSL"}. Ensure ~/.local/bin is on your shell PATH.${state.wslBackendEnabled ? "" : " Enable the WSL backend to open projects."}`
+                : !state.wslBackendEnabled
+                  ? "Enable the WSL backend in Sharing & access before installing the WSL command."
+                  : "Run t3 app from WSL to open the current Linux project in the Windows desktop app."
+          }
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || query.isPending || (!wslInstalled && !state.wslBackendEnabled)}
+              onClick={() => change(wslInstalled ? "uninstallWsl" : "installWsl")}
+            >
+              {wslInstalled ? "Remove" : "Install"}
+            </Button>
+          }
+        />
+      ) : null}
+    </>
   );
 }

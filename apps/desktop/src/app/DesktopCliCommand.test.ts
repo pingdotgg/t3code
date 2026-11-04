@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const environmentFor = (
   path: Path.Path,
@@ -29,7 +30,14 @@ const environmentFor = (
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
 const commandIn = (
-  input: { home: string; baseDir?: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir?: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    wslBackendEnabled?: boolean;
+    wslDistro?: string | null;
+  },
   spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) =>
   Effect.gen(function* () {
@@ -43,22 +51,47 @@ const commandIn = (
         environmentFor(path, { ...input, baseDir }),
       ),
     );
+    const configured = make.pipe(
+      Effect.provide(
+        DesktopAppSettings.layerTest({
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          wslBackendEnabled: input.wslBackendEnabled ?? false,
+          wslDistro: input.wslDistro ?? null,
+        }),
+      ),
+    );
     return yield* spawner
-      ? make.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
-      : make;
+      ? configured.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
+      : configured;
   });
 
 const fakePowerShell = (initial: string) => {
-  const registry = { path: initial, failReads: false, writes: 0 };
+  const registry = {
+    path: initial,
+    failReads: false,
+    writes: 0,
+    wslCalls: 0,
+    wslFail: false,
+    wslOutput: "/home/test/.local/bin/t3\nUbuntu\n",
+    wslArgs: [] as Array<ReadonlyArray<string>>,
+  };
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       const { options } = command as unknown as {
         readonly options: { readonly env?: Record<string, string> };
       };
+      const { command: executable } = command as unknown as { readonly command: string };
       const env = options.env ?? {};
       let exitCode = 0;
       let stdout = "";
-      if (env.T3_SET === "1") {
+      if (executable === "wsl.exe") {
+        registry.wslCalls += 1;
+        registry.wslArgs.push(
+          (command as unknown as { readonly args: ReadonlyArray<string> }).args,
+        );
+        if (registry.wslFail) exitCode = 1;
+        else stdout = registry.wslOutput;
+      } else if (env.T3_SET === "1") {
         registry.path = env.T3_PATH ?? "";
         registry.writes += 1;
       } else if (registry.failReads) {
@@ -105,6 +138,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         supported: true,
         installedPath: null,
         onPath: false,
+        wslSupported: false,
+        wslBackendEnabled: false,
+        wslInstalledPath: null,
+        wslInstalledDistro: null,
+        wslStatusUnavailable: false,
         launcherPath: null,
       });
       const installed = yield* command.install;
@@ -295,5 +333,57 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "removes the WSL command from the installed distro after the configuration changes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const { spawner, registry } = fakePowerShell("");
+        const command = yield* commandIn(
+          { home, platform: "win32", wslBackendEnabled: true },
+          spawner,
+        );
+
+        const installed = yield* command.installWsl;
+        expect(installed).toMatchObject({
+          wslSupported: true,
+          wslBackendEnabled: true,
+          wslInstalledPath: "/home/test/.local/bin/t3",
+          wslInstalledDistro: "Ubuntu",
+          wslStatusUnavailable: false,
+        });
+        expect(registry.wslCalls).toBe(2);
+
+        registry.wslFail = true;
+        expect(yield* command.state).toMatchObject({
+          wslInstalledPath: "/home/test/.local/bin/t3",
+          wslStatusUnavailable: true,
+        });
+        expect((yield* Effect.flip(command.uninstallWsl)).message).toContain(
+          "Could not run WSL in Ubuntu",
+        );
+        registry.wslFail = false;
+
+        registry.wslOutput = "NONE\n";
+        expect(yield* command.state).toMatchObject({
+          wslInstalledPath: null,
+          wslInstalledDistro: null,
+          wslStatusUnavailable: false,
+        });
+        registry.wslOutput = "/home/test/.local/bin/t3\nUbuntu\n";
+
+        const reconfigured = yield* commandIn(
+          { home, platform: "win32", wslBackendEnabled: true, wslDistro: "Debian" },
+          spawner,
+        );
+        const removed = yield* reconfigured.uninstallWsl;
+        expect(removed.wslInstalledPath).toBeNull();
+        expect(registry.wslCalls).toBe(6);
+        expect(registry.wslArgs[0]).toEqual(["--exec", "sh", "-s"]);
+        expect(registry.wslArgs[5]).toEqual(["--distribution", "Ubuntu", "--exec", "sh", "-s"]);
+      }).pipe(Effect.scoped),
   );
 });

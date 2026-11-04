@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   handleDesktopAppActivationRequest,
+  findWslActivationTarget,
+  openedProjectDraft,
   type DesktopAppActivationDependencies,
 } from "./desktopAppActivation";
 
@@ -36,6 +38,50 @@ function dependencies(
 }
 
 describe("desktop app activation", () => {
+  it("accepts a concurrently opened draft only for the requested project and environment", () => {
+    const project = { environmentId, projectId: createdProjectId };
+    const draft = { ...project, threadId };
+    expect(openedProjectDraft(project, draft)).toEqual({ threadId });
+    expect(openedProjectDraft(project, { ...draft, projectId: existingProjectId })).toBeNull();
+    expect(
+      openedProjectDraft(project, { ...draft, promotedTo: { environmentId, threadId } }),
+    ).toBeNull();
+    expect(
+      openedProjectDraft(project, { ...draft, environmentId: EnvironmentId.make("other") }),
+    ).toBeNull();
+    expect(openedProjectDraft(project, null)).toBeNull();
+  });
+  it("selects only the connected backend running the requested WSL distro", () => {
+    const ubuntu = EnvironmentId.make("ubuntu");
+    const debian = EnvironmentId.make("debian");
+    const candidates = [
+      {
+        environmentId: debian,
+        backendId: "wsl:default",
+        connected: true,
+        platform: "linux" as const,
+      },
+      {
+        environmentId: ubuntu,
+        backendId: "wsl:Ubuntu",
+        connected: true,
+        platform: "linux" as const,
+      },
+    ];
+    const bootstraps = [
+      { id: "wsl:default", runningDistro: "Debian" },
+      { id: "wsl:Ubuntu", runningDistro: "Ubuntu" },
+    ];
+    expect(findWslActivationTarget("ubuntu", candidates, bootstraps)).toEqual({
+      environmentId: ubuntu,
+      platform: "linux",
+    });
+    expect(findWslActivationTarget("Ubuntu", [candidates[0]!], bootstraps)).toBeNull();
+    expect(
+      findWslActivationTarget("Ubuntu", [{ ...candidates[1]!, connected: false }], bootstraps),
+    ).toBeNull();
+  });
+
   it("waits for a created project before it opens the thread", async () => {
     const order: string[] = [];
     const deps = dependencies({
@@ -66,5 +112,36 @@ describe("desktop app activation", () => {
     );
 
     expect(response).toMatchObject({ ok: false, code: "platform-mismatch" });
+  });
+
+  it("explains when the requested WSL distro is unavailable", async () => {
+    const response = await handleDesktopAppActivationRequest(
+      { ...request, wslDistro: "Ubuntu" },
+      dependencies({ getTarget: () => null }),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      code: "environment-unavailable",
+      message: expect.stringContaining("WSL environment for Ubuntu"),
+    });
+  });
+
+  it("uses the requested WSL distro instead of the primary environment", async () => {
+    const wslEnvironmentId = EnvironmentId.make("wsl-ubuntu");
+    const deps = dependencies({
+      getTarget: (activationRequest) =>
+        activationRequest.wslDistro === "Ubuntu"
+          ? { environmentId: wslEnvironmentId, platform: "linux" }
+          : { environmentId, platform: "windows" },
+      findProject: () => null,
+    });
+
+    await handleDesktopAppActivationRequest({ ...request, wslDistro: "Ubuntu" }, deps);
+
+    expect(deps.createProject).toHaveBeenCalledWith(wslEnvironmentId, request.workspaceRoot);
+    expect(deps.openThread).toHaveBeenCalledWith({
+      environmentId: wslEnvironmentId,
+      projectId: createdProjectId,
+    });
   });
 });
