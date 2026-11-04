@@ -292,20 +292,28 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("stops after a few reads of Reviewing pages the viewer has all voted on", () =>
+  it.effect("stops reading Reviewing pages of voted pull requests once it has one to show", () =>
     Effect.gen(function* () {
-      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev", vote: 10 };
-      for (let page = 0; page < 5; page += 1) {
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify(
-                pullRequestRows(3, page * 3 + 1).map((row) => ({ ...row, reviewers: [viewer] })),
-              ),
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev" };
+      const page = (count: number, firstNumber: number, pendingNumbers: ReadonlyArray<number>) =>
+        Effect.succeed(
+          output(
+            JSON.stringify(
+              pullRequestRows(count, firstNumber).map((row) => ({
+                ...row,
+                reviewers: [
+                  { ...viewer, vote: pendingNumbers.includes(Number(row.pullRequestId)) ? 0 : 10 },
+                ],
+              })),
             ),
           ),
         );
-      }
+      // Once one row is kept, `--top` asks for one fewer.
+      mockedExecute
+        .mockReturnValueOnce(page(3, 1, [1]))
+        .mockReturnValueOnce(page(2, 4, []))
+        .mockReturnValueOnce(page(2, 6, []))
+        .mockReturnValueOnce(page(2, 8, [8]));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
       const batch = yield* cli.listPullRequests({
@@ -318,9 +326,48 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(batch.items).toEqual([]);
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
       assert.isTrue(batch.truncated);
-      assert.strictEqual(batch.cursorAdvance, 9);
+      assert.strictEqual(batch.cursorAdvance, 7);
+    }),
+  );
+
+  it.effect("keeps reading past voted Reviewing pages until it finds one to show", () =>
+    Effect.gen(function* () {
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "bilal@acme.dev" };
+      const page = (count: number, firstNumber: number, pendingNumbers: ReadonlyArray<number>) =>
+        Effect.succeed(
+          output(
+            JSON.stringify(
+              pullRequestRows(count, firstNumber).map((row) => ({
+                ...row,
+                reviewers: [
+                  { ...viewer, vote: pendingNumbers.includes(Number(row.pullRequestId)) ? 0 : 10 },
+                ],
+              })),
+            ),
+          ),
+        );
+      mockedExecute
+        .mockReturnValueOnce(page(3, 1, []))
+        .mockReturnValueOnce(page(3, 4, []))
+        .mockReturnValueOnce(page(3, 7, []))
+        .mockReturnValueOnce(page(3, 10, [10]));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "all",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      expect(batch.items.map((item) => item.number)).toEqual([10]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 12);
     }),
   );
 

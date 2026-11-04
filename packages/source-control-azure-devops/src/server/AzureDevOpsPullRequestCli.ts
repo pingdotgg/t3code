@@ -105,7 +105,10 @@ export type AzureDevOpsPullRequestCliError =
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/** Reviewing drops rows the viewer voted on; bound the reads one listing may spend skipping them. */
+/**
+ * Reviewing drops rows the viewer voted on; bound the reads one listing spends skipping them. The
+ * bound waits for one row, since an empty page gives the list service no cursor to resume from.
+ */
 const PULL_REQUEST_LIST_MAX_READS = 3;
 /** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -456,7 +459,10 @@ export const make = Effect.gen(function* () {
         }
 
         const items = [...input.items, ...batch.items];
-        if (batch.rawCount < top || input.reads + 1 >= PULL_REQUEST_LIST_MAX_READS) {
+        if (
+          batch.rawCount < top ||
+          (items.length > 0 && input.reads + 1 >= PULL_REQUEST_LIST_MAX_READS)
+        ) {
           return Effect.succeed({
             items,
             truncated: batch.rawCount === top,

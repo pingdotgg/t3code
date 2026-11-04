@@ -169,7 +169,7 @@ function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | unde
 
 /** Azure writes identity ids both with and without dashes. */
 function identityKey(id: string | null | undefined): string | null {
-  return trimmed(id)?.replaceAll("-", "").toLowerCase() ?? null;
+  return trimmed(id)?.replaceAll("-", "").toLowerCase() || null;
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {
