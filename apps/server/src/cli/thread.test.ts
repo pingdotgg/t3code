@@ -1,8 +1,19 @@
 import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
+import {
+  readLatestMessages,
+  resolveProject,
+  type ThreadTools,
+  titleFromMessage,
+  waitForRun,
+} from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -17,6 +28,73 @@ const scriptedTools = (script: Record<string, Array<unknown>>) => {
   }) as ThreadTools["call"];
   return { tools: { call } satisfies ThreadTools, calls };
 };
+
+it.live("resolves a project from an external git worktree and its subdirectories", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-project-" });
+    const workspaceRoot = path.join(root, "project");
+    const worktree = path.join(root, "worktrees", "branch with spaces");
+    yield* fs.makeDirectory(workspaceRoot);
+    for (const args of [
+      ["init", "-b", "main"],
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        `core.hooksPath=${path.join(root, "hooks")}`,
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ],
+      ["worktree", "add", "--detach", worktree],
+    ]) {
+      assert.strictEqual(
+        yield* spawner.exitCode(
+          ChildProcess.make("git", args, { cwd: workspaceRoot, stdin: "ignore", stderr: "ignore" }),
+        ),
+        0,
+      );
+    }
+    const nested = path.join(worktree, "src");
+    yield* fs.makeDirectory(nested);
+    const alias = path.join(root, "worktree-alias");
+    yield* fs.symlink(worktree, alias);
+    const project = { id: ProjectId.make("project-1"), title: "Project", workspaceRoot };
+    const nestedProject = {
+      ...project,
+      id: ProjectId.make("nested"),
+      workspaceRoot: path.join(workspaceRoot, "src"),
+    };
+    yield* fs.makeDirectory(nestedProject.workspaceRoot);
+    const directProject = { ...project, id: ProjectId.make("direct"), workspaceRoot: worktree };
+    for (const { cwd, identifier, projects, expected } of [
+      { cwd: worktree, identifier: ".", projects: [project], expected: project },
+      { cwd: nested, identifier: ".", projects: [project], expected: project },
+      { cwd: alias, identifier: ".", projects: [project], expected: project },
+      { cwd: root, identifier: nested, projects: [project], expected: project },
+      { cwd: nested, identifier: ".", projects: [project, nestedProject], expected: nestedProject },
+      { cwd: nested, identifier: ".", projects: [project, directProject], expected: directProject },
+    ]) {
+      const { tools } = scriptedTools({
+        t3_project_list: [{ projects, nextCursor: null }],
+      });
+      assert.deepStrictEqual(
+        yield* resolveProject(tools, identifier).pipe(
+          Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        ),
+        expected,
+      );
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("--wait follows the sent run to its continuation's terminal status", () =>
   Effect.gen(function* () {

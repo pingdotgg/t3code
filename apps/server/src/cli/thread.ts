@@ -13,6 +13,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveGitWorktreePath } from "@t3tools/shared/devHome";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
@@ -272,8 +274,8 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
-const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
+/** A project id, or a path inside its folder or a linked worktree (deepest project wins). */
+export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
 ) {
@@ -291,19 +293,40 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
+  const containingProject = (target: string) =>
+    roots
+      .filter(({ root }) => {
+        const relative = path.relative(root, target);
+        return (
+          relative === "" ||
+          (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      })
+      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+  const containing = containingProject(target);
+  if (containing !== undefined) return containing;
+
+  const worktree = yield* resolveGitWorktreePath(target);
+  if (worktree !== undefined) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const listing = yield* spawner
+      .string(
+        ChildProcess.make("git", ["worktree", "list", "--porcelain", "-z"], {
+          cwd: worktree,
+          stdin: "ignore",
+          stderr: "ignore",
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => ""));
+    // Git lists the main checkout first; -z keeps spaces and non-ASCII paths unquoted.
+    const first = listing.split("\0")[0];
+    if (first?.startsWith("worktree ")) {
+      const mainRoot = yield* realPath(first.slice("worktree ".length));
+      const project = containingProject(path.resolve(mainRoot, path.relative(worktree, target)));
+      if (project !== undefined) return project;
+    }
   }
-  return containing.project;
+  return yield* new ThreadProjectNotFoundError({ identifier });
 });
 
 /** Every item on a timeline view, oldest first. */
