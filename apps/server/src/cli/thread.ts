@@ -29,6 +29,7 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -272,7 +273,34 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
+/**
+ * The same path in the repository's main checkout, when `target` is inside a
+ * linked git worktree of a non-bare repository.
+ */
+const mainCheckoutPath = Effect.fn("cli.thread.mainCheckoutPath")(function* (target: string) {
+  const path = yield* Path.Path;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* processRunner
+    .run({
+      command: "git",
+      args: ["rev-parse", "--show-toplevel", "--git-common-dir"],
+      cwd: target,
+    })
+    .pipe(Effect.option);
+  if (Option.isNone(result) || result.value.code !== 0) return undefined;
+  // A newline inside either path breaks the line framing, so that repository never matches.
+  const lines = result.value.stdout.split(/\r?\n/u);
+  const [topLevel = "", commonDir = ""] = lines;
+  if (lines.length !== 3 || lines[2] !== "") return undefined;
+  const gitDir = path.resolve(target, commonDir);
+  if (path.basename(gitDir) !== ".git") return undefined;
+  return path.join(path.dirname(gitDir), path.relative(topLevel, target));
+});
+
+/**
+ * A project id, or a path inside a project's folder (deepest project wins).
+ * A path inside a git worktree resolves as the same path in the main checkout.
+ */
 export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
@@ -291,19 +319,25 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
+  const deepestContaining = (candidate: string) =>
+    roots
+      .filter(({ root }) => {
+        const relative = path.relative(root, candidate);
+        return (
+          relative === "" ||
+          (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      })
+      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+
+  const containing = deepestContaining(target);
+  if (containing !== undefined) return containing;
+  const inMainCheckout = yield* mainCheckoutPath(target).pipe(Effect.provide(ProcessRunner.layer));
+  const fromWorktree = inMainCheckout === undefined ? undefined : deepestContaining(inMainCheckout);
+  if (fromWorktree === undefined) {
     return yield* new ThreadProjectNotFoundError({ identifier });
   }
-  return containing.project;
+  return fromWorktree;
 });
 
 /** Every item on a timeline view, oldest first. */
