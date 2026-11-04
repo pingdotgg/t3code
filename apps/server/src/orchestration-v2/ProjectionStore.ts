@@ -440,6 +440,10 @@ export interface OlderSettledThreadsListing {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly findNativeThreadOwner: (
+    providerInstanceId: OrchestrationV2ProviderThread["providerInstanceId"],
+    nativeId: string,
+  ) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -7232,6 +7236,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id);
     }, Effect.mapError(shellSnapshotReadError));
 
+    const findNativeThreadOwner = Effect.fn("ProjectionStore.findNativeThreadOwner")(function* (
+      providerInstanceId: OrchestrationV2ProviderThread["providerInstanceId"],
+      nativeId: string,
+    ) {
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_provider_threads
+        WHERE provider_instance_id = ${providerInstanceId}
+          AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${nativeId}
+        LIMIT 1
+      `;
+      return rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id);
+    }, Effect.mapError(shellSnapshotReadError));
+
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit }) {
@@ -7383,6 +7400,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
+      findNativeThreadOwner: readOnReader(findNativeThreadOwner),
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

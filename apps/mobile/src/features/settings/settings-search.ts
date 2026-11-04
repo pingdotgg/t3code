@@ -28,6 +28,7 @@ const SETTINGS_SEARCH_TERMS = {
     "math",
   ],
   SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
+  SettingsAgentHistory: ["resume", "sessions", "claude", "codex", "history", "cli"],
   SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],
   SettingsMicrophone: ["voice", "dictation", "audio input", "bluetooth"],
   SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],

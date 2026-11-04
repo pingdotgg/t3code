@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -211,6 +212,7 @@ const makeImporter = Effect.fn(function* (
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
+          Layer.succeed(ProjectionStore.ProjectionStoreV2, projections),
           settings,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
           Layer.succeed(
@@ -248,8 +250,37 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return { run: importer.importRecentAgentThreads({ projectId }), importer, published };
 });
+
+it.effect("imports only the selected session in the selected provider instance", () =>
+  Effect.gen(function* () {
+    const selected = candidate(CODEX_MODEL_SELECTION, "selected");
+    const otherSession = candidate(CODEX_MODEL_SELECTION, "other");
+    const otherInstance = candidate(
+      { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-other") },
+      "selected",
+    );
+    const { importer } = yield* makeImporter([otherSession, otherInstance, selected]);
+    const result = yield* importer.importRecentAgentThreads({
+      projectId,
+      session: {
+        providerInstanceId: selected.source.providerInstanceId,
+        providerSessionId: "selected",
+      },
+    });
+    expect(result).toEqual({ importedCount: 1, skippedCount: 0, threadId: importId(selected) });
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const records = yield* projections.getThreadRecords(importId(selected), ["messages", "runs"]);
+    expect(records.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+    expect(records.runs).toEqual([]);
+    for (const unselected of [otherSession, otherInstance]) {
+      expect(yield* Effect.option(projections.getThread(importId(unselected)))).toEqual(
+        Option.none(),
+      );
+    }
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
 
 it.effect(
   "ignores owned sessions, including archived and deleted threads, but imports other instances and unowned sessions",
@@ -294,6 +325,15 @@ it.effect(
       ]);
 
       expect(yield* importer.run).toEqual({ importedCount: 3, skippedCount: 0 });
+      expect(
+        (yield* importer.importer.importRecentAgentThreads({
+          projectId,
+          session: {
+            providerInstanceId: ownedPi.source.providerInstanceId,
+            providerSessionId: ownedPi.source.providerSessionId,
+          },
+        })).threadId,
+      ).toEqual(owners[3]);
       for (const source of [active, archived, deleted, ownedPi]) {
         const threadId = importId(source);
         expect(yield* Effect.option(projections.getThread(threadId))).toEqual(Option.none());
@@ -348,6 +388,60 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("concurrent first imports commit one thread and native session owner", () =>
+  Effect.gen(function* () {
+    const enteringTransaction = yield* Queue.unbounded<void>();
+    const continueTransaction = yield* Deferred.make<void>();
+    const source = candidate(CODEX_MODEL_SELECTION, "concurrent-first-import");
+    const threadId = importId(source);
+    const { importer, published } = yield* makeImporter(
+      [source],
+      Queue.offer(enteringTransaction, undefined).pipe(
+        Effect.andThen(Deferred.await(continueTransaction)),
+      ),
+    );
+    const input = {
+      projectId,
+      session: {
+        providerInstanceId: source.source.providerInstanceId,
+        providerSessionId: source.source.providerSessionId,
+      },
+    };
+    const first = yield* Effect.forkScoped(importer.importRecentAgentThreads(input));
+    const second = yield* Effect.forkScoped(importer.importRecentAgentThreads(input));
+    yield* Queue.take(enteringTransaction);
+    yield* Queue.take(enteringTransaction);
+    const sql = yield* SqlClient.SqlClient;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventStore.EventStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    expect(yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).toEqual([]);
+    expect(yield* sql`SELECT thread_id FROM orchestration_v2_projection_provider_threads`).toEqual(
+      [],
+    );
+    expect(yield* runtimes.list()).toEqual([]);
+    yield* Deferred.succeed(continueTransaction, undefined);
+    const results = [yield* Fiber.join(first), yield* Fiber.join(second)];
+    expect(results.map((result) => result.threadId)).toEqual([threadId, threadId]);
+    expect(results.map((result) => result.skippedCount)).toEqual([0, 0]);
+    expect(results.reduce((total, result) => total + result.importedCount, 0)).toBe(1);
+    expect(yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).toEqual([
+      { thread_id: threadId },
+    ]);
+    expect(yield* sql`SELECT thread_id FROM orchestration_v2_projection_provider_threads`).toEqual([
+      { thread_id: threadId },
+    ]);
+    expect(
+      yield* projections.findNativeThreadOwner(source.source.providerInstanceId, nativeId(source)),
+    ).toBe(threadId);
+    expect(yield* events.read({ threadId }).pipe(Stream.runCollect)).toHaveLength(6);
+    expect(published).toHaveLength(6);
+    expect(yield* runtimes.list()).toMatchObject([
+      { threadId, runtimePayload: { importedTranscripts: [source.source] } },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("rechecks ownership after the import reaches the commit transaction", () =>
   Effect.gen(function* () {
     const enteringTransaction = yield* Deferred.make<void>();
@@ -366,6 +460,14 @@ it.effect("rechecks ownership after the import reaches the commit transaction", 
     yield* Deferred.succeed(continueTransaction, undefined);
     expect(yield* Fiber.join(pending)).toEqual({ importedCount: 0, skippedCount: 0 });
     expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
+    const selected = yield* importer.importer.importRecentAgentThreads({
+      projectId,
+      session: {
+        providerInstanceId: source.source.providerInstanceId,
+        providerSessionId: source.source.providerSessionId,
+      },
+    });
+    expect(selected.threadId).toBe(ownerId);
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const events = yield* EventStore.EventStoreV2;
     const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;

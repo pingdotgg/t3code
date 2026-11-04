@@ -56,6 +56,7 @@ import {
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  HistoryIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -1571,6 +1572,23 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:agent-history",
+    searchTerms: ["history", "sessions", "import", "claude", "codex", "resume"],
+    title: "Open agent history",
+    icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({
+        to: "/history",
+        search:
+          currentProjectEnvironmentId !== null && currentProjectId !== null
+            ? { environmentId: currentProjectEnvironmentId, projectId: currentProjectId }
+            : {},
+      });
+    },
+  });
 
   actionItems.push({
     kind: "action",

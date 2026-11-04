@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  TextGenerationError,
+  AgentSessionRecap,
+} from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -12,6 +17,7 @@ import {
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
+  buildSessionRecapPrompt,
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -168,6 +174,15 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   });
 
   return {
+    generateSessionRecap: Effect.fn(`${name}.generateSessionRecap`)(function (input) {
+      return run({
+        operation: "generateSessionRecap",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        prompt: buildSessionRecapPrompt(input.recentMessages),
+        outputSchema: AgentSessionRecap,
+      });
+    }),
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

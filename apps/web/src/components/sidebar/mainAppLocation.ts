@@ -3,9 +3,14 @@ import { useNavigate, type AnyRouter } from "@tanstack/react-router";
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
 
-/** Settings and Usage open as modals over the last main-app view. */
+/** App modals retain the last main-app view underneath. */
 export function isAppModalPage(pathname: string) {
-  return pathname === "/settings" || pathname.startsWith("/settings/") || pathname === "/usage";
+  return (
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname === "/usage" ||
+    pathname === "/history"
+  );
 }
 
 export function isSidebarUtilityPage(pathname: string) {
@@ -20,7 +25,7 @@ const SHELL_LESS_PATHS = new Set(["/pair", "/connect", "/connect-agent", GUEST_P
 let mainAppHref: string | null = null;
 let appModalReturnHref: string | null = null;
 
-/** Remembers where Settings, Usage, and the utility pages lead back to. */
+/** Remembers where app modals and utility pages lead back to. */
 export function startMainAppLocationTracking(router: AnyRouter): () => void {
   const record = () => {
     const { pathname } = router.state.location;
@@ -38,7 +43,7 @@ export function useNavigateToMainApp() {
   return () => navigate({ href: mainAppHref ?? "/" });
 }
 
-/** Leaves Settings or Usage for the page that opened it. */
+/** Leaves an app modal for the page that opened it. */
 export function useCloseAppModal() {
   const navigate = useNavigate();
   return () => navigate({ href: appModalReturnHref ?? mainAppHref ?? "/" });

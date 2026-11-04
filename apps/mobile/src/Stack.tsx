@@ -88,6 +88,7 @@ import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
+import { SettingsAgentHistoryRouteScreen } from "./features/settings/SettingsAgentHistoryRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
@@ -302,6 +303,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsNavigationRouteScreen,
     linking: "settings/navigation-tabs",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Navigation tabs" },
+  }),
+  SettingsAgentHistory: createNativeStackScreen({
+    screen: SettingsAgentHistoryRouteScreen,
+    linking: "settings/agent-history",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Agent history" },
   }),
   SettingsAppearance: createNativeStackScreen({
     screen: SettingsAppearanceRouteScreen,

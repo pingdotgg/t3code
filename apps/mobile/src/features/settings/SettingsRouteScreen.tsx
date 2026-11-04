@@ -274,6 +274,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         page("SettingsLabs", "sparkles", "Labs"),
         page("SettingsAbout", "info.circle", "About"),
         page("SettingsArchive", "archivebox", "Archive"),
+        page("SettingsAgentHistory", "clock", "Agent history"),
       ],
     },
   ];

@@ -36,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
@@ -170,6 +171,7 @@ function messageEvents(input: {
 
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
@@ -231,18 +233,29 @@ const make = Effect.gen(function* () {
       }
       return payload.value.importedTranscripts ?? [];
     });
-    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
+    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources, input.session);
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
+    let selectedNativeId = input.session?.providerSessionId;
 
     yield* Stream.runForEach(outcomes, (outcome) =>
       Effect.gen(function* () {
+        if (
+          input.session !== undefined &&
+          (outcome._tag === "Skipped" ||
+            outcome.source.providerInstanceId !== input.session.providerInstanceId ||
+            outcome.source.providerSessionId !== input.session.providerSessionId)
+        ) {
+          return;
+        }
         if (outcome._tag === "Skipped") {
           skippedCount += 1;
           return;
         }
         const source = outcome.source;
+        if (input.session !== undefined && source.provider === "pi")
+          selectedNativeId = source.filePath;
         const threadId = ThreadId.make(
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
@@ -374,59 +387,74 @@ const make = Effect.gen(function* () {
             updatedAt,
           };
 
-          const committed = yield* eventSink.write({
-            unlessNativeThreadOwned: providerThread,
-            events: [
-              {
-                id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
-                type: "thread.created",
-                threadId,
-                providerInstanceId: thread.providerInstanceId,
-                occurredAt: createdAt,
-                payload: appThread,
-              },
-              ...(thread.omittedMessageCount > 0
-                ? [
-                    {
-                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
-                      type: "turn-item.updated" as const,
-                      threadId,
-                      occurredAt: createdAt,
-                      payload: {
-                        id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+          const committed = yield* eventSink
+            .write({
+              unlessNativeThreadOwned: providerThread,
+              events: [
+                {
+                  id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
+                  type: "thread.created",
+                  threadId,
+                  providerInstanceId: thread.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: appThread,
+                },
+                ...(thread.omittedMessageCount > 0
+                  ? [
+                      {
+                        id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                        type: "turn-item.updated" as const,
                         threadId,
-                        runId: null,
-                        nodeId: null,
-                        providerThreadId: null,
-                        providerTurnId: null,
-                        nativeItemRef: null,
-                        parentItemId: null,
-                        ordinal: 0,
-                        status: "completed" as const,
-                        title: null,
-                        startedAt: createdAt,
-                        completedAt: createdAt,
-                        updatedAt: createdAt,
-                        type: "system_notice" as const,
-                        message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+                        occurredAt: createdAt,
+                        payload: {
+                          id: TurnItemId.make(
+                            `${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`,
+                          ),
+                          threadId,
+                          runId: null,
+                          nodeId: null,
+                          providerThreadId: null,
+                          providerTurnId: null,
+                          nativeItemRef: null,
+                          parentItemId: null,
+                          ordinal: 0,
+                          status: "completed" as const,
+                          title: null,
+                          startedAt: createdAt,
+                          completedAt: createdAt,
+                          updatedAt: createdAt,
+                          type: "system_notice" as const,
+                          message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+                        },
                       },
-                    },
-                  ]
-                : []),
-              ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
+                    ]
+                  : []),
+                ...thread.messages.flatMap((message, index) =>
+                  messageEvents({ threadId, index, message }),
+                ),
+                {
+                  id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
+                  type: "provider-thread.updated",
+                  threadId,
+                  driver,
+                  providerInstanceId: thread.providerInstanceId,
+                  occurredAt: updatedAt,
+                  payload: providerThread,
+                },
+              ],
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                // A concurrent import can commit the same deterministic thread and event IDs.
+                projections
+                  .findNativeThreadOwner(thread.providerInstanceId, nativeThreadId)
+                  .pipe(
+                    Effect.flatMap((owner) =>
+                      owner === threadId ? Effect.succeed([]) : Effect.fail(cause),
+                    ),
+                  ),
               ),
-              {
-                id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
-                type: "provider-thread.updated",
-                threadId,
-                driver,
-                providerInstanceId: thread.providerInstanceId,
-                occurredAt: updatedAt,
-                payload: providerThread,
-              },
-            ],
-          });
+            );
           if (committed.length === 0) return null;
           yield* persistRuntime;
           yield* runtimes.recordImportedTranscript({ threadId, source });
@@ -449,7 +477,24 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+    const threadId =
+      input.session === undefined
+        ? null
+        : yield* projections
+            .findNativeThreadOwner(
+              input.session.providerInstanceId,
+              selectedNativeId ?? input.session.providerSessionId,
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+              ),
+            );
+    return {
+      importedCount,
+      skippedCount,
+      ...(threadId === null ? {} : { threadId }),
+    } satisfies AgentSessionImportResult;
   });
 
   return { importRecentAgentThreads };

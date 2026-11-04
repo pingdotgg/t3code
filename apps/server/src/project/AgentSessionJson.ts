@@ -45,7 +45,12 @@ export class TranscriptJsonLimitError extends Error {}
 export function createTranscriptJsonReader(
   reserve: (bytes: number) => void,
   selectPath: (path: JsonPath) => boolean,
-  options?: { readonly maxDepth?: number },
+  options?: {
+    readonly maxDepth?: number;
+    readonly streamString?: (
+      path: JsonPath,
+    ) => { readonly write: (chunk: string) => void; readonly finish: () => string } | undefined;
+  },
 ) {
   // 3.6.0 omits the synchronous tokenizer from types; parser() adds an unnecessary async generator.
   const { jsonParser } = StreamJson as typeof StreamJson & {
@@ -89,6 +94,7 @@ export function createTranscriptJsonReader(
   // Preserve actual keys; adjacent duplicates share a path, but JSON.parse keeps the last value.
   const stack: Array<{ path: JsonPath; key: string | number | null; selected: boolean }> = [];
   let selectedValue = false;
+  let stringSink: ReturnType<NonNullable<NonNullable<typeof options>["streamString"]>>;
   const startValue = () => {
     const parent = stack.at(-1);
     const path = parent?.selected ? [...parent.path, parent.key] : [];
@@ -123,12 +129,22 @@ export function createTranscriptJsonReader(
         endValue();
         return;
       case "startString":
-      case "startNumber":
-        selectedValue = startValue().selected;
+      case "startNumber": {
+        const frame = startValue();
+        selectedValue = frame.selected;
+        stringSink =
+          token.name === "startString" && selectedValue
+            ? options?.streamString?.(frame.path)
+            : undefined;
         if (selectedValue) assemble(token);
         return;
+      }
       case "endString":
       case "endNumber":
+        if (stringSink) {
+          value = stringSink.finish();
+          stringSink = undefined;
+        }
         if (selectedValue) assemble(token);
         endValue();
         return;
@@ -139,6 +155,10 @@ export function createTranscriptJsonReader(
         endValue();
         return;
       default:
+        if (token.name === "stringChunk" && stringSink) {
+          stringSink.write(token.value);
+          return;
+        }
         if (selectedValue) assemble(token);
     }
   };

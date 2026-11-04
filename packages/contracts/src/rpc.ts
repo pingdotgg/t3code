@@ -6,6 +6,7 @@ import {
   OrchestrationV2SearchThreadsResult,
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
+import { TextGenerationError } from "./git.ts";
 import {
   McpAppCallToolInput,
   McpAppCallToolResult,
@@ -97,6 +98,10 @@ import {
   AgentSessionScanInput,
   AgentSessionScanResult,
   AgentSessionScanError,
+  AgentSessionHistoryInput,
+  AgentSessionHistoryResult,
+  AgentSessionPreviewInput,
+  AgentSessionPreviewResult,
 } from "./agentSessions.ts";
 import {
   AssetAccessError,
@@ -422,6 +427,9 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
+  agentSessionsHistory: "agentSessions.history",
+  agentSessionsPreview: "agentSessions.preview",
+  agentSessionsRecap: "agentSessions.recap",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
@@ -1379,6 +1387,18 @@ const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
 });
 
+const WsAgentSessionsHistoryRpc = Rpc.make(WS_METHODS.agentSessionsHistory, {
+  payload: AgentSessionHistoryInput,
+  success: AgentSessionHistoryResult,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+});
+
+const WsAgentSessionsPreviewRpc = Rpc.make(WS_METHODS.agentSessionsPreview, {
+  payload: AgentSessionPreviewInput,
+  success: AgentSessionPreviewResult,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   payload: AgentSessionImportInput,
   success: AgentSessionImportResult,
@@ -1388,6 +1408,12 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
     AgentSessionScanError,
     EnvironmentAuthorizationError,
   ]),
+});
+
+const WsAgentSessionsRecapRpc = Rpc.make(WS_METHODS.agentSessionsRecap, {
+  payload: AgentSessionPreviewInput,
+  success: AgentSessionPreviewResult,
+  error: Schema.Union([AgentSessionScanError, TextGenerationError, EnvironmentAuthorizationError]),
 });
 
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
@@ -2117,6 +2143,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
+  WsAgentSessionsHistoryRpc,
+  WsAgentSessionsPreviewRpc,
+  WsAgentSessionsRecapRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
