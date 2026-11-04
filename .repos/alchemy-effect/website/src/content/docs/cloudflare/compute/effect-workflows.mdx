@@ -1,0 +1,274 @@
+---
+title: Effect workflows
+description: Run Effect workflows on Cloudflare, on Durable Objects or Cloudflare Workflows. Declare a workflow with effect/workflow, implement it with Workflows.layer, start runs with Workflows.RunWorkflow, and let them sleep, wait for signals and undo steps durably.
+---
+
+An Effect workflow is a durable process written with `effect/workflow`: a
+series of steps whose results are stored, so a run that's interrupted
+resumes after its last finished step, and a run can wait hours or days for
+a timer or a signal. On Cloudflare they run on Durable Objects
+(`Cloudflare.Workflows.layerDurableObjectEngine()`) or on Cloudflare Workflows
+(`Cloudflare.Workflows.NativeEngine`), with the same workflow code.
+
+Reach for Effect workflows when you want the same workflow code to run
+anywhere Effect's `WorkflowEngine` does: on Cloudflare, on
+[AWS Lambda](/aws/compute/effect-workflows), or in memory in tests. To write
+against Cloudflare Workflows' own step API instead, see
+[Workflows](/cloudflare/compute/workflows).
+
+## Define a workflow
+
+`Workflow.make` declares the workflow: its name, the payload it starts
+with, its result, and the key that identifies one run.
+
+```typescript
+// src/Greet.ts
+import * as Schema from "effect/Schema";
+import { Workflow } from "effect/workflow";
+
+export const Greet = Workflow.make("Greet", {
+  payload: { id: Schema.String, name: Schema.String },
+  success: Schema.String,
+  idempotencyKey: ({ id }) => id,
+});
+```
+
+Starting a workflow again with the same key returns the run already
+started, so a retried request never starts a second one.
+
+## Implement its steps
+
+`Workflows.layer` implements the workflow. Each step is an `Activity`: a
+named Effect whose result is stored the first time it completes. When the
+run replays, a finished step returns its stored result instead of running
+again.
+
+```typescript
+// src/Greet.ts
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import { Activity } from "effect/workflow";
+
+export const GreetLive = Workflows.layer(
+  Greet,
+  Effect.fn(function* ({ name }) {
+    return yield* Activity.make({
+      name: "greet",
+      success: Schema.String,
+      execute: Effect.succeed(`hello ${name}`),
+    });
+  }),
+);
+```
+
+A step that returns a value or fails with a typed error declares `success`
+and `error` schemas, because its result is stored as JSON.
+
+## Run it on Durable Objects
+
+`Cloudflare.Workflows.layerDurableObjectEngine()` is the engine. Provide it under
+the workflow Layers, and provide both to the Worker:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { GreetLive } from "./Greet.ts";
+
+export default class AppWorker extends Cloudflare.Worker<AppWorker>()(
+  "AppWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {};
+  }).pipe(
+    Effect.provide(GreetLive.pipe(Layer.provideMerge(Cloudflare.Workflows.layerDurableObjectEngine()))),
+  ),
+) {}
+```
+
+Each workflow gets its own Durable Object class on the Worker, named after
+it (`GreetWorkflow`), and deploying the Worker deploys them.
+
+Pass `{ jurisdiction: "eu" }` to `layerDurableObjectEngine` to create and
+store every run's Durable Object only inside that jurisdiction. Runs that
+already exist stay where they were, and `alchemy dev` runs it unrestricted,
+since local workerd doesn't emulate jurisdictions.
+
+## Start a run
+
+`Workflows.RunWorkflow` gives you a client for the workflow. Resolve it
+during init, and start runs from your handlers:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import { Greet, GreetLive } from "./Greet.ts";
+
+export default class AppWorker extends Cloudflare.Worker<AppWorker>()(
+  "AppWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const greet = yield* Workflows.RunWorkflow(Greet);
+    return {
+      fetch: Effect.gen(function* () {
+        const run = yield* greet.start({ id: "g-1", name: "sam" });
+        return HttpServerResponse.text(run.executionId);
+      }),
+    };
+  }).pipe(
+    Effect.provide(GreetLive.pipe(Layer.provideMerge(Cloudflare.Workflows.layerDurableObjectEngine()))),
+  ),
+) {}
+```
+
+`start` returns as soon as the run is started, with a handle to it.
+Starting again with the same key returns the run already started, so a
+retried request never starts a second one.
+
+`RunWorkflow` only compiles where the workflow is implemented: running a
+workflow with no `Workflows.layer` in the Worker is a type error.
+
+## Read a run
+
+Store the run's `executionId`, and get the run back with `get`:
+
+```typescript
+const run = greet.get(executionId);
+const status = yield* run.status;
+```
+
+`status` is `NotStarted`, `Running`, `Completed` with its result, `Failed`
+with its error, `Interrupted`, or `Died` with a defect. `run.result` waits
+for the run to finish, which suits tests and scripts more than requests.
+
+## Or run it on Cloudflare Workflows
+
+`Cloudflare.Workflows.NativeEngine` runs the same workflow Layers on
+Cloudflare Workflows instead: one Workflow class, `NativeEngine`, runs them
+all, and each run is one Workflow instance. Swap the engine and nothing else
+changes:
+
+```typescript
+Effect.provide(GreetLive.pipe(Layer.provideMerge(Cloudflare.Workflows.NativeEngine)))
+```
+
+Steps run with `step.do`, sleeps with `step.sleep`, and signals are
+Workflow events, so runs show up in the Cloudflare dashboard step by step.
+Cloudflare's limits apply: steps per instance, the size of each step's
+result, and a year at most for a wait.
+
+## Sleep durably
+
+`DurableClock.sleep` waits on a Durable Object alarm or a Workflow sleep, so
+the wait survives restarts and costs nothing while it lasts:
+
+```typescript
+yield* DurableClock.sleep({ name: "cool-off", duration: "1 hour" });
+```
+
+Sleeps of a minute or less run in memory by default. Pass
+`inMemoryThreshold: 0` to make a short sleep durable too.
+
+## Wait for a signal
+
+A `DurableDeferred` is a value a run waits for, delivered from outside:
+an approval, a webhook, a person clicking a link. The run suspends until
+it arrives.
+
+```typescript
+export const Approval = DurableDeferred.make("approval", { success: Schema.String });
+
+const approvedBy = yield* DurableDeferred.await(Approval);
+```
+
+Send it with the run's `signal`:
+
+```typescript
+yield* greet.get(executionId).signal(Approval, "agent-7");
+```
+
+## Undo a step when a later one fails
+
+`withCompensation` attaches what to do if the run fails after the step
+succeeded. Compensations run last step first.
+
+```typescript
+yield* Activity.make({ name: "reserve", execute: reserve(order) }).pipe(
+  Checkout.withCompensation(() => Activity.make({ name: "release", execute: release(order) })),
+);
+```
+
+`run.interrupt` stops a run where it waits, and its compensations run too.
+
+## Use bindings in a step
+
+Pass `Workflows.layer` an Effect that returns the handler instead of the
+handler itself. The Effect runs once, when the Worker starts, so resolve
+bindings there, the same way a Worker's init does, and use them in the
+steps:
+
+```typescript
+// src/Checkout.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Activity, Workflow } from "effect/workflow";
+
+export const Receipts = Cloudflare.R2.Bucket("Receipts");
+
+export const Checkout = Workflow.make("Checkout", {
+  payload: { orderId: Schema.String },
+  idempotencyKey: ({ orderId }) => orderId,
+});
+
+export const CheckoutLive = Workflows.layer(
+  Checkout,
+  Effect.gen(function* () {
+    const receipts = yield* Cloudflare.R2.WriteBucket(Receipts);
+    return Effect.fn(function* ({ orderId }) {
+      yield* Activity.make({
+        name: "receipt",
+        execute: receipts
+          .put(`${orderId}.json`, JSON.stringify({ orderId }))
+          .pipe(Effect.orDie),
+      });
+    });
+  }),
+);
+```
+
+Provide the binding's implementation with the engine:
+
+```typescript
+Effect.provide(
+  CheckoutLive.pipe(
+    Layer.provideMerge(Cloudflare.Workflows.layerDurableObjectEngine()),
+    Layer.provide(Cloudflare.R2.WriteBucketBinding),
+  ),
+)
+```
+
+A Durable Object namespace works the same way: `yield* Journal` in the
+Effect, and call `journals.getByName(id).append(...)` from a step.
+
+The bucket's methods are runtime-only: they need `RuntimeContext`, which
+init doesn't have. Steps only run inside a run, which has one, so
+`Workflows.layer` doesn't pass that requirement on to the Worker.
+
+## How a run executes on Durable Objects
+
+A run is one Durable Object instance, named by its execution id, with its
+journal in that instance's SQLite: the payload, each finished step's
+result, completed signals and pending timers. Every wake-up (a start, a
+signal, a timer, an interrupt) schedules one durable alarm callback that
+replays the run, so runs never overlap, and a run that fails or is cut
+short is retried.
+
+Under `alchemy dev` the same Durable Objects run locally in workerd, so
+workflows, sleeps and signals behave as they do when deployed.

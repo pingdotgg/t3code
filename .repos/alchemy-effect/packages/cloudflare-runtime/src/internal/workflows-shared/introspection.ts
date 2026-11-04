@@ -29,9 +29,7 @@ function normalizeStreamMockChunk(value: unknown): Uint8Array {
   );
 }
 
-async function readStreamMockChunks(
-  stream: ReadableStream<unknown>,
-): Promise<Array<Uint8Array>> {
+async function readStreamMockChunks(stream: ReadableStream<unknown>): Promise<Array<Uint8Array>> {
   if (stream.locked) {
     throw new TypeError(
       "Workflow mockStepResult() received a locked or unreadable ReadableStream.",
@@ -58,9 +56,7 @@ async function readStreamMockChunks(
     }
   } finally {
     if (!fullyRead) {
-      await reader
-        .cancel("stream mock consumption stopped before completion")
-        .catch(() => {});
+      await reader.cancel("stream mock consumption stopped before completion").catch(() => {});
     }
     try {
       reader.releaseLock();
@@ -71,9 +67,7 @@ async function readStreamMockChunks(
 }
 
 export class WorkflowInstanceModificationRecorder implements WorkflowInstanceModifier {
-  constructor(
-    private readonly operations: Array<WorkflowIntrospectionOperation>,
-  ) {}
+  constructor(private readonly operations: Array<WorkflowIntrospectionOperation>) {}
 
   async disableSleeps(steps?: Array<WorkflowStepSelector>): Promise<void> {
     this.operations.push({ type: "disableSleeps", steps });
@@ -83,10 +77,7 @@ export class WorkflowInstanceModificationRecorder implements WorkflowInstanceMod
     this.operations.push({ type: "disableRetryDelays", steps });
   }
 
-  async mockStepResult(
-    step: WorkflowStepSelector,
-    stepResult: unknown,
-  ): Promise<void> {
+  async mockStepResult(step: WorkflowStepSelector, stepResult: unknown): Promise<void> {
     if (stepResult instanceof ReadableStream) {
       const streamResult: WorkflowIntrospectionStreamResult = {
         __workflowIntrospectionStreamResult: true,
@@ -103,11 +94,7 @@ export class WorkflowInstanceModificationRecorder implements WorkflowInstanceMod
     this.operations.push({ type: "mockStepResult", step, stepResult });
   }
 
-  async mockStepError(
-    step: WorkflowStepSelector,
-    error: Error,
-    times?: number,
-  ): Promise<void> {
+  async mockStepError(step: WorkflowStepSelector, error: Error, times?: number): Promise<void> {
     this.operations.push({
       type: "mockStepError",
       step,
@@ -116,10 +103,7 @@ export class WorkflowInstanceModificationRecorder implements WorkflowInstanceMod
     });
   }
 
-  async forceStepTimeout(
-    step: WorkflowStepSelector,
-    times?: number,
-  ): Promise<void> {
+  async forceStepTimeout(step: WorkflowStepSelector, times?: number): Promise<void> {
     this.operations.push({ type: "forceStepTimeout", step, times });
   }
 
@@ -154,10 +138,7 @@ export class WorkflowIntrospectorHandle implements WorkflowIntrospector {
   async modifyAll(fn: ModifierCallback): Promise<void> {
     const sessionId = this.getSessionId();
     await fn(new WorkflowInstanceModificationRecorder(this.#operations));
-    await this.workflow.unsafeSetIntrospectionOperations(
-      sessionId,
-      this.#operations,
-    );
+    await this.workflow.unsafeSetIntrospectionOperations(sessionId, this.#operations);
   }
 
   async get(): Promise<Array<WorkflowInstanceIntrospector>> {
@@ -168,8 +149,7 @@ export class WorkflowIntrospectorHandle implements WorkflowIntrospector {
   }
 
   private async syncInstanceIntrospectors(sessionId: string): Promise<void> {
-    const instanceIds =
-      await this.workflow.unsafeGetIntrospectionInstances(sessionId);
+    const instanceIds = await this.workflow.unsafeGetIntrospectionInstances(sessionId);
 
     for (const instanceId of instanceIds) {
       if (!this.#instanceIntrospectors.has(instanceId)) {
@@ -192,9 +172,7 @@ export class WorkflowIntrospectorHandle implements WorkflowIntrospector {
   private async disposeInstanceIntrospectors(): Promise<void> {
     try {
       await Promise.all(
-        Array.from(this.#instanceIntrospectors.values(), (introspector) =>
-          introspector.dispose(),
-        ),
+        Array.from(this.#instanceIntrospectors.values(), (introspector) => introspector.dispose()),
       );
     } finally {
       this.#instanceIntrospectors.clear();
@@ -224,6 +202,7 @@ export class WorkflowIntrospectorHandle implements WorkflowIntrospector {
 }
 
 export class WorkflowInstanceIntrospectorHandle implements WorkflowInstanceIntrospector {
+  #disposed = false;
   #instanceModifier: WorkflowInstanceModifier | undefined;
   #instanceModifierPromise: Promise<WorkflowInstanceModifier> | undefined;
 
@@ -259,11 +238,7 @@ export class WorkflowInstanceIntrospectorHandle implements WorkflowInstanceIntro
   }
 
   async waitForStepResult(step: WorkflowStepSelector): Promise<unknown> {
-    return await this.workflow.unsafeWaitForStepResult(
-      this.instanceId,
-      step.name,
-      step.index,
-    );
+    return await this.workflow.unsafeWaitForStepResult(this.instanceId, step.name, step.index);
   }
 
   async waitForStatus(status: string): Promise<void> {
@@ -279,10 +254,7 @@ export class WorkflowInstanceIntrospectorHandle implements WorkflowInstanceIntro
   }
 
   async getError(): Promise<{ name: string; message: string }> {
-    return (await this.workflow.unsafeGetOutputOrError(
-      this.instanceId,
-      false,
-    )) as {
+    return (await this.workflow.unsafeGetOutputOrError(this.instanceId, false)) as {
       name: string;
       message: string;
     };
@@ -290,7 +262,19 @@ export class WorkflowInstanceIntrospectorHandle implements WorkflowInstanceIntro
 
   /** Keep this bound; explicit resource management may call the disposer unbound. */
   dispose = async (): Promise<void> => {
-    await this.workflow.unsafeAbort(this.instanceId, "Instance dispose");
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    try {
+      // Acquisition starts in the constructor, even if modify() is never called.
+      // If it failed, there is no modifier to dispose; modify() still reports it.
+      const modifier =
+        this.#instanceModifier ?? (await this.#instanceModifierPromise?.catch(() => undefined));
+      (modifier as Partial<Disposable> | undefined)?.[Symbol.dispose]?.();
+    } finally {
+      await this.workflow.unsafeAbort(this.instanceId, "Instance dispose");
+    }
   };
 
   async [Symbol.asyncDispose](): Promise<void> {
