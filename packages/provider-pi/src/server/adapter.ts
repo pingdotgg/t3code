@@ -417,6 +417,10 @@ interface PiWake {
   readonly events: Array<PiRpcRecord>;
 }
 
+interface PiRegistration {
+  wakeEvents: Array<PiRpcRecord> | null;
+}
+
 export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   options: PiAdapterV2Options,
 ) {
@@ -539,6 +543,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let stopRequested = false;
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
+      // Extension session_start hooks can start work before a switch answers; hold it for that thread.
+      let registration: PiRegistration | null = null;
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -1699,19 +1705,59 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         yield* connection.terminate;
       });
 
+      const stopUnsolicitedActivity = Effect.gen(function* () {
+        unsolicitedActivityDetected = true;
+        yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
+        yield* connection.terminate;
+      });
+
+      const offerPendingWake = Effect.fnUntraced(function* (wake: PiWake) {
+        const { state } = wake;
+        const threadId = state.providerThread.appThreadId;
+        if (continuationRequests === undefined || threadId == null) {
+          return yield* stopPendingWake(wake);
+        }
+        yield* continuationRequests
+          .offer({
+            threadId,
+            providerThreadId: state.providerThread.id,
+            driver: PI_PROVIDER,
+            detail: null,
+            delivery: "adapter_buffered",
+            dispatchIfCurrent: (dispatch) =>
+              sessionEventPermit.withPermits(1)(
+                Effect.suspend(() =>
+                  pendingWake === wake && threadState === state && !closed
+                    ? dispatch.pipe(
+                        Effect.asSome,
+                        Effect.tapError(() => stopPendingWake(wake)),
+                      )
+                    : Effect.succeedNone,
+                ),
+              ),
+            clearIfCurrent: () => sessionEventPermit.withPermits(1)(stopPendingWake(wake)),
+          })
+          .pipe(Effect.tapError(() => stopPendingWake(wake)));
+      });
+
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
         const interactiveUiRequest =
           event["type"] === "extension_ui_request" &&
           ["select", "confirm", "input", "editor"].includes(String(event["method"]));
+        const wakeEvents =
+          threadState === null
+            ? (registration?.wakeEvents ?? null)
+            : threadState.activeTurn === null
+              ? (pendingWake?.events ?? null)
+              : null;
         if (
-          threadState?.activeTurn === null &&
-          pendingWake !== null &&
+          wakeEvents !== null &&
           !interactiveUiRequest &&
           !String(event["type"]).startsWith("t3.") &&
           event["type"] !== "response"
         ) {
-          pendingWake.events.push(event);
+          wakeEvents.push(event);
           if (event["type"] === "agent_start") yield* updateProviderSession("running", null);
           if (event["type"] === "agent_settled") yield* updateProviderSession("ready", null);
           return;
@@ -1734,33 +1780,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 return;
               }
               yield* updateProviderSession("running", null);
-              yield* continuationRequests
-                .offer({
-                  threadId: state.providerThread.appThreadId,
-                  providerThreadId: state.providerThread.id,
-                  driver: PI_PROVIDER,
-                  detail: null,
-                  delivery: "adapter_buffered",
-                  dispatchIfCurrent: (dispatch) =>
-                    sessionEventPermit.withPermits(1)(
-                      Effect.suspend(() =>
-                        pendingWake === wake && threadState === state && !closed
-                          ? dispatch.pipe(
-                              Effect.asSome,
-                              Effect.tapError(() => stopPendingWake(wake)),
-                            )
-                          : Effect.succeedNone,
-                      ),
-                    ),
-                  clearIfCurrent: () => sessionEventPermit.withPermits(1)(stopPendingWake(wake)),
-                })
-                .pipe(Effect.tapError(() => stopPendingWake(wake)));
+              yield* offerPendingWake(wake);
+              return;
+            }
+            if (
+              state === null &&
+              registration !== null &&
+              continuationRequests !== undefined &&
+              rollbackBarrier === null &&
+              !closed &&
+              !stopRequested
+            ) {
+              registration.wakeEvents = [event];
+              yield* updateProviderSession("running", null);
               return;
             }
             if (turn === null) {
-              unsolicitedActivityDetected = true;
-              yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
-              yield* connection.terminate;
+              yield* stopUnsolicitedActivity;
               return;
             }
             turn.sawAgentActivity = true;
@@ -2275,6 +2311,29 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             "Cannot switch Pi threads while native work is awaiting a turn",
           );
         }
+        const current: PiRegistration = { wakeEvents: null };
+        registration = current;
+        const providerThread = yield* bindNativeThread(threadInput, publish, current).pipe(
+          Effect.onExit(() =>
+            registration !== current
+              ? Effect.void
+              : Effect.suspend(() => {
+                  registration = null;
+                  // Work started for a thread that never bound must not keep running unseen.
+                  return current.wakeEvents === null
+                    ? Effect.void
+                    : sessionEventPermit.withPermits(1)(stopUnsolicitedActivity);
+                }),
+          ),
+        );
+        return providerThread;
+      });
+
+      const bindNativeThread = Effect.fnUntraced(function* (
+        threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+        publish: boolean,
+        current: PiRegistration,
+      ) {
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
@@ -2363,7 +2422,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null };
+        const state: PiThreadState = { providerThread, activeTurn: null };
+        threadState = state;
+        if (registration === current) registration = null;
+        if (current.wakeEvents !== null) pendingWake = { state, events: current.wakeEvents };
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
           Effect.orElseSucceed(() => undefined),
         );
@@ -2375,6 +2437,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             driver: PI_PROVIDER,
             providerThread,
           });
+        const wake = pendingWake;
+        if (wake !== null && wake.events === current.wakeEvents) {
+          yield* sessionEventPermit.withPermits(1)(
+            Effect.suspend(() => (pendingWake === wake ? offerPendingWake(wake) : Effect.void)),
+          );
+        }
         return providerThread;
       });
 

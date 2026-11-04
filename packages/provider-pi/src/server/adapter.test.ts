@@ -1229,6 +1229,59 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("stops native work an extension started when the resume switch then fails", () =>
+    Effect.gen(function* () {
+      const previous = yield* makeFakePi;
+      const { runtime: previousRuntime } = yield* openRuntime(previous);
+      const providerThread = yield* previousRuntime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        { offer: () => Effect.void },
+      );
+      fake.deferNextLifecycle("switch_session");
+      const resuming = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: providerThread,
+        })
+        .pipe(Effect.forkScoped);
+      const switchRequest = yield* fake.takeRequest("switch_session");
+      yield* fake.emit({ type: "agent_start" });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "running",
+      );
+      yield* fake.emit({
+        type: "response",
+        id: switchRequest["id"],
+        command: "switch_session",
+        success: true,
+        data: { cancelled: true },
+      });
+      assert.isTrue(Exit.isFailure(yield* Fiber.await(resuming)));
+      const sessionError = yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      assert.isTrue(
+        sessionError.type === "provider_session.updated" &&
+          sessionError.providerSession.lastError?.includes("invisible tool execution") === true,
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "a user prompt takes the wake without premature settlement, native wake settled=%s",
     (settled) =>

@@ -311,6 +311,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
     // Retry backoff must block later effects so turns cannot race a pending rollback.
+    // A runtime request answer may pass a running effect, which can be blocked on that answer.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -347,6 +348,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               (
                 candidate.effect_type != 'thread-title.generate'
                 AND active.effect_type != 'thread-title.generate'
+                AND NOT (
+                  active.status = 'running'
+                  AND candidate.effect_type = 'runtime-request.respond'
+                  AND active.effect_type != 'runtime-request.respond'
+                )
               )
             )
         )
