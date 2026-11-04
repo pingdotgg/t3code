@@ -1718,6 +1718,18 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
   return APP_THEME_VARIABLES[role];
 }
 
+const SIDEBAR_SELECTION_FOREGROUND_VARIABLE = "--app-theme-sidebar-row-selected-foreground";
+
+function applySidebarSelectionForeground(root: HTMLElement, colors: ThemeColors): void {
+  const selection = themeColorToHex(colors.sidebarRowSelected);
+  const isHighlight =
+    selection?.length === 7 && selection === themeColorToHex(colors.accentSurface);
+  root.style.setProperty(
+    SIDEBAR_SELECTION_FOREGROUND_VARIABLE,
+    isHighlight ? "var(--contrast-accent-foreground)" : "var(--contrast-sidebar-foreground)",
+  );
+}
+
 export const THEME_PREVIEW_ID = "__preview";
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
@@ -1735,6 +1747,7 @@ export function applyThemeColorPreview(
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applySidebarSelectionForeground(root, colors);
   applyContextChipVariables(root, colors);
   applyThemeCss(css);
   setThemePreviewAppearance(appearance);
@@ -1758,11 +1771,13 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applySidebarSelectionForeground(root, colors);
     applyContextChipVariables(root, colors);
     return;
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty(SIDEBAR_SELECTION_FOREGROUND_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
