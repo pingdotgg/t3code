@@ -90,6 +90,7 @@ export function makeSpeechTextCorrector(
       if (inner > 0 && inner > innerPossessives(custom.word)) continue;
       const keepSuffix = suffix !== "" && !possessive.test(custom.word);
       const candidate = keepSuffix ? stem : key;
+      if (Math.min(candidate.length, custom.key.length) < 4 && candidate !== custom.key) continue;
       const longest = Math.max(candidate.length, custom.key.length);
       if (Math.abs(candidate.length - custom.key.length) > Math.max(longest * 0.25, 2)) continue;
       const distance = editDistance(candidate, custom.key) / longest;
