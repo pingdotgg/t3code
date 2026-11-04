@@ -577,6 +577,10 @@ export interface ClaudeAgentSdkQuerySession {
     readonly tool: string;
     readonly arguments: Record<string, unknown>;
   }) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
+  readonly listPermissionRules: Effect.Effect<
+    ReadonlyArray<ClaudePermissionRule>,
+    ClaudeAgentSdkQueryRunnerError
+  >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -717,25 +721,35 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
-// SDK 0.3.316 types `mcp_call` but has no Query method for it; its own readMcpResource sends control requests this way.
-async function sendClaudeMcpCall(
+// SDK 0.3.316 types `mcp_call` and `list_permission_rules` but has no Query method for them; its own readMcpResource sends control requests this way.
+async function sendClaudeControlRequest(
   queryRuntime: ClaudeQuery,
-  call: { readonly tool: string; readonly arguments: Record<string, unknown> },
+  request: {
+    readonly subtype: "mcp_call" | "list_permission_rules";
+    readonly [key: string]: unknown;
+  },
 ): Promise<unknown> {
-  const request: unknown = Reflect.get(queryRuntime, "request");
-  if (typeof request !== "function") {
-    throw new Error("This Claude Agent SDK cannot call MCP tools directly.");
+  const send: unknown = Reflect.get(queryRuntime, "request");
+  if (typeof send !== "function") {
+    throw new Error(`This Claude Agent SDK cannot send ${request.subtype}.`);
   }
-  const reply: unknown = await Reflect.apply(request, queryRuntime, [
-    {
-      subtype: "mcp_call",
-      tool: call.tool,
-      arguments: call.arguments,
-      result_not_for_model: true,
-    },
-  ]);
+  const reply: unknown = await Reflect.apply(send, queryRuntime, [request]);
   return Predicate.isObject(reply) ? reply.response : undefined;
 }
+
+const ClaudePermissionRules = Schema.Struct({
+  state: Schema.Struct({
+    rules: Schema.Array(
+      Schema.Struct({
+        behavior: Schema.Literals(["allow", "deny", "ask"]),
+        rule: Schema.String,
+        notInEffect: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  }),
+});
+export type ClaudePermissionRule = (typeof ClaudePermissionRules.Type)["state"]["rules"][number];
+const decodeClaudePermissionRules = Schema.decodeUnknownEffect(ClaudePermissionRules);
 
 // Without these, tools carry no `_meta.ui` and a model-shaped result would reach the app.
 const CLAUDE_MCP_APP_CAPABILITIES = [
@@ -793,9 +807,70 @@ function withoutForgedMcpApp(output: ClaudeNativeToolOutput): ClaudeNativeToolOu
     : { type: "structured_tool_use_result", value: { result: value } };
 }
 
-/** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
-function claudeMcpToolForApps(tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number]) {
+function claudeMcpGlobMatches(pattern: string, value: string): boolean {
+  const glob = pattern
+    .split("*")
+    .map((part) => part.replaceAll(/[\\^$.|?+()[\]{}]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${glob}$`).test(value);
+}
+
+/**
+ * Deliberately broader than Claude's matcher, which also accepts server aliases T3 can't list:
+ * the server part of a tool rule is ignored. A false match only refuses a card's call, or asks first.
+ */
+function claudeRuleMayCover(rule: string, qualifiedTool: string, toolPart: string): boolean {
+  const name = rule.split("(", 1)[0] ?? rule;
+  // The `__*` form covers server-wide rules for server names containing `__`.
+  if ([name, `${name}__*`].some((glob) => claudeMcpGlobMatches(glob, qualifiedTool))) return true;
+  if (!name.startsWith("mcp__")) return false;
+  const rest = name.slice("mcp__".length);
+  // Claude's rule parser ends the server part at the first `__`; a server-wide rule may name an alias.
+  const serverEnd = rest.indexOf("__");
+  if (serverEnd === -1) return true;
+  const serverRule = rest.slice(0, serverEnd);
+  const toolRule = rest.slice(serverEnd + 2);
+  // Claude can match a rule against a `__` prefix of a tool name, and a server `*` can absorb one.
+  const serverTail = serverRule.includes("*")
+    ? [`*${serverRule.slice(serverRule.lastIndexOf("*") + 1)}__${toolRule}`]
+    : [];
+  return [toolRule, `${toolRule}__*`, ...serverTail].some((glob) =>
+    claudeMcpGlobMatches(glob, toolPart),
+  );
+}
+
+function claudeMcpToolRuled(
+  rules: ReadonlyArray<ClaudePermissionRule>,
+  behaviors: ReadonlyArray<ClaudePermissionRule["behavior"]>,
+  server: string,
+  tool: string,
+): boolean {
+  const qualifiedTool = claudeMcpToolName(server, tool);
+  const toolPart = claudeMcpToolNamePart(tool);
+  return rules.some(
+    (entry) =>
+      behaviors.includes(entry.behavior) &&
+      entry.notInEffect !== true &&
+      claudeRuleMayCover(entry.rule, qualifiedTool, toolPart),
+  );
+}
+
+/**
+ * Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names.
+ * Card calls skip Claude's permission check, so `readOnlyHint`, which skips T3's prompt, needs readable
+ * rules (null when not) with no ask or deny rule that may cover the tool.
+ */
+function claudeMcpToolForApps(
+  server: string,
+  tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
+  rules: ReadonlyArray<ClaudePermissionRule> | null,
+) {
   const annotations = tool.annotations ?? {};
+  const readOnlyHint =
+    annotations.readOnly !== true ||
+    (rules !== null && !claudeMcpToolRuled(rules, ["ask", "deny"], server, tool.name))
+      ? annotations.readOnly
+      : undefined;
   return {
     name: tool.name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
@@ -803,7 +878,7 @@ function claudeMcpToolForApps(tool: NonNullable<ClaudeMcpServerStatus["tools"]>[
     inputSchema: { type: "object" },
     ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
     annotations: {
-      ...(annotations.readOnly === undefined ? {} : { readOnlyHint: annotations.readOnly }),
+      ...(readOnlyHint === undefined ? {} : { readOnlyHint }),
       ...(annotations.destructive === undefined
         ? {}
         : { destructiveHint: annotations.destructive }),
@@ -1447,9 +1522,24 @@ export const layerQueryRunner: Layer.Layer<
               }),
             callMcpTool: (call) =>
               Effect.tryPromise({
-                try: () => sendClaudeMcpCall(queryRuntime, call),
+                try: () =>
+                  sendClaudeControlRequest(queryRuntime, {
+                    subtype: "mcp_call",
+                    tool: call.tool,
+                    arguments: call.arguments,
+                    result_not_for_model: true,
+                  }),
                 catch: (cause) => queryRunnerError(cause, "callMcpTool"),
               }),
+            listPermissionRules: Effect.tryPromise({
+              try: () =>
+                sendClaudeControlRequest(queryRuntime, { subtype: "list_permission_rules" }),
+              catch: (cause) => queryRunnerError(cause, "listPermissionRules"),
+            }).pipe(
+              Effect.flatMap(decodeClaudePermissionRules),
+              Effect.map(({ state }) => state.rules),
+              Effect.mapError((cause) => queryRunnerError(cause, "listPermissionRules")),
+            ),
             interrupt: Effect.tryPromise({
               try: () => queryRuntime.interrupt(),
               catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -11768,9 +11858,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerThread,
               server,
             }) {
-              const { statuses } = yield* mcpAppServerStatuses(providerThread, server);
+              const { liveQuery, statuses } = yield* mcpAppServerStatuses(providerThread, server);
               const status = statuses.find((candidate) => candidate.name === server);
-              return (status?.tools ?? []).map(claudeMcpToolForApps);
+              const rules = yield* liveQuery.query.listPermissionRules.pipe(
+                Effect.orElseSucceed(() => null),
+              );
+              return (status?.tools ?? []).map((tool) => claudeMcpToolForApps(server, tool, rules));
             }),
             callTool: Effect.fn("ClaudeAdapterV2.callMcpTool")(function* (call) {
               const { liveQuery, statuses } = yield* mcpAppServerStatuses(
@@ -11786,6 +11879,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: "Another tool on this MCP server has the same Claude tool name.",
+                });
+              }
+              // mcp_call skips Claude's permission check, so its deny rules are applied here.
+              const rules = yield* liveQuery.query.listPermissionRules.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: `Claude's permission rules could not be read, so ${tool} was not called.`,
+                      cause,
+                    }),
+                ),
+              );
+              if (claudeMcpToolRuled(rules, ["deny"], call.server, call.tool)) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `A Claude permission rule denies ${tool}.`,
                 });
               }
               return claudeMcpCallToolResult(

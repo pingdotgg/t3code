@@ -919,6 +919,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1044,6 +1045,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1356,6 +1358,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
+            listPermissionRules: Effect.die("unexpected permission rules read"),
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1546,6 +1549,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1935,6 +1939,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(messages),
@@ -2445,6 +2450,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2786,6 +2792,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -3118,7 +3125,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly mcp?: Pick<
       ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
       "mcpServerStatus" | "readMcpResource" | "callMcpTool"
-    >;
+    > &
+      Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -3244,6 +3252,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3277,6 +3286,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   (() => Effect.die("unexpected MCP resource read")),
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
+                listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -4963,7 +4973,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const runClaudeMcpAppToolTurn = Effect.fnUntraced(function* (
     capabilities: ReadonlyArray<string>,
     overrides?: Partial<
-      Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "mcpServerStatus" | "readMcpResource">
+      Pick<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
+        "mcpServerStatus" | "readMcpResource" | "listPermissionRules"
+      >
     >,
     toolName = "mcp__probe_server__show_weather",
     toolUseResult: unknown = { content: '{"tempC":21}', structuredContent: { tempC: 21 } },
@@ -5169,6 +5182,167 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         toolUseResult,
       );
       assert.isUndefined(mcpAppFromToolItem(item));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { case: "no permission rules", rules: [], called: true, readOnly: true },
+    {
+      case: "an exact ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh_weather" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "a tool glob ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh_*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "an all-servers ask rule",
+      rules: [{ behavior: "ask", rule: "mcp__*" }],
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "an exact deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server-wide deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server wildcard deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__*" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule with a server-part wildcard",
+      rules: [{ behavior: "deny", rule: "mcp__*__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule naming a prefix of the server's name",
+      rules: [{ behavior: "deny", rule: "mcp__probe" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule for this tool on a server alias T3 can't list",
+      rules: [{ behavior: "deny", rule: "mcp__probe_alias__refresh_weather" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a server-wide deny rule for a server whose name contains __",
+      rules: [{ behavior: "deny", rule: "mcp__finance__prod" }],
+      server: "finance__prod",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule naming the first part of a tool name containing __",
+      rules: [{ behavior: "deny", rule: "mcp__gw_example_com__refresh" }],
+      tool: "refresh__weather",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule whose server wildcard spans part of a tool name containing __",
+      rules: [{ behavior: "deny", rule: "mcp__gw*__weather" }],
+      tool: "refresh__weather",
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule with a parenthesized specifier",
+      rules: [{ behavior: "deny", rule: "mcp__probe_server__refresh_weather(city:Oslo)" }],
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "a deny rule a managed policy switched off",
+      rules: [
+        { behavior: "deny", rule: "mcp__probe_server__refresh_weather", notInEffect: true },
+        { behavior: "ask", rule: "mcp__probe_server", notInEffect: true },
+      ],
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "rules for other tools and servers",
+      rules: [
+        { behavior: "deny", rule: "mcp__probe_server__refresh" },
+        { behavior: "deny", rule: "mcp__*__show_weather" },
+        { behavior: "ask", rule: "Bash" },
+        { behavior: "allow", rule: "mcp__probe_server__refresh_weather" },
+      ],
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "permission rules that cannot be read",
+      rules: "unreadable",
+      called: false,
+      readOnly: false,
+    },
+  ] as const)("applies Claude's permission rules to MCP app calls with $case", (testCase) =>
+    Effect.gen(function* () {
+      const server = "server" in testCase ? testCase.server : PROBE_SERVER_STATUS.name;
+      const tool = "tool" in testCase ? testCase.tool : "refresh_weather";
+      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
+        mcpServerStatus: Effect.succeed([
+          {
+            ...PROBE_SERVER_STATUS,
+            name: server,
+            tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
+          },
+        ]),
+        listPermissionRules:
+          testCase.rules === "unreadable"
+            ? Effect.fail(
+                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "listPermissionRules",
+                  cause: new Error("Unsupported control request subtype"),
+                }),
+              )
+            : Effect.succeed(testCase.rules),
+      });
+      const mcpApps = harness.runtime.mcpApps!;
+      const target = { providerThread: harness.providerThread, server };
+      const [listed] = yield* mcpApps.listTools(target);
+      assert.deepEqual(
+        listed?.annotations,
+        testCase.readOnly
+          ? { readOnlyHint: true, destructiveHint: false }
+          : { destructiveHint: false },
+      );
+      const exit = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
+      assert.equal(Exit.isSuccess(exit), testCase.called);
+      assert.equal(
+        mcpRequests.some(
+          (request) => typeof request === "object" && request !== null && "arguments" in request,
+        ),
+        testCase.called,
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -10176,6 +10350,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: isFirstProcess
@@ -10376,6 +10551,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
@@ -12580,6 +12756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 mcpServerStatus: Effect.die("unexpected MCP server status"),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 interrupt: Effect.void,
                 close:
                   closeSignal === undefined
@@ -15449,6 +15626,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -15626,6 +15804,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
@@ -15806,6 +15985,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -16004,6 +16184,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
@@ -16150,6 +16331,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
                     callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
