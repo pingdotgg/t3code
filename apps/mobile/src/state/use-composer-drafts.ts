@@ -358,6 +358,8 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
   }
 }
 
+const isComposerDraftPersistenceError = Schema.is(ComposerDraftPersistenceError);
+
 export interface ComposerDraft {
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
@@ -1061,7 +1063,7 @@ export function ensureComposerDraftsLoaded(): void {
     if (loadPromise === loading) loadPromise = null;
     console.warn(
       "[composer-drafts] failed to hydrate drafts",
-      cause instanceof ComposerDraftPersistenceError
+      isComposerDraftPersistenceError(cause)
         ? cause
         : new ComposerDraftPersistenceError({
             operation: "hydrate",
