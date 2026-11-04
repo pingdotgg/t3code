@@ -86,7 +86,7 @@ interface BranchToolbarProps {
   isServerThread: boolean;
   showGitControls: boolean;
   draftId?: DraftId;
-  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+  composerDraftTarget?: ScopedThreadRef | DraftId | null | undefined;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;

@@ -266,9 +266,11 @@ export type PullRequestHandoffDetail = Pick<
 export function usePullRequestHandoffs({
   environmentId,
   detail,
+  composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestHandoffDetail | null;
+  composerDraftTarget?: ScopedThreadRef | DraftId | null | undefined;
 }) {
   const newThread = useNewThreadHandler();
   const prepareThread = usePreparePullRequestThreadAction({
@@ -330,7 +332,16 @@ export function usePullRequestHandoffs({
     task: PullRequestThreadTask | null,
     mode: "worktree" | "local" = "worktree",
   ) => {
-    if (!detail || handoff !== null) return;
+    if (!detail || handoff !== null || composerDraftTarget === null) return;
+    if (composerDraftTarget !== undefined && task !== null) {
+      writeHandoffToComposer(composerDraftTarget, task);
+      toastManager.add({
+        type: "success",
+        title: "Added to the composer",
+        description: "The task is in the composer. Read it over, then send.",
+      });
+      return;
+    }
     setHandoff(kind);
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
