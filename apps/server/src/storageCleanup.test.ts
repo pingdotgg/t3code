@@ -2451,6 +2451,26 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each(["missing", "tracked.txt"] as const)(
+    "compares flagged tracked symlinks by target (%s)",
+    (target) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* fs.symlink("tracked.txt", `${worktree}/link`);
+          yield* command(worktree, ["add", "link"]);
+          yield* command(worktree, ["commit", "-m", "link"]);
+          yield* command(worktree, ["update-index", "--assume-unchanged", "link"]);
+          yield* fs.remove(`${worktree}/link`);
+          yield* fs.symlink(target, `${worktree}/link`);
+          expect((yield* service.runNow).entries[0]).toMatchObject(
+            target === "missing"
+              ? { outcome: "kept", reason: expect.stringContaining("(link)") }
+              : { outcome: "removed" },
+          );
+        }),
+      ),
+  );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(
       Effect.gen(function* () {
