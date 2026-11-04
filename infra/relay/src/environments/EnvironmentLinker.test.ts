@@ -14,6 +14,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
@@ -114,7 +115,7 @@ function layerTest(input?: {
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
 }) {
   return EnvironmentLinker.layer.pipe(
-    Layer.provideMerge(RelayTokens.layer),
+    Layer.provideMerge(RelayTokens.layer.pipe(Layer.provide(CloudMintSigner.layer))),
     Layer.provide(
       Layer.mergeAll(
         RelayConfiguration.layer(config),

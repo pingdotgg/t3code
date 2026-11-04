@@ -1,5 +1,9 @@
+import { importRelayPrivateKey, RelayJwtError, signRelayJwt } from "@t3tools/shared/relayJwt";
+import * as Context from "effect/Context";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Jwk from "effect/jose/Jwk";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -109,3 +113,42 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
   );
   return yield* persistEnvironmentKeyPair(secrets, keyPair);
 });
+
+/** The environment's Ed25519 relay signing key, loaded at startup and parsed on first use. */
+export class EnvironmentSigningKey extends Context.Service<
+  EnvironmentSigningKey,
+  {
+    /** SPKI PEM, as relays and linked clients receive it. */
+    readonly publicKey: string;
+    readonly sign: (input: {
+      readonly typ: string;
+      readonly payload: Readonly<Record<string, unknown>>;
+    }) => Effect.Effect<string, RelayJwtError>;
+  }
+>()("t3/cloud/environmentKeys/EnvironmentSigningKey") {}
+
+export const layer = Layer.effect(
+  EnvironmentSigningKey,
+  Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const signature = yield* Signature.Signature;
+    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+    // Parsed lazily so corrupt key material fails Connect operations, not server startup.
+    let privateKey: Jwk.PrivateKey | undefined;
+    return EnvironmentSigningKey.of({
+      publicKey: keyPair.publicKey,
+      sign: Effect.fn("EnvironmentSigningKey.sign")(function* (input) {
+        if (privateKey === undefined) {
+          privateKey = yield* importRelayPrivateKey(keyPair.privateKey).pipe(
+            Effect.mapError(
+              (cause) => new RelayJwtError({ operation: "sign", typ: input.typ, cause }),
+            ),
+          );
+        }
+        return yield* signRelayJwt({ ...input, privateKey }).pipe(
+          Effect.provideService(Signature.Signature, signature),
+        );
+      }),
+    });
+  }),
+);

@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as CloudMintSigner from "./CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayTokens from "./RelayTokens.ts";
 
@@ -38,6 +39,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
 });
 
 const layer = RelayTokens.layer.pipe(
+  Layer.provide(CloudMintSigner.layer),
   Layer.provide(RelayConfiguration.layer(config)),
   Layer.provideMerge(Signature.layerWebCrypto),
   Layer.provide(SecureRandom.layerWebCrypto),
