@@ -13,6 +13,7 @@ import {
   buildAddProjectRemoteSourceReadiness,
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
+  findConflictingAddProject,
   findExistingAddProject,
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
@@ -720,6 +721,33 @@ function useCreateProject(environment: EnvironmentOption | null) {
   });
   const projects = useProjects();
 
+  const openExisting = async (
+    existing: (typeof projects)[number],
+    originRoute: ReturnType<typeof getActiveRoute>,
+  ) => {
+    // Adding an archived project's folder again brings the project back.
+    const unarchived =
+      existing.archivedAt == null ||
+      (
+        await updateProject({
+          environmentId: existing.environmentId,
+          input: { projectId: existing.id, archived: false },
+        })
+      )._tag === "Success";
+    Dialog.alert(
+      "Project already exists",
+      unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
+    );
+    openNewTaskDraft(
+      {
+        environmentId: existing.environmentId,
+        projectId: existing.id,
+        title: existing.title,
+      },
+      originRoute,
+    );
+  };
+
   return async (workspaceRoot: string, originRoute = getActiveRoute(navigation)) => {
     if (
       !environment ||
@@ -739,27 +767,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       path: workspaceRoot,
     });
     if (existing) {
-      // Adding an archived project's folder again brings the project back.
-      const unarchived =
-        existing.archivedAt == null ||
-        (
-          await updateProject({
-            environmentId: existing.environmentId,
-            input: { projectId: existing.id, archived: false },
-          })
-        )._tag === "Success";
-      Dialog.alert(
-        "Project already exists",
-        unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
-      );
-      openNewTaskDraft(
-        {
-          environmentId: existing.environmentId,
-          projectId: existing.id,
-          title: existing.title,
-        },
-        originRoute,
-      );
+      await openExisting(existing, originRoute);
       return;
     }
 
@@ -774,7 +782,15 @@ function useCreateProject(environment: EnvironmentOption | null) {
       input: command,
     });
     if (AsyncResult.isFailure(result)) {
-      return result;
+      // The server matches folders the local path lookup above can miss.
+      const conflicting = findConflictingAddProject({
+        projects,
+        environmentId: environment.environmentId,
+        error: Cause.squash(result.cause),
+      });
+      if (conflicting === null) return result;
+      await openExisting(conflicting, originRoute);
+      return;
     }
     // A successful command can precede its project in the client store. The
     // draft treats a missing project as a reason to return to the chooser.

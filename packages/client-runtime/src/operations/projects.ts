@@ -8,11 +8,12 @@ import type {
   SourceControlDiscoveryResult,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { ProjectMutationError, SourceControlProviderKind } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 import {
   appendBrowsePathSegment,
@@ -304,6 +305,24 @@ export function findExistingAddProject(input: {
     findProjectByPath(
       input.projects.filter((project) => project.environmentId === input.environmentId),
       input.path,
+    ) ?? null
+  );
+}
+
+const isProjectMutationError = Schema.is(ProjectMutationError);
+
+/** The project the server says already owns the folder a create request failed on. */
+export function findConflictingAddProject(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly environmentId: EnvironmentId;
+  readonly error: unknown;
+}): EnvironmentProject | null {
+  if (!isProjectMutationError(input.error)) return null;
+  const { conflictingProjectId } = input.error;
+  return (
+    input.projects.find(
+      (project) =>
+        project.environmentId === input.environmentId && project.id === conflictingProjectId,
     ) ?? null
   );
 }

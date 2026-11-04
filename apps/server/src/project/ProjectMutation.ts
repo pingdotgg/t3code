@@ -1,8 +1,9 @@
-import { type ProjectMutation } from "@t3tools/contracts";
+import { type CommandId, type ProjectMutation, ProjectMutationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { type ServerRuntimeStartupError } from "../serverRuntimeStartup.ts";
 import { type ProjectCloneTracker } from "./ProjectCloneTracker.ts";
-import { type ProjectService } from "./ProjectService.ts";
+import { type ProjectService, type ProjectServiceError } from "./ProjectService.ts";
 
 type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
 
@@ -68,3 +69,25 @@ export const mutateProjectWithClone = Effect.fn("mutateProjectWithClone")(functi
     Effect.uninterruptible,
   );
 });
+
+/** Shows clients the failures a user can act on; internal ones stay generic. */
+export function toProjectMutationError(
+  commandId: CommandId,
+  cause: ProjectServiceError | ServerRuntimeStartupError,
+): ProjectMutationError {
+  switch (cause._tag) {
+    case "ProjectConflictError":
+      return new ProjectMutationError({
+        commandId,
+        message: `${cause.workspaceRoot} is already added as a project.`,
+        conflictingProjectId: cause.conflictingProjectId,
+        cause,
+      });
+    case "ProjectNotFoundError":
+    case "ProjectNotEmptyError":
+      return new ProjectMutationError({ commandId, message: cause.message, cause });
+    case "ProjectOperationError":
+    case "ServerRuntimeStartupError":
+      return new ProjectMutationError({ commandId, message: "Failed to mutate project.", cause });
+  }
+}

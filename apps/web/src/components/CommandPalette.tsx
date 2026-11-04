@@ -21,6 +21,7 @@ import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
   addProjectRemoteSourceProvider,
+  findConflictingAddProject,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
@@ -1802,11 +1803,7 @@ function OpenCommandPaletteDialog(props: {
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
 
-    const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
-      cwd,
-    );
-    if (existing) {
+    const openExistingProject = async (existing: (typeof projects)[number]) => {
       // Adding an archived project's folder again brings the project back.
       if (existing.archivedAt != null) {
         void updateProject({
@@ -1843,6 +1840,14 @@ function OpenCommandPaletteDialog(props: {
         }
       }
       setOpen(false);
+    };
+
+    const existing = findProjectByPath(
+      projects.filter((project) => project.environmentId === input.environmentId),
+      cwd,
+    );
+    if (existing) {
+      await openExistingProject(existing);
       return;
     }
 
@@ -1870,6 +1875,16 @@ function OpenCommandPaletteDialog(props: {
     if (createResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(createResult)) {
         const error = squashAtomCommandFailure(createResult);
+        // The server matches folders the local path lookup above can miss.
+        const conflicting = findConflictingAddProject({
+          projects,
+          environmentId: input.environmentId,
+          error,
+        });
+        if (conflicting !== null) {
+          await openExistingProject(conflicting);
+          return;
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",

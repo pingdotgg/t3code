@@ -4,8 +4,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { ProjectNotEmptyError } from "./ProjectService.ts";
-import { mutateProjectWithClone } from "./ProjectMutation.ts";
+import {
+  ProjectConflictError,
+  ProjectNotEmptyError,
+  ProjectOperationError,
+} from "./ProjectService.ts";
+import { mutateProjectWithClone, toProjectMutationError } from "./ProjectMutation.ts";
 
 const projectId = ProjectId.make("project-1");
 const deletedProject: Project = {
@@ -75,4 +79,28 @@ describe("mutateProjectWithClone", () => {
       expect(discarded).toEqual([projectId]);
     }),
   );
+});
+
+describe("toProjectMutationError", () => {
+  it("tells the client which project already owns the workspace", () => {
+    const commandId = CommandId.make("create-duplicate");
+    const conflictingProjectId = ProjectId.make("project-existing");
+    const conflict = toProjectMutationError(
+      commandId,
+      new ProjectConflictError({
+        projectId,
+        workspaceRoot: "/workspace/kh-frontend",
+        conflictingProjectId,
+      }),
+    );
+    expect(conflict.message).toBe("/workspace/kh-frontend is already added as a project.");
+    expect(conflict.conflictingProjectId).toBe(conflictingProjectId);
+
+    const internal = toProjectMutationError(
+      commandId,
+      new ProjectOperationError({ operation: "list-projects", cause: "sqlite busy" }),
+    );
+    expect(internal.message).toBe("Failed to mutate project.");
+    expect(internal.conflictingProjectId).toBeUndefined();
+  });
 });
