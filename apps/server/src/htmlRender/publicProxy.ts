@@ -135,12 +135,13 @@ const connectThroughProxy = (
   const onData = (chunk: Buffer) => {
     head = Buffer.concat([head, chunk]);
     const end = head.indexOf("\r\n\r\n");
-    if (end === -1) {
-      if (head.length > 16 * 1024) finish(new Error("oversized proxy response"));
-      return;
+    if ((end === -1 ? head.length : end + 4) > 16 * 1024) {
+      return finish(new Error("oversized proxy response"));
     }
-    const status = /^HTTP\/1\.[01] (\d{3})/.exec(head.subarray(0, end).toString("latin1"));
-    if (status?.[1] !== "200") return finish(new Error("egress proxy refused"));
+    if (end === -1) return;
+    // RFC 9110 section 9.3.6: any 2xx response establishes the tunnel.
+    const success = /^HTTP\/1\.[01] 2\d{2} [^\r\n]*\r\n/.test(head.toString("latin1"));
+    if (!success) return finish(new Error("egress proxy refused"));
     finish(undefined, head.subarray(end + 4));
   };
   socket.on("data", onData);

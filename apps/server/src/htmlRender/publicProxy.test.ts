@@ -173,34 +173,44 @@ describe("publicProxy", () => {
           }),
       );
 
-    /** A fake egress proxy: records CONNECT lines, answers `status`, then echoes. */
-    const fakeEgress = (status: number) =>
+    /** A fake egress proxy: records CONNECT lines, answers, then echoes. */
+    const fakeEgress = (response: number | string) =>
       Effect.acquireRelease(
-        Effect.callback<{ readonly server: NodeNet.Server; readonly seen: Array<string> }>(
-          (resume) => {
-            const seen: Array<string> = [];
-            const server = NodeNet.createServer((socket) => {
-              socket.on("error", () => {});
-              let head = "";
-              const onData = (chunk: Buffer) => {
-                head += chunk.toString("latin1");
-                const end = head.indexOf("\r\n\r\n");
-                if (end === -1) return;
-                socket.off("data", onData);
-                seen.push(head.split("\r\n")[0]!);
-                socket.write(`HTTP/1.1 ${status} X\r\n\r\n`);
-                if (status !== 200) return void socket.end();
-                const rest = head.slice(end + 4);
-                if (rest) socket.write(rest);
-                socket.on("data", (more) => socket.write(more));
-              };
-              socket.on("data", onData);
-            });
-            server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen })));
-          },
-        ),
-        ({ server }) =>
-          Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+        Effect.callback<{
+          readonly server: NodeNet.Server;
+          readonly seen: Array<string>;
+          readonly sockets: Set<NodeNet.Socket>;
+        }>((resume) => {
+          const seen: Array<string> = [];
+          const sockets = new Set<NodeNet.Socket>();
+          const server = NodeNet.createServer((socket) => {
+            sockets.add(socket);
+            socket.on("close", () => sockets.delete(socket));
+            socket.on("error", () => {});
+            let head = "";
+            const onData = (chunk: Buffer) => {
+              head += chunk.toString("latin1");
+              const end = head.indexOf("\r\n\r\n");
+              if (end === -1) return;
+              socket.off("data", onData);
+              seen.push(head.split("\r\n")[0]!);
+              socket.write(
+                typeof response === "number" ? `HTTP/1.1 ${response} X\r\n\r\n` : response,
+              );
+              if (typeof response === "number" && response !== 200) return void socket.end();
+              const rest = head.slice(end + 4);
+              if (rest) socket.write(rest);
+              socket.on("data", (more) => socket.write(more));
+            };
+            socket.on("data", onData);
+          });
+          server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen, sockets })));
+        }),
+        ({ server, sockets }) =>
+          Effect.callback<void>((resume) => {
+            for (const socket of sockets) socket.destroy();
+            server.close(() => resume(Effect.void));
+          }),
       );
 
     const portOf = (server: NodeNet.Server) => (server.address() as NodeNet.AddressInfo).port;
@@ -289,6 +299,27 @@ describe("publicProxy", () => {
             socket.destroy();
             expect(code).toBe(5);
             expect(seen).toEqual(["CONNECT 1.1.1.1:443 HTTP/1.1"]);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect.each([
+      ["another successful status", "HTTP/1.1 201 Created\r\n\r\n", 0],
+      ["malformed status", "HTTP/1.1 200evil\r\n\r\n", 5],
+      ["oversized complete headers", `HTTP/1.1 200 OK\r\nX: ${"x".repeat(16 * 1024)}\r\n\r\n`, 5],
+      ["oversized incomplete headers", `HTTP/1.1 200 OK\r\nX: ${"x".repeat(16 * 1024)}`, 5],
+      ["large tunnel data", `HTTP/1.1 200 OK\r\n\r\n${"x".repeat(16 * 1024)}`, 0],
+    ] as const)("handles %s in CONNECT responses", ([_name, response, expected]) =>
+      Effect.gen(function* () {
+        const { server } = yield* fakeEgress(response);
+        yield* withEnv(
+          { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+          Effect.gen(function* () {
+            const port = yield* publicProxy;
+            const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443));
+            socket.destroy();
+            expect(code).toBe(expected);
           }),
         );
       }).pipe(Effect.scoped),
