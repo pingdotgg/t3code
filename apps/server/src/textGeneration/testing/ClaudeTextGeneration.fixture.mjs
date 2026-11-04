@@ -1,4 +1,5 @@
 import * as NodeFS from "node:fs";
+import * as NodeUtil from "node:util";
 
 const argv = process.argv.slice(2);
 const args = argv.join(" ");
@@ -35,6 +36,19 @@ if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
 const settingsIndex = argv.indexOf("--settings");
 if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
+}
+const settingsMustEqual = process.env.T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL;
+if (settingsMustEqual) {
+  const settingsValues = argv.flatMap((arg, index) =>
+    arg === "--settings" ? [argv[index + 1]] : [],
+  );
+  const received = settingsValues.map((value) => JSON.parse(value));
+  if (
+    received.length !== 1 ||
+    !NodeUtil.isDeepStrictEqual(received[0], JSON.parse(settingsMustEqual))
+  ) {
+    fail("--settings was " + settingsValues.join(" --settings "), 13);
+  }
 }
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
