@@ -11,6 +11,7 @@ import {
   parseMcpHttpResponseBody,
   parseMentionMcpServers,
   pickMentionMcpServer,
+  settleStdioMcpResponseLine,
 } from "./MentionIndexMcpClient.ts";
 
 describe("MentionIndexMcpClient helpers", () => {
@@ -27,6 +28,38 @@ describe("MentionIndexMcpClient helpers", () => {
     expect(pickMentionMcpServer(servers, "figma")?.name).toBe("figma-dev");
     expect(pickMentionMcpServer(servers, "jira", "missing")).toBeNull();
     expect(pickMentionMcpServer(servers, "figma", "figma-dev")?.transport).toBe("http");
+  });
+
+  it("preserves apostrophes inside Codex command args", () => {
+    const servers = parseCodexMcpServers(`
+[mcp_servers.local-jira]
+command = "node"
+args = ["-c", "console.log('ok')"]
+`);
+    expect(servers).toEqual([
+      {
+        transport: "stdio",
+        name: "local-jira",
+        command: "node",
+        args: ["-c", "console.log('ok')"],
+        env: {},
+      },
+    ]);
+  });
+
+  it("rejects stdio JSON-RPC responses with a non-object error without throwing", async () => {
+    const pending = new Map<
+      number,
+      {
+        resolve: (value: unknown) => void;
+        reject: (error: Error) => void;
+      }
+    >();
+    const result = Promise.withResolvers<unknown>();
+    pending.set(1, { resolve: result.resolve, reject: result.reject });
+    settleStdioMcpResponseLine('{"id":1,"error":null}', pending, "local-jira");
+    await expect(result.promise).rejects.toThrow("MCP error from local-jira");
+    expect(pending.size).toBe(0);
   });
 
   it("skips Codex servers with enabled = false and carries headers/env", () => {

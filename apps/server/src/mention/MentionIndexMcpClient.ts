@@ -193,6 +193,53 @@ function parseTomlInlineStringTable(raw: string): Record<string, string> {
   return next;
 }
 
+/** Parse a TOML string array without rewriting characters inside quotes. */
+function parseTomlStringArray(raw: string): string[] {
+  const trimmed = raw.trim();
+  const asJson = parseJsonOrNull(trimmed);
+  if (Array.isArray(asJson)) {
+    return asJson.filter((entry): entry is string => typeof entry === "string");
+  }
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [];
+  const items: string[] = [];
+  const item = /"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'/gu;
+  for (const match of trimmed.slice(1, -1).matchAll(item)) {
+    const value = match[1] ?? match[2];
+    if (value !== undefined) items.push(value);
+  }
+  return items;
+}
+
+function mcpErrorMessage(error: unknown, fallback: string): string {
+  const message = asRecord(error)?.message;
+  return typeof message === "string" ? message : fallback;
+}
+
+/** Test helper: settle one stdio JSON-RPC line against pending request waiters. */
+export function settleStdioMcpResponseLine(
+  line: string,
+  pending: Map<
+    number,
+    {
+      readonly resolve: (value: unknown) => void;
+      readonly reject: (error: Error) => void;
+    }
+  >,
+  serverName: string,
+): void {
+  const envelope = asRecord(parseJsonOrNull(line));
+  if (envelope === null) return;
+  if (typeof envelope.id !== "number") return;
+  const waiter = pending.get(envelope.id);
+  if (!waiter) return;
+  pending.delete(envelope.id);
+  if (envelope.error !== undefined) {
+    waiter.reject(new Error(mcpErrorMessage(envelope.error, `MCP error from ${serverName}`)));
+    return;
+  }
+  waiter.resolve(envelope.result);
+}
+
 function headersFromEnvMap(
   envHeaderNames: Readonly<Record<string, string>>,
 ): Record<string, string> {
@@ -256,14 +303,7 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
         headers,
       });
     } else if (command) {
-      const argsRaw = fields.args;
-      let args: string[] = [];
-      if (argsRaw) {
-        const parsed = parseJsonOrNull(argsRaw.replace(/'/g, '"'));
-        if (Array.isArray(parsed)) {
-          args = parsed.filter((entry): entry is string => typeof entry === "string");
-        }
-      }
+      const args = fields.args ? parseTomlStringArray(fields.args) : [];
       entries.push({
         transport: "stdio",
         name: current.name,
@@ -515,21 +555,7 @@ const make = Effect.gen(function* () {
         let nextId = 1;
 
         const onLine = (line: string) => {
-          const envelope = parseJsonOrNull(line) as {
-            id?: unknown;
-            result?: unknown;
-            error?: { message?: string };
-          } | null;
-          if (envelope === null) return;
-          if (typeof envelope.id !== "number") return;
-          const waiter = pending.get(envelope.id);
-          if (!waiter) return;
-          pending.delete(envelope.id);
-          if (envelope.error !== undefined) {
-            waiter.reject(new Error(envelope.error.message ?? `MCP error from ${config.name}`));
-            return;
-          }
-          waiter.resolve(envelope.result);
+          settleStdioMcpResponseLine(line, pending, config.name);
         };
         lines.on("line", onLine);
         stdin.on("error", (cause) => {
@@ -680,9 +706,8 @@ const make = Effect.gen(function* () {
       const version = stringField(result ?? {}, "protocolVersion");
       if (version) protocolVersion = version;
       if (envelope.error !== undefined) {
-        const error = asRecord(envelope.error);
         return yield* Effect.fail(
-          new Error(stringField(error ?? {}, "message") ?? `MCP error from ${config.name}`),
+          new Error(mcpErrorMessage(envelope.error, `MCP error from ${config.name}`)),
         );
       }
       return envelope.result;

@@ -1,4 +1,7 @@
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  stripInlineContextReferences,
+} from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -4349,15 +4352,110 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               });
             const movedFileIds = new Set(movedFiles.map((file) => file.id));
             const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
+            // Terminals stay on their draft; other chips referenced in the moved prompt follow the text.
+            const referencedIds = new Set(collectInlineContextIds(source.prompt));
+            const splitByContextId = <T extends { readonly contextId: string }>(
+              records: ReadonlyArray<T>,
+            ) => {
+              const moving: T[] = [];
+              const staying: T[] = [];
+              for (const record of records) {
+                (referencedIds.has(record.contextId) ? moving : staying).push(record);
+              }
+              return { moving, staying };
+            };
+            const mergeByContextId = <T extends { readonly contextId: string }>(
+              existing: ReadonlyArray<T>,
+              incoming: ReadonlyArray<T>,
+            ) => {
+              if (incoming.length === 0) return [...existing];
+              const seen = new Set(existing.map((record) => record.contextId));
+              const next = [...existing];
+              for (const record of incoming) {
+                if (seen.has(record.contextId)) continue;
+                seen.add(record.contextId);
+                next.push(record);
+              }
+              return next;
+            };
+            const splitByDerivedId = <T>(
+              records: ReadonlyArray<T>,
+              contextIdOf: (record: T) => string,
+            ) => {
+              const moving: T[] = [];
+              const staying: T[] = [];
+              for (const record of records) {
+                (referencedIds.has(contextIdOf(record)) ? moving : staying).push(record);
+              }
+              return { moving, staying };
+            };
+            const mergeByDerivedId = <T>(
+              existing: ReadonlyArray<T>,
+              incoming: ReadonlyArray<T>,
+              idOf: (record: T) => string,
+            ) => {
+              if (incoming.length === 0) return [...existing];
+              const seen = new Set(existing.map(idOf));
+              const next = [...existing];
+              for (const record of incoming) {
+                const id = idOf(record);
+                if (seen.has(id)) continue;
+                seen.add(id);
+                next.push(record);
+              }
+              return next;
+            };
+            const jira = splitByContextId(source.jiraContexts);
+            const figma = splitByContextId(source.figmaContexts);
+            const threads = splitByContextId(source.threadContexts);
+            const environments = splitByContextId(source.environmentContexts);
+            const reviews = splitByDerivedId(
+              source.reviewComments,
+              (comment) => reviewCommentContextReference(comment).contextId,
+            );
+            const annotations = splitByDerivedId(source.previewAnnotations, (annotation) =>
+              previewAnnotationContextId(annotation.id),
+            );
+            const nextJiraContexts = mergeByContextId(destination.jiraContexts, jira.moving);
+            const nextFigmaContexts = mergeByContextId(destination.figmaContexts, figma.moving);
+            const nextThreadContexts = mergeByContextId(destination.threadContexts, threads.moving);
+            const nextEnvironmentContexts = mergeByContextId(
+              destination.environmentContexts,
+              environments.moving,
+            );
+            const nextReviewComments = mergeByDerivedId(
+              destination.reviewComments,
+              reviews.moving,
+              (comment) => comment.id,
+            );
+            const nextPreviewAnnotations = mergeByDerivedId(
+              destination.previewAnnotations,
+              annotations.moving,
+              (annotation) => annotation.id,
+            );
             const movedPrompt = ensureInlineContextReferences(
               stripInlineContextReferences(source.prompt),
-              destination.terminalContexts.map(terminalContextReference),
+              [
+                ...destination.terminalContexts.map(terminalContextReference),
+                ...nextReviewComments.map(reviewCommentContextReference),
+                ...nextThreadContexts.map(threadContextReference),
+                ...nextEnvironmentContexts.map(environmentContextReference),
+                ...nextJiraContexts.map(jiraContextReference),
+                ...nextFigmaContexts.map(figmaContextReference),
+                ...nextPreviewAnnotations.map(previewAnnotationContextReference),
+              ],
             );
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
               prompt: movedPrompt,
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],
+              reviewComments: nextReviewComments,
+              threadContexts: nextThreadContexts,
+              environmentContexts: nextEnvironmentContexts,
+              jiraContexts: nextJiraContexts,
+              figmaContexts: nextFigmaContexts,
+              previewAnnotations: nextPreviewAnnotations,
               nonPersistedImageIds: [
                 ...destination.nonPersistedImageIds,
                 ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
@@ -4374,13 +4472,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...source,
               prompt: ensureInlineContextReferences("", [
                 ...source.terminalContexts.map(terminalContextReference),
-                ...source.reviewComments.map(reviewCommentContextReference),
-                ...source.threadContexts.map(threadContextReference),
-                ...source.environmentContexts.map(environmentContextReference),
-                ...source.jiraContexts.map(jiraContextReference),
-                ...source.figmaContexts.map(figmaContextReference),
-                ...source.previewAnnotations.map(previewAnnotationContextReference),
+                ...reviews.staying.map(reviewCommentContextReference),
+                ...threads.staying.map(threadContextReference),
+                ...environments.staying.map(environmentContextReference),
+                ...jira.staying.map(jiraContextReference),
+                ...figma.staying.map(figmaContextReference),
+                ...annotations.staying.map(previewAnnotationContextReference),
               ]),
+              reviewComments: reviews.staying,
+              threadContexts: threads.staying,
+              environmentContexts: environments.staying,
+              jiraContexts: jira.staying,
+              figmaContexts: figma.staying,
+              previewAnnotations: annotations.staying,
               images: retainedImages,
               files: retainedFiles,
               nonPersistedImageIds: source.nonPersistedImageIds.filter(
