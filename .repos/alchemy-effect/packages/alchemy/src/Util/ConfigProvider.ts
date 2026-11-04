@@ -79,9 +79,7 @@ export const stackConfigLayer = (
           // Every list ends with the shell unless the user placed (or disabled) it.
           const entries = Array.isArray(declared) ? [...declared] : [declared];
           const shellListed = entries.some(
-            (entry) =>
-              "_tag" in entry &&
-              entry._tag === "alchemy/SecretProvider::ProcessEnv",
+            (entry) => "_tag" in entry && entry._tag === "alchemy/SecretProvider::ProcessEnv",
           );
           if (!shellListed) entries.push(ProcessEnv());
 
@@ -91,9 +89,7 @@ export const stackConfigLayer = (
           // gets a pinned view of the final result.
           const profile =
             overrides.profile ??
-            (yield* Effect.sync(
-              () => process.env.ALCHEMY_PROFILE || undefined,
-            ));
+            (yield* Effect.sync(() => process.env.ALCHEMY_PROFILE || undefined));
           const pinned = ConfigProvider.fromEnv({
             env: profile === undefined ? {} : { ALCHEMY_PROFILE: profile },
           });
@@ -102,25 +98,21 @@ export const stackConfigLayer = (
               (path[0] === "ALCHEMY_PROFILE" ? pinned : provider).load(path),
             );
 
-          const chain = entries.reduce<
-            Layer.Layer<never, unknown, StackServices>
-          >(
+          const chain = entries.reduce<Layer.Layer<never, unknown, StackServices>>(
             (below, entry) =>
               ("layer" in entry ? entry.layer : entry).pipe(
                 // A reused entry must merge with this position's configuration,
                 // not return the result memoized at its first position.
                 Layer.fresh,
                 Layer.provide(
-                  ConfigProvider.layer(
-                    Effect.map(ConfigProvider.ConfigProvider, pin),
-                  ).pipe(Layer.provide(below)),
+                  ConfigProvider.layer(Effect.map(ConfigProvider.ConfigProvider, pin)).pipe(
+                    Layer.provide(below),
+                  ),
                 ),
               ),
             ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
           );
-          const context = yield* Layer.build(chain).pipe(
-            Effect.mapError(toConfigError),
-          );
+          const context = yield* Layer.build(chain).pipe(Effect.mapError(toConfigError));
           return pin(Context.get(context, ConfigProvider.ConfigProvider));
         }),
       );
@@ -146,9 +138,7 @@ export const loadConfigProvider = Effect.fn("loadConfigProvider")(function* (
   // than once at module load.
   const shell = ConfigProvider.fromEnv();
   if (path === undefined) return shell;
-  const dotEnv = yield* ConfigProvider.fromDotEnv({
-    path,
-  });
+  const dotEnv = yield* ConfigProvider.fromDotEnv({ path });
   return Option.isSome(envFile)
     ? ConfigProvider.orElse(dotEnv, shell)
     : ConfigProvider.orElse(shell, dotEnv);

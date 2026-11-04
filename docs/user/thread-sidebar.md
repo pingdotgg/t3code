@@ -5,8 +5,11 @@ need a separate branch and working directory.
 
 ## Start a thread
 
-On web and desktop, a new thread keeps the current project and carries your model
-and mode selections, unless the destination project has its own model default.
+On web and desktop, **New thread** opens the project picker when you have multiple
+projects in the default or project-grouped sidebar. The legacy sidebar always
+starts in the current project. **Shift-click** to start in
+the current project, or use a project's own new-thread action. A new thread carries
+your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
@@ -236,9 +239,11 @@ palette.
 
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
-link when available, otherwise the thread itself, which pastes into a composer as
-a thread chip. To copy the thread even when it has a PR, choose **Copy → Thread**
-from its context menu, or **Copy thread** from its long-press menu on mobile.
+link when available, otherwise a link to the thread, which opens it from anywhere
+you paste it and pastes into a composer as a thread chip (see
+[sharing a thread](./prompt-links.md#share-a-thread)). To copy the thread even
+when it has a PR, choose **Copy → Thread** from its context menu, or **Copy
+thread** from its long-press menu on mobile.
 **Thread ID** copies the bare ID for scripts and the `t3` CLI. See
 [keybindings](./keybindings.md) for custom configuration.
 

@@ -438,6 +438,12 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
+  readonly getPullRequestSnapshot: (
+    options: Parameters<ProjectionStoreV2["Service"]["getPullRequestSnapshot"]>[0],
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<ProjectionStoreV2["Service"]["getPullRequestSnapshot"]>>,
+    OrchestratorV2Error
+  >;
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
@@ -1161,6 +1167,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return withId;
       });
 
+  // Detaching kills background work running inside the provider process.
+  // Probe even with an empty roster: Claude's native subagents never reach
+  // pendingBackgroundTasks. Sessions shared across threads probe per thread.
+  const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
+    detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
+    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
+  ) {
+    const session = yield* providerSessions
+      .get(detaching.id)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(session)) return false;
+    const runtime = session.value;
+    const probes =
+      !detaching.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
+      runtime.hasPendingBackgroundWork !== undefined
+        ? [runtime.hasPendingBackgroundWork]
+        : providerThreads.flatMap((providerThread) =>
+            providerThread.providerSessionId === detaching.id &&
+            runtime.hasPendingBackgroundWorkForThread !== undefined
+              ? [runtime.hasPendingBackgroundWorkForThread(providerThread)]
+              : [],
+          );
+    for (const probe of probes) {
+      // A failed probe cannot confirm that the work ended.
+      if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
+    }
+    return false;
+  });
+
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
   const readCommandProjection = (threadId: ThreadId) =>
     projectionStore
@@ -1821,6 +1856,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               )
           : null;
+      const releasableSessions = projection.providerSessions.filter(
+        (session) =>
+          switchPlan?.releaseProviderSessionIds.includes(session.id) &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      );
+      const busySessionIds = new Set<ProviderSessionId>();
+      for (const session of releasableSessions) {
+        if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
+          busySessionIds.add(session.id);
+        }
+      }
+      // Nobody waits on a queued start to refuse it. A handoff runs in its own session, so a
+      // busy one stays up; a restart resumes the busy session's native thread, so wait instead.
+      if (busySessionIds.size > 0 && switchPlan?.transition.type === "restart_and_resume") {
+        yield* Effect.logInfo(
+          "Holding the queue: the replaced provider session still runs background work",
+          { threadId, runId: queuedRun.id, providerSessionIds: Array.from(busySessionIds) },
+        );
+        yield* writeSystemEvents(
+          projection.runs
+            .filter((run) => run.status === "queued")
+            .map((run) => ({
+              type: "run.updated" as const,
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, queueHeld: true },
+            })),
+        );
+        return;
+      }
+      const sessionsToDetach = releasableSessions.filter(
+        (session) => !busySessionIds.has(session.id),
+      );
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
         switchPlan.transition.type === "restart_and_resume" &&
@@ -2159,12 +2230,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               },
             ]
           : [];
-      const sessionsToDetach = projection.providerSessions.filter(
-        (session) =>
-          switchPlan?.releaseProviderSessionIds.includes(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
-      );
       yield* writeSystemEvents(
         [
           ...(selectionChanged
@@ -3553,6 +3618,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledOverride:
               thread.settledOverride === "settled" ? "active" : thread.settledOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+            ...(thread.settledOverride === "settled" ? { unsettledAt: now } : {}),
             snoozedUntil: null,
             snoozedAt: null,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
@@ -4685,6 +4751,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
+    readonly notification?: OrchestrationV2ConversationMessage["notification"];
     readonly forceRestart: boolean;
   }) {
     const targetRun = input.projection.runs.find((candidate) => candidate.id === input.targetRunId);
@@ -4838,6 +4905,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(input.delegatedCompletion === undefined
             ? {}
             : { delegatedCompletion: input.delegatedCompletion }),
+          ...(input.notification === undefined ? {} : { notification: input.notification }),
           ...(input.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
@@ -4939,6 +5007,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         input.projection.thread.providerInstanceId !== input.modelSelection.instanceId;
       if (
         input.delegatedCompletion === undefined &&
+        input.notification === undefined &&
         (instanceChanged ||
           !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection))
       ) {
@@ -5729,13 +5798,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         taskIds: delivery.taskIds,
       };
     }
-    // Route durable mailbox deliveries under the thread lock, using the live
-    // session's capabilities. Never interrupt/restart a turn for a notification.
+    // Route durable mailbox deliveries and delegated task questions under the
+    // thread lock, using the live session's capabilities. A question queued
+    // behind a long parent turn is never seen. Never interrupt/restart a turn
+    // for a notification.
     if (
-      delegatedCompletion !== undefined &&
-      delegatedCompletion.taskIds.every(
-        (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
-      )
+      delegatedCompletion !== undefined
+        ? delegatedCompletion.taskIds.every(
+            (id) =>
+              projection.subagents.find((task) => task.id === id)?.completionWake === "always",
+          )
+        : command.notification?.source.kind === "delegated_task"
     ) {
       const active = projection.runs.find((run) => run.status === "running");
       const providerThread = projection.providerThreads.find(
@@ -5759,7 +5832,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           Option.isSome(session) &&
           session.value.providerSession.capabilities.turns.supportsActiveSteering &&
-          session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true
+          session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools !== true &&
+          !(yield* stopReachedRun(command, command.threadId, active.id))
         ) {
           dispatchMode = { type: "steer_active", targetRunId: active.id };
         }
@@ -5826,11 +5900,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
         projection,
         modelSelection:
-          delegatedCompletion === undefined
+          delegatedCompletion === undefined && command.notification === undefined
             ? modelSelection
             : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
+        ...(command.notification === undefined ? {} : { notification: command.notification }),
         targetRunId: dispatchMode.targetRunId,
         messageId: command.messageId,
         text: dispatchText,
@@ -6241,24 +6316,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
     // Account overlays share native history. Selection commands may already
     // have updated the app thread, so classify against the native thread's owner.
+    const providerSwitchPlan = isProviderSwitch
+      ? yield* providerSwitchService
+          .plan({
+            projection: {
+              ...projection,
+              thread: {
+                ...projection.thread,
+                modelSelection: {
+                  ...projection.thread.modelSelection,
+                  instanceId: activeProviderThread.providerInstanceId,
+                },
+              },
+            },
+            targetModelSelection: modelSelection,
+          })
+          .pipe(mapDispatchError(command))
+      : null;
     const canResumeAcrossInstances =
       isProviderSwitch &&
       activeProviderThread.nativeThreadRef !== null &&
-      (yield* providerSwitchService
-        .plan({
-          projection: {
-            ...projection,
-            thread: {
-              ...projection.thread,
-              modelSelection: {
-                ...projection.thread.modelSelection,
-                instanceId: activeProviderThread.providerInstanceId,
-              },
-            },
-          },
-          targetModelSelection: modelSelection,
-        })
-        .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+      providerSwitchPlan?.transition.type === "restart_and_resume";
+    const sessionsToDetach = projection.providerSessions.filter(
+      (session) =>
+        providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "error",
+    );
+    for (const detaching of sessionsToDetach) {
+      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then send the message again.",
+        });
+      }
+    }
 
     if (
       pendingForkTransfer === undefined &&
@@ -7220,7 +7314,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.context ? { context: command.context } : {}),
       attachments: command.attachments,
       ...(run.contextHandoffId === null
-        ? modelSwitchSince(projection, modelSelection, sourceRun?.modelSelection)
+        ? modelSwitchSince(
+            projection,
+            modelSelection,
+            // Side chats do not show the parent's runs.
+            sideChatFork ? undefined : sourceRun?.modelSelection,
+          )
         : {}),
     };
     const activeHandoff = portableForkHandoff ?? mergeBackHandoff ?? providerSwitchHandoff;
@@ -7565,30 +7664,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
-      const previousProviderSessionId = activeProviderThread.providerSessionId;
+    const detachDetail = canResumeAcrossInstances
+      ? "Provider account changed; continuing the native thread."
+      : "Provider or model selection changed.";
+    for (const session of sessionsToDetach) {
       yield* emitEvent({
         type: "provider-session.detached",
         threadId: command.threadId,
-        driver: activeProviderThread.driver,
-        providerInstanceId: activeProviderThread.providerInstanceId,
+        driver: session.driver,
+        providerInstanceId: session.providerInstanceId,
         occurredAt: now,
         payload: {
-          providerSessionId: previousProviderSessionId,
+          providerSessionId: session.id,
           detachedAt: now,
-          reason: "Provider account changed; continuing the native thread.",
+          reason: detachDetail,
         },
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
-          id: `effect:${command.commandId}:provider-session.detach:${previousProviderSessionId}`,
+          id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
           commandId: command.commandId,
           threadId: command.threadId,
           request: {
             type: "provider-session.detach",
-            providerSessionId: previousProviderSessionId,
-            detail: "Provider account changed; continuing the native thread.",
+            providerSessionId: session.id,
+            detail: detachDetail,
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
@@ -8525,6 +8626,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: completionPlan.message,
       });
     }
+    return completionPlan.parentRun?.id;
   });
 
   const dispatchCreatedThreadRecord = Effect.fn("orchestrationV2.dispatch.createdThreadRecord")(
@@ -13352,7 +13454,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchRemoteDelegatedTaskStop(command, events);
         break;
       case "delegated_task.wake-policy":
-        yield* dispatchDelegatedTaskWakePolicy(command, events);
+        updateDelegatedCompletionOnlyRunId = yield* dispatchDelegatedTaskWakePolicy(
+          command,
+          events,
+        );
         break;
       case "delegated_task.completion-delivery.acknowledge":
       case "delegated_task.completion-delivery.dispose":
@@ -14078,6 +14183,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
+    getPullRequestSnapshot: Effect.fn("OrchestratorV2.getPullRequestSnapshot")(function (options) {
+      return projectionStore
+        .getPullRequestSnapshot(options)
+        .pipe(Effect.mapError(shellProjectionError));
+    }),
     getShellSnapshot: Effect.fn("OrchestratorV2.getShellSnapshot")(function (options) {
       return projectionStore.getShellSnapshot(options).pipe(Effect.mapError(shellProjectionError));
     }),
