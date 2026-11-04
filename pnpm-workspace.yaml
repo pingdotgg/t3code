@@ -23,7 +23,6 @@ allowBuilds:
   objc-js: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
   sharp: true
-  "@tsc-rs/typescript": true
   utf-8-validate: false
   workerd: false
 
@@ -77,7 +76,6 @@ catalog:
   react-dom: 19.3.0
   tailwindcss: 4.3.3
   tldts: 7.4.2
-  typescript: npm:@tsc-rs/typescript@0.8.0
   undici: 8.11.2
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
@@ -295,3 +293,13 @@ permissions:
 # pnpm keeps optional deps inside the virtual store, so hoist it to the root.
 publicHoistPattern:
   - "@cursor/sdk-*"
+
+minimumReleaseAgeExclude:
+  - "@effect/tsgo-darwin-arm64@0.67.1"
+  - "@effect/tsgo-darwin-x64@0.67.1"
+  - "@effect/tsgo-linux-arm64@0.67.1"
+  - "@effect/tsgo-linux-arm@0.67.1"
+  - "@effect/tsgo-linux-x64@0.67.1"
+  - "@effect/tsgo-win32-arm64@0.67.1"
+  - "@effect/tsgo-win32-x64@0.67.1"
+  - "@effect/tsgo@0.67.1"

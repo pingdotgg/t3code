@@ -3983,19 +3983,19 @@ it.effect("finishes two presses on one file in the order they were made", () =>
       ],
     });
 
-    const tick = service
+    const tick = yield* service
       .setFilesViewed({
         ...GITLAB_REFERENCE,
         files: [{ path: "src/a.ts", viewed: true }],
       })
-      .pipe(Effect.runFork);
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* TestClock.adjust("1 second");
-    const untick = service
+    const untick = yield* service
       .setFilesViewed({
         ...GITLAB_REFERENCE,
         files: [{ path: "src/a.ts", viewed: false }],
       })
-      .pipe(Effect.runFork);
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* TestClock.adjust("1 second");
     yield* Deferred.succeed(held, undefined);
     yield* Fiber.join(tick);

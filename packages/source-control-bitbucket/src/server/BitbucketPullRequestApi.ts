@@ -827,7 +827,7 @@ export const make = Effect.gen(function* () {
             yield* bitbucket.request({
               method: "POST",
               url: `${pullRequest}/comments`,
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              // @effect-diagnostics-next-line globalJsonInEffect:off
               body: JSON.stringify({ content: { raw: input.body } }),
             });
           }

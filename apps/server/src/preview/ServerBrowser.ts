@@ -468,6 +468,7 @@ const make = Effect.gen(function* () {
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const runSyncExit = Effect.runSyncExitWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
@@ -2529,7 +2530,7 @@ const make = Effect.gen(function* () {
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
         else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
-          const dropped = Effect.runSyncExit(Queue.clear(output));
+          const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
           // Without its latest size and control the viewer cannot map input at all.

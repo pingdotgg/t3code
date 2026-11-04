@@ -64,7 +64,7 @@
           "unknownInEffectCatch": "error",
           "strictBooleanExpressions": "off",
           "lazyEffect": "off",
-          "preferSchemaOverJson": "error",
+          "globalJsonInEffect": "error",
           "schemaSyncInEffect": "error",
           "cryptoRandomUUID": "error",
           "cryptoRandomUUIDInEffect": "error",
@@ -86,7 +86,7 @@
             "include": ["**/*.test.ts", "**/*.test.tsx"],
             "options": {
               "diagnosticSeverity": {
-                "preferSchemaOverJson": "off",
+                "globalJsonInEffect": "off",
                 "effectFnOpportunity": "off"
               }
             }
