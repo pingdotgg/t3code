@@ -10,6 +10,45 @@ function parseTimeOfDay(value: string): { hour: number; minute: number } | null 
   return { hour: Number(match[1]), minute: Number(match[2]) };
 }
 
+function weekdaySet(weekdays: ReadonlyArray<number> | undefined): ReadonlySet<number> | null {
+  return weekdays !== undefined && weekdays.length > 0 ? new Set(weekdays) : null;
+}
+
+function isInsideWindow(
+  instant: DateTime.DateTime,
+  weekdays: ReadonlyArray<number> | undefined,
+  start: { readonly hour: number; readonly minute: number },
+  end: { readonly hour: number; readonly minute: number },
+): boolean {
+  const parts = DateTime.toParts(instant);
+  const allowed = weekdaySet(weekdays);
+  if (allowed !== null && !allowed.has(parts.weekDay)) return false;
+  const time = ((parts.hour * 60 + parts.minute) * 60 + parts.second) * 1000 + parts.millisecond;
+  const startMs = (start.hour * 60 + start.minute) * 60_000;
+  const endMs = (end.hour * 60 + end.minute) * 60_000;
+  return time >= startMs && time < endMs;
+}
+
+function nextLocalTime(
+  from: DateTime.DateTime,
+  time: { readonly hour: number; readonly minute: number },
+  weekdays: ReadonlyArray<number> | undefined,
+): DateTime.DateTime | null {
+  const allowed = weekdaySet(weekdays);
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
+      hour: time.hour,
+      minute: time.minute,
+      second: 0,
+      millisecond: 0,
+    });
+    if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
+    if (allowed !== null && !allowed.has(DateTime.toParts(candidate).weekDay)) continue;
+    return candidate;
+  }
+  return null;
+}
+
 export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
@@ -24,25 +63,22 @@ export function nextScheduledRunAt(
   }
   if (schedule.type === "interval") {
     // Intervals advance elapsed time, including across daylight-saving changes.
-    return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS));
+    const candidate = DateTime.addDuration(
+      from,
+      Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS),
+    );
+    const window = schedule.window;
+    if (window === undefined) return candidate;
+    const start = parseTimeOfDay(window.start);
+    const end = parseTimeOfDay(window.end);
+    if (start === null || end === null) return null;
+    if (isInsideWindow(candidate, window.weekdays, start, end)) return candidate;
+    return nextLocalTime(from, start, window.weekdays);
   }
 
   const time = parseTimeOfDay(schedule.timeOfDay);
   if (time === null) return null;
-  const weekdays =
-    schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
-  for (let offset = 0; offset <= 7; offset += 1) {
-    const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
-      hour: time.hour,
-      minute: time.minute,
-      second: 0,
-      millisecond: 0,
-    });
-    if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
-    if (weekdays !== null && !weekdays.has(DateTime.toParts(candidate).weekDay)) continue;
-    return candidate;
-  }
-  return null;
+  return nextLocalTime(from, time, schedule.weekdays);
 }
 
 function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
@@ -51,9 +87,30 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
   return unique.join(",");
 }
 
+type IntervalWindow = NonNullable<Extract<ScheduledTaskSchedule, { type: "interval" }>["window"]>;
+
+function sameWindow(a: IntervalWindow | undefined, b: IntervalWindow | undefined): boolean {
+  if (a === undefined || b === undefined) return a === undefined && b === undefined;
+  const aStart = parseTimeOfDay(a.start);
+  const bStart = parseTimeOfDay(b.start);
+  const aEnd = parseTimeOfDay(a.end);
+  const bEnd = parseTimeOfDay(b.end);
+  return (
+    aStart !== null &&
+    bStart !== null &&
+    aEnd !== null &&
+    bEnd !== null &&
+    aStart.hour === bStart.hour &&
+    aStart.minute === bStart.minute &&
+    aEnd.hour === bEnd.hour &&
+    aEnd.minute === bEnd.minute &&
+    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
+  );
+}
+
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
   if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
+    return b.type === "interval" && a.everyMs === b.everyMs && sameWindow(a.window, b.window);
   }
   if (a.type === "webhook") return b.type === "webhook";
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
