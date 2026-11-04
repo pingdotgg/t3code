@@ -73,7 +73,7 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   );
   const distinctCalls = ["application key", "application secret", "consumer key"].map((label) => ({
     tool: "request_secret",
-    args: { label: "~" + label, delivery: "file" },
+    args: { label: "~" + label, delivery: "file", value: null },
   }));
   const cards = distinctCalls.map(({ tool, args }) => ({
     step: 0,
@@ -82,6 +82,13 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   }));
   const run = (calls: SampleRun["calls"]) => ({ calls, text: "", stopReason: "end_turn" });
   assert.deepEqual(failed({ distinctCalls }, run(cards)), []);
+  assert.deepEqual(
+    failed(
+      { distinctCalls },
+      run(cards.map((card) => ({ ...card, input: { ...card.input, value: "invented" } }))),
+    ),
+    ["distinctCalls"],
+  );
   assert.deepEqual(failed({ distinctCalls }, run([cards[0]!])), ["distinctCalls"]);
   assert.deepEqual(
     failed(
