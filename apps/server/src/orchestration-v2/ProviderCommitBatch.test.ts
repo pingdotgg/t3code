@@ -1,34 +1,30 @@
 import { assert, it } from "@effect/vitest";
-import {
-  EventId,
-  MessageId,
-  ThreadId,
-  type OrchestrationV2DomainEvent,
-  type OrchestrationV2StoredEvent,
-} from "@t3tools/contracts";
+import { MessageId, ProviderDriverKind, ProviderTurnId, ThreadId } from "@t3tools/contracts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 
-function event(id: number, text = "delta"): OrchestrationV2DomainEvent {
-  const threadId = ThreadId.make(`thread:${id}`);
+const driver = ProviderDriverKind.make("codex");
+function event(index: number, text = `delta:${index}`): ProviderAdapter.ProviderAdapterV2Event {
+  const threadId = ThreadId.make("single-thread");
   const now = DateTime.makeUnsafe("2026-11-03T00:00:00Z");
   return {
-    id: EventId.make(`event:${id}`),
     type: "message.updated",
-    threadId,
-    occurredAt: now,
-    payload: {
-      id: MessageId.make(`message:${id}`),
+    driver,
+    message: {
+      id: MessageId.make("single-message"),
       threadId,
       runId: null,
       nodeId: null,
       createdBy: "agent",
-      creationSource: "web",
+      creationSource: "provider",
       role: "assistant",
       text,
       attachments: [],
@@ -38,170 +34,111 @@ function event(id: number, text = "delta"): OrchestrationV2DomainEvent {
     },
   };
 }
-
-it.effect.each([false, true])(
-  "acknowledges shared commits through publication with cancellation=%s",
-  (cancel) =>
-    Effect.gen(function* () {
-      const commits: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
-      const publishing = yield* Deferred.make<void>();
-      const published = yield* Deferred.make<void>();
-      const batch = yield* ProviderCommitBatch.make(
-        (events) =>
-          Effect.gen(function* () {
-            commits.push(events);
-            yield* Deferred.succeed(publishing, undefined);
-            yield* Deferred.await(published);
-            return events.map((event, index) => ({ sequence: index + 1, commandId: null, event }));
-          }),
-        25,
-      );
-      const first = yield* batch
-        .write([event(1)])
-        .pipe(Effect.forkScoped({ startImmediately: true }));
-      const second = yield* batch
-        .write([event(2)])
-        .pipe(Effect.forkScoped({ startImmediately: true }));
-      assert.deepEqual(commits, []);
-      yield* TestClock.adjust(25);
-      yield* Deferred.await(publishing);
-      assert.isUndefined(yield* Effect.sync(() => first.pollUnsafe()));
-      const interrupted = cancel
-        ? yield* Fiber.interrupt(second).pipe(Effect.forkScoped({ startImmediately: true }))
-        : undefined;
-      yield* Deferred.succeed(published, undefined);
-      assert.deepEqual(
-        (yield* Fiber.join(first)).map((stored) => stored.event.id),
-        ["event:1"],
-      );
-      if (interrupted !== undefined) {
-        yield* Fiber.join(interrupted);
-        assert.isTrue(Exit.isFailure(yield* Fiber.await(second)));
-      } else {
-        assert.deepEqual(
-          (yield* Fiber.join(second)).map((stored) => stored.event.id),
-          ["event:2"],
-        );
-      }
-      assert.equal(commits.length, 1);
-    }).pipe(Effect.scoped),
-);
-
-it.effect("flushes before a control write and does not let an old timer flush a new window", () =>
-  Effect.gen(function* () {
-    const order: string[] = [];
-    const batch = yield* ProviderCommitBatch.make(
-      (events) =>
-        Effect.sync(() => {
-          order.push(...events.map((event) => event.id));
-          return events.map((event, index) => ({ sequence: index + 1, commandId: null, event }));
-        }),
-      25,
-    );
-    const first = yield* batch
-      .write([event(1)])
-      .pipe(Effect.forkScoped({ startImmediately: true }));
-    yield* TestClock.adjust(10);
-    yield* batch.barrier(Effect.sync(() => order.push("stop")));
-    yield* Fiber.join(first);
-    const next = yield* batch.write([event(2)]).pipe(Effect.forkScoped({ startImmediately: true }));
-    yield* TestClock.adjust(15);
-    assert.deepEqual(order, ["event:1", "stop"]);
-    yield* TestClock.adjust(10);
-    yield* Fiber.join(next);
-    assert.deepEqual(order, ["event:1", "stop", "event:2"]);
-  }).pipe(Effect.scoped),
-);
-
-it.effect("fails every affected writer immediately and accepts the next batch", () =>
-  Effect.gen(function* () {
-    let fail = true;
-    const batch = yield* ProviderCommitBatch.make(
-      (events) =>
-        fail
-          ? Effect.fail("disk full")
-          : Effect.succeed(
-              events.map((event, index) => ({ sequence: index + 1, commandId: null, event })),
-            ),
-      25,
-    );
-    const first = yield* batch
-      .write([event(1)])
-      .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
-    const second = yield* batch
-      .write([event(2)])
-      .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
-    yield* TestClock.adjust(25);
-    assert.deepEqual(yield* Fiber.join(first), Exit.fail("disk full"));
-    assert.deepEqual(yield* Fiber.join(second), Exit.fail("disk full"));
-    fail = false;
-    const next = yield* batch.write([event(3)]).pipe(Effect.forkScoped({ startImmediately: true }));
-    yield* batch.barrier(Effect.void);
-    assert.equal((yield* Fiber.join(next))[0]?.event.id, "event:3");
-  }).pipe(Effect.scoped),
-);
-
-it.effect("bounds groups by event count and JSON bytes without waiting for the timer", () =>
-  Effect.gen(function* () {
-    const commits: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
-    const batch = yield* ProviderCommitBatch.make(
-      (events) =>
-        Effect.sync(() => {
-          commits.push(events);
-          return events.map((event, index) => ({ sequence: index + 1, commandId: null, event }));
-        }),
-      25,
-    );
-    const first = yield* batch
-      .write(Array.from({ length: 63 }, (_, i) => event(i)))
-      .pipe(Effect.forkScoped({ startImmediately: true }));
-    const second = yield* batch
-      .write([event(64)])
-      .pipe(Effect.forkScoped({ startImmediately: true }));
-    yield* Fiber.join(first);
-    yield* Fiber.join(second);
-    assert.equal(commits[0]?.length, 64);
-    const small = yield* batch
-      .write([event(65)])
-      .pipe(Effect.forkScoped({ startImmediately: true }));
-    const large = yield* batch.write([event(66, "x".repeat(1024 * 1024))]);
-    yield* Fiber.join(small);
-    assert.deepEqual(
-      commits.map((events) => events.length),
-      [64, 1, 1],
-    );
-    assert.equal(large.length, 1);
-  }).pipe(Effect.scoped),
-);
+const control: ProviderAdapter.ProviderAdapterV2Event = {
+  type: "background_work.updated",
+  driver,
+  providerTurnId: ProviderTurnId.make("turn"),
+  pending: false,
+};
 
 it.effect(
-  "removes interrupted queued writes and flushes outstanding writes when its scope closes",
+  "collects successive updates from one stream and flushes before control without waiting for the window",
   () =>
     Effect.gen(function* () {
-      const commits: string[] = [];
-      const write = (
-        events: ReadonlyArray<OrchestrationV2DomainEvent>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>> =>
-        Effect.sync(() => {
-          commits.push(...events.map((event) => event.id));
-          return events.map((event, index) => ({ sequence: index + 1, commandId: null, event }));
-        });
-      const batch = yield* ProviderCommitBatch.make(write, 25);
-      const cancelled = yield* batch
-        .write([event(1)])
-        .pipe(Effect.forkScoped({ startImmediately: true }));
-      yield* Fiber.interrupt(cancelled);
-      yield* batch.barrier(Effect.void);
-      assert.deepEqual(commits, []);
-      const parentScope = yield* Effect.scope;
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const closing = yield* ProviderCommitBatch.make(write, 25);
-          yield* closing
-            .write([event(2)])
-            .pipe(Effect.forkIn(parentScope, { startImmediately: true }));
-        }),
+      const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+      const output =
+        yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
+      const consumer = yield* ProviderCommitBatch.group(Stream.fromQueue(input), 25).pipe(
+        Stream.runForEach((batch) => Queue.offer(output, batch.events)),
+        Effect.forkScoped,
       );
-      assert.deepEqual(commits, ["event:2"]);
+      yield* Queue.offer(input, event(1));
+      yield* TestClock.adjust(5);
+      yield* Queue.offer(input, event(2));
+      yield* Queue.offer(input, control);
+      const first = yield* Queue.take(output);
+      const second = yield* Queue.take(output);
+      assert.deepEqual(first, [event(1), event(2)]);
+      assert.deepEqual(second, [control]);
+      yield* Queue.end(input);
+      yield* Fiber.join(consumer);
     }).pipe(Effect.scoped),
+);
+
+it.effect("flushes a sparse stream on the deadline and restarts the next window", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const output = yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
+    const consumer = yield* ProviderCommitBatch.group(Stream.fromQueue(input), 25).pipe(
+      Stream.runForEach((batch) => Queue.offer(output, batch.events)),
+      Effect.forkScoped,
+    );
+    yield* Queue.offer(input, event(1));
+    yield* TestClock.adjust(25);
+    assert.deepEqual(yield* Queue.take(output), [event(1)]);
+    yield* Queue.offer(input, event(2));
+    yield* TestClock.adjust(24);
+    assert.isTrue((yield* Queue.poll(output))._tag === "None");
+    yield* TestClock.adjust(1);
+    assert.deepEqual(yield* Queue.take(output), [event(2)]);
+    yield* Queue.end(input);
+    yield* Fiber.join(consumer);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("bounds transaction groups by count and bytes and flushes the final partial group", () =>
+  Effect.gen(function* () {
+    const events = Array.from({ length: 129 }, (_, index) => event(index));
+    const batches = yield* ProviderCommitBatch.group(Stream.fromArray(events), 25).pipe(
+      Stream.runCollect,
+    );
+    assert.deepEqual(
+      batches.map((batch) => batch.events.length),
+      [64, 64, 1],
+    );
+    assert.deepEqual(
+      batches.flatMap((batch) => batch.events),
+      events,
+    );
+    const large = event(1, "x".repeat(1024 * 1024));
+    const sized = yield* ProviderCommitBatch.group(Stream.make(event(0), large, event(2)), 25).pipe(
+      Stream.runCollect,
+    );
+    assert.deepEqual(
+      sized.map((batch) => batch.events.length),
+      [1, 1, 1],
+    );
+    assert.deepEqual(
+      sized.flatMap((batch) => batch.events),
+      [event(0), large, event(2)],
+    );
+  }),
+);
+
+it.effect("delivers the pending prefix before propagating a source failure", () =>
+  Effect.gen(function* () {
+    const observed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    const exit = yield* ProviderCommitBatch.group(
+      Stream.concat(Stream.make(event(1), event(2)), Stream.fail("provider failed")),
+      25,
+    ).pipe(
+      Stream.runForEach((batch) => Effect.sync(() => observed.push(...batch.events))),
+      Effect.exit,
+    );
+    assert.deepEqual(observed, [event(1), event(2)]);
+    assert.deepEqual(exit, Exit.fail("provider failed"));
+  }),
+);
+
+it.effect("keeps controls and individual writes immediate when the window is disabled", () =>
+  Effect.gen(function* () {
+    const batches = yield* ProviderCommitBatch.group(
+      Stream.make(event(1), control, event(2)),
+      0,
+    ).pipe(Stream.runCollect);
+    assert.deepEqual(
+      batches.map((batch) => batch.events),
+      [[event(1)], [control], [event(2)]],
+    );
+  }),
 );

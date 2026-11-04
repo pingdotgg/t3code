@@ -13,7 +13,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,6 +22,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
@@ -35,7 +35,6 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -68,10 +67,22 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
+interface ProviderBatchPublication {
+  readonly publish: Array<Effect.Effect<void>>;
+  eventCount: number;
+}
+const CurrentProviderBatch = Context.Reference<ProviderBatchPublication | undefined>(
+  "t3/orchestration-v2/EventSink/CurrentProviderBatch",
+  { defaultValue: () => undefined },
+);
+
 export interface EventSinkV2Shape {
+  /** Normalize and persist an ordered group against one transaction; publish after its commit. */
+  readonly withProviderBatch: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EventSinkV2Error, R>;
+
   readonly write: (input: {
-    /** Group independent provider snapshots; return only after commit and publication. */
-    readonly batch?: boolean;
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
@@ -413,7 +424,6 @@ const layerBase: Layer.Layer<
 
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
-      grouped = false,
     ) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.command_id": input.commandId ?? null,
@@ -421,7 +431,9 @@ const layerBase: Layer.Layer<
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
 
-      const { committed } = yield* (grouped ? commitThenPublishNow : commitThenPublish)(
+      const batch = yield* CurrentProviderBatch;
+      if (batch !== undefined) batch.eventCount += input.events.length;
+      const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
@@ -882,64 +894,61 @@ const layerBase: Layer.Layer<
       );
     };
 
-    const rawWindow = yield* Config.String("T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS").pipe(
-      Config.withDefault("0"),
-      Effect.orDie,
-    );
-    const window = Number(rawWindow);
-    const batch =
-      Number.isInteger(window) && window > 0
-        ? yield* ProviderCommitBatch.make(
-            (events) =>
-              writeEffect({ events, effects: [], guardPendingUserInputCancellations: true }, true),
-            Math.min(window, 25),
-          )
-        : undefined;
-
-    const commitThenPublish: typeof commitThenPublishNow = (transaction, publish) => {
-      const effect = commitThenPublishNow(transaction, publish);
-      if (batch === undefined) return effect;
-      // A caller holding the writer cannot wait for another fiber to acquire it.
-      return Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
-        Option.isSome(existing) ? effect : batch.barrier(effect),
+    const commitThenPublish: typeof commitThenPublishNow = (transaction, publish) =>
+      Effect.flatMap(CurrentProviderBatch, (batch) =>
+        batch === undefined
+          ? commitThenPublishNow(transaction, publish)
+          : transaction.pipe(
+              Effect.tap((committed) =>
+                Effect.sync(() => {
+                  batch.publish.push(publish(committed));
+                }),
+              ),
+            ),
       );
-    };
 
-    const write: EventSinkV2Shape["write"] = (input) => {
-      const immediate = writeEffect({ ...input, effects: [] });
-      const eligible =
-        batch !== undefined &&
-        input.batch === true &&
-        input.commandId === undefined &&
-        input.unlessNativeThreadOwned === undefined &&
-        input.events.length > 0 &&
-        input.events.every(
-          (event) =>
-            event.type === "node.updated" ||
-            event.type === "message.updated" ||
-            event.type === "turn-item.updated" ||
-            event.type === "plan.updated",
-        );
-      return (
-        eligible
-          ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
-              Option.isSome(existing) ? immediate : batch.write(input.events),
-            )
-          : immediate
+    const withProviderBatch: EventSinkV2Shape["withProviderBatch"] = Effect.fn(
+      "orchestrationV2.EventSink.providerBatch",
+    )(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      if ((yield* CurrentProviderBatch) !== undefined) return yield* effect;
+      const batch: ProviderBatchPublication = { publish: [], eventCount: 0 };
+      let started = false;
+      const result = yield* commitThenPublishNow(
+        Effect.sync(() => {
+          started = true;
+        }).pipe(Effect.andThen(Effect.provideService(effect, CurrentProviderBatch, batch))),
+        () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
       ).pipe(
+        // Normalization mutates run-local state, so only retry before its transaction body starts.
+        Effect.retry({
+          while: (cause) =>
+            !started && SqlError.isSqlError(cause) && cause.reason._tag === "LockTimeoutError",
+          times: 2,
+        }),
         Effect.mapError(
-          (cause) =>
-            new EventSinkWriteError({
-              eventCount: input.events.length,
-              ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-              cause,
-            }),
+          (cause) => new EventSinkWriteError({ eventCount: batch.eventCount, cause }),
         ),
       );
-    };
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": batch.eventCount,
+        "orchestration_v2.batch_writes": batch.publish.length,
+      });
+      return result;
+    });
 
     return EventSinkV2.of({
-      write,
+      withProviderBatch,
+      write: (input) =>
+        writeEffect({ ...input, effects: [] }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                eventCount: input.events.length,
+                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                cause,
+              }),
+          ),
+        ),
       writeWithEffects: (input) =>
         writeEffect(input).pipe(
           Effect.mapError(

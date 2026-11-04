@@ -1,131 +1,114 @@
-import type { OrchestrationV2DomainEvent, OrchestrationV2StoredEvent } from "@t3tools/contracts";
-import * as Deferred from "effect/Deferred";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Semaphore from "effect/Semaphore";
-import * as Schema from "effect/Schema";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 
 const MAX_EVENTS = 64;
 const MAX_BYTES = 1024 * 1024;
 const encodeQueue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-export const make = Effect.fn("ProviderCommitBatch.make")(function* <E>(
-  commit: (
-    events: ReadonlyArray<OrchestrationV2DomainEvent>,
-  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, E>,
-  windowMs: number,
-) {
-  const scope = yield* Effect.scope;
-  const lane = yield* Semaphore.make(1);
-  type Pending = {
-    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly bytes: number;
-    readonly result: Deferred.Deferred<ReadonlyArray<OrchestrationV2StoredEvent>, E>;
-  };
-  let pending: Array<Pending> = [];
-  let eventCount = 0;
-  let byteCount = 0;
-  let generation = 0;
-  let closed = false;
-  let openedAt = 0;
+export const windowMs = Config.String("T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS").pipe(
+  Config.withDefault("0"),
+  Effect.map((raw) => {
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? Math.min(value, 25) : 0;
+  }),
+  Effect.orDie,
+);
 
-  // The lane stays held through commit, publication and acknowledgement.
-  const flush = Effect.fn("orchestrationV2.EventSink.flushProviderBatch")(function* (
-    reason: "deadline" | "limit" | "barrier" | "shutdown",
-  ) {
-    if (pending.length === 0) return;
-    const batch = pending;
-    pending = [];
-    yield* Effect.annotateCurrentSpan({
-      "orchestration_v2.batch_requests": batch.length,
-      "orchestration_v2.event_count": eventCount,
-      "orchestration_v2.queued_json_bytes": byteCount,
-      "orchestration_v2.batch_threads": new Set(
-        batch.flatMap((entry) => entry.events.map((event) => event.threadId)),
-      ).size,
-      "orchestration_v2.commit_window_ms": windowMs,
-      "orchestration_v2.batch_wait_ms": (yield* Clock.currentTimeMillis) - openedAt,
-      "orchestration_v2.batch_flush_reason": reason,
-    });
-    eventCount = 0;
-    byteCount = 0;
-    generation++;
-    const exit = yield* Effect.exit(commit(batch.flatMap((entry) => entry.events)));
-    // Unguarded snapshots preserve one stored event per input, in input order.
-    let offset = 0;
-    for (const entry of batch) {
-      yield* Deferred.done(
-        entry.result,
-        Exit.isFailure(exit)
-          ? exit
-          : Exit.succeed(exit.value.slice(offset, offset + entry.events.length)),
-      );
-      offset += entry.events.length;
-    }
-  }, Effect.uninterruptible);
+type Event = ProviderAdapter.ProviderAdapterV2Event;
+interface Batch {
+  readonly events: ReadonlyArray<Event>;
+  readonly bytes: number;
+  readonly openedAt: number;
+  readonly reason: "deadline" | "limit" | "control" | "end" | "failure";
+}
 
-  yield* Effect.addFinalizer(() =>
-    lane.withPermits(1)(
-      Effect.sync(() => {
-        closed = true;
-      }).pipe(Effect.andThen(flush("shutdown"))),
+const isSnapshot = (event: Event) =>
+  event.type === "node.updated" ||
+  event.type === "message.updated" ||
+  event.type === "turn_item.updated" ||
+  event.type === "plan.updated";
+
+export function group<E, R>(source: Stream.Stream<Event, E, R>, window: number) {
+  if (window === 0)
+    return source.pipe(
+      Stream.map((event): Batch => ({ events: [event], bytes: 0, openedAt: 0, reason: "control" })),
+    );
+  type Signal =
+    | { readonly _tag: "Event"; readonly event: Event; readonly bytes: number }
+    | { readonly _tag: "Failure"; readonly cause: Cause.Cause<E | Schema.SchemaError> }
+    | { readonly _tag: "End" };
+  const signals = source.pipe(
+    Stream.mapEffect((event) =>
+      (isSnapshot(event)
+        ? encodeQueue(event).pipe(Effect.map((encoded) => Buffer.byteLength(encoded)))
+        : Effect.succeed(0)
+      ).pipe(Effect.map((bytes): Signal => ({ _tag: "Event", event, bytes }))),
     ),
+    // A failed source must not discard the prefix already collected by the sink.
+    Stream.catchCause((cause) => Stream.succeed<Signal>({ _tag: "Failure", cause })),
+    Stream.concat(Stream.succeed<Signal>({ _tag: "End" })),
   );
-
-  // Per-write calls share the batch's tracing boundary.
-  const write = Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
-    const result = yield* Deferred.make<ReadonlyArray<OrchestrationV2StoredEvent>, E>();
-    const entry: Pending = { events, result, bytes: Buffer.byteLength(yield* encodeQueue(events)) };
-    yield* lane.withPermits(1)(
+  const collect = Sink.fold(
+    () => ({ signals: [] as Array<Signal>, bytes: 0, openedAt: 0, stop: false }),
+    (state) => !state.stop,
+    (state, signal: Signal) =>
       Effect.gen(function* () {
-        if (closed) return yield* Effect.interrupt;
-        if (eventCount + events.length > MAX_EVENTS || byteCount + entry.bytes > MAX_BYTES) {
-          yield* flush("limit");
-        }
-        const opensWindow = pending.length === 0;
-        if (opensWindow) openedAt = yield* Clock.currentTimeMillis;
-        pending.push(entry);
-        eventCount += events.length;
-        byteCount += entry.bytes;
-        if (eventCount >= MAX_EVENTS || byteCount >= MAX_BYTES) {
-          yield* flush("limit");
-        } else if (opensWindow) {
-          const token = ++generation;
-          yield* Effect.sleep(windowMs).pipe(
-            Effect.andThen(
-              lane.withPermits(1)(
-                Effect.suspend(() => (token === generation ? flush("deadline") : Effect.void)),
-              ),
-            ),
-            Effect.interruptible,
-            Effect.forkIn(scope, { startImmediately: true }),
-          );
-        }
+        if (state.signals.length === 0) state.openedAt = yield* Clock.currentTimeMillis;
+        state.signals.push(signal);
+        if (signal._tag === "Event") state.bytes += signal.bytes;
+        state.stop =
+          signal._tag !== "Event" ||
+          !isSnapshot(signal.event) ||
+          state.signals.length >= MAX_EVENTS ||
+          state.bytes >= MAX_BYTES;
+        return state;
       }),
-    );
-    return yield* Deferred.await(result).pipe(
-      Effect.onInterrupt(() =>
-        lane.withPermits(1)(
-          Effect.sync(() => {
-            const index = pending.indexOf(entry);
-            if (index < 0) return;
-            pending.splice(index, 1);
-            eventCount -= events.length;
-            byteCount -= entry.bytes;
-            if (pending.length === 0) generation++;
-          }),
+  );
+  return signals.pipe(
+    Stream.aggregateWithin(collect, Schedule.spaced(window)),
+    Stream.flatMap((state) => {
+      const groups: Array<Batch | Extract<Signal, { _tag: "Failure" }>> = [];
+      let events: Array<Event> = [];
+      let bytes = 0;
+      const flush = (reason: Batch["reason"]) => {
+        if (events.length === 0) return;
+        groups.push({ events, bytes, openedAt: state.openedAt, reason });
+        events = [];
+        bytes = 0;
+      };
+      for (const signal of state.signals) {
+        if (signal._tag === "Failure") {
+          flush("failure");
+          groups.push(signal);
+        } else if (signal._tag === "End") flush("end");
+        else if (!isSnapshot(signal.event)) {
+          flush("control");
+          groups.push({
+            events: [signal.event],
+            bytes: signal.bytes,
+            openedAt: state.openedAt,
+            reason: "control",
+          });
+        } else {
+          if (bytes + signal.bytes > MAX_BYTES) flush("limit");
+          events.push(signal.event);
+          bytes += signal.bytes;
+          if (bytes >= MAX_BYTES || events.length >= MAX_EVENTS) flush("limit");
+        }
+      }
+      flush("deadline");
+      return Stream.fromArray(groups).pipe(
+        Stream.mapEffect((batch) =>
+          "_tag" in batch ? Effect.failCause(batch.cause) : Effect.succeed(batch),
         ),
-      ),
-    );
-  });
-
-  const barrier = <A, E2, R>(effect: Effect.Effect<A, E2, R>) =>
-    lane.withPermits(1)(
-      Effect.suspend(() =>
-        closed ? Effect.interrupt : flush("barrier").pipe(Effect.andThen(effect)),
-      ),
-    );
-
-  return { write, barrier };
-});
+      );
+    }),
+  );
+}

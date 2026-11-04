@@ -30,7 +30,6 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -328,34 +327,27 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
 );
 
 it.effect(
-  "group commits streaming writes atomically, preserves barriers and bypasses existing transactions",
+  "commits an ordered provider batch atomically and publishes only after the outer commit",
   () =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
-      const store = yield* EventStore.EventStoreV2;
-      const sql = yield* SqlClient.SqlClient;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const store = yield* EventStore.EventStoreV2;
       const now = yield* DateTime.now;
-      const threads = [1, 2].map((id) =>
-        makeThread(ThreadId.make(`thread:group-commit:${id}`), now),
-      );
-      yield* sink.write({
-        events: threads.map((thread, id) =>
-          threadCreatedEvent({ id: `group-created:${id}`, thread, now }),
-        ),
-      });
-      const message = (index: number, id: string): OrchestrationV2DomainEvent => ({
+      const thread = makeThread(ThreadId.make("thread:single-stream-batch"), now);
+      yield* sink.write({ events: [threadCreatedEvent({ id: "batch-created", thread, now })] });
+      const message = (id: string): OrchestrationV2DomainEvent => ({
         id: EventId.make(id),
         type: "message.updated",
-        threadId: threads[index]!.id,
+        threadId: thread.id,
         occurredAt: now,
         payload: {
-          id: MessageId.make(`group-message:${index}`),
-          threadId: threads[index]!.id,
+          id: MessageId.make("batch-message"),
+          threadId: thread.id,
           runId: null,
           nodeId: null,
           createdBy: "agent",
-          creationSource: "web",
+          creationSource: "provider",
           role: "assistant",
           text: id,
           streaming: true,
@@ -365,72 +357,57 @@ it.effect(
         },
       });
       const highWater = yield* sink.latestSequence();
-      const first = yield* sink
-        .write({ batch: true, events: [message(0, "group-duplicate")] })
-        .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
-      const second = yield* sink
-        .write({ batch: true, events: [message(1, "group-duplicate")] })
-        .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
-      yield* TestClock.adjust(0);
+      const failed = yield* sink
+        .withProviderBatch(
+          Effect.gen(function* () {
+            yield* sink.write({ events: [message("batch-duplicate")] });
+            yield* sink.write({ events: [message("batch-duplicate")] });
+          }),
+        )
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
       assert.equal(yield* sink.latestSequence(), highWater);
-      yield* TestClock.adjust(25);
-      assert.isTrue(Exit.isFailure(yield* Fiber.join(first)));
-      assert.isTrue(Exit.isFailure(yield* Fiber.join(second)));
-      assert.equal(yield* sink.latestSequence(), highWater);
-      assert.equal(
-        (yield* projections.getThreadRecords(threads[0]!.id, ["messages"])).messages.length,
-        0,
-      );
-      assert.equal(
-        (yield* projections.getThreadRecords(threads[1]!.id, ["messages"])).messages.length,
-        0,
-      );
+      assert.isEmpty((yield* projections.getThreadRecords(thread.id, ["messages"])).messages);
 
-      const live = yield* sink
-        .stream({ afterSequence: highWater })
-        .pipe(Stream.take(3), Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
-      const pending = yield* sink
-        .write({ batch: true, events: [message(0, "group-first")] })
-        .pipe(Effect.forkScoped({ startImmediately: true }));
-      yield* TestClock.adjust(0);
-      const [control] = yield* sink.write({
-        events: [
-          {
-            id: EventId.make("group-control"),
-            threadId: threads[1]!.id,
-            occurredAt: now,
-            payload: threads[1]!,
-            type: "thread.metadata-updated",
-          },
-        ],
-      });
-      const [committed] = yield* Fiber.join(pending);
-      assert.isBelow(committed!.sequence, control!.sequence);
-      // Holding the writer must not wait for a batch worker to acquire that same connection.
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sink.write({ batch: true, events: [message(1, "group-nested")] });
-          assert.equal(
-            (yield* projections.getThreadRecords(threads[1]!.id, ["messages"])).messages[0]?.text,
-            "group-nested",
-          );
-        }),
+      const firstPublished = yield* Deferred.make<void>();
+      const writesApplied = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const live = yield* sink.stream({ afterSequence: highWater }).pipe(
+        Stream.tap(() => Deferred.succeed(firstPublished, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped({ startImmediately: true }),
       );
+      const batch = yield* sink
+        .withProviderBatch(
+          Effect.gen(function* () {
+            yield* sink.write({ events: [message("batch-first")] });
+            yield* sink.write({ events: [message("batch-second")] });
+            assert.equal(
+              (yield* projections.getThreadRecords(thread.id, ["messages"])).messages[0]?.text,
+              "batch-second",
+            );
+            yield* Deferred.succeed(writesApplied, undefined);
+            yield* Deferred.await(release);
+          }),
+        )
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(writesApplied);
+      yield* TestClock.adjust(0);
+      assert.isFalse(yield* Deferred.isDone(firstPublished));
+      assert.isUndefined(yield* Effect.sync(() => batch.pollUnsafe()));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(batch);
       const published = yield* Fiber.join(live);
-      const replayed = yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect);
       assert.deepEqual(
         published.map((stored) => stored.event.id),
-        ["group-first", "group-control", "group-nested"],
+        ["batch-first", "batch-second"],
       );
-      assert.deepEqual(replayed, published);
-    }).pipe(
-      Effect.provide(Layer.fresh(layerTest)),
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromUnknown({ T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS: "25" }),
-      ),
-      Effect.scoped,
-    ),
+      assert.deepEqual(
+        yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect),
+        published,
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest)), Effect.scoped),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
@@ -3322,87 +3299,101 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
   );
 });
 
-it.effect("publishes live events in commit order across concurrent writers", () =>
-  Effect.gen(function* () {
-    const firstCommitted = yield* Deferred.make<void>();
-    const releaseFirst = yield* Deferred.make<void>();
-    const layerPausingOutbox = Layer.effect(
-      EffectOutbox.EffectOutboxV2,
-      Effect.gen(function* () {
-        const delegate = yield* EffectOutbox.EffectOutboxV2;
-        return EffectOutbox.EffectOutboxV2.of({
-          ...delegate,
-          notifyAvailable: (count) =>
-            Deferred.succeed(firstCommitted, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseFirst)),
-              Effect.andThen(delegate.notifyAvailable(count)),
-            ),
-        });
-      }),
-    ).pipe(Layer.provide(layerEffectOutboxProvided));
-    const layerEventSink = EventSink.layerFromStores.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerStoresProvided,
-          layerPausingOutbox,
-          layerCommandReceiptStoreProvided,
-          ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
-          TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+it.effect.each(["direct", "provider-batch", "cancel-provider-batch"] as const)(
+  "publishes live events in commit order across concurrent writers with %s",
+  (mode) =>
+    Effect.gen(function* () {
+      const firstCommitted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const layerPausingOutbox = Layer.effect(
+        EffectOutbox.EffectOutboxV2,
+        Effect.gen(function* () {
+          const delegate = yield* EffectOutbox.EffectOutboxV2;
+          return EffectOutbox.EffectOutboxV2.of({
+            ...delegate,
+            notifyAvailable: (count) =>
+              Deferred.succeed(firstCommitted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirst)),
+                Effect.andThen(delegate.notifyAvailable(count)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(layerEffectOutboxProvided));
+      const layerEventSink = EventSink.layerFromStores.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerStoresProvided,
+            layerPausingOutbox,
+            layerCommandReceiptStoreProvided,
+            ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
+            TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+          ),
         ),
-      ),
-    );
-
-    yield* Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      const first = makeThread(ThreadId.make("thread:foundation-publish-order:first"), now);
-      const second = makeThread(ThreadId.make("thread:foundation-publish-order:second"), now);
-      const published = yield* eventSink
-        .stream({ afterSequence: yield* eventSink.latestSequence() })
-        .pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
-
-      const firstWrite = yield* eventSink
-        .writeWithEffects({
-          events: [
-            threadCreatedEvent({ id: "event:foundation-publish-order:first", thread: first, now }),
-          ],
-          effects: [
-            {
-              id: "effect:foundation-publish-order:first",
-              commandId: CommandId.make("command:foundation-publish-order:first"),
-              threadId: first.id,
-              request: { type: "terminal.cleanup" },
-            },
-          ],
-        })
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(firstCommitted);
-      const secondWrite = yield* eventSink
-        .write({
-          events: [
-            threadCreatedEvent({
-              id: "event:foundation-publish-order:second",
-              thread: second,
-              now,
-            }),
-          ],
-        })
-        .pipe(
-          Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.POSITIVE_INFINITY),
-          Effect.forkScoped,
-        );
-      yield* Effect.yieldNow;
-      yield* Deferred.succeed(releaseFirst, undefined);
-      yield* Fiber.join(firstWrite);
-      yield* Fiber.join(secondWrite);
-
-      const sequences = Array.from(yield* Fiber.join(published), (stored) => stored.sequence);
-      assert.deepEqual(
-        sequences,
-        [...sequences].sort((left, right) => left - right),
       );
-    }).pipe(Effect.provide(layerEventSink));
-  }).pipe(Effect.provide(layerDatabase)),
+
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const first = makeThread(ThreadId.make("thread:foundation-publish-order:first"), now);
+        const second = makeThread(ThreadId.make("thread:foundation-publish-order:second"), now);
+        const published = yield* eventSink
+          .stream({ afterSequence: yield* eventSink.latestSequence() })
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped({ startImmediately: true }));
+
+        const firstWrite = yield* eventSink
+          .writeWithEffects({
+            events: [
+              threadCreatedEvent({
+                id: "event:foundation-publish-order:first",
+                thread: first,
+                now,
+              }),
+            ],
+            effects: [
+              {
+                id: "effect:foundation-publish-order:first",
+                commandId: CommandId.make("command:foundation-publish-order:first"),
+                threadId: first.id,
+                request: { type: "terminal.cleanup" },
+              },
+            ],
+          })
+          .pipe(
+            (write) => (mode === "direct" ? write : eventSink.withProviderBatch(write)),
+            Effect.forkScoped,
+          );
+        yield* Deferred.await(firstCommitted);
+        const secondWrite = yield* eventSink
+          .write({
+            events: [
+              threadCreatedEvent({
+                id: "event:foundation-publish-order:second",
+                thread: second,
+                now,
+              }),
+            ],
+          })
+          .pipe(
+            Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.POSITIVE_INFINITY),
+            Effect.forkScoped,
+          );
+        yield* Effect.yieldNow;
+        const interrupted =
+          mode === "cancel-provider-batch"
+            ? yield* Fiber.interrupt(firstWrite).pipe(Effect.forkScoped({ startImmediately: true }))
+            : undefined;
+        yield* Deferred.succeed(releaseFirst, undefined);
+        if (interrupted !== undefined) yield* Fiber.join(interrupted);
+        else yield* Fiber.join(firstWrite);
+        yield* Fiber.join(secondWrite);
+
+        const sequences = Array.from(yield* Fiber.join(published), (stored) => stored.sequence);
+        assert.deepEqual(
+          sequences,
+          [...sequences].sort((left, right) => left - right),
+        );
+      }).pipe(Effect.provide(layerEventSink));
+    }).pipe(Effect.provide(layerDatabase)),
 );
 
 it.effect.each(["events", "receipts"] as const)(
