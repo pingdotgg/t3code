@@ -66,24 +66,31 @@ export function isJsonToolText(text: string): boolean {
   return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
 }
 
-// JSON.parse rounds integers beyond 2^53; strings match whole so digit runs inside them are skipped.
-const LONG_JSON_NUMBER = /"(?:[^"\\]|\\.)*"|\d{16,}/g;
+// Strings match whole so numbers inside them are skipped. Scan only parsed JSON: every string closes.
+const JSON_STRING_OR_NUMBER = /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
 
-function hasUnsafeJsonInteger(text: string): boolean {
-  for (const [token] of text.matchAll(LONG_JSON_NUMBER)) {
-    if (!token.startsWith('"') && !Number.isSafeInteger(Number(token))) return true;
+/** JSON.parse rounds integers beyond 2^53, so reformatting would show values the tool never returned. */
+function hasUnsafeJsonInteger(json: string): boolean {
+  for (const [token] of json.matchAll(JSON_STRING_OR_NUMBER)) {
+    if (token.startsWith('"')) continue;
+    const value = Number(token);
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) return true;
   }
   return false;
 }
 
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
-  if (!/^[[{]/.test(trimmed) || hasUnsafeJsonInteger(trimmed)) return text;
+  if (!/^[[{]/.test(trimmed)) return text;
   const whole = parseJson(trimmed);
-  if (whole !== undefined) return JSON.stringify(whole, null, 2);
+  if (whole !== undefined) {
+    return hasUnsafeJsonInteger(trimmed) ? text : JSON.stringify(whole, null, 2);
+  }
   const lines = trimmed.split("\n").filter((line) => line.trim());
   const documents = lines.map((line) => parseJson(line.trim()));
-  if (documents.some((document) => document === undefined)) return text;
+  if (documents.some((document) => document === undefined) || hasUnsafeJsonInteger(trimmed)) {
+    return text;
+  }
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
