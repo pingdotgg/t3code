@@ -20,6 +20,7 @@ import {
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
+  type ScopedProjectRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -1048,6 +1049,22 @@ export function pullRequestMatchesSearchQuery(
   return normalizedQuery.split(" ").every((token) => haystack.includes(token));
 }
 
+export function scopeSidebarProjectKeysToEnvironment(
+  projectKeys: ReadonlySet<string> | null,
+  environmentId: EnvironmentId | null,
+  projectRefs: readonly ScopedProjectRef[],
+): ReadonlySet<string> | null {
+  if (environmentId === null) return projectKeys;
+  return new Set(
+    projectRefs.flatMap((ref) => {
+      const key = `${ref.environmentId}:${ref.projectId}`;
+      return ref.environmentId === environmentId && (projectKeys === null || projectKeys.has(key))
+        ? [key]
+        : [];
+    }),
+  );
+}
+
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;
@@ -1055,7 +1072,9 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
 }): readonly TItem[] {
   const query = input.query.trim();
   if (query.length === 0) return input.items;
-  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+  return input.items.filter(
+    (item) => item.value !== "all" && item.value !== "all-machines" && input.matches(item, query),
+  );
 }
 
 interface SidebarProjectScopeMenuState {

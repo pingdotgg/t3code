@@ -34,6 +34,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  scopeSidebarProjectKeysToEnvironment,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -58,6 +59,44 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("scopeSidebarProjectKeysToEnvironment", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const refs = [
+    { environmentId: localEnvironmentId, projectId: ProjectId.make("shared") },
+    { environmentId: remoteEnvironmentId, projectId: ProjectId.make("shared") },
+    { environmentId: remoteEnvironmentId, projectId: ProjectId.make("other") },
+  ];
+
+  it.each([
+    { projects: null, machine: null, expected: null },
+    {
+      projects: null,
+      machine: remoteEnvironmentId,
+      expected: ["environment-remote:shared", "environment-remote:other"],
+    },
+    {
+      projects: ["environment-local:shared", "environment-remote:shared"],
+      machine: remoteEnvironmentId,
+      expected: ["environment-remote:shared"],
+    },
+    { projects: ["environment-local:shared"], machine: remoteEnvironmentId, expected: [] },
+    {
+      projects: ["environment-local:shared"],
+      machine: null,
+      expected: ["environment-local:shared"],
+    },
+    { projects: null, machine: EnvironmentId.make("empty"), expected: [] },
+  ])(
+    "intersects project scope $projects with machine $machine",
+    ({ projects, machine, expected }) => {
+      const keys = projects === null ? null : new Set(projects);
+      expect(scopeSidebarProjectKeysToEnvironment(keys, machine, refs)).toEqual(
+        expected === null ? null : new Set(expected),
+      );
+    },
+  );
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
