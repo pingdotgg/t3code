@@ -4,7 +4,7 @@ T3 Code shows a setup flow when you open a new installation. Existing
 workspaces skip this flow.
 
 The hosted app at app.t3.codes does not open setup. With no computer connected,
-it asks you to sign in to T3 Connect, then to run `npx t3 connect` on your
+it asks you to sign in to T3 Connect, then to run `t3-learn connect` on your
 computer. From home, it adds compatible computers linked to your account and
 opens the app.
 
@@ -22,13 +22,13 @@ browser.
 You can add more computers before continuing:
 
 - **T3 Connect** connects computers that are signed in to your account.
-  [Install the CLI](./install.md#command-line) and run `t3 connect` on each
-  computer you want to add, then start T3 Code or run `t3 serve` so the
+  [Install the CLI](./install.md#command-line) and run `t3-learn connect` on each
+  computer you want to add, then start T3 Code or run `t3-learn serve` so the
   computer stays available.
 - **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `t3 serve`, then run `t3 pair --tailscale` and paste
-  the pairing link. You can also run `t3 serve --host <address>` and use
-  `t3 pair` when the server is already reachable on your network.
+  Start the server with `t3-learn serve`, then run `t3-learn pair --tailscale` and paste
+  the pairing link. You can also run `t3-learn serve --host <address>` and use
+  `t3-learn pair` when the server is already reachable on your network.
 
 A computer marked **Client not supported** runs a T3 Code version that cannot
 talk to this app. The message under its name says which side to update.
