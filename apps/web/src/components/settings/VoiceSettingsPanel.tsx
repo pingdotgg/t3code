@@ -1043,6 +1043,20 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
         <SettingsRow
+          {...searchableSetting("speech-silence-filtering")}
+          title="Silence filtering"
+          description="Skip non-speech audio before transcription. Keeps a short buffer around speech to preserve words."
+          control={
+            <Switch
+              aria-label="Silence filtering"
+              checked={settings.speechSilenceFiltering}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ speechSilenceFiltering: checked })
+              }
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("remove-filler-words")}
           title="Remove filler words"
           description="Drop hesitation sounds such as um and uh from transcripts."
