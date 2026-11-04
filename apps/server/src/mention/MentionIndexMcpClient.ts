@@ -215,16 +215,15 @@ function mcpErrorMessage(error: unknown, fallback: string): string {
   return typeof message === "string" ? message : fallback;
 }
 
+type StdioPending = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+};
+
 /** Test helper: settle one stdio JSON-RPC line against pending request waiters. */
 export function settleStdioMcpResponseLine(
   line: string,
-  pending: Map<
-    number,
-    {
-      readonly resolve: (value: unknown) => void;
-      readonly reject: (error: Error) => void;
-    }
-  >,
+  pending: Map<number, StdioPending>,
   serverName: string,
 ): void {
   const envelope = asRecord(parseJsonOrNull(line));
@@ -409,11 +408,6 @@ export function parseMcpHttpResponseBody(input: {
   if (input.text.trim().length === 0) return null;
   return parseJsonOrNull(input.text);
 }
-
-type StdioPending = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-};
 
 type StdioResource = {
   readonly child: NodeChildProcess.ChildProcess;
@@ -620,14 +614,14 @@ const make = Effect.gen(function* () {
           capabilities: {},
           clientInfo: { name: "t3code-mention-index", version: "1" },
         }).pipe(
-          Effect.flatMap(() =>
+          Effect.andThen(
             Effect.sync(() => {
               stdin.write(
                 `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
               );
             }),
           ),
-          Effect.flatMap(() => use(session)),
+          Effect.andThen(use(session)),
           Effect.ensuring(
             Effect.sync(() => {
               lines.off("line", onLine);
