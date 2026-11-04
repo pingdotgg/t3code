@@ -187,6 +187,43 @@ describe("CDP relay popups", () => {
   const resultOf = (written: Array<Record<string, unknown>>, id: number) =>
     written.find((message) => message["id"] === id)!;
 
+  it("detaches an announced popup session without closing its native window or detaching the opener", async () => {
+    const pageSend = vi.fn(async () => ({}));
+    const popupSend = vi.fn(async () => ({}));
+    const closePopup = vi.fn();
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(pageSend), (raw) => written.push(JSON.parse(raw)));
+    relay.addPopup(makePopup("POPUP", popupSend, closePopup));
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach" }));
+    await settle();
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-popup-1" },
+      }),
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 3,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page" },
+      }),
+    );
+    await settle();
+    expect(resultOf(written, 2)).toHaveProperty("result");
+    relay.receive(
+      JSON.stringify({ id: 4, method: "Runtime.evaluate", sessionId: "t3-preview-popup-1" }),
+    );
+    relay.receive(JSON.stringify({ id: 5, method: "Page.enable", sessionId: "t3-preview-page" }));
+    await settle();
+    expect(resultOf(written, 4)).toHaveProperty("error");
+    expect(popupSend).not.toHaveBeenCalled();
+    expect(closePopup).not.toHaveBeenCalled();
+    expect(pageSend).toHaveBeenCalledExactlyOnceWith("Page.enable", {}, undefined, undefined);
+    expect(resultOf(written, 5)).toHaveProperty("result");
+  });
+
   it.each(["browser", "popup", "child"])(
     "detaches a popup child through its %s session without affecting the other sessions",
     async (source) => {

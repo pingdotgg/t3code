@@ -257,7 +257,7 @@ export function createCdpRelayConnection(
             undefined,
           );
           children.delete(sessionId as string);
-        } else if (session?.kind === "page" && sessionId !== session.owner.sessionId) {
+        } else if (session?.kind === "page" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId as string);
           session.owner.target.sessionDetached?.(sessionId as string);
         } else if (session?.kind === "browser") {
