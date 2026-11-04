@@ -1915,13 +1915,15 @@ export default function ChatView(props: ChatViewProps) {
     if (terminalEditorEnvironmentId === null) return;
     return registerTerminalEditorHost({
       environmentId: terminalEditorEnvironmentId,
-      open: (command) =>
-        runProjectScriptStable(
+      open: (command) => {
+        if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
+        return runProjectScriptStable(
           { id: "terminal-editor", name: "editor", command },
           { rememberAsLastInvoked: false },
-        ),
+        );
+      },
     });
-  }, [terminalEditorEnvironmentId, runProjectScriptStable]);
+  }, [terminalEditorEnvironmentId, activeThreadRef, runProjectScriptStable]);
   const {
     saveProjectScript: saveProjectScriptStable,
     updateProjectScript: updateProjectScriptStable,
