@@ -1,4 +1,5 @@
-import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
+import { UsagePolling, makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
@@ -613,7 +614,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       );
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
-          if (request.url.endsWith("/api/oauth/usage")) {
+          if (new URL(request.url).pathname === "/api/oauth/usage") {
             return HttpClientResponse.fromWeb(
               request,
               Response.json({
@@ -632,6 +633,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
         }),
       );
+      const host = yield* ProviderHost.ProviderHost;
+      const usageHttpClient = yield* makeUsageHttpClient(client);
       const instanceId = ProviderInstanceId.make("claude_reset");
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: [ClaudeDriver],
@@ -652,7 +655,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             }),
           },
         },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(ProviderHost.ProviderHost, { ...host, usageHttpClient }),
+      );
       const instance = yield* registry.getInstance(instanceId);
       expect(instance).toBeDefined();
       const before = yield* instance!.snapshot.refresh.pipe(
