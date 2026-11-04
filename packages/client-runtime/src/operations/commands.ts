@@ -27,7 +27,7 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
-  queuedOnlyDelegatedTaskRuns,
+  delegatedTaskYieldsLiveRun,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -801,22 +801,35 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
           subagentId: subagent.id,
         }).pipe(Effect.ignore);
       }
-      const child = yield* getProjection(subagent.childThreadId);
-      // The child's live turn belongs to another task when this one's turns are all queued.
-      const queued = queuedOnlyDelegatedTaskRuns(child.runs, subagent.id);
-      if (queued.length > 0) {
-        let result = { sequence: 0 };
-        for (const run of queued) {
-          result = yield* dispatch({
-            type: "queued-run.cancel",
-            commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
-            threadId: subagent.childThreadId,
-            runId: run.id,
-          });
-        }
-        return result;
+      const childThreadId = subagent.childThreadId;
+      const child = yield* getProjection(childThreadId);
+      // The child's live turn belongs to another task, so only this task's queued turns go.
+      if (delegatedTaskYieldsLiveRun(child.runs, subagent.id)) {
+        const cancelled = yield* Effect.gen(function* () {
+          let result = { sequence: 0 };
+          for (const run of child.runs) {
+            if (run.status !== "queued" || run.delegatedTaskId !== subagent.id) continue;
+            result = yield* dispatch({
+              type: "queued-run.cancel",
+              commandId: yield* allocateCommandId({}),
+              threadId: childThreadId,
+              runId: run.id,
+            });
+          }
+          return result;
+        }).pipe(
+          // A queued turn that started meanwhile owns the live turn now; the stop below ends it.
+          Effect.catch((error) =>
+            Effect.flatMap(getProjection(childThreadId), (latest) =>
+              delegatedTaskYieldsLiveRun(latest.runs, subagent.id)
+                ? Effect.fail(error)
+                : Effect.succeed(null),
+            ),
+          ),
+        );
+        if (cancelled !== null) return cancelled;
       }
-      threadId = subagent.childThreadId;
+      threadId = childThreadId;
     } else {
       if (subagent?.runId == null) return { sequence: 0 };
       return yield* dispatch({

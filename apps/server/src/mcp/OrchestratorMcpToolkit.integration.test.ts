@@ -720,12 +720,14 @@ describe("orchestrator MCP toolkit", () => {
             yield* scenario.start;
           const childThreadId = localChild(delegated.childThreadId);
 
-          const cancelCall = yield* invoke("task_cancel", {
+          const cancelQueued = invoke("task_cancel", {
             taskId: queuedFollowup.taskId,
             reason: "Drop only the queued follow-up.",
             clientRequestId: "cancel-queued-followup-task-1",
           });
-          expect(cancelCall.isError).not.toBe(true);
+          expect((yield* cancelQueued).isError).not.toBe(true);
+          // A retry finds the task already settled and must still leave the other task's turn.
+          expect((yield* cancelQueued).isError).not.toBe(true);
 
           const child = yield* orchestrator.getThreadProjection(childThreadId);
           expect({

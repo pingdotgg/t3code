@@ -929,22 +929,22 @@ export function isOrchestrationV2WorkActive(
 }
 
 /**
- * A delegated task's queued child runs, when none of its runs is live. Stopping such a task
- * cancels only these and leaves the child's live turn, which belongs to another task.
+ * Whether the child's live run belongs to another delegated task. Stopping this task then
+ * cancels only its own queued runs instead of stopping the child thread.
  */
-export function queuedOnlyDelegatedTaskRuns(
+export function delegatedTaskYieldsLiveRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   taskId: NodeId,
-): ReadonlyArray<OrchestrationV2Run> {
-  const own = runs.filter((run) => run.delegatedTaskId === taskId);
-  const live = own.some(
+): boolean {
+  return runs.some(
     (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
+      (run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting") &&
+      run.delegatedTaskId !== undefined &&
+      run.delegatedTaskId !== taskId,
   );
-  return live ? [] : own.filter((run) => run.status === "queued");
 }
 
 export const OrchestrationV2CheckpointScope = Schema.Struct({

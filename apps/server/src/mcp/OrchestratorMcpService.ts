@@ -62,7 +62,7 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
-  queuedOnlyDelegatedTaskRuns,
+  delegatedTaskYieldsLiveRun,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
@@ -2637,11 +2637,7 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
-        const { runs } = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
-          .pipe(Effect.mapError(threadManagementFailure));
-        // The child's live turn belongs to another task when this one's turns are all queued.
-        if (queuedOnlyDelegatedTaskRuns(runs, input.taskId).length === 0) {
+        const stopThread = Effect.gen(function* () {
           yield* threadManagement
             .dispatch({
               type: "thread.stop",
@@ -2668,16 +2664,17 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
-        }
-        const stopped = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
-          .pipe(Effect.mapError(threadManagementFailure));
-        for (const run of stopped.runs) {
-          if (
-            run.status !== "queued" ||
-            (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
-          )
-            continue;
+        });
+        const readRuns = threadManagement.getThreadRecords(childThreadId, ["runs"]).pipe(
+          Effect.map(({ runs }) => runs),
+          Effect.mapError(threadManagementFailure),
+        );
+        const ownRun = (run: OrchestrationV2Run) =>
+          run.delegatedTaskId === input.taskId || run.id === current.childRunId;
+        const yieldsLiveRun = delegatedTaskYieldsLiveRun(yield* readRuns, input.taskId);
+        if (!yieldsLiveRun) yield* stopThread;
+        for (const run of yield* readRuns) {
+          if (run.status !== "queued" || !ownRun(run)) continue;
           // Stop preserves the queue for Resume. Cancelling a task must also
           // remove that task's queued turn, including a previously held one.
           yield* threadManagement
@@ -2691,7 +2688,24 @@ const make = Effect.gen(function* () {
               threadId: childThreadId,
               runId: run.id,
             })
-            .pipe(Effect.mapError(threadManagementFailure));
+            .pipe(
+              Effect.mapError(threadManagementFailure),
+              // A turn that started meanwhile is no longer queued; it is stopped below.
+              Effect.catch((error) =>
+                Effect.flatMap(readRuns, (runs) =>
+                  runs.some((latest) => latest.id === run.id && latest.status === "queued")
+                    ? Effect.fail(error)
+                    : Effect.void,
+                ),
+              ),
+            );
+        }
+        // The other task's turn can end and promote this task's queued turn before its cancel lands.
+        if (
+          yieldsLiveRun &&
+          (yield* readRuns).some((run) => ownRun(run) && ThreadManagementService.isActiveRun(run))
+        ) {
+          yield* stopThread;
         }
       });
       // Checked above; a user raising one of these threads meanwhile is
@@ -2742,7 +2756,7 @@ const make = Effect.gen(function* () {
         return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
       }).pipe(Effect.mapError(threadManagementFailure));
       if (isTerminalTaskStatus(current.status)) {
-        // The child can still run work for another turn, so it is stopped either way.
+        // The child can still run work for another turn; another task's live turn is left alone.
         yield* stopWithinLimit;
         const cancelled = yield* cancelOrphan;
         yield* disposeCompletionDelivery;
