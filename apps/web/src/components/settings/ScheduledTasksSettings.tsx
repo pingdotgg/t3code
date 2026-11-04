@@ -1566,7 +1566,10 @@ function ScheduledTaskEditorForm({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
-      modelSelection: selection,
+      // Saves what the picker shows, including Cursor's implicit Standard.
+      modelSelection: traits
+        ? createModelSelection(selection.instanceId, selection.model, traits.modelOptions)
+        : selection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
         clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??

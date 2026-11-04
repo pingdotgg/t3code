@@ -93,7 +93,22 @@ const codex: ServerProvider = {
   slashCommands: [],
   skills: [],
 };
-const providersAtom = Atom.make<ReadonlyArray<ServerProvider>>([codex]);
+const claude: ServerProvider = {
+  ...codex,
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+      }),
+    },
+  ],
+};
+const providersAtom = Atom.make<ReadonlyArray<ServerProvider>>([codex, claude]);
 
 const state = vi.hoisted(() => ({
   connected: true,
@@ -321,5 +336,21 @@ describe("ScheduledTasksSettings", () => {
     await userEvent.click(page.getByRole("dialog").getByRole("button", { name: /GPT-5\.4/ }));
     await expect.element(page.getByRole("radio", { name: "Fast" })).toBeChecked();
     await expect.element(page.getByRole("radio", { name: "Low" })).toBeChecked();
+  });
+
+  it("saves the Standard speed the picker shows for an untouched Fast toggle", async () => {
+    setup();
+    state.taskOverride = {
+      ...task,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+    };
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Save task" }));
+
+    await vi.waitFor(() => expect(state.upserts).toHaveLength(1));
+    expect(state.upserts[0]?.modelSelection.options).toEqual([{ id: "fastMode", value: false }]);
   });
 });
