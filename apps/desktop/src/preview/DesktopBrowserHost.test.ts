@@ -1092,6 +1092,31 @@ describe("DesktopBrowserHost", () => {
       expect(host.placeDownload(late.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-late"]);
 
+      for (const id of [5, 6, 7]) {
+        yield* cdp(key, {
+          id,
+          method: id === 7 ? "Page.startScreencast" : "Page.captureScreenshot",
+          params: { id },
+          sessionId: earlySession,
+        });
+      }
+      yield* settle;
+      yield* cdp(key, {
+        id: 8,
+        method: "Target.detachFromTarget",
+        params: { sessionId: earlySession },
+      });
+      let detached = yield* nextCdp;
+      while (detached["id"] !== 8) detached = yield* nextCdp;
+      yield* TestClock.adjust("1 minute");
+      expect(early.focusEmulation).toEqual([true, false]);
+      early.release();
+      let queued = yield* nextCdp;
+      while (queued["id"] !== 6) queued = yield* nextCdp;
+      expect(queued).toHaveProperty("error");
+      expect(early.sent.filter((id) => id === 5 || id === 6)).toEqual([5]);
+      expect(early.tab.webContents.close).not.toHaveBeenCalled();
+
       late.destroy();
       let closed = yield* nextCdp;
       while (closed["method"] !== "Target.detachedFromTarget") closed = yield* nextCdp;

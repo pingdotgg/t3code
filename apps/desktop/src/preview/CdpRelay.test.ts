@@ -269,7 +269,7 @@ describe("CDP relay popups", () => {
       await settle();
       expect(resultOf(written, 4)).toHaveProperty("error");
       expect(popupSend.mock.calls).toEqual([
-        ["Page.enable", {}, undefined, undefined],
+        ["Page.enable", {}, undefined, popupSession],
         ["DOM.enable", {}, "sibling-frame", undefined],
       ]);
       expect(pageSend.mock.calls).toEqual([["Page.enable", {}, undefined, undefined]]);
@@ -358,7 +358,7 @@ describe("CDP relay popups", () => {
     relay.receive(JSON.stringify({ id: 9, method: "Page.startScreencast", sessionId: extra }));
     relay.receive(JSON.stringify({ id: 10, method: "Page.enable", sessionId: "t3-preview-page" }));
     await settle();
-    expect(earlySend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, undefined]);
+    expect(earlySend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, earlySession]);
     expect(lateSend.mock.calls.at(-1)).toEqual(["Page.startScreencast", {}, undefined, extra]);
     expect(pageSend.mock.calls.at(-1)).toEqual(["Page.enable", {}, undefined, undefined]);
 

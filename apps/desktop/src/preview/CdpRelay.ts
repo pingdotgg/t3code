@@ -289,7 +289,7 @@ export function createCdpRelayConnection(
     const owner = session?.kind === "page" ? session.owner : children.get(child!)?.owner;
     if (owner === undefined) return Promise.reject(new Error("Unknown or detached CDP session"));
     if (command.method === "Target.detachFromTarget") return browserCommand(command);
-    const extra = child === undefined && command.sessionId !== owner.sessionId;
+    const extra = child === undefined && command.sessionId !== PAGE_SESSION_ID;
     // Child frames/workers pause on auto-attach until resumed; only a main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
       return Promise.resolve({});
