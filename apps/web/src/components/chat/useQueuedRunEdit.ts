@@ -39,7 +39,7 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
-import { buildMessageContext } from "../../lib/composerContextRecords";
+import { asKnownContextRecord, buildMessageContext } from "../../lib/composerContextRecords";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -231,9 +231,20 @@ export function useQueuedRunEdit(input: {
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
     const text = stripAttachmentOnlyBootstrapPrompt(request.text);
+    const context = serverProjection?.messages.find(
+      (message) => message.id === request.messageId,
+    )?.context;
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, text);
+    store.addThreadContexts(
+      target,
+      (context?.records ?? []).flatMap((record) => {
+        const known = asKnownContextRecord(record);
+        return known?.kind === "thread" ? [known] : [];
+      }),
+      { appendReference: false },
+    );
     const threadRef = { environmentId, threadId: activeThreadId };
     queuedRunEdits.begin(
       editKey,
@@ -243,8 +254,7 @@ export function useQueuedRunEdit(input: {
         messageId: request.messageId,
         originalText: text,
         existingAttachments: request.attachments,
-        context: serverProjection?.messages.find((message) => message.id === request.messageId)
-          ?.context,
+        context,
       },
       {
         runs: makeQueuedRunsAtom({
