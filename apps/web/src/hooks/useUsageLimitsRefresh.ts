@@ -27,7 +27,7 @@ export function useUsageLimitsRefresh(
     },
     {
       enabled: enabled && connected && instanceId !== null,
-      key: `usage:${environmentId}:${instanceId}`,
+      key: `usage:${environmentId}:${instanceId}:${driver ?? ""}`,
       refreshOnShow: true,
       refreshWhileIdle: true,
     },
