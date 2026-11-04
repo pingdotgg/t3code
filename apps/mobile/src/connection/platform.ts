@@ -40,7 +40,7 @@ function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "on
   return "unknown";
 }
 
-const layerConnectivity = Connectivity.layer({
+const connectivity = Connectivity.Connectivity.of({
   status: Effect.tryPromise({
     try: () => Network.getNetworkStateAsync(),
     catch: () => undefined,
@@ -58,7 +58,7 @@ const layerConnectivity = Connectivity.layer({
           Queue.offerUnsafe(queue, networkStatus(state));
         });
         const appStateSubscription = AppState.addEventListener("change", (state) => {
-          if (state !== "active") {
+          if (!active || state !== "active") {
             return;
           }
           void Network.getNetworkStateAsync()
@@ -81,6 +81,14 @@ const layerConnectivity = Connectivity.layer({
     ).pipe(Effect.asVoid),
   ),
 });
+
+// Keep status reads fresh; share only live changes, without replay or an idle grace period.
+export const layerConnectivity = Layer.effect(
+  Connectivity.Connectivity,
+  Stream.share(connectivity.changes, { capacity: "unbounded", replay: 0 }).pipe(
+    Effect.map((changes) => ({ ...connectivity, changes })),
+  ),
+);
 
 /** Wake connections on network path changes; online/offline misses Wi-Fi-to-cellular moves. */
 const networkPathChanges = Stream.callback<"network-changed">((queue) =>
@@ -115,30 +123,30 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   ).pipe(Effect.asVoid),
 );
 
-const layerWakeups = Wakeups.layer({
+const applicationActiveWakeups = Stream.callback<
+  "application-active-probe" | "application-active-long"
+>((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+      return AppState.addEventListener("change", (state) => {
+        if (state === "background") {
+          backgroundedAtMs = Date.now();
+          return;
+        }
+        if (state === "active") {
+          Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
+          backgroundedAtMs = null;
+        }
+      });
+    }),
+    (subscription) => Effect.sync(() => subscription.remove()),
+  ).pipe(Effect.asVoid),
+);
+
+const wakeups = Wakeups.ConnectionWakeups.of({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
-            return AppState.addEventListener("change", (state) => {
-              if (state === "background") {
-                backgroundedAtMs = Date.now();
-                return;
-              }
-              if (state === "active") {
-                Queue.offerUnsafe(
-                  queue,
-                  mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()),
-                );
-                backgroundedAtMs = null;
-              }
-            });
-          }),
-          (subscription) => Effect.sync(() => subscription.remove()),
-        ).pipe(Effect.asVoid),
-      ),
       managedRelayAccountChanges(appAtomRegistry).pipe(
         Stream.map(() => "credentials-changed" as const),
       ),
@@ -147,6 +155,17 @@ const layerWakeups = Wakeups.layer({
     { concurrency: "unbounded" },
   ),
 });
+
+export const layerWakeups = Layer.effect(
+  Wakeups.ConnectionWakeups,
+  Stream.share(wakeups.changes, { capacity: "unbounded", replay: 0 }).pipe(
+    // A newly acquired connection must keep its own background age for resume classification.
+    Effect.map((changes) => ({
+      ...wakeups,
+      changes: Stream.mergeAll([applicationActiveWakeups, changes], { concurrency: "unbounded" }),
+    })),
+  ),
+);
 
 const layerCapabilities = Layer.effectContext(
   Effect.gen(function* () {
