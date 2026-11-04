@@ -20,7 +20,6 @@ export function DesktopUpdatePrompt() {
   const state = useDesktopUpdateState();
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
   const [autoUpdate, setAutoUpdate] = useState(false);
-  const [pending, setPending] = useState(false);
   if (!isElectron || !state) return null;
   const prompt = getDesktopUpdatePrompt(state, dismissedVersion);
   const version = prompt === "available" ? state.availableVersion : state.downloadedVersion;
@@ -31,24 +30,12 @@ export function DesktopUpdatePrompt() {
     if (autoUpdate && prompt === "available") void bridge.setAutoUpdate(true);
     dismiss();
   };
+  // Close first: the sidebar pill shows download progress, and failures toast.
   const update = async () => {
-    if (pending) return;
-    setPending(true);
-    try {
-      if (autoUpdate && prompt === "available") await bridge.setAutoUpdate(true);
-      if (prompt === "available") {
-        const downloaded = await downloadLocalUpdate(bridge, { notifyDownloaded: false });
-        if (!downloaded) {
-          setPending(false);
-          return;
-        }
-      }
-      await installLocalUpdate(bridge);
-    } catch {
-      setPending(false);
+    later();
+    if (prompt === "available" && !(await downloadLocalUpdate(bridge, { notifyDownloaded: false })))
       return;
-    }
-    setPending(false);
+    await installLocalUpdate(bridge);
   };
   const title =
     prompt === "available" ? `T3 Learn ${version} is available` : `T3 Learn ${version} is ready`;
@@ -69,12 +56,10 @@ export function DesktopUpdatePrompt() {
           </label>
         ) : null}
         <AlertDialogFooter>
-          <AlertDialogClose
-            render={<Button variant="outline" disabled={pending} onClick={later} />}
-          >
+          <AlertDialogClose render={<Button variant="outline" onClick={later} />}>
             Later
           </AlertDialogClose>
-          <Button disabled={pending} onClick={() => void update()}>
+          <Button onClick={() => void update()}>
             {prompt === "available" ? "Update now" : "Restart to update"}
           </Button>
         </AlertDialogFooter>
