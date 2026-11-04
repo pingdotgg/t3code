@@ -11,6 +11,8 @@ import {
   workspaceSearchBottomClearance,
   workspaceDockBottomClearance,
   workspaceUsesColumns,
+  type WorkspaceTab,
+  type WorkspaceTabsState,
 } from "./workspace-tabs-state";
 
 describe("compact list clearance", () => {
@@ -179,12 +181,25 @@ describe("workspace root navigation", () => {
   });
 });
 
-const mocks = vi.hoisted(() => ({ split: false, floating: false }));
+const mocks = vi.hoisted(() => ({
+  split: false,
+  floating: false,
+  state: undefined as WorkspaceTabsState | undefined,
+  openWorkspaceTab: (_tab: string) => {},
+  backListeners: new Set<() => boolean>(),
+}));
 
 vi.mock("../../settings/appearance/AppearancePreferencesProvider", () => ({
   useAndroidFloatingTabs: () => mocks.floating,
 }));
 vi.mock("react-native", () => ({
+  BackHandler: {
+    addEventListener: (_event: string, listener: () => boolean) => {
+      mocks.backListeners.add(listener);
+      return { remove: () => mocks.backListeners.delete(listener) };
+    },
+  },
+  Keyboard: { dismiss: () => undefined },
   useWindowDimensions: () => ({ width: 400, height: 800 }),
   View: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
@@ -198,12 +213,16 @@ vi.mock("../AdaptiveWorkspaceLayout", () => ({
     startNewTask: () => undefined,
   }),
 }));
+vi.mock("@react-navigation/native", () => ({ useIsFocused: () => true }));
+vi.mock("../adaptive-workspace-context", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ openWorkspaceTab: mocks.openWorkspaceTab }),
+}));
 vi.mock("./navigation-tabs", () => ({
   useEnabledNavigationTabs: () => ["threads", "pullRequests", "usage"],
 }));
 vi.mock("./WorkspaceTabsContext", () => ({
   WorkspaceTabsContext: createContext(null),
-  useWorkspaceTabs: () => ({ state: { selectedTab: "usage" } }),
+  useWorkspaceTabs: () => ({ state: mocks.state, dispatch: () => undefined }),
 }));
 vi.mock("./WorkspaceExtraTab", () => ({
   WorkspaceExtraTab: function UsageProbe() {
@@ -238,12 +257,44 @@ vi.mock("../../../components/ui/WorkspaceAppBar.android", () => ({
   WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
 }));
 
-function setup(split: boolean, floating: boolean) {
+function setup(split: boolean, floating: boolean, state = selected("usage")) {
   mocks.split = split;
   mocks.floating = floating;
+  mocks.state = state;
+  mocks.openWorkspaceTab = () => undefined;
+  mocks.backListeners.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   return { [Symbol.dispose]: () => vi.unstubAllGlobals() };
 }
+
+function selected(tab: WorkspaceTab) {
+  return workspaceTabsReducer(initialWorkspaceTabsState(), { type: "select", tab });
+}
+
+/** Android calls the newest listener first and stops at the first that handles Back. */
+function pressBack() {
+  return [...mocks.backListeners].reverse().some((listener) => listener());
+}
+
+it.each([
+  { state: selected("pullRequests"), opens: "threads" },
+  { state: selected("usage"), opens: "threads" },
+  { state: selected("threads"), opens: undefined },
+  {
+    state: workspaceTabsReducer(selected("pullRequests"), { type: "search" }),
+    opens: undefined,
+  },
+])("Back from the $state.selectedTab tab opens $opens", async ({ state, opens }) => {
+  using _actEnvironment = setup(false, false, state);
+  const opened: string[] = [];
+  mocks.openWorkspaceTab = (tab) => opened.push(tab);
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  await act(async () => root.render(createElement(WorkspaceRootScreen)));
+
+  expect(pressBack()).toBe(opens !== undefined);
+  expect(opened).toEqual(opens ? [opens] : []);
+});
 
 it.each([
   [false, false],
