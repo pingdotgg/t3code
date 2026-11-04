@@ -4094,6 +4094,121 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect(
+    "wakes once for a bot comment's edits after they settle under a quiet fingerprint",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-pull-request-watch-edit-settle");
+        const projectId = ProjectId.make("pr-watch-edit-settle-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch edits",
+          workspaceRoot: "/workspace/watch-edits",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("pr-watch-edit-settle-create"),
+          threadId,
+          projectId,
+          title: "Watch edits",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-edit-settle-start"),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+        });
+        const started = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.isDefined(started);
+        if (started === undefined) return;
+        const at = (minutes: number) =>
+          DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(started.startedAt), { minutes }));
+
+        let editedAt: string | null = null;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () =>
+              Effect.sync(() => ({ status: "quiet", remarks: editedAt ?? "none" })),
+            invalidate: () => Effect.void,
+            detail: () =>
+              Effect.succeed({
+                ...watchedPullRequestDetail({ projectId, number: 15, at: at(-60) }),
+                checks: [{ name: "lint", status: "success", description: null, url: null }],
+              }),
+            activity: () =>
+              Effect.sync(() => ({
+                comments: [
+                  {
+                    id: "review-bot-status",
+                    kind: "issue-comment" as const,
+                    author: { login: "review-bot", name: null, avatarUrl: null },
+                    body: editedAt === null ? "Reviewing..." : "Review finished.",
+                    createdAt: at(-30),
+                    editedAt,
+                    url: "https://github.com/pingdotgg/t3code/pull/15#status",
+                    path: null,
+                    reviewState: null,
+                  },
+                ],
+                commentCount: 1,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              })),
+          }),
+        );
+        const wakes = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.filter((message) => message.text.includes("review-bot")),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+
+        yield* sweep;
+        for (const minute of [2, 4]) {
+          editedAt = at(minute);
+          yield* TestClock.adjust("2 minutes");
+          yield* sweep;
+        }
+        assert.lengthOf(yield* wakes, 0);
+
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep;
+        const told = yield* wakes;
+        assert.lengthOf(told, 1);
+        assert.include(told[0]!.text, '1 edited comment:\n  - review-bot: "Review finished."');
+
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep;
+        assert.lengthOf(yield* wakes, 1);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-edit-settle-end"),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {

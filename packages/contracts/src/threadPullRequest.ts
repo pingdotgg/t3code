@@ -96,6 +96,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   remarksThrough: IsoDateTime,
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
+  /** Edits of remarks the agent already saw, held until a read finds them unchanged. */
+  pendingEdits: Schema.optional(
+    Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString, editedAt: IsoDateTime })),
+  ),
   conflicting: Schema.Boolean,
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,

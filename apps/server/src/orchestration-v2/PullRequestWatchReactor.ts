@@ -152,8 +152,11 @@ function planRead(
       watch.checksAwaitedSince != null &&
       now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
   );
+  // A held edit is delivered by the next read that finds it unchanged, which a quiet fingerprint skips.
+  const editsHeld = group.targets.some(({ watch }) => (watch.pendingEdits?.length ?? 0) > 0);
   if (fingerprint === null) {
     const read =
+      editsHeld ||
       last.inFlight ||
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
@@ -161,6 +164,7 @@ function planRead(
     return { detail: read || checksDue, activity: read };
   }
   const activity =
+    editsHeld ||
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
@@ -182,6 +186,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
+    JSON.stringify(left.pendingEdits ?? []) === JSON.stringify(right.pendingEdits ?? []) &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
     left.checksAwaitedSince === right.checksAwaitedSince
