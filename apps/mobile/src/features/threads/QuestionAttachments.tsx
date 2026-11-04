@@ -64,6 +64,17 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // The draft atom re-renders on the sync lane, ahead of TextInput's own event-count state, and
+  // feeding that value straight in overwrites in-flight IME edits. Own the text locally and adopt
+  // only drafts this input did not write, such as an option selection clearing it.
+  const [text, setText] = useState(props.value);
+  const writtenText = useRef(props.value);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adopts draft changes made outside this input; the ref tells them apart from our own writes, which reach props on another lane
+  useEffect(() => {
+    if (props.value === writtenText.current) return;
+    writtenText.current = props.value;
+    setText(props.value);
+  }, [props.value]);
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -195,11 +206,15 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          value={text}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={(next) => {
+            writtenText.current = next;
+            setText(next);
+            props.onChangeText(next);
+          }}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);
