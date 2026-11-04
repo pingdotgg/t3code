@@ -660,6 +660,18 @@ function AdaptiveWorkspaceLayoutContent(
   const contentTargetWidth = layout.usesSplitView
     ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth - contentEndGap)
     : null;
+  // A workspace page (Usage) lays out at this width even while hidden behind another tab, so
+  // opening it widens nothing it measured.
+  const workspacePageWidth = !layout.usesSplitView
+    ? null
+    : workspacePage
+      ? contentTargetWidth
+      : Math.max(
+          0,
+          viewportWidth -
+            (shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0) -
+            contentEndGap,
+        );
   const [listPaneSizing, setListPaneSizing] = useState({
     viewportWidth,
     workspacePage,
@@ -941,6 +953,7 @@ function AdaptiveWorkspaceLayoutContent(
     composerKeyboardActive,
     setComposerEditing,
     sidebarByOrientation,
+    workspacePageWidth,
   };
 
   const inspectorSheet = (
