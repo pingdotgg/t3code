@@ -410,6 +410,33 @@ describe("entireTrailJson", () => {
     assert.strictEqual(activity.reviewThreads[0]?.comments[0]?.body, body);
   });
 
+  it.each([
+    ["a saved agent", { source: { agent: { name: "Trail Review" } } }, "Trail Review"],
+    ["a person", { actor_display_name: "carol" }, "carol"],
+    ["a repository runner", { actor_id: "agent:codex", actor_display_name: null }, "codex"],
+    ["an automation", { actor_id: "01KSPWEZ", actor_display_name: null }, "Entire"],
+  ] as const)("names %s as a finding's author", (_, actor, login) => {
+    const discussion = decodeDiscussion({
+      discussion: {
+        ...Fixtures.discussions.items[1],
+        review_comment: {
+          id: "rc_1",
+          body: "Guard the empty case",
+          created_at: "2026-10-01T12:31:00.000Z",
+          location: { file_path: "src/app.ts", start_line: 12 },
+          ...actor,
+        },
+      },
+      messages: [],
+    });
+    const activity = Json.toActivity({
+      timeline: decodeTimeline(Fixtures.timeline),
+      discussions: [discussion],
+      discussionsTruncated: false,
+    });
+    assert.strictEqual(activity.reviewThreads[0]?.comments[0]?.author?.login, login);
+  });
+
   it("treats an open trail that isn't ready for review as a draft", () => {
     const cases: ReadonlyArray<[string, boolean | undefined, boolean]> = [
       ["draft", undefined, true],

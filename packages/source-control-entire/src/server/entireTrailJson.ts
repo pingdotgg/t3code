@@ -206,8 +206,13 @@ const DiscussionSummary = Schema.Struct({
         id: Schema.optional(TrimmedString),
         body: Schema.optional(Schema.NullOr(Schema.String)),
         severity: Schema.optional(Schema.NullOr(Schema.String)),
+        actor_id: Schema.optional(Schema.NullOr(Schema.String)),
         actor_display_name: Schema.optional(Schema.NullOr(Schema.String)),
         actor_identity: Schema.optional(Schema.NullOr(Identity)),
+        /** Set when a saved agent's run published the finding. */
+        source: Schema.optional(
+          Schema.NullOr(Schema.Struct({ agent: Schema.Struct({ name: Schema.String }) })),
+        ),
         created_at: Schema.optional(IsoDateTime),
         location: Schema.optional(
           Schema.NullOr(
@@ -313,6 +318,10 @@ export const trailTitle = (trail: Pick<EntireTrail, "title" | "number">) =>
 export function trailHeadBranch(trail: Pick<EntireTrail, "branch" | "original_branch">): string {
   return trail.branch ?? trail.original_branch ?? "";
 }
+
+/** A trail made with `--no-branch` has no code to show yet, so it isn't a change request. */
+export const hasBranch = (trail: Pick<EntireTrail, "branch" | "original_branch">) =>
+  trailHeadBranch(trail).trim() !== "";
 
 export function trailUrl(trail: Pick<EntireTrail, "url" | "number">, repository: string): string {
   const own = trail.url === undefined ? null : EntireUrls.parseEntireTrailUrl(trail.url);
@@ -616,6 +625,19 @@ const findingBody = (body: string, severity: string | null | undefined) => {
     : body;
 };
 
+type Finding = NonNullable<EntireDiscussion["discussion"]["review_comment"]>;
+
+/** Entire names no person for an agent's or an automation's finding. */
+function findingAuthor(finding: Finding): PullRequestActor {
+  const agent = finding.source?.agent.name.trim();
+  if (agent) return { login: agent, name: null, avatarUrl: null };
+  const person = toActor(finding.actor_display_name, finding.actor_identity ?? undefined);
+  if (person !== null) return person;
+  // A repository runner's finding carries only its `agent:<slug>` ref.
+  const runner = finding.actor_id?.startsWith("agent:") ? finding.actor_id.slice(6).trim() : "";
+  return { login: runner || "Entire", name: null, avatarUrl: null };
+}
+
 function remarks(discussion: EntireDiscussion): ReadonlyArray<Remark> {
   const finding = discussion.discussion.review_comment;
   const root: ReadonlyArray<Remark> =
@@ -623,7 +645,7 @@ function remarks(discussion: EntireDiscussion): ReadonlyArray<Remark> {
       ? [
           {
             id: finding.id,
-            author: toActor(finding.actor_display_name, finding.actor_identity ?? undefined),
+            author: findingAuthor(finding),
             body: findingBody(finding.body, finding.severity),
             createdAt: finding.created_at,
             url: null,

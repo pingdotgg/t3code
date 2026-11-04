@@ -199,6 +199,16 @@ export const make = Effect.gen(function* () {
   const readTrail = (operation: string, input: TrailRef) =>
     read(operation, input, { path: trailPath(input) }, Json.EntireTrailDetail);
 
+  const readBranchedTrail = (operation: string, input: TrailRef) =>
+    readTrail(operation, input).pipe(
+      Effect.filterOrFail(Json.hasBranch, () =>
+        failure(
+          operation,
+          `This trail has no branch yet, so T3 Code can't show it. Open it on ${ENTIRE_WEB_HOST}.`,
+        ),
+      ),
+    );
+
   const runGit = (operation: string, cwd: string, args: ReadonlyArray<string>, detail: string) =>
     git
       .execute({
@@ -851,6 +861,7 @@ export const make = Effect.gen(function* () {
         : true;
       items.push(
         ...batch.items
+          .filter(Json.hasBranch)
           .map((trail) => Json.toListChangeRequest(trail, input.repository, readiness))
           .filter(involved),
       );
@@ -894,7 +905,7 @@ export const make = Effect.gen(function* () {
       ),
     listChangeRequests,
     getChangeRequestSummary: (input) =>
-      readTrail("getChangeRequestSummary", input).pipe(
+      readBranchedTrail("getChangeRequestSummary", input).pipe(
         Effect.map((trail) => {
           const checksState = Json.toSummaryChecksState(trail, input.repository);
           return {
@@ -914,7 +925,7 @@ export const make = Effect.gen(function* () {
         })),
       ),
     getChangeRequest: Effect.fn("EntirePullRequestProvider.getChangeRequest")(function* (input) {
-      const trail = yield* readTrail("getChangeRequest", input);
+      const trail = yield* readBranchedTrail("getChangeRequest", input);
       const checks = Json.toChecks(trail, input.repository);
       const checksState = Json.toChecksState(checks);
       const mergeability = trail.mergeability;

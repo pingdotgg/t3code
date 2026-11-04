@@ -497,6 +497,33 @@ describe("EntirePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("leaves a trail with no branch out of lists and refuses to show it", () => {
+    const branchless = { ...Fixtures.trail, number: 8, branch: null, original_branch: null };
+    const server = fakeEntire({
+      "GET /trails": { items: [Fixtures.trail, branchless], next_cursor: null },
+      "GET /trails/8": { ...Fixtures.detail, ...branchless },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* EntirePullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 10,
+      });
+      assert.deepStrictEqual(
+        page.items.map((item) => item.number),
+        [7],
+      );
+      for (const error of [
+        yield* provider.getChangeRequest({ ...target, number: 8 }).pipe(Effect.flip),
+        yield* provider.getChangeRequestSummary!({ ...target, number: 8 }).pipe(Effect.flip),
+      ])
+        assert.include(error.detail, "This trail has no branch yet");
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("says a list was cut when its last page held more rows than asked for", () => {
     const server = fakeEntire({
       "GET /trails": {
