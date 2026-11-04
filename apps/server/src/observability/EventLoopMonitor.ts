@@ -19,7 +19,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import {
   cpuBusyBetween,
-  cpuLimitCoversHost,
   loadAverageCountsDiskWait,
   readCpu,
 } from "../resourceTelemetry/HostResources.ts";
@@ -115,9 +114,7 @@ const makeNodeSampler = Effect.gen(function* () {
       // Host-wide busy time says nothing about the cores an affinity mask or quota leaves us,
       // and a load average without disk wait leaves idle cores with no other cause to name.
       cpuBusy:
-        loadAverageCountsDiskWait(platform) &&
-        nextCpu?.count === cpuCount &&
-        cpuLimitCoversHost(cpuCount)
+        loadAverageCountsDiskWait(platform) && nextCpu?.count === cpuCount
           ? (busy ?? undefined)
           : undefined,
       cpuCount,
