@@ -10,6 +10,7 @@ import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopServerExposure from "../../backend/DesktopServerExposure.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { requireMainRenderer } from "../TrustedRenderer.ts";
 
 const SetTailscaleServeEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
@@ -30,7 +31,8 @@ export const setServerExposureMode = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL,
   payload: DesktopServerExposureModeSchema,
   result: DesktopServerExposureStateSchema,
-  handler: Effect.fn("desktop.ipc.serverExposure.setMode")(function* (mode) {
+  handler: Effect.fn("desktop.ipc.serverExposure.setMode")(function* (mode, event) {
+    yield* requireMainRenderer(event);
     const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const change = yield* serverExposure.setMode(mode);
@@ -45,17 +47,22 @@ export const setTailscaleServeEnabled = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
   payload: SetTailscaleServeEnabledInput,
   result: DesktopServerExposureStateSchema,
-  handler: Effect.fn("desktop.ipc.serverExposure.setTailscaleServeEnabled")(function* (input) {
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    const change = yield* serverExposure.setTailscaleServeEnabled(input);
-    if (change.requiresRelaunch) {
-      yield* lifecycle.relaunch(
-        change.state.tailscaleServeEnabled ? "tailscale-serve-enabled" : "tailscale-serve-disabled",
-      );
-    }
-    return change.state;
-  }),
+  handler: Effect.fn("desktop.ipc.serverExposure.setTailscaleServeEnabled")(
+    function* (input, event) {
+      yield* requireMainRenderer(event);
+      const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+      const change = yield* serverExposure.setTailscaleServeEnabled(input);
+      if (change.requiresRelaunch) {
+        yield* lifecycle.relaunch(
+          change.state.tailscaleServeEnabled
+            ? "tailscale-serve-enabled"
+            : "tailscale-serve-disabled",
+        );
+      }
+      return change.state;
+    },
+  ),
 });
 
 export const getAdvertisedEndpoints = DesktopIpc.makeIpcMethod({

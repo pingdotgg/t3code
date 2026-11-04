@@ -25,6 +25,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -86,13 +87,26 @@ const backendConfigurationLayer = Layer.succeed(
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 
+const bootstrapFrame = { url: "t3code://app/" };
+const bootstrapEvent = { sender: { id: 7 }, senderFrame: bootstrapFrame };
 const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
-  Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
+  Layer.mergeAll(
+    DesktopBackendPool.layerTest([...instances]),
+    backendConfigurationLayer,
+    Layer.mock(ElectronWindow.ElectronWindow, {
+      main: Effect.succeedSome({
+        webContents: { id: 7, mainFrame: bootstrapFrame },
+      } as Electron.BrowserWindow),
+    }),
+    Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+      isDevelopment: false,
+    } as DesktopEnvironment.DesktopEnvironment["Service"]),
+  );
 
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(bootstrapEvent);
 
       assert.deepEqual(result, [
         {
@@ -144,7 +158,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(bootstrapEvent);
       assert.deepEqual(result, [
         {
           id: "wsl:default",
@@ -178,7 +192,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(bootstrapEvent);
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
