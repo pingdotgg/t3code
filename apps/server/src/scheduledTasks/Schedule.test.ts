@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedScheduledRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
   function local(day: number, hour: number, minute: number) {
@@ -132,6 +132,37 @@ describe("scheduled task schedule calculation", () => {
     const from = local(6, 15, 0);
     const next = nextScheduledRunAt({ type: "interval", everyMs: 3_600_000 }, from);
     expect(next && DateTime.toEpochMillis(next) - DateTime.toEpochMillis(from)).toBe(3_600_000);
+  });
+
+  it("uses the later copy of a window start when clocks fall back", () => {
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "01:30", end: "01:45" },
+      },
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month: 11, day: 1, hour: 1, minute: 50, second: 0, millisecond: 0 },
+        { timeZone: "America/New_York", adjustForTimeZone: true },
+      ),
+    );
+    expect(next && DateTime.formatIso(next)).toBe("2026-11-01T06:30:00.000Z");
+    const parts = next ? DateTime.toParts(next) : null;
+    expect(parts && [parts.month, parts.day, parts.hour, parts.minute]).toEqual([11, 1, 1, 30]);
+  });
+
+  it("skips a due windowed interval once the window has closed", () => {
+    const dueAt = local(6, 19, 30);
+    const schedule = {
+      type: "interval" as const,
+      everyMs: 3_600_000,
+      window: { start: "10:00", end: "20:00" },
+    };
+    expect(isMissedScheduledRun(schedule, dueAt, local(6, 19, 50))).toBe(false);
+    expect(isMissedScheduledRun(schedule, dueAt, local(6, 21, 0))).toBe(true);
+    expect(
+      isMissedScheduledRun({ type: "interval", everyMs: 3_600_000 }, dueAt, local(6, 21, 0)),
+    ).toBe(false);
   });
 
   it("skips a window start that daylight saving shifts past the end", () => {

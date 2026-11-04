@@ -29,6 +29,29 @@ function isInsideWindow(
   return time >= startMs && time < endMs;
 }
 
+function windowStartAfter(
+  candidate: DateTime.DateTime,
+  from: DateTime.DateTime,
+  start: { readonly hour: number; readonly minute: number },
+  end: { readonly hour: number; readonly minute: number },
+  weekdays: ReadonlyArray<number> | undefined,
+): DateTime.DateTime | null {
+  const fromMs = DateTime.toEpochMillis(from);
+  const laterRepeatedHour = DateTime.addDuration(candidate, 3_600_000);
+  const repeatedParts = DateTime.toParts(laterRepeatedHour);
+  // A fall-back hour happens twice. The later one is one elapsed hour after the earlier.
+  const openings =
+    repeatedParts.hour === start.hour && repeatedParts.minute === start.minute
+      ? [candidate, laterRepeatedHour]
+      : [candidate];
+  for (const opening of openings) {
+    if (DateTime.toEpochMillis(opening) <= fromMs) continue;
+    if (!isInsideWindow(opening, weekdays, start, end)) continue;
+    return opening;
+  }
+  return null;
+}
+
 function nextWindowStart(
   from: DateTime.DateTime,
   start: { readonly hour: number; readonly minute: number },
@@ -42,10 +65,8 @@ function nextWindowStart(
       second: 0,
       millisecond: 0,
     });
-    if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
-    // A missing local time, such as 02:30 on a spring-forward morning, shifts forward.
-    if (!isInsideWindow(candidate, weekdays, start, end)) continue;
-    return candidate;
+    const open = windowStartAfter(candidate, from, start, end, weekdays);
+    if (open !== null) return open;
   }
   return null;
 }
@@ -150,11 +171,17 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
 
 const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
 
-export function isMissedFixedTimeRun(
+export function isMissedScheduledRun(
   schedule: ScheduledTaskSchedule,
   dueAt: DateTime.DateTime,
   now: DateTime.DateTime,
 ): boolean {
-  if (schedule.type !== "fixed_time") return false;
-  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+  if (schedule.type === "fixed_time") {
+    return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
+  }
+  if (schedule.type !== "interval" || schedule.window === undefined) return false;
+  const start = parseTimeOfDay(schedule.window.start);
+  const end = parseTimeOfDay(schedule.window.end);
+  if (start === null || end === null) return true;
+  return !isInsideWindow(now, schedule.window.weekdays, start, end);
 }

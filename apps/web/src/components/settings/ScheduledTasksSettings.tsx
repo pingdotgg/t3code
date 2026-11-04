@@ -2397,7 +2397,7 @@ function ScheduledTaskEditorForm({
                       id="scheduled-task-interval-window-description"
                       className="text-sm text-muted-foreground"
                     >
-                      <T>Run only between two local times. Off means all day.</T>
+                      <T>Run only between these hours on the days below. Off means all day, every day.</T>
                     </p>
                   </div>
                   <Switch
@@ -2457,7 +2457,6 @@ function ScheduledTaskEditorForm({
                     </div>
                     <WeekdayToggleGroup
                       weekdays={draft.weekdays}
-                      allowEmpty
                       onWeekdaysChange={(weekdays) =>
                         setDraft((current) => ({ ...current, weekdays }))
                       }
