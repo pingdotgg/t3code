@@ -199,12 +199,11 @@ it.effect(
           updatedAt: now,
         },
       });
-      yield* createRun(
-        yield* createThread("snoozed", {
-          snoozedUntil: DateTime.add(now, { days: 1 }),
-          snoozedAt: now,
-        }),
-      );
+      const snoozed = yield* createThread("snoozed", {
+        snoozedUntil: DateTime.add(now, { days: 1 }),
+        snoozedAt: now,
+      });
+      yield* createRun(snoozed);
       const woke = yield* createThread("woke", {
         snoozedUntil: DateTime.add(now, { days: 1 }),
         snoozedAt: DateTime.subtract(old, { days: 1 }),
@@ -250,7 +249,7 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([idle, completed, queued, snoozed, woke, background, persistent, rolledBack]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
