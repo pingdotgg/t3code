@@ -210,3 +210,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## T3 Learn fork
+
+This checkout is the T3 Learn fork. Read /home/quokka/t3-learn-team/STATE.md first; roles are in /home/quokka/t3-learn-team/roles/.
