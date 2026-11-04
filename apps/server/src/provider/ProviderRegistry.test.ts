@@ -45,6 +45,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
@@ -3045,22 +3046,22 @@ it.layer(
         const status = yield* checkClaudeProviderStatus(
           {
             ...defaultClaudeSettings,
-            customModels: [
-              { slug: "my-custom", name: "My Custom" },
-              { slug: "gateway/kimi-3", name: "Kimi (mine)" },
-            ],
+            customModels: [{ slug: "gateway/kimi-3", name: "Kimi (mine)" }],
           },
           claudeCapabilities({
             models: [
               { value: "default", displayName: "Default", description: "" },
+              { value: "sonnet", displayName: "Sonnet", description: "" },
+              { value: "claude-haiku-4-5[1m]", displayName: "Haiku", description: "" },
               {
-                value: "opus[1m]",
+                value: "best",
                 resolvedModel: "claude-opus-5[1m]",
-                displayName: "Opus",
+                displayName: "Best",
                 description: "",
               },
-              { value: "sonnet", displayName: "Sonnet", description: "" },
-              { value: "gateway/glm-5", displayName: "GLM 5", description: "" },
+              { value: "gateway/kimi-3", displayName: "Kimi 3", description: "" },
+              { value: "gateway/glm-5[1m]", displayName: "GLM 5", description: "" },
+              { value: "gateway/glm-5", displayName: "GLM 5 again", description: "" },
               {
                 value: "gateway/claude-relay",
                 displayName: "Claude Relay",
@@ -3068,38 +3069,32 @@ it.layer(
                 supportsEffort: true,
                 supportedEffortLevels: ["low", "high"],
               },
-              { value: "gateway/kimi-3", displayName: "Kimi 3", description: "" },
             ],
           }),
         );
-        const reported = status.models.filter(
-          (model) => !model.isCustom && !model.slug.startsWith("claude-"),
-        );
+        const catalogSlugs = new Set(BUNDLED_CLAUDE_MODEL_CATALOG.models.map((m) => m.model.slug));
+        const added = status.models.filter((model) => !catalogSlugs.has(model.slug));
+
         assert.deepStrictEqual(
-          reported.map((model) => [model.slug, model.name]),
+          added.map((model) => [model.slug, model.name, model.isCustom]),
           [
-            ["gateway/glm-5", "GLM 5"],
-            ["gateway/claude-relay", "Claude Relay"],
+            ["gateway/glm-5[1m]", "GLM 5", false],
+            ["gateway/claude-relay", "Claude Relay", false],
+            ["gateway/kimi-3", "Kimi (mine)", true],
           ],
         );
-        assert.deepStrictEqual(reported[0]?.capabilities, { optionDescriptors: [] });
-        assert.deepStrictEqual(reported[1]?.capabilities, {
-          optionDescriptors: [
-            {
-              id: "effort",
-              label: "Reasoning",
-              type: "select",
-              options: [
-                { id: "low", label: "Low" },
-                { id: "high", label: "High", isDefault: true },
-              ],
-            },
-          ],
-        });
-        assert.deepStrictEqual(
-          status.models.filter((model) => model.isCustom).map((model) => model.name),
-          ["My Custom", "Kimi (mine)"],
-        );
+        assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
+        assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ]);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
