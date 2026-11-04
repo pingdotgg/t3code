@@ -90,15 +90,12 @@ const make = Effect.gen(function* () {
     });
   }
 
-  const command = (message: DesktopBrowserCommandType) =>
-    writeLock.withPermits(1)(
-      encodeCommand(message).pipe(
-        Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("desktop browser command failed", { cause }),
-        ),
-      ),
+  const write = (message: DesktopBrowserCommandType) =>
+    encodeCommand(message).pipe(
+      Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
+      Effect.catchCause((cause) => Effect.logWarning("desktop browser command failed", { cause })),
     );
+  const command = (message: DesktopBrowserCommandType) => writeLock.withPermits(1)(write(message));
 
   // Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
   const readable = yield* Effect.acquireRelease(
@@ -158,9 +155,15 @@ const make = Effect.gen(function* () {
     }
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
-        if (inbound.get(id) === queue) inbound.delete(id);
         yield* Queue.shutdown(queue);
-        yield* command({ type: "release", ...key });
+        // A reconnect's endpoint may already hold the tab; its release would drop the new relay.
+        yield* writeLock.withPermits(1)(
+          Effect.suspend(() => {
+            if (inbound.get(id) !== queue) return Effect.void;
+            inbound.delete(id);
+            return write({ type: "release", ...key });
+          }),
+        );
       }),
     );
     // Written before any CDP, so popups already open are there when Playwright connects.

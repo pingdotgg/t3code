@@ -164,6 +164,7 @@ function fileChooserElement(accept: string) {
 function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "about:blank") {
   const events = new NodeEvents.EventEmitter();
   const nativeFileChooser = vi.fn();
+  const dialogAutoDismissed = vi.fn();
   const setChooserFiles = vi.fn(async (_files: unknown) => {});
   const sessions: ReturnType<typeof makeSession>[] = [];
   let url = initialUrl;
@@ -178,6 +179,13 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     nativeFileChooser,
     setChooserFiles,
+    dialogAutoDismissed,
+    // Playwright dismisses a dialog nothing listens for before the page shows it.
+    openDialog: () => {
+      if (!events.emit("dialog", { type: () => "alert", message: () => "hello" })) {
+        dialogAutoDismissed();
+      }
+    },
     openFileChooser: () => {
       if (
         !events.emit("filechooser", {
@@ -2311,6 +2319,9 @@ it.live.each([
         return newCDPSession(target);
       };
       openerPage.emit("popup", popup.page);
+      // A native window's dialog waits for the person while its tab is still being set up.
+      popup.page.openDialog();
+      expect(popup.page.dialogAutoDismissed).toHaveBeenCalledTimes(host === "desktop" ? 0 : 1);
       const last = yield* open().pipe(Effect.result, Effect.forkScoped);
       const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
       // The host processes this after the opens, while manager creation is blocked.
@@ -2357,6 +2368,11 @@ it.live.each([
       expect(sessions).toHaveLength(limit);
       expect(popup.page.isClosed()).toBe(false);
       expect(rejectedPopup.page.isClosed()).toBe(host === "server");
+      if (host === "desktop") {
+        // No tab answers the window it could not adopt, so its dialogs stay the person's.
+        rejectedPopup.page.openDialog();
+        expect(rejectedPopup.page.dialogAutoDismissed).not.toHaveBeenCalled();
+      }
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,

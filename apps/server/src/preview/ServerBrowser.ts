@@ -1345,6 +1345,8 @@ const make = Effect.gen(function* () {
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     if (adoptedPopups.has(popup)) return;
     adoptedPopups.add(popup);
+    // Playwright dismisses dialogs nothing listens for; a native window's are the person's to answer.
+    if (opener.desktop !== null) popup.on("dialog", constVoid);
     if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
