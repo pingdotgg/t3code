@@ -104,21 +104,22 @@ ancestors, and empty ones stay open because their composer may hold an unsent dr
 
 ## Downgrade safety and the capability gate
 
-T3 Learn installs beside T3 Code and keeps its own home, `~/.t3-learn`. Nothing switches one
-installation between them. The remaining way an official build can open a T3 Learn database is to
-run plain upstream `t3` with `T3CODE_HOME=~/.t3-learn`.
+T3 Learn installs beside T3 Code with its own home, `~/.t3-learn`, so an official build opens a
+T3 Learn database only when pointed at it: upstream `t3` or the T3 Code desktop app with
+`T3CODE_HOME=~/.t3-learn`, or `t3 --base-dir ~/.t3-learn`. The user guides tell people to export
+that variable for T3 Learn's plain CLI, so an upstream `t3` run from the same shell lands there.
 
-That database is safe for an official server only when:
+Side chats create no `fork` or `merge_back` transfer, which an official server would replay in full:
+a fork of a side chat drops `sideChat`, and merge-back from one is refused. The database is then safe
+for an official server only when:
 
-- Side chats create no `fork` or `merge_back` transfer, which an official server would replay in full.
-  A fork of a side chat drops `sideChat`, and merge-back from one is refused.
 - There is no pending or running `side-chat.*` outbox row. An official server claims one, cannot
   decode it and leaves it `running`, which blocks its thread's lane.
 - There is no `sideChat.*` entry in `keybindings.json`. An official server rejects the unknown
   command, then stops syncing defaults. [Keybindings](../../apps/server/src/keybindings.ts) never
   writes a lone default, but a user's own binding is written.
 
-Nothing checks these outbox and keybinding preconditions automatically. Round-trip limits:
+Nothing checks either automatically. Round-trip limits:
 
 - An official server that touches a lesson or side chat rewrites its payload without `sideChat` and
   `sideChatNoteDeliveries`. T3 Learn then sees those side chats as ordinary forks, and ready notes may
