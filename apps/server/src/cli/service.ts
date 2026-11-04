@@ -285,6 +285,22 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
       flags,
       Effect.gen(function* () {
         const service = yield* BootService.BootService;
+        const path = yield* Path.Path;
+        const { baseDir } = yield* ServerConfig.ServerConfig;
+        // An unreadable unit stays removable; only a unit known to serve another home is kept.
+        const installedBaseDir = yield* service.status.pipe(
+          Effect.map((status) => status.installedBaseDir),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (
+          installedBaseDir !== undefined &&
+          path.resolve(installedBaseDir) !== path.resolve(baseDir)
+        ) {
+          yield* Console.log(
+            "The installed service runs another T3 home, so it was not removed. Pass its --base-dir.",
+          );
+          return;
+        }
         const removed = yield* service.uninstall;
         yield* Console.log(
           removed

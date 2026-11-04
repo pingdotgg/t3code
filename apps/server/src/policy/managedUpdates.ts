@@ -6,6 +6,17 @@ import {
 import type { CliReleaseChannel } from "@t3tools/shared/cliRelease";
 
 /**
+ * The update mirror the policy sends updates to, or `undefined` for the public releases. It wins
+ * over the environment, which a user can set.
+ */
+export function managedUpdateMirror(
+  _document: ManagedPolicyDocument | undefined,
+): { readonly organization: string; readonly feedUrl: string } | undefined {
+  // The policy is T3 Code's, so its mirror serves T3 Code builds; T3 Learn keeps its own releases.
+  return undefined;
+}
+
+/**
  * Why the managed policy refuses an update a user or maintainer asked for, or `undefined` when it
  * allows it. The server never updates on its own, so `auto` allows every explicit request.
  * Pass `targetChannel` when the caller picks the release; the desktop app gates its own channel.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 
 describe("project removal confirmation", () => {
@@ -16,18 +16,53 @@ describe("project removal confirmation", () => {
     environmentLabel: "Remote",
   };
 
-  it("limits a checkout's thread count to its environment and project", () => {
+  const parentId = ThreadId.make("parent");
+  const listed = { rootThreadId: parentId, parentThreadId: null, relationshipToParent: null };
+  const child = { rootThreadId: parentId, parentThreadId: parentId };
+
+  it("limits a checkout's thread count to its listed threads in that environment and project", () => {
     const plan = planProjectRemoval({
       members: [local],
       groupMemberCount: 2,
       hasOtherMembers: false,
       displayName: "Repo",
       threads: [
-        { environmentId: local.environmentId, projectId: local.id },
-        { environmentId: remote.environmentId, projectId: remote.id },
+        { environmentId: local.environmentId, projectId: local.id, lineage: listed },
+        {
+          environmentId: local.environmentId,
+          projectId: local.id,
+          lineage: { ...child, relationshipToParent: "subagent" },
+        },
+        {
+          environmentId: local.environmentId,
+          projectId: local.id,
+          lineage: { ...child, relationshipToParent: "fork", sideChat: true },
+        },
+        // A T3 Learn side chat is a top-level thread that opens inside its lesson.
+        {
+          environmentId: local.environmentId,
+          projectId: local.id,
+          lineage: listed,
+          sideChat: {
+            lessonThreadId: parentId,
+            anchor: {
+              threadId: parentId,
+              messageId: MessageId.make("message-1"),
+              start: 0,
+              end: 4,
+              prefix: "",
+              suffix: "",
+            },
+            label: "word",
+            state: "open",
+            noteStatus: null,
+            excerptLength: 4,
+          },
+        },
+        { environmentId: remote.environmentId, projectId: remote.id, lineage: listed },
       ],
     });
-    expect(plan.projectThreads).toHaveLength(1);
+    expect(plan.projectThreads).toHaveLength(4);
     expect(plan.confirmationMessage).toBe(
       'Remove checkout "Repo" and delete its 1 thread?\nPath: /work/repo\nEnvironment: Local\nThose threads and any archived threads are deleted from T3 Code. Provider sessions are kept.\nOther entries in this grouped project are unaffected.\nThis action cannot be undone.',
     );

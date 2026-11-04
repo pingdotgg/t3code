@@ -218,6 +218,7 @@ it.effect(
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
           getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
+          getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
           listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
           listActiveSideChatThreadIds: () => Effect.die("unused listActiveSideChatThreadIds"),
@@ -250,6 +251,7 @@ it.effect(
           listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
           getTurnItem: () => Effect.die("unused turn item read"),
+          getMessagesById: () => Effect.die("unused getMessagesById"),
           getThreadRecords: () => Effect.die("unused record read"),
           getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
           getRunningTurnContext: () => Effect.die("unused getRunningTurnContext"),
@@ -281,6 +283,7 @@ it.effect(
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
+          getPullRequestSnapshot: () => Effect.die("unused getPullRequestSnapshot"),
         }),
       );
       const layerSessionManager = Layer.succeed(
