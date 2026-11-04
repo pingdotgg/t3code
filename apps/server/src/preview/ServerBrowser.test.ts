@@ -878,7 +878,12 @@ it.live("keeps one fill-size viewer until control or connection changes", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
-      const first = yield* browser.attachViewer(viewerInput(tabId, true));
+      const firstScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const first = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.provideService(Scope.Scope, firstScope));
       const secondScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
         Scope.close(scope, Exit.void),
       );
@@ -905,6 +910,14 @@ it.live("keeps one fill-size viewer until control or connection changes", () =>
       expect(page.viewportSize()).toEqual(secondSize);
       yield* Scope.close(secondScope, Exit.void);
       expect(page.viewportSize()).toEqual(firstSize);
+      const replacement = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* replacement.input({ type: "resize", ...secondSize });
+      const controller = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* controller.input({ type: "takeControl" });
+      yield* Scope.close(firstScope, Exit.void);
+      expect(page.viewportSize()).toEqual(firstSize);
+      yield* controller.input({ type: "releaseControl" });
+      expect(page.viewportSize()).toEqual(secondSize);
     }),
   ).pipe(Effect.provide(layer)),
 );

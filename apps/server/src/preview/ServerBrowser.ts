@@ -2589,8 +2589,13 @@ const make = Effect.gen(function* () {
                 if (tab.sizeViewer !== viewer) return;
                 tab.sizeViewer =
                   [...tab.viewers].find((candidate) => candidate.requestedSize !== null) ?? null;
-                if (tab.setting._tag === "fill" && tab.sizeViewer)
-                  await applySetting(tab, tab.setting);
+                const sizingViewer = tab.sizeViewer;
+                if (sizingViewer?.requestedSize) {
+                  await dispatchViewerInput(tab, session, sizingViewer, {
+                    type: "resize",
+                    ...sizingViewer.requestedSize,
+                  });
+                }
               }),
             )
             .catch(constVoid);
