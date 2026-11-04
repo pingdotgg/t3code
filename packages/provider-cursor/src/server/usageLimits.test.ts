@@ -158,6 +158,38 @@ describe("Cursor usage limits", () => {
       }),
   );
 
+  it.effect("explains when a file credential store has no access token", () =>
+    withNodeServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        for (const credentials of ["{}", '{"accessToken":""}'] as const) {
+          yield* fs.writeFileString(path.join(directory, "cursor", "auth.json"), credentials);
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "" },
+            {
+              XDG_CONFIG_HOME: directory,
+              HOME: directory,
+              AGENT_CLI_CREDENTIAL_STORE: "file",
+            },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("must not request limits without a token")),
+            ),
+          );
+          expect(limits.unavailable).toEqual({
+            reason: "unsupported",
+            message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
+          });
+        }
+      }).pipe(Effect.scoped),
+    ),
+  );
+
   it.effect("reports failed requests without exposing credentials or response bodies", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(

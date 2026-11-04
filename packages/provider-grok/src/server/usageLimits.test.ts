@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import { readGrokAccount } from "./usageLimits.ts";
 
 describe("Grok usage limits", () => {
@@ -22,6 +23,12 @@ describe("Grok usage limits", () => {
         label: "xAI console",
         url: "https://console.x.ai",
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("API-key Grok must not request usage limits")),
+      ),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });
