@@ -13,13 +13,9 @@ export function getEntryChunk(output: RolldownOutput): OutputChunk {
   return entry;
 }
 
-export function getChunk(
-  output: RolldownOutput,
-  fileName: string,
-): OutputChunk {
+export function getChunk(output: RolldownOutput, fileName: string): OutputChunk {
   const chunk = output.output.find(
-    (item): item is OutputChunk =>
-      item.type === "chunk" && item.fileName === fileName,
+    (item): item is OutputChunk => item.type === "chunk" && item.fileName === fileName,
   );
   if (!chunk) {
     throw new Error(`Expected generated output to contain chunk "${fileName}"`);
@@ -27,22 +23,16 @@ export function getChunk(
   return chunk;
 }
 
-export function findAsset(
-  output: RolldownOutput,
-  matcher: RegExp,
-): OutputAsset | undefined {
+export function findAsset(output: RolldownOutput, matcher: RegExp): OutputAsset | undefined {
   return output.output.find(
-    (item): item is OutputAsset =>
-      item.type === "asset" && matcher.test(item.fileName),
+    (item): item is OutputAsset => item.type === "asset" && matcher.test(item.fileName),
   );
 }
 
 export function getAsset(output: RolldownOutput, matcher: RegExp): OutputAsset {
   const asset = findAsset(output, matcher);
   if (!asset) {
-    throw new Error(
-      `Expected generated output to contain asset matching ${matcher}`,
-    );
+    throw new Error(`Expected generated output to contain asset matching ${matcher}`);
   }
   return asset;
 }

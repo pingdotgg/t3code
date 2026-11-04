@@ -74,7 +74,7 @@ const make = Effect.gen(function* () {
 
   const administer = Effect.fn("AccessMcpService.administer")(function* <A>(
     scope: CallerScope,
-    operation: Effect.Effect<A, EnvironmentAuth.ServerAuthInternalError>,
+    operation: Effect.Effect<A, AccessError>,
   ) {
     const threadId = yield* access(scope);
     return yield* executor.withLock(
@@ -89,7 +89,17 @@ const make = Effect.gen(function* () {
 
   return AccessMcpService.of({
     createPairingCredential: Effect.fn("AccessMcpService.createPairingCredential")((scope, input) =>
-      administer(scope, auth.issuePairingCredential(input)),
+      administer(
+        scope,
+        auth.issuePairingCredential(input).pipe(
+          Effect.catchTags({
+            ManagedPolicyRefusedError: (error) =>
+              Effect.fail(
+                new OrchestratorMcpFailure({ code: "capability_denied", message: error.message }),
+              ),
+          }),
+        ),
+      ),
     ),
     listPairingLinks: Effect.fn("AccessMcpService.listPairingLinks")((scope) =>
       administer(scope, auth.listPairingLinks()),

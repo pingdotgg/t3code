@@ -18,6 +18,16 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it.each(["/Model opus", "/MODEL opus"])(
+    "opens the model picker for capitalized %j the same as /model",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toMatchObject({
+        kind: "slash-model",
+        query: "opus",
+      });
+    },
+  );
+
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
       kind: "slash-command",
