@@ -139,8 +139,8 @@ jobs:
           VERIFY_RUNNER_LABEL: ${{ inputs.verify_runner }}
         run: |
           set -euo pipefail
-          # Blacksmith's per-capacity labels and GitHub's own images only.
-          allowed='^(blacksmith|ubuntu|macos|windows)-[a-z0-9][a-z0-9.-]*$'
+          # Standard GitHub-hosted images only.
+          allowed='^(ubuntu-(latest|22\.04|24\.04|26\.04)(-arm)?|macos-(latest|14|15|26)(-intel)?|windows-(latest|2022|2025|11-arm))$'
           failed=0
           check_label() {
             local name="$1" label="$2" required="$3"
@@ -154,7 +154,7 @@ jobs:
             # A private label is either a `*-runner` pool or simply outside the
             # hosted pools above (GitHub's own self-hosted selector included).
             if [[ "$label" == *-runner* ]] || [[ ! "$label" =~ $allowed ]]; then
-              echo "::error::inputs.$name=$label is not a hosted runner label (blacksmith-*, ubuntu-*, macos-*, windows-*)."
+              echo "::error::inputs.$name=$label is not a hosted runner label (standard GitHub-hosted Ubuntu, macOS or Windows image)."
               failed=1
             else
               echo "inputs.$name=$label is a hosted runner label."

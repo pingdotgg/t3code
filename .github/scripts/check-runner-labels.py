@@ -3,8 +3,7 @@
 This repository has no self-hosted runners. Pull requests from forks can propose
 workflow changes, and a workflow that selects a private runner would put
 untrusted code on hardware that holds credentials and reaches the internal
-network. Every `runs-on` value must therefore name a Blacksmith pool
-(`blacksmith-*`) or a GitHub-hosted image (`ubuntu-*`, `macos-*`, `windows-*`).
+network. Every `runs-on` value must name a standard GitHub-hosted image.
 
 Two modes:
 
@@ -26,9 +25,8 @@ from pathlib import Path
 
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
 
-# A label a hosted pool provides: Blacksmith's per-capacity labels and GitHub's
-# own images. `[a-z0-9.-]*` covers suffixes such as `ubuntu-24.04-arm`.
-HOSTED_LABEL = re.compile(r"^(?:blacksmith|ubuntu|macos|windows)-[a-z0-9][a-z0-9.-]*$")
+# Excludes paid larger runners and third-party pools.
+HOSTED_LABEL = re.compile(r"^(?:ubuntu-(?:latest|22\.04|24\.04|26\.04)(?:-arm)?|macos-(?:latest|14|15|26)(?:-intel)?|windows-(?:latest|2022|2025|11-arm))$")
 
 # Runner labels that name hardware this account owns. `-runner` is a stronger
 # signal than `-hosted`, so a label such as `linux-runner` is private by
@@ -39,7 +37,7 @@ PRIVATE_LABEL_HINT = ("self-hosted", "-runner")
 # selector, the private labels this repository used to have, and the `bench-*`
 # capacity pool. `android-emulator-runner` and other action names do not match.
 FORBIDDEN_REFERENCE = re.compile(
-    r"self-hosted|\b(?:linux|windows|macos)-runner\b|\bbench-[a-z0-9][a-z0-9.-]*"
+    r"blacksmith-[a-z0-9.-]+|self-hosted|\b(?:linux|windows|macos)-runner\b|\bbench-[a-z0-9][a-z0-9.-]*"
 )
 
 
@@ -82,7 +80,7 @@ def check_label(name, label, required):
     if any(hint in label for hint in PRIVATE_LABEL_HINT) or not HOSTED_LABEL.match(label):
         return (
             f"inputs.{name}={label!r} is not a hosted runner label; "
-            "use blacksmith-*, ubuntu-*, macos-* or windows-*"
+            "use a standard GitHub-hosted Ubuntu, macOS or Windows image"
         )
     return None
 

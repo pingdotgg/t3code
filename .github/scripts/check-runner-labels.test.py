@@ -24,7 +24,7 @@ class ScanWorkflowsTests(unittest.TestCase):
         self.assertEqual(self.scan("build.yml", """
             jobs:
               build:
-                runs-on: blacksmith-8vcpu-ubuntu-2404
+                runs-on: ubuntu-24.04
               verify:
                 runs-on: windows-11-arm
               lint:
@@ -40,7 +40,7 @@ class ScanWorkflowsTests(unittest.TestCase):
         self.assertIn("self-hosted", problems[0])
 
     def test_rejects_private_runner_labels(self):
-        for label in ("linux-runner", "windows-runner", "macos-runner", "bench-32vcpu"):
+        for label in ("linux-runner", "windows-runner", "macos-runner", "bench-32vcpu", "blacksmith-8vcpu-ubuntu-2404"):
             with self.subTest(label=label):
                 self.workflows.joinpath("build.yml").unlink(missing_ok=True)
                 problems = self.scan("build.yml", f"        runs-on: {label}\n")
@@ -50,7 +50,7 @@ class ScanWorkflowsTests(unittest.TestCase):
         problems = self.scan("release.yml", """
             strategy:
               matrix:
-                runner: [blacksmith-8vcpu-ubuntu-2404, bench-arm64]
+                runner: [ubuntu-24.04, bench-arm64]
             runs-on: ${{ matrix.runner }}
         """)
         self.assertEqual(len(problems), 1)
@@ -61,7 +61,7 @@ class ScanWorkflowsTests(unittest.TestCase):
             # A private runner would be self-hosted or linux-runner.
             jobs:
               emulator:
-                runs-on: blacksmith-4vcpu-ubuntu-2404
+                runs-on: ubuntu-24.04
                 steps:
                   - uses: reactivecircus/android-emulator-runner@v2
         """), [])
@@ -79,12 +79,12 @@ class ScanWorkflowsTests(unittest.TestCase):
 class CheckLabelsTests(unittest.TestCase):
     def test_accepts_hosted_labels(self):
         self.assertEqual(
-            labels.check_labels("blacksmith-16vcpu-ubuntu-2404", "windows-2025"), []
+            labels.check_labels("ubuntu-24.04", "windows-2025"), []
         )
         self.assertEqual(labels.check_labels("ubuntu-24.04-arm", ""), [])
 
     def test_rejects_private_labels(self):
-        for label in ("self-hosted", "linux-runner", "bench-32vcpu", "macos-26-runner"):
+        for label in ("self-hosted", "linux-runner", "bench-32vcpu", "macos-26-runner", "blacksmith-8vcpu-ubuntu-2404", "macos-15-large", "macos-15-xlarge"):
             with self.subTest(label=label):
                 problems = labels.check_labels(label, "")
                 self.assertEqual(len(problems), 1, problems)
