@@ -467,3 +467,29 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Suggestions to start a fresh thread
+
+In **Settings → Labs**, enable **Suggest new threads** for an environment
+and configure its local decision-model endpoint. Suggestions are off by default.
+When an idle thread has a text-only draft that appears independent of its earlier
+work, T3 can offer to start a new thread with that draft. Nothing is sent until
+you send it yourself. Dismiss the suggestion to keep working in the current thread;
+it stays hidden until you send or clear that draft. Turn the setting off to stop checks.
+
+Checks run on the connected server, including when you use a remote browser or
+phone. The experimental model can miss new tasks or suggest a split for a follow-up;
+you decide whether the earlier context is still needed. Attachments and context
+references stay in their current thread and are not eligible for this suggestion.
+
+The endpoint must be a loopback Jev-compatible endpoint on the server machine,
+using `pplx-decider-flash-v1.2`. For an existing MLX Decision installation on Apple
+Silicon, start the model with:
+
+```sh
+mlx-decision server --model /path/to/pplx-decider-flash-v1.2 --host 127.0.0.1 --port 8000
+```
+
+Enter `http://127.0.0.1:8000/v1/systemone` in the endpoint setting.
+T3 does not install or download a model. When the endpoint is unavailable, checks
+quietly abstain and the composer continues working normally.

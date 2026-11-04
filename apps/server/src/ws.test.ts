@@ -1,3 +1,4 @@
+import * as ThreadSplitSuggestions from "./orchestration-v2/ThreadSplitSuggestions.ts";
 import * as PstackPack from "./pstack/PstackPack.ts";
 import * as SkillsLibrary from "./skills/SkillsLibrary.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
@@ -930,7 +931,14 @@ it.effect.each([
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
             { secretReferences: true },
-          ).pipe(Layer.provide(configRpcServices)),
+          ).pipe(
+            Layer.provide(configRpcServices),
+            Layer.provide(
+              Layer.succeed(ThreadSplitSuggestions.ThreadSplitSuggestions, {
+                suggest: () => Effect.succeed({ suggest: false }),
+              }),
+            ),
+          ),
         ),
       );
       const requestId = RpcMessage.RequestId("config");
@@ -1226,7 +1234,14 @@ it.effect(
             {},
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
-          ).pipe(Layer.provide(configRpcServices)),
+          ).pipe(
+            Layer.provide(configRpcServices),
+            Layer.provide(
+              Layer.succeed(ThreadSplitSuggestions.ThreadSplitSuggestions, {
+                suggest: () => Effect.succeed({ suggest: false }),
+              }),
+            ),
+          ),
         ),
       );
       const configRequest = RpcMessage.RequestId("config");

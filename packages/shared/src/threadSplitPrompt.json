@@ -1,0 +1,8 @@
+{
+  "type": "noul",
+  "instructions": "Could the agent handle the new user message independently of all earlier thread context, without reusing any earlier result, file, decision, or instruction? Answer yes only if independent.",
+  "criteria": {
+    "true": "No earlier thread result, file, decision, or instruction is needed.",
+    "false": "Handling relies on an earlier thread result, file, decision, or instruction."
+  }
+}
