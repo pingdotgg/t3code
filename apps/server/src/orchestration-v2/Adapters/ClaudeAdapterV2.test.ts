@@ -7322,6 +7322,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       threshold: 117_000,
       maxTokens: 150_000,
     },
+    {
+      autoCompactWindow: "",
+      model: "claude-sonnet-4-6",
+      userSettings:
+        '{"modelSettings":{"claude-sonnet-4-6-20251117":{"autoCompactWindow":150000},"claude-sonnet-4-6":{"autoCompactWindow":180000}}}',
+      threshold: 147_000,
+      maxTokens: 180_000,
+    },
     // /autocompact writes the per-model value, which beats the file's top-level one.
     {
       autoCompactWindow: "",

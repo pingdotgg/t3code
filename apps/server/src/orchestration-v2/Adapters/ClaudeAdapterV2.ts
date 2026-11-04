@@ -4804,6 +4804,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.flatMap(decodeClaudeAutoCompactSettings),
         Effect.orElseSucceed(() => undefined),
       );
+      const canonical = Option.getOrUndefined(
+        decodeClaudeModelAutoCompactSettings(settings?.modelSettings?.[model]),
+      );
+      if (canonical !== undefined) {
+        return canonical.autoCompactWindow === "auto" ? undefined : canonical.autoCompactWindow;
+      }
       for (const [key, entry] of Object.entries(settings?.modelSettings ?? {})) {
         const entryModel = compileClaudeModelSelection({
           ...modelSelection,
