@@ -227,8 +227,11 @@ function chatSubject(
 function AddToChatButton({ onClick }: { onClick: () => void }) {
   return (
     <Button size="xs" variant="ghost" className="shrink-0" onClick={onClick}>
-      <MessageSquarePlusIcon className="size-3" />
-      Add to chat
+      {/* Wrapped like Fix's label so both sit on the header's baseline. */}
+      <span className="inline-flex items-baseline gap-1">
+        <MessageSquarePlusIcon className="size-3 self-center" />
+        <span>Add to chat</span>
+      </span>
     </Button>
   );
 }
