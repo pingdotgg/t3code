@@ -1722,17 +1722,16 @@ const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefine
   return rows.map((row) => row.detail);
 });
 
-// SQLite's plan wording changes between versions, so only the index name and the absence of a
-// temporary B-tree are pinned.
+// SQLite's plan wording changes between versions, so only the index search, the keys it seeks
+// and the absence of a temporary B-tree are pinned.
 const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessageOrdinalIndex")(
-  function* (statement: string | undefined) {
+  function* (statement: string | undefined, keys: ReadonlyArray<string>) {
     const plan = yield* queryPlan(statement);
-    assert.isTrue(
-      plan.some((detail) =>
-        detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx"),
-      ),
-      plan.join("\n"),
+    const search = plan.find((detail) =>
+      detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx"),
     );
+    assert.isDefined(search, plan.join("\n"));
+    for (const key of keys) assert.include(search, key);
     assert.isFalse(
       plan.some((detail) => detail.includes("TEMP B-TREE")),
       plan.join("\n"),
@@ -1835,6 +1834,7 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
     .pipe(Effect.withTracer(tracer));
   yield* assertReadsThroughMessageOrdinalIndex(
     statements.find((statement) => statement.includes("MIN(ordinal) AS ordinal")),
+    ["thread_id=?"],
   );
   assert.deepEqual(
     indexed.messages.map((message) => message.id),
@@ -1863,7 +1863,8 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
       statement.includes("MIN(ordinal) AS ordinal"),
     );
     assert.include(bounded, "IN (SELECT value FROM json_each(");
-    yield* assertReadsThroughMessageOrdinalIndex(bounded);
+    // The selected messages are sought in the index, not filtered from the whole thread.
+    yield* assertReadsThroughMessageOrdinalIndex(bounded, ["thread_id=?", "<expr>=?"]);
     const rows = yield* sql.unsafe<{ readonly message_id: string }>(bounded!, [
       threadId,
       JSON.stringify(loaded),
