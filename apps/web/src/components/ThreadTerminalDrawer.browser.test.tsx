@@ -18,6 +18,7 @@ const fixture = vi.hoisted(() => ({
   openFilesInApp: false,
   scopes: null as ReadonlySet<string> | null,
   metadata: { entries: [{ kind: "file" }] } as FilesystemGetMetadataResult,
+  pendingMetadata: new Map<string, Promise<FilesystemGetMetadataResult>>(),
   openEditor: vi.fn(async (_target: string) => ({ _tag: "Success" as const })),
 }));
 
@@ -74,7 +75,12 @@ vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => fixture.openEditor }));
 vi.mock("../state/filesystem", () => ({ filesystemEnvironment: { getMetadata: {} } }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: fixture.metadata }),
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input: { paths: readonly string[] } }) => ({
+      _tag: "Success",
+      value: await (fixture.pendingMetadata.get(input.paths[0]!) ?? fixture.metadata),
+    }),
 }));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => null }));
@@ -130,6 +136,7 @@ function setup() {
   fixture.openFilesInApp = false;
   fixture.scopes = null;
   fixture.metadata = { entries: [{ kind: "file" }] };
+  fixture.pendingMetadata = new Map();
   fixture.openEditor.mockClear();
   useRightPanelStore.setState({ byThreadKey: {} });
   return { original, other };
@@ -166,12 +173,14 @@ it.each([false, true])(
   },
 );
 
-it.each(["modifier", "directory"])(
-  "keeps the external editor available for a %s when file previews are enabled",
+it.each(["modifier", "directory", "missing", "other"])(
+  "uses the external editor for %s links when file previews are enabled",
   async (reason) => {
     const { original } = setup();
     fixture.openFilesInApp = true;
     if (reason === "directory") fixture.metadata = { entries: [{ kind: "directory" }] };
+    if (reason === "missing") fixture.metadata = { entries: [null] };
+    if (reason === "other") fixture.metadata = { entries: [{ kind: "other" }] };
     await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
     await act(async () => {
       fixture.pendingSurfaces.shift()?.();
@@ -190,6 +199,73 @@ it.each(["modifier", "directory"])(
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
     ).toBeNull();
+  },
+);
+
+function deferredMetadata() {
+  let resolve!: (result: FilesystemGetMetadataResult) => void;
+  const promise = new Promise<FilesystemGetMetadataResult>((resolveResult) => {
+    resolve = resolveResult;
+  });
+  return { promise, resolve };
+}
+
+it.each([
+  ["file", "file"],
+  ["file", "directory"],
+  ["directory", "file"],
+  ["file", "modifier"],
+  ["file", "url"],
+] as const)(
+  "ignores stale %s metadata after a newer %s activation",
+  async (olderKind, latestKind) => {
+    const { original } = setup();
+    fixture.openFilesInApp = true;
+    const older = deferredMetadata();
+    const latest = deferredMetadata();
+    fixture.pendingMetadata.set("/repo/src/older.ts", older.promise);
+    fixture.pendingMetadata.set("/repo/src/latest.ts", latest.promise);
+    await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const options = fixture.surfaceOptions[0]!;
+    const mac = /mac/i.test(navigator.platform);
+    await act(() => {
+      options.onLinkActivate("src/older.ts", new MouseEvent("click"));
+      options.onLinkActivate(
+        latestKind === "url" ? "https://example.com" : "src/latest.ts:42",
+        new MouseEvent("click", {
+          metaKey: latestKind === "modifier" && mac,
+          ctrlKey: latestKind === "modifier" && !mac,
+        }),
+      );
+    });
+    if (latestKind === "file" || latestKind === "directory") {
+      await act(async () => {
+        latest.resolve({ entries: [{ kind: latestKind }] });
+        await latest.promise;
+      });
+    }
+    const latestPanel = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      original,
+    );
+    if (latestKind === "file") {
+      expect(latestPanel).toMatchObject({ relativePath: "/repo/src/latest.ts", revealLine: 42 });
+    } else {
+      expect(latestPanel).toBeNull();
+    }
+    await act(async () => {
+      older.resolve({ entries: [{ kind: olderKind }] });
+      await older.promise;
+    });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, original),
+    ).toEqual(latestPanel);
+    expect(fixture.openEditor.mock.calls).toEqual(
+      latestKind === "directory" || latestKind === "modifier" ? [["/repo/src/latest.ts:42"]] : [],
+    );
   },
 );
 

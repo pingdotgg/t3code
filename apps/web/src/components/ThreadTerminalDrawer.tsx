@@ -523,6 +523,7 @@ function TerminalSessionViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const autoFocusedRef = useRef(false);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
+  const linkActivationIdRef = useRef(0);
   const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -547,28 +548,31 @@ function TerminalSessionViewport({
     reportFailure: false,
     refresh: true,
   });
-  const openTerminalPath = useEffectEvent(async (target: string, event: MouseEvent) => {
-    if (
-      openFilesInApp &&
-      !isTerminalLinkActivation(event) &&
-      readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-    ) {
-      const position = splitFilePathPosition(target);
-      const metadata = await getFilesystemMetadata({
-        environmentId,
-        input: { paths: [position.path] },
-      });
-      if (metadata._tag !== "Success") return metadata;
-      if (metadata.value.entries[0]?.kind !== "directory") {
-        if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+  const openTerminalPath = useEffectEvent(
+    async (target: string, event: MouseEvent, activationId: number) => {
+      if (
+        openFilesInApp &&
+        !isTerminalLinkActivation(event) &&
+        readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+      ) {
+        const position = splitFilePathPosition(target);
+        const metadata = await getFilesystemMetadata({
+          environmentId,
+          input: { paths: [position.path] },
+        });
+        if (activationId !== linkActivationIdRef.current) return AsyncResult.success(undefined);
+        if (metadata._tag !== "Success") return metadata;
+        if (metadata.value.entries[0]?.kind === "file") {
+          if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+            return AsyncResult.success(undefined);
+          }
+          useRightPanelStore.getState().openFile(threadRef, position.path, position.line);
           return AsyncResult.success(undefined);
         }
-        useRightPanelStore.getState().openFile(threadRef, position.path, position.line);
-        return AsyncResult.success(undefined);
       }
-    }
-    return openInPreferredEditor(target);
-  });
+      return openInPreferredEditor(target);
+    },
+  );
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -1030,6 +1034,7 @@ function TerminalSessionViewport({
         if (!canActivateTerminalLink(text)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
+        const activationId = ++linkActivationIdRef.current;
         if (isTerminalUrl(text)) {
           if (!localApi) {
             writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
@@ -1062,7 +1067,7 @@ function TerminalSessionViewport({
         }
         const target = resolvePathLinkTarget(text, cwd);
         void (async () => {
-          const result = await openTerminalPath(target, event);
+          const result = await openTerminalPath(target, event, activationId);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
             return;
           }
