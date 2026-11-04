@@ -330,11 +330,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled || isResponding}
-                    onClick={() => {
+                    onClick={(event) => {
                       const shown = questionShownRef.current;
+                      // detail is 0 for Enter/Space, which only reach a deliberately focused option.
                       if (
-                        shown?.questionId !== activeQuestion.id ||
-                        performance.now() - shown.at < QUESTION_READ_DELAY_MS
+                        event.detail > 0 &&
+                        (shown?.questionId !== activeQuestion.id ||
+                          performance.now() - shown.at < QUESTION_READ_DELAY_MS)
                       ) {
                         return;
                       }

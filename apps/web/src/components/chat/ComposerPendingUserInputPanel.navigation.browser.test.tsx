@@ -317,15 +317,16 @@ it("ignores a click that lands on an option as the question appears, then accept
   );
   const option = screen.getByRole("button", { name: /Incremental/ });
 
+  await advanceClock(149);
   await userEvent.click(option);
   await advanceClock(1_000);
   expect(
     onToggleOption,
-    "a click 0 ms after the question appeared selected an option",
+    "a click 149 ms after the question appeared selected an option",
   ).not.toHaveBeenCalled();
   expect(
     onAdvance,
-    "a click 0 ms after the question appeared submitted the answer",
+    "a click 149 ms after the question appeared submitted the answer",
   ).not.toHaveBeenCalled();
 
   await userEvent.click(option);
@@ -381,4 +382,19 @@ it("ignores a click that lands on an option as expanding the collapsed question 
     onToggleOption,
     "a click 0 ms after expanding the question selected an option",
   ).not.toHaveBeenCalled();
+});
+
+it("answers at once when a focused option is activated from the keyboard", async () => {
+  using _timers = fakeTimers();
+  const onToggleOption = vi.fn();
+  await using screen = await render(
+    <AnsweringPanel
+      questions={prompt.questions.slice(0, 1)}
+      onToggleOption={onToggleOption}
+      onAdvance={() => {}}
+    />,
+  );
+  (screen.getByRole("button", { name: /Incremental/ }).element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(onToggleOption).toHaveBeenCalledExactlyOnceWith("question-0", "Incremental");
 });
