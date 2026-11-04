@@ -228,6 +228,12 @@ describe("sidebarNarrowsAndroidReading", () => {
     ).toBe(true);
   });
 
+  it("leaves the keyboard's old behaviour when the inspector already pushes the sidebar out", () => {
+    const panes = panesWithSidebar(1_024, 768, 1_024 - RAIL, true);
+    expect(panes.primarySidebarVisible).toBe(false);
+    expect(sidebarNarrowsAndroidReading(panes, END_GAP)).toBe(true);
+  });
+
   it("keeps the sidebar once the chat beside it reaches exactly the reading width", () => {
     // A 1280-wide window's sidebar is 380 wide.
     const exact = 380 + ANDROID_READING_MAX_WIDTH + END_GAP;
