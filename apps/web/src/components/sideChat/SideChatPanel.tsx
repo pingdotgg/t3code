@@ -787,7 +787,7 @@ export function SideChatPanel(props: {
               }}
               canInterrupt={canOperate && deriveCanInterruptRunningThread(shell !== null, runtime)}
               onExpandImage={(preview) =>
-                openExpandedImagePreview(scopedThreadKey(lessonRef), preview)
+                openExpandedImagePreview(scopedThreadKey(lessonRef), { ...preview, fill: true })
               }
               onOptimisticMessage={(message) => {
                 if (shownSideChatIdRef.current === sideChatRef.threadId)

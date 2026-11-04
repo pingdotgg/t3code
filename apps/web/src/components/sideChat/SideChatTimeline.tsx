@@ -194,7 +194,9 @@ export function SideChatTimeline(props: {
           supportsConversationRollback={false}
           onRevertToTurnCount={noop}
           isRevertingCheckpoint={false}
-          onImageExpand={(preview) => openExpandedImagePreview(lessonKey, preview)}
+          onImageExpand={(preview) =>
+            openExpandedImagePreview(lessonKey, { ...preview, fill: true })
+          }
           markdownCwd={workspaceRoot}
           resolvedTheme={resolvedTheme}
           timestampFormat={timestampFormat}
