@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,8 +14,10 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 
 import {
@@ -43,6 +46,8 @@ const INSTALL_DOWNLOADING: RelayClientInstallProgressEvent = {
   type: "progress",
   stage: "downloading",
 };
+
+const decodeNumber = Schema.decodeUnknownEffect(Schema.Number);
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
@@ -264,11 +269,162 @@ describe("environment RPC", () => {
       while (subscriptions.length < 2) {
         yield* Queue.take(subscriptionChanges);
       }
+      // The pending same-session retry must not resubscribe the replaced session.
+      yield* TestClock.adjust("1 minute");
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
     }),
+  );
+
+  // The session stays healthy (`closed` never resolves), as when one stream chunk fails to decode,
+  // so the supervisor will not replace it and only resubscribing restores delivery.
+  const resumesOnTheSameSession = Effect.fn("TestEnvironmentRpc.resumesOnTheSameSession")(
+    function* (streamFailure: Stream.Stream<never, unknown>) {
+      const resumedValue = { source: "resumed" } as unknown as ServerLifecycleStreamEvent;
+      const firstSubscribed = yield* Deferred.make<void>();
+      let subscriptions = 0;
+      const observedDefects: unknown[] = [];
+      const client = {
+        [WS_METHODS.subscribeServerLifecycle]: () => {
+          subscriptions += 1;
+          return subscriptions === 1
+            ? Stream.fromEffect(Deferred.succeed(firstSubscribed, undefined)).pipe(
+                Stream.drain,
+                Stream.concat(streamFailure),
+              )
+            : Stream.make(resumedValue).pipe(Stream.concat(Stream.never));
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const resultFiber = yield* subscribe(
+        WS_METHODS.subscribeServerLifecycle,
+        {},
+        {
+          onDefect: (cause) =>
+            Effect.sync(() => {
+              observedDefects.push(Cause.squash(cause));
+            }),
+        },
+      ).pipe(
+        Stream.runHead,
+        Effect.timeoutOption("2 seconds"),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstSubscribed);
+      yield* TestClock.adjust("2 seconds");
+
+      expect(
+        yield* Fiber.join(resultFiber),
+        "durable subscription stopped delivering after its stream ended on a healthy session",
+      ).toEqual(Option.some(Option.some(resumedValue)));
+      expect(subscriptions).toBe(2);
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      return observedDefects;
+    },
+  );
+
+  it.effect("resubscribes on the same session after a transport failure", () =>
+    Effect.gen(function* () {
+      yield* resumesOnTheSameSession(
+        Stream.fail(
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: "stream failed",
+              cause: new Error("stream failed"),
+            }),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("resubscribes on the same session after a stream chunk fails to decode", () =>
+    Effect.gen(function* () {
+      // Mirrors RpcClient, which decodes each chunk with `Effect.orDie`.
+      const decodeDefect = decodeNumber("not a number").pipe(Effect.orDie);
+      const observedDefects = yield* resumesOnTheSameSession(
+        Stream.fromEffect(decodeDefect).pipe(Stream.drain),
+      );
+
+      expect(observedDefects).toHaveLength(1);
+      expect(Schema.isSchemaError(observedDefects[0])).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "backs off a same-session stream that keeps failing to decode after its first value",
+    () =>
+      Effect.gen(function* () {
+        // Like the shell stream: a valid value (metadata) arrives, then a chunk fails to decode.
+        const value = { source: "metadata" } as unknown as ServerLifecycleStreamEvent;
+        const decodeDefect = decodeNumber("not a number").pipe(Effect.orDie);
+        const subscriptions = yield* Queue.unbounded<{
+          readonly session: "first" | "second";
+          readonly at: number;
+        }>();
+        let secondSubscriptions = 0;
+        const failingClient = (name: "first" | "second") =>
+          ({
+            [WS_METHODS.subscribeServerLifecycle]: () =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  yield* Queue.offer(subscriptions, {
+                    session: name,
+                    at: yield* Clock.currentTimeMillis,
+                  });
+                  if (name === "second" && ++secondSubscriptions > 2) return Stream.never;
+                  return Stream.make(value).pipe(
+                    Stream.concat(Stream.fromEffect(decodeDefect).pipe(Stream.drain)),
+                  );
+                }),
+              ),
+          }) as unknown as WsRpcProtocolClient;
+        const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+        yield* SubscriptionRef.set(activeSession, Option.some(session(failingClient("first"))));
+        const subscriptionFiber = yield* subscribe(
+          WS_METHODS.subscribeServerLifecycle,
+          {},
+          {
+            onExpectedFailure: () => Effect.void,
+            retryExpectedFailureAfter: "250 millis",
+          },
+        ).pipe(
+          Stream.runDrain,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+
+        const expectedFirstSessionDelays = [250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+        const firstSessionDelays: number[] = [];
+        let previous = yield* Queue.take(subscriptions);
+        for (const delay of expectedFirstSessionDelays) {
+          yield* TestClock.adjust(delay);
+          const next = yield* Queue.take(subscriptions);
+          firstSessionDelays.push(next.at - previous.at);
+          previous = next;
+        }
+
+        // A replacement session starts a fresh backoff.
+        yield* SubscriptionRef.set(activeSession, Option.some(session(failingClient("second"))));
+        const replaced = yield* Queue.take(subscriptions);
+        yield* TestClock.adjust(250);
+        const retried = yield* Queue.take(subscriptions);
+        yield* Fiber.interrupt(subscriptionFiber);
+
+        expect(
+          firstSessionDelays,
+          "same-session decode retries reset to the base delay after every first value",
+        ).toEqual(expectedFirstSessionDelays);
+        expect([replaced.session, retried.session]).toEqual(["second", "second"]);
+        expect(retried.at - replaced.at).toBe(250);
+        expect(yield* Ref.get(retryCount)).toBe(0);
+      }),
   );
 
   it.effect("surfaces domain subscription failures without reconnecting", () =>
