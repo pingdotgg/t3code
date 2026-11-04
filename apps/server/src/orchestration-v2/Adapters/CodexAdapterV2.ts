@@ -1165,6 +1165,16 @@ function codexTerminalFailureClass(
   return "provider_error";
 }
 
+function codexTerminalErrorNeedsEvidence(
+  errorInfo: CodexErrorInfo | null | undefined,
+  code: string | null,
+) {
+  return (
+    code === "other" ||
+    (code === "responseTooManyFailedAttempts" && codexExhaustionHttpStatus(errorInfo) === null)
+  );
+}
+
 /**
  * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
  * the code it names replaces Codex's, and clients pick a recovery from it.
@@ -1187,6 +1197,7 @@ interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
+    readonly errorInfo?: CodexErrorInfo | null;
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
@@ -4713,6 +4724,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
+                ...(payload.error.codexErrorInfo === undefined
+                  ? {}
+                  : { errorInfo: payload.error.codexErrorInfo }),
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
                     message: payload.error.additionalDetails?.trim() || payload.error.message,
@@ -5841,10 +5855,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       input.failureMessage,
                     );
               const retry = input.providerRetry;
+              const notification = input.context.latestProviderFailure;
               // Codex 0.164 reports an exhausted stream error as `other` with the same details.
               if (
-                failure.code === "other" &&
+                codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failure.code) &&
                 failure.class === "provider_error" &&
+                (notification === undefined ||
+                  notification.failure.class === "transport_error" ||
+                  codexTerminalErrorNeedsEvidence(
+                    notification.errorInfo,
+                    notification.nativeCode,
+                  )) &&
                 retry !== undefined &&
                 input.failureMessage !== undefined &&
                 input.failureMessage === retry.nativeDetails &&

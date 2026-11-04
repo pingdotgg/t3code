@@ -5672,6 +5672,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           terminalMessage: `${"Connection lost. ".repeat(300)}Different cause.`,
           expectedClass: "provider_error",
         },
+        {
+          name: "generic-terminal-status",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseStreamDisconnected: { httpStatusCode: 503 } },
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-exhaustion",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          completionErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-exhaustion-status",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 503 } },
+          completionErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          expectedClass: "provider_error",
+        },
       ] as const
     ).map((scenario) => ({
       ...scenario,
@@ -5779,7 +5802,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         threadId: nativeThreadId,
                         turnId: nativeTurnId,
                         willRetry: false,
-                        error: { message: scenario.terminalMessage, codexErrorInfo: "other" },
+                        error: {
+                          message: scenario.terminalMessage,
+                          codexErrorInfo:
+                            "terminalErrorInfo" in scenario ? scenario.terminalErrorInfo : "other",
+                        },
                       },
                     },
                   },
@@ -5802,7 +5829,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                             ? "A different failure."
                             : message,
                       ...("terminalMessage" in scenario
-                        ? { codexErrorInfo: "other" }
+                        ? {
+                            codexErrorInfo:
+                              "completionErrorInfo" in scenario
+                                ? scenario.completionErrorInfo
+                                : "other",
+                          }
                         : scenario.notification &&
                             scenario.name !== "matching-details" &&
                             !("details" in scenario)
