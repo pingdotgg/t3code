@@ -4,6 +4,7 @@ import {
   offlineMessages,
   useOfflineMessages,
   deliverOfflineMessages,
+  cancelOfflineMessage,
 } from "../../state/offlineMessages";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
@@ -75,7 +76,7 @@ export function OfflineMessages({
               variant="ghost"
               disabled={sending}
               onClick={() => {
-                void offlineMessages.remove(id).then(deliverOfflineMessages).catch(report);
+                void cancelOfflineMessage(id).then(deliverOfflineMessages).catch(report);
               }}
             >
               Cancel

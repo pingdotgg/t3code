@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { Atom } from "effect/reactivity";
 import { AuthOrchestrationOperateScope, CommandId } from "@t3tools/contracts";
+import { DraftId, restoreFailedDraftThread, useComposerDraftStore } from "../composerDraftStore";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -69,34 +70,45 @@ export const offlineMessages = createOfflineOutbox({
     );
     const { bootstrap, ...turnInput } = message.input;
     if (!bootstrap?.createThread) {
-      const runtimeResult = await runAtomCommand(
-        appAtomRegistry,
-        threadEnvironment.setRuntimeMode,
-        {
-          environmentId: message.environmentId,
-          input: {
-            threadId: message.input.threadId,
-            runtimeMode: message.input.runtimeMode,
-            commandId: CommandId.make(message.input.commandId + ":runtime-mode"),
+      const threadRef = scopeThreadRef(message.environmentId, message.input.threadId);
+      if (
+        appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.runtimeMode !==
+        message.input.runtimeMode
+      ) {
+        const runtimeResult = await runAtomCommand(
+          appAtomRegistry,
+          threadEnvironment.setRuntimeMode,
+          {
+            environmentId: message.environmentId,
+            input: {
+              threadId: message.input.threadId,
+              runtimeMode: message.input.runtimeMode,
+              commandId: CommandId.make(message.input.commandId + ":runtime-mode"),
+            },
           },
-        },
-        { reportFailure: false },
-      );
-      if (runtimeResult._tag === "Failure") throw squashAtomCommandFailure(runtimeResult);
-      const interactionResult = await runAtomCommand(
-        appAtomRegistry,
-        threadEnvironment.setInteractionMode,
-        {
-          environmentId: message.environmentId,
-          input: {
-            threadId: message.input.threadId,
-            interactionMode: message.input.interactionMode,
-            commandId: CommandId.make(message.input.commandId + ":interaction-mode"),
+          { reportFailure: false },
+        );
+        if (runtimeResult._tag === "Failure") throw squashAtomCommandFailure(runtimeResult);
+      }
+      if (
+        appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))?.interactionMode !==
+        message.input.interactionMode
+      ) {
+        const interactionResult = await runAtomCommand(
+          appAtomRegistry,
+          threadEnvironment.setInteractionMode,
+          {
+            environmentId: message.environmentId,
+            input: {
+              threadId: message.input.threadId,
+              interactionMode: message.input.interactionMode,
+              commandId: CommandId.make(message.input.commandId + ":interaction-mode"),
+            },
           },
-        },
-        { reportFailure: false },
-      );
-      if (interactionResult._tag === "Failure") throw squashAtomCommandFailure(interactionResult);
+          { reportFailure: false },
+        );
+        if (interactionResult._tag === "Failure") throw squashAtomCommandFailure(interactionResult);
+      }
     }
     const result = await runAtomCommand(
       appAtomRegistry,
@@ -119,6 +131,36 @@ export const offlineMessages = createOfflineOutbox({
     releaseDraftAttachments(message.attachments);
   },
 });
+
+export async function cancelOfflineMessage(id: string) {
+  const message = offlineMessages
+    .getSnapshot()
+    .find((entry) => entry.input.message.messageId === id);
+  await offlineMessages.remove(id);
+  if (!message?.input.bootstrap?.createThread) return;
+  const threadRef = scopeThreadRef(message.environmentId, message.input.threadId);
+  if (
+    offlineMessages
+      .getSnapshot()
+      .some(
+        (entry) =>
+          entry.environmentId === message.environmentId &&
+          entry.input.threadId === message.input.threadId,
+      ) ||
+    appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef))
+  )
+    return;
+  for (const [draftId, draft] of Object.entries(
+    useComposerDraftStore.getState().draftThreadsByThreadKey,
+  )) {
+    if (
+      draft.environmentId === message.environmentId &&
+      draft.threadId === message.input.threadId
+    ) {
+      restoreFailedDraftThread(DraftId.make(draftId), draft, draft.threadId);
+    }
+  }
+}
 
 export function useOfflineMessages() {
   return useSyncExternalStore(offlineMessages.subscribe, offlineMessages.getSnapshot);
