@@ -50,8 +50,19 @@ command = "should-not-leak"
 command = "npx"
 args = ["-y", "jira-mcp"]
 env = { "JIRA_SITE" = "acme" }
+
+[mcp_servers.stdio-env]
+command = "uvx"
+args = ["jira-mcp"]
+
+[mcp_servers.stdio-env.env]
+JIRA_SITE = "from-table"
+JIRA_API_TOKEN = "secret"
+
+[[features]]
+command = "should-not-overwrite-stdio-env"
 `);
-      expect(servers.map((server) => server.name)).toEqual(["figma", "local-jira"]);
+      expect(servers.map((server) => server.name)).toEqual(["figma", "local-jira", "stdio-env"]);
       const figma = servers.find((server) => server.name === "figma");
       expect(figma).toMatchObject({
         transport: "http",
@@ -67,6 +78,13 @@ env = { "JIRA_SITE" = "acme" }
         command: "npx",
         args: ["-y", "jira-mcp"],
         env: { JIRA_SITE: "acme" },
+      });
+      const stdioEnv = servers.find((server) => server.name === "stdio-env");
+      expect(stdioEnv).toMatchObject({
+        transport: "stdio",
+        command: "uvx",
+        args: ["jira-mcp"],
+        env: { JIRA_SITE: "from-table", JIRA_API_TOKEN: "secret" },
       });
     } finally {
       if (previous === undefined) delete process.env.FIGMA_TOKEN;

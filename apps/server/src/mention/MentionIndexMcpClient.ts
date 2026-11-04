@@ -204,13 +204,26 @@ function headersFromEnvMap(
   return next;
 }
 
+const MCP_SERVER_TABLE_KEYS = new Set(["env", "http_headers", "env_http_headers"]);
+
+type CodexMcpServerDraft = {
+  name: string;
+  fields: Record<string, string>;
+  tables: Record<string, Record<string, string>>;
+  activeTable: string | null;
+};
+
 /**
  * Lightweight Codex `config.toml` `[mcp_servers.*]` reader.
  * Skips `enabled = false`; carries env / http_headers / bearer_token_env_var.
  */
 export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServerConfig> {
   const entries: MentionMcpServerConfig[] = [];
-  let current: { name: string; fields: Record<string, string> } | null = null;
+  let current: CodexMcpServerDraft | null = null;
+  const mergeTable = (inline: string | undefined, table: Record<string, string> | undefined) => ({
+    ...(inline ? parseTomlInlineStringTable(inline) : {}),
+    ...table,
+  });
   const flush = () => {
     if (current === null) return;
     const fields = current.fields;
@@ -220,11 +233,11 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
     }
     const command = fields.command;
     const url = fields.url;
-    const env = fields.env ? parseTomlInlineStringTable(fields.env) : {};
-    const httpHeaders = fields.http_headers ? parseTomlInlineStringTable(fields.http_headers) : {};
-    const envHttpHeaders = fields.env_http_headers
-      ? headersFromEnvMap(parseTomlInlineStringTable(fields.env_http_headers))
-      : {};
+    const env = mergeTable(fields.env, current.tables.env);
+    const httpHeaders = mergeTable(fields.http_headers, current.tables.http_headers);
+    const envHttpHeaders = headersFromEnvMap(
+      mergeTable(fields.env_http_headers, current.tables.env_http_headers),
+    );
     const bearerEnv = fields.bearer_token_env_var;
     const bearer =
       bearerEnv !== undefined && bearerEnv.length > 0 ? process.env[bearerEnv] : undefined;
@@ -262,18 +275,51 @@ export function parseCodexMcpServers(raw: string): ReadonlyArray<MentionMcpServe
     current = null;
   };
   for (const line of raw.split(/\r?\n/u)) {
+    const arraySection = line.match(/^\[\[([^\]]+)\]\]\s*$/u);
+    if (arraySection) {
+      flush();
+      continue;
+    }
     const section = line.match(/^\[([^\]]+)\]\s*$/u);
     if (section) {
+      const header = section[1]!.replace(/^"|"$/g, "");
+      const mcpTable = /^mcp_servers\.(.+)\.(env|http_headers|env_http_headers)$/u.exec(header);
+      if (mcpTable !== null && MCP_SERVER_TABLE_KEYS.has(mcpTable[2]!)) {
+        const name = mcpTable[1]!.replace(/^"|"$/g, "");
+        if (current === null || current.name !== name) {
+          flush();
+          current = { name, fields: {}, tables: {}, activeTable: mcpTable[2]! };
+        } else {
+          current.activeTable = mcpTable[2]!;
+        }
+        current.tables[mcpTable[2]!] ??= {};
+        continue;
+      }
+      const mcpSection = /^mcp_servers\.(.+)$/u.exec(header);
+      if (mcpSection !== null) {
+        const name = mcpSection[1]!.replace(/^"|"$/g, "");
+        if (current === null || current.name !== name) {
+          flush();
+          current = { name, fields: {}, tables: {}, activeTable: null };
+        } else {
+          current.activeTable = null;
+        }
+        continue;
+      }
       flush();
-      const mcpSection = /^mcp_servers\.(.+)$/u.exec(section[1]!);
-      current =
-        mcpSection === null ? null : { name: mcpSection[1]!.replace(/^"|"$/g, ""), fields: {} };
       continue;
     }
     if (current === null) continue;
     const field = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/u);
     if (!field) continue;
-    current.fields[field[1]!] = unquoteToml(field[2]!);
+    const key = field[1]!;
+    const value = unquoteToml(field[2]!);
+    if (current.activeTable !== null) {
+      current.tables[current.activeTable] ??= {};
+      current.tables[current.activeTable]![key] = value;
+    } else {
+      current.fields[key] = value;
+    }
   }
   flush();
   return entries;
