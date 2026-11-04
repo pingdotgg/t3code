@@ -576,8 +576,11 @@ function PullRequestCodeTab({
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
-  // A filter never hides the file being jumped to or the one holding the open comment draft.
-  const isPinned = (path: string) => path === revealRequest?.path || path === draft?.path;
+  // A filter never hides the file being jumped to or one holding unsent review comments.
+  const isPinned = (path: string) =>
+    path === revealRequest?.path ||
+    path === draft?.path ||
+    pendingComments.some((comment) => comment.path === path);
   const reviewFiles = hideTestFiles
     ? loadedFiles.filter((file) => {
         const path = resolveFileDiffPath(file);
@@ -1474,16 +1477,6 @@ function PullRequestCodeTab({
     return withToolbar(rawSlicesView);
   }
 
-  if (items.length === 0 && nextCursor === null) {
-    const noFilesMessage =
-      commit === null ? `This ${term} has no file changes.` : "This commit has no file changes.";
-    return withToolbar(
-      <p className="px-4 py-5 text-sm text-muted-foreground">
-        {loadedFiles.length > 0 ? "All files are hidden." : noFilesMessage}
-      </p>,
-    );
-  }
-
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
   const orphanFiles = new Map<string, PullRequestReviewThread[]>();
   for (const thread of orphanThreads) {
@@ -1491,63 +1484,76 @@ function PullRequestCodeTab({
     if (existing) existing.push(thread);
     else orphanFiles.set(thread.path, [thread]);
   }
+  const orphanConversations =
+    orphanFiles.size > 0 ? (
+      <div className="shrink-0 border-b border-border/60">
+        <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+          <h2>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+              <span>
+                {nextCursor === null
+                  ? "Conversations not on the current diff"
+                  : "Conversations not on the diff loaded so far"}
+              </span>
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+              />
+              <span aria-hidden className="tabular-nums">
+                {orphanThreads.length}
+              </span>
+              <span className="sr-only">
+                {orphanThreads.length === 1
+                  ? "1 conversation"
+                  : `${orphanThreads.length} conversations`}
+              </span>
+            </CollapsibleTrigger>
+          </h2>
+          <CollapsiblePanel>
+            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+              {[...orphanFiles].map(([path, threads]) => (
+                <div key={path}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
+                    />
+                    <TooltipPopup side="top">{path}</TooltipPopup>
+                  </Tooltip>
+                  <div className="mt-1 space-y-2">
+                    {threads.map((thread) => (
+                      <div key={thread.id}>
+                        {thread.line === null ? null : (
+                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                        )}
+                        {renderThreadCard(thread)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      </div>
+    ) : null;
+
+  if (items.length === 0 && nextCursor === null) {
+    const noFilesMessage =
+      commit === null ? `This ${term} has no file changes.` : "This commit has no file changes.";
+    return withToolbar(
+      <>
+        {orphanConversations}
+        <p className="px-4 py-5 text-sm text-muted-foreground">
+          {loadedFiles.length > 0 ? "All files are hidden." : noFilesMessage}
+        </p>
+      </>,
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      {orphanFiles.size > 0 ? (
-        <div className="shrink-0 border-b border-border/60">
-          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
-            <h2>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-                <span>
-                  {nextCursor === null
-                    ? "Conversations not on the current diff"
-                    : "Conversations not on the diff loaded so far"}
-                </span>
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-                />
-                <span aria-hidden className="tabular-nums">
-                  {orphanThreads.length}
-                </span>
-                <span className="sr-only">
-                  {orphanThreads.length === 1
-                    ? "1 conversation"
-                    : `${orphanThreads.length} conversations`}
-                </span>
-              </CollapsibleTrigger>
-            </h2>
-            <CollapsiblePanel>
-              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-                {[...orphanFiles].map(([path, threads]) => (
-                  <div key={path}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
-                        }
-                      />
-                      <TooltipPopup side="top">{path}</TooltipPopup>
-                    </Tooltip>
-                    <div className="mt-1 space-y-2">
-                      {threads.map((thread) => (
-                        <div key={thread.id}>
-                          {thread.line === null ? null : (
-                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
-                          )}
-                          {renderThreadCard(thread)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        </div>
-      ) : null}
+      {orphanConversations}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"

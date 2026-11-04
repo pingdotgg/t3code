@@ -256,6 +256,33 @@ it("marks a Shift-clicked range viewed after the first file of it was hidden", a
   await expect.element(screen.getByText("early-11.ts", { exact: true })).not.toBeInTheDocument();
 });
 
+it("keeps conversations reachable when every file is hidden", async () => {
+  setup({ paged: false });
+  const threadDetail: PullRequestDetailView = {
+    ...detail,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" },
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "a.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      },
+    ],
+  };
+  const container = document.createElement("div");
+  container.className = "h-[500px] w-[400px]";
+  await using screen = await render(tab(0, null, threadDetail), { container });
+  await screen.getByRole("checkbox", { name: "Viewed" }).click();
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
+  await expect.element(screen.getByText("All files are hidden.")).toBeVisible();
+
+  await expect.element(screen.getByText("Conversations not on the current diff")).toBeVisible();
+});
+
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
   setup({ paged: false });
   const container = document.createElement("div");
