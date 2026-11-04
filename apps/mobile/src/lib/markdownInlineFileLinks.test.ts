@@ -72,6 +72,9 @@ describe("inline code that names a file", () => {
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );
+    expect(rewrite("See `src/math.ts:2-4` and `math.ts:2-4`.")).toBe(
+      "See [src/math.ts:2-4](<src/math.ts:2-4>) and [math.ts:2-4](<math.ts:2-4>).",
+    );
   });
 
   it("keeps commands, identifiers and URLs as code", () => {
