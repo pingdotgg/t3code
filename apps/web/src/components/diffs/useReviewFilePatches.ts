@@ -101,31 +101,34 @@ export function useReviewFilePatches({
     if (queries.some(({ index }) => index === settledFileCount)) return;
     requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
   };
-  const requestFile = (index: number) => requestFiles([index]);
+  const requestFile = (path: string) =>
+    requestFiles([files.findIndex((file) => file.path === path)]);
   const renderableFiles = source
-    ? files.map((file, index): FileDiffMetadata => {
+    ? files.flatMap((file, index): FileDiffMetadata[] => {
         const result = patches.get(index);
         const value = result && Option.getOrUndefined(AsyncResult.value(result));
         if (value?.patch?.kind === "files") {
-          const loaded = value.patch.files.find(
+          const loaded = value.patch.files.filter(
             (candidate) => resolveFileDiffPath(candidate) === file.path,
           );
-          if (loaded) return loaded;
+          if (loaded.length > 0) return loaded;
         }
-        return {
-          name: file.path,
-          ...(file.previousPath ? { prevName: file.previousPath } : {}),
-          type: file.previousPath ? "rename-changed" : "change",
-          hunks: [],
-          additionLines: [],
-          deletionLines: [],
-          additionCharacterCount: 0,
-          deletionCharacterCount: 0,
-          splitLineCount: 0,
-          unifiedLineCount: 0,
-          isPartial: true,
-          cacheKey: `${scope}:${file.path}:pending`,
-        };
+        return [
+          {
+            name: file.path,
+            ...(file.previousPath ? { prevName: file.previousPath } : {}),
+            type: file.previousPath ? "rename-changed" : "change",
+            hunks: [],
+            additionLines: [],
+            deletionLines: [],
+            additionCharacterCount: 0,
+            deletionCharacterCount: 0,
+            splitLineCount: 0,
+            unifiedLineCount: 0,
+            isPartial: true,
+            cacheKey: `${scope}:${file.path}:pending`,
+          },
+        ];
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
@@ -154,7 +157,7 @@ export function useReviewFilePatches({
     retry,
     requestFile,
     renderableFiles,
-    settledFileCount,
+    remainingFileCount: source ? files.length - settledFileCount : 0,
     loadNextFiles,
   };
 }

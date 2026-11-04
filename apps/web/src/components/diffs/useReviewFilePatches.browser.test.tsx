@@ -57,12 +57,14 @@ function Probe({ source }: { source: ReviewDiffPreviewSource }) {
   });
   return (
     <>
-      <button onClick={() => files.requestFile(source.files!.findIndex((f) => f.path === "f.txt"))}>
-        Open f
-      </button>
+      <button onClick={() => files.requestFile("f.txt")}>Open f</button>
+      <output>Pending files: {files.remainingFileCount}</output>
       {files.renderableFiles.map((file) => (
-        <div key={file.name}>
-          {file.name}:{file.hunks.length ? "loaded" : "pending"}
+        <div key={`${file.name}:${file.type}`}>
+          <span>
+            {file.name}:{file.hunks.length ? "loaded" : "pending"}
+          </span>
+          <span>{file.type}</span>
         </div>
       ))}
     </>
@@ -115,4 +117,29 @@ it("retains automatic and explicitly opened files through metadata insertion, re
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
   act(() => registry.set(atom, loaded));
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
+});
+
+it("preserves deletion and addition patches for a file replaced by a symlink", async () => {
+  state.patches.clear();
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const metadata = source(["entry"], "type-change");
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <Probe source={metadata} />
+    </RegistryContext.Provider>,
+  );
+  const atom = [...state.patches.values()][0]!;
+  act(() =>
+    registry.set(
+      atom,
+      AsyncResult.success({
+        ...metadata,
+        diff: "diff --git a/entry b/entry\ndeleted file mode 100644\n--- a/entry\n+++ /dev/null\n@@ -1 +0,0 @@\n-before\ndiff --git a/entry b/entry\nnew file mode 120000\n--- /dev/null\n+++ b/entry\n@@ -0,0 +1 @@\n+target\n\\ No newline at end of file\n",
+      }),
+    ),
+  );
+  await expect.element(screen.getByText("deleted", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Pending files: 0")).toBeVisible();
 });

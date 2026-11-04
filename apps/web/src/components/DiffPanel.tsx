@@ -599,7 +599,7 @@ export default function DiffPanel({
     retry,
     requestFile,
     renderableFiles,
-    settledFileCount,
+    remainingFileCount,
     loadNextFiles,
   } = useReviewFilePatches({
     environmentId: activeThread?.environmentId,
@@ -672,11 +672,8 @@ export default function DiffPanel({
       .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
   };
   const renderLoadingBoundary = () =>
-    settledFileCount < renderableFiles.length ? (
-      <DiffFileLoadingBoundary
-        load={loadNextFiles}
-        count={renderableFiles.length - settledFileCount}
-      />
+    remainingFileCount > 0 ? (
+      <DiffFileLoadingBoundary load={loadNextFiles} count={remainingFileCount} />
     ) : null;
   const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
     fileDiff,
@@ -704,9 +701,7 @@ export default function DiffPanel({
       next.delete(file.fileKey);
       return next;
     });
-    if (lazySource && index >= settledFileCount) {
-      requestFile(index);
-    }
+    if (lazySource) requestFile(filePath);
     codeViewReveal.request(file.fileKey);
     return true;
   };
@@ -753,8 +748,8 @@ export default function DiffPanel({
     });
   };
   const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
-    const index = renderableFileEntries.findIndex((file) => file.fileKey === fileKey);
-    if (lazySource && index >= 0) requestFile(index);
+    const file = renderableFileEntries.find((file) => file.fileKey === fileKey);
+    if (lazySource && file) requestFile(resolveFileDiffPath(file.fileDiff));
     updateCollapsedDiffFiles((current) => {
       const next = new Set(current);
       if (next.has(fileKey)) {
@@ -1476,12 +1471,7 @@ export default function DiffPanel({
                           onToggle={toggleDiffFileCollapsed}
                           {...(fileDiff.cacheKey?.endsWith(":pending")
                             ? {
-                                load: () =>
-                                  requestFile(
-                                    renderableFileEntries.findIndex(
-                                      (file) => file.fileKey === fileKey,
-                                    ),
-                                  ),
+                                load: () => requestFile(resolveFileDiffPath(fileDiff)),
                               }
                             : {})}
                         />
