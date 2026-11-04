@@ -166,8 +166,8 @@ const KIMI_K3_EFFORT_LEVELS = ["low", "high", "max"];
 
 /**
  * Reasoning levels per Kiro model id and its default level, copied from what
- * Kiro 2.32.0 advertises, since `--list-models` names none. Unlisted models take
- * no effort; the adapter sends only a level the live session offers.
+ * Kiro 2.32.0 (Haiku 5.5: 2.37.1) advertises, since `--list-models` names none.
+ * Unlisted models take no effort; the adapter sends only a level the live session offers.
  */
 const KIRO_MODEL_EFFORT: Readonly<
   Record<string, { readonly levels: ReadonlyArray<string>; readonly defaultLevel: string }>
@@ -181,6 +181,7 @@ const KIRO_MODEL_EFFORT: Readonly<
   "claude-sonnet-5.5": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "high" },
   "claude-sonnet-5": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "high" },
   "claude-sonnet-4.6": { levels: CLAUDE_4_6_EFFORT_LEVELS, defaultLevel: "high" },
+  "claude-haiku-5.5": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "medium" },
   "gpt-5.6-sol": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
   "gpt-5.6-terra": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
   "gpt-5.6-luna": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
