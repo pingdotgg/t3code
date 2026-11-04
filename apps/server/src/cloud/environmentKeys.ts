@@ -1,7 +1,7 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
-import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
+import * as Jwk from "effect/jose/Jwk";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -93,12 +93,19 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
     });
   }
 
-  const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { format: "pem", type: "pkcs8" },
-    publicKeyEncoding: { format: "pem", type: "spki" },
-  });
-  return yield* persistEnvironmentKeyPair(secrets, {
-    privateKey: keyPair.privateKey,
-    publicKey: keyPair.publicKey,
-  });
+  const keyPair = yield* Jwk.generateKeyPair({ algorithm: "EdDSA" }).pipe(
+    Effect.flatMap((pair) =>
+      Effect.all({
+        privateKey: Jwk.importPrivate(pair.privateKey, "EdDSA").pipe(
+          Effect.flatMap((key) => Jwk.exportPkcs8(key, { format: "pem" })),
+          Effect.map(Redacted.value),
+        ),
+        publicKey: Jwk.importPublic(pair.publicKey, "EdDSA").pipe(
+          Effect.flatMap((key) => Jwk.exportSpki(key, { format: "pem" })),
+        ),
+      }),
+    ),
+    Effect.orDie,
+  );
+  return yield* persistEnvironmentKeyPair(secrets, keyPair);
 });
