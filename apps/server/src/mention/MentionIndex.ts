@@ -1,0 +1,329 @@
+import type {
+  MentionIndexHit,
+  MentionIndexProviderId,
+  MentionIndexPullRequestPayload,
+  MentionIndexSearchInput,
+  MentionIndexSearchResult,
+  MentionIndexSyncStatus,
+  ProjectId,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
+
+import * as ServerConfig from "../config.ts";
+
+const SCOPE_PREFIX = "scope:";
+const META_PREFIX = "meta:";
+const MAX_ROWS_PER_SCOPE = 2_000;
+
+export interface MentionIndexRow {
+  readonly providerId: MentionIndexProviderId;
+  readonly itemKey: string;
+  readonly label: string;
+  readonly description: string;
+  readonly url: string;
+  readonly tokens: string;
+  readonly pullRequest?: MentionIndexPullRequestPayload;
+  readonly updatedAt: number;
+}
+
+interface ScopeMeta {
+  readonly syncedAt: number;
+  readonly status: MentionIndexSyncStatus;
+  readonly detail?: string;
+}
+
+interface ScopeState {
+  readonly rows: ReadonlyArray<MentionIndexRow>;
+  readonly meta: ScopeMeta;
+}
+
+const ScopeBlob = Schema.fromJsonString(
+  Schema.Struct({
+    rows: Schema.Array(
+      Schema.Struct({
+        providerId: Schema.Literals(["pull-request", "jira", "figma"]),
+        itemKey: Schema.String,
+        label: Schema.String,
+        description: Schema.String,
+        url: Schema.String,
+        tokens: Schema.String,
+        pullRequest: Schema.optionalKey(
+          Schema.Struct({
+            number: Schema.Number,
+            title: Schema.String,
+            url: Schema.String,
+            headBranch: Schema.String,
+            baseBranch: Schema.String,
+            state: Schema.Literals(["open", "closed", "merged"]),
+            isDraft: Schema.Boolean,
+            projectId: Schema.String,
+            repository: Schema.String,
+          }),
+        ),
+        updatedAt: Schema.Number,
+      }),
+    ),
+    meta: Schema.Struct({
+      syncedAt: Schema.Number,
+      status: Schema.Literals(["ready", "syncing", "empty", "error"]),
+      detail: Schema.optionalKey(Schema.String),
+    }),
+  }),
+);
+const encodeScope = Schema.encodeSync(ScopeBlob);
+const decodeScope = Schema.decodeUnknownOption(ScopeBlob);
+const MetaBlob = Schema.fromJsonString(
+  Schema.Struct({
+    syncedAt: Schema.Number,
+    status: Schema.Literals(["ready", "syncing", "empty", "error"]),
+  }),
+);
+const encodeMeta = Schema.encodeSync(MetaBlob);
+
+export function mentionIndexScopeKey(
+  providerId: MentionIndexProviderId,
+  projectId: ProjectId,
+): string {
+  return `${providerId}:${projectId}`;
+}
+
+function fold(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function scoreRow(row: MentionIndexRow, query: string): number {
+  const q = fold(query);
+  if (q.length === 0) return row.updatedAt / 1e13;
+  const tokens = row.tokens;
+  if (tokens === q || row.label.toLowerCase() === q || row.itemKey === q) return 1_000;
+  if (tokens.startsWith(q) || row.itemKey.startsWith(q)) return 800;
+  if (tokens.includes(q)) return 400 + Math.min(200, q.length * 10);
+  const words = q.split(/\s+/u).filter(Boolean);
+  if (words.length > 1 && words.every((word) => tokens.includes(word))) return 300;
+  return 0;
+}
+
+export class MentionIndex extends Context.Service<
+  MentionIndex,
+  {
+    readonly search: (input: MentionIndexSearchInput) => Effect.Effect<MentionIndexSearchResult>;
+    readonly replaceScope: (
+      scopeKey: string,
+      rows: ReadonlyArray<MentionIndexRow>,
+      meta?: Partial<ScopeMeta>,
+    ) => Effect.Effect<void>;
+    readonly markSyncing: (scopeKey: string) => Effect.Effect<void>;
+    readonly markError: (scopeKey: string, detail: string) => Effect.Effect<void>;
+    readonly scopeMeta: (scopeKey: string) => Effect.Effect<ScopeMeta | null>;
+    readonly upsertRows: (
+      scopeKey: string,
+      rows: ReadonlyArray<MentionIndexRow>,
+    ) => Effect.Effect<void>;
+  }
+>()("t3/mention/MentionIndex") {}
+
+export const make = Effect.gen(function* () {
+  const store = yield* KeyValueStore.KeyValueStore;
+  const hot = yield* Ref.make(new Map<string, ScopeState>());
+
+  const readDisk = Effect.fn("MentionIndex.readDisk")(function* (scopeKey: string) {
+    const raw = yield* store
+      .get(`${SCOPE_PREFIX}${scopeKey}`)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (raw === undefined) return null;
+    const decoded = decodeScope(raw);
+    if (Option.isNone(decoded)) return null;
+    return {
+      rows: decoded.value.rows as ReadonlyArray<MentionIndexRow>,
+      meta: decoded.value.meta as ScopeMeta,
+    } satisfies ScopeState;
+  });
+
+  const writeDisk = Effect.fn("MentionIndex.writeDisk")(function* (
+    scopeKey: string,
+    state: ScopeState,
+  ) {
+    const ignoreStoreError = (cause: unknown) =>
+      Effect.logWarning("Failed to persist mention index scope", { scopeKey, cause });
+    yield* store
+      .set(
+        `${SCOPE_PREFIX}${scopeKey}`,
+        encodeScope({
+          rows: state.rows.slice(0, MAX_ROWS_PER_SCOPE),
+          meta: state.meta,
+        }),
+      )
+      .pipe(Effect.catch(ignoreStoreError));
+    yield* store
+      .set(
+        `${META_PREFIX}${scopeKey}`,
+        encodeMeta({ syncedAt: state.meta.syncedAt, status: state.meta.status }),
+      )
+      .pipe(Effect.catch(ignoreStoreError));
+  });
+
+  const loadScope = Effect.fn("MentionIndex.loadScope")(function* (scopeKey: string) {
+    const current = yield* Ref.get(hot);
+    const cached = current.get(scopeKey);
+    if (cached) return cached;
+    const fromDisk = yield* readDisk(scopeKey);
+    if (fromDisk) {
+      yield* Ref.update(hot, (map) => {
+        const next = new Map(map);
+        next.set(scopeKey, fromDisk);
+        return next;
+      });
+      return fromDisk;
+    }
+    return {
+      rows: [],
+      meta: { syncedAt: 0, status: "empty" },
+    } satisfies ScopeState;
+  });
+
+  const setScope = Effect.fn("MentionIndex.setScope")(function* (
+    scopeKey: string,
+    state: ScopeState,
+  ) {
+    yield* Ref.update(hot, (map) => {
+      const next = new Map(map);
+      next.set(scopeKey, state);
+      return next;
+    });
+    yield* writeDisk(scopeKey, state);
+  });
+
+  return MentionIndex.of({
+    search: Effect.fn("MentionIndex.search")(function* (input: MentionIndexSearchInput) {
+      const providers = input.providers ?? (["pull-request"] as const);
+      const limit = input.limit ?? 20;
+      const hits: MentionIndexHit[] = [];
+      let status: MentionIndexSyncStatus = "empty";
+      let syncedAt: number | undefined;
+      let detail: string | undefined;
+
+      for (const providerId of providers) {
+        const scopeKey = mentionIndexScopeKey(providerId, input.projectId);
+        const scope = yield* loadScope(scopeKey);
+        if (scope.meta.status === "syncing") status = "syncing";
+        else if (scope.meta.status === "error" && status === "empty") {
+          status = "error";
+          detail = scope.meta.detail;
+        } else if (scope.meta.status === "ready") status = "ready";
+        if (scope.meta.syncedAt > 0) {
+          syncedAt = Math.max(syncedAt ?? 0, scope.meta.syncedAt);
+        }
+        for (const row of scope.rows) {
+          const score = scoreRow(row, input.query);
+          if (score <= 0 && fold(input.query).length > 0) continue;
+          hits.push({
+            providerId: row.providerId,
+            itemKey: row.itemKey,
+            label: row.label,
+            description: row.description,
+            url: row.url,
+            score,
+            ...(row.pullRequest ? { pullRequest: row.pullRequest } : {}),
+          });
+        }
+      }
+
+      hits.sort((left, right) => right.score - left.score || left.label.localeCompare(right.label));
+      if (hits.length > 0 && status === "empty") status = "ready";
+
+      return {
+        hits: hits.slice(0, limit),
+        status,
+        ...(syncedAt !== undefined ? { syncedAt } : {}),
+        ...(detail !== undefined ? { detail } : {}),
+      } satisfies MentionIndexSearchResult;
+    }),
+
+    replaceScope: Effect.fn("MentionIndex.replaceScope")(function* (scopeKey, rows, meta = {}) {
+      const previous = yield* loadScope(scopeKey);
+      const now = yield* Clock.currentTimeMillis;
+      const next: ScopeState = {
+        rows: rows.slice(0, MAX_ROWS_PER_SCOPE),
+        meta: {
+          syncedAt: meta.syncedAt ?? now,
+          status: meta.status ?? (rows.length === 0 ? "empty" : "ready"),
+          ...(meta.detail !== undefined
+            ? { detail: meta.detail }
+            : previous.meta.detail !== undefined && meta.status === "error"
+              ? { detail: previous.meta.detail }
+              : {}),
+        },
+      };
+      yield* setScope(scopeKey, next);
+    }),
+
+    markSyncing: Effect.fn("MentionIndex.markSyncing")(function* (scopeKey) {
+      const previous = yield* loadScope(scopeKey);
+      yield* setScope(scopeKey, {
+        rows: previous.rows,
+        meta: { ...previous.meta, status: "syncing" },
+      });
+    }),
+
+    markError: Effect.fn("MentionIndex.markError")(function* (scopeKey, detail) {
+      const previous = yield* loadScope(scopeKey);
+      yield* setScope(scopeKey, {
+        rows: previous.rows,
+        meta: {
+          syncedAt: previous.meta.syncedAt,
+          status: previous.rows.length > 0 ? "ready" : "error",
+          detail,
+        },
+      });
+    }),
+
+    scopeMeta: Effect.fn("MentionIndex.scopeMeta")(function* (scopeKey) {
+      const scope = yield* loadScope(scopeKey);
+      return scope.meta.syncedAt === 0 && scope.rows.length === 0 ? null : scope.meta;
+    }),
+
+    upsertRows: Effect.fn("MentionIndex.upsertRows")(function* (scopeKey, rows) {
+      const previous = yield* loadScope(scopeKey);
+      const byKey = new Map(previous.rows.map((row) => [row.itemKey, row]));
+      for (const row of rows) byKey.set(row.itemKey, row);
+      const merged = [...byKey.values()]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .slice(0, MAX_ROWS_PER_SCOPE);
+      const now = yield* Clock.currentTimeMillis;
+      yield* setScope(scopeKey, {
+        rows: merged,
+        meta: {
+          syncedAt: now,
+          status: merged.length === 0 ? "empty" : "ready",
+        },
+      });
+    }),
+  });
+});
+
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    const directory = path.join(config.providerStatusCacheDir, "mention-index");
+    return Layer.effect(MentionIndex, make).pipe(
+      Layer.provide(
+        KeyValueStore.layerFileSystem(directory).pipe(
+          Layer.catch(() =>
+            Layer.effectDiscard(
+              Effect.logWarning("Mention index directory unavailable; using memory store"),
+            ).pipe(Layer.provideMerge(KeyValueStore.layerMemory)),
+          ),
+        ),
+      ),
+    );
+  }),
+);

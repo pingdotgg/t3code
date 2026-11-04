@@ -19,7 +19,6 @@ import {
   formatAttachmentUploadProgress,
   type AttachmentUploadState,
 } from "~/lib/attachmentUploadState";
-import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
@@ -30,6 +29,7 @@ import {
   previewAnnotationContextLabel,
   reviewCommentContextId,
   reviewCommentContextLabel,
+  reviewCommentContextReference,
   terminalContextReference,
   uploadedAttachmentContextRecord,
 } from "~/lib/composerContextRecords";
@@ -58,6 +58,7 @@ import {
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
   | { kind: "review-comment"; record: ReviewCommentContext }
+  | { kind: "pull-request"; record: ReviewCommentContext }
   | {
       kind: "preview-annotation";
       record: PreviewAnnotationPayload;
@@ -129,6 +130,13 @@ export function composerContextRecordsFromDraft(input: {
     records.set(terminalContextReference(record).contextId, { kind: "terminal", record });
   }
   for (const record of input.reviewComments ?? []) {
+    if (isPullRequestSummaryContext(record) && record.pullRequest !== undefined) {
+      records.set(reviewCommentContextReference(record).contextId, {
+        kind: "pull-request",
+        record,
+      });
+      continue;
+    }
     records.set(reviewCommentContextId(record.id), { kind: "review-comment", record });
   }
   const imagesById = new Map((input.images ?? []).map((image) => [image.id, image]));
@@ -382,6 +390,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
     "file",
     "terminal",
     "review-comment",
+    "pull-request",
     "preview-annotation",
     "thread",
     "environment",
@@ -421,6 +430,22 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         ),
     },
     {
+      kind: "pull-request",
+      canRender: (entry) => entry.kind === "pull-request",
+      render: (entry, context) => {
+        if (entry.kind !== "pull-request") {
+          return <UnresolvedContextChip label={context.label} />;
+        }
+        const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";
+        return (
+          <PullRequestContextChip
+            record={entry.record}
+            kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
+          />
+        );
+      },
+    },
+    {
       kind: "review-comment",
       canRender: (entry) => entry.kind === "review-comment",
       render: (entry, context, definition) => {
@@ -439,12 +464,12 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         }
         return (
           <ContextChip
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            icon={<MessageCircleIcon />}
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel="Review comment"
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
-            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            kind="review-comment"
           />
         );
       },
