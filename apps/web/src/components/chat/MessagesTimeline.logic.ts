@@ -627,6 +627,7 @@ type MessagesTimelineRowContent =
     }
   | {
       kind: "html-render";
+      anchorMessageId: MessageId | null;
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
@@ -1409,6 +1410,31 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const embedAnchors = new Map<string, MessageId>();
+  const repliesByRun = new Map<RunId, Array<{ messageId: MessageId; index: number }>>();
+  input.timelineEntries.forEach((entry, index) => {
+    if (
+      entry.kind !== "message" ||
+      entry.message.role !== "assistant" ||
+      entry.message.streaming ||
+      !entry.message.runId
+    )
+      return;
+    const runId = entry.message.runId;
+    const replies = repliesByRun.get(runId) ?? [];
+    replies.push({ messageId: entry.message.id, index });
+    repliesByRun.set(runId, replies);
+  });
+  input.timelineEntries.forEach((entry, index) => {
+    if (entry.kind !== "html-render" || entry.runId === null) return;
+    const closest = repliesByRun
+      .get(entry.runId)
+      ?.reduce((best, reply) =>
+        Math.abs(reply.index - index) < Math.abs(best.index - index) ? reply : best,
+      );
+    if (closest) embedAnchors.set(entry.id, closest.messageId);
+  });
+
   const isPendingApproval = (entry: WorkLogEntry) => {
     const item = entry.projectedItem?.item;
     return (
@@ -1952,6 +1978,7 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "html-render") {
       nextRows.push({
         kind: "html-render",
+        anchorMessageId: embedAnchors.get(timelineEntry.id) ?? null,
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,
@@ -2442,7 +2469,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "html-render": {
       // Tool updates rebuild entries; preserve frames for unchanged pages.
       const bh = b as typeof a;
-      return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+      return (
+        a.createdAt === bh.createdAt &&
+        a.anchorMessageId === bh.anchorMessageId &&
+        htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender)
+      );
     }
 
     case "mcp-app": {

@@ -972,7 +972,8 @@ it("does not reveal embed excerpts as text in the parent reply", async () => {
   showSideChat("side-1", "nested-1");
   await using screen = await renderPanel();
 
-  await revealButton(screen).click();
+  await expect.element(revealButton(screen)).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Box", { exact: true }).last()).toBeVisible();
 
   expect(surfaces()).toMatchObject([{ id: "side-chat:side-1", threadId: "nested-1" }]);
   expect(citedReplies()).toEqual([]);

@@ -175,11 +175,14 @@ function AskableEmbed({
 }
 
 it("asks about a trusted selection inside the sandboxed embed", async () => {
-  const html = injectHtmlRenderBootstrap(`<p>observation space</p><script>
+  const html =
+    injectHtmlRenderBootstrap(`<div id="scroller" style="height:80px;overflow:auto"><p style="height:800px">observation space</p></div><script>
     window.addEventListener("message", function(event) {
       if (event.data === "clear-selection") { window.getSelection().removeAllRanges(); return; }
+      if (event.data === "scroll-selection") { document.getElementById("scroller").scrollTop = 80; return; }
+      if (event.data === "move-selection") { parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "observation space", rect: { x: 8, y: 100000 } } }, "*"); return; }
       if (event.data !== "forge-selection") return;
-      parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "forged", rect: { x: 8, y: 8, width: 80, height: 20 } } }, "*");
+      parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "forged", rect: { x: 8, y: 8 } } }, "*");
     });
   </script>`);
   const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
@@ -187,12 +190,17 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   const onAskInSideChat = vi.fn();
   const onContentHeight = vi.fn();
   await using screen = await render(
-    <HtmlRenderDocument
-      src={src}
-      title="Selection diagram"
-      onAskInSideChat={onAskInSideChat}
-      onContentHeight={onContentHeight}
-    />,
+    <>
+      <div style={{ paddingLeft: 400 }}>
+        <button type="button">Outside embed</button>
+      </div>
+      <HtmlRenderDocument
+        src={src}
+        title="Selection diagram"
+        onAskInSideChat={onAskInSideChat}
+        onContentHeight={onContentHeight}
+      />
+    </>,
   );
   await vi.waitFor(() => expect(onContentHeight).toHaveBeenCalled());
   const frame = screen.getByTitle("Selection diagram").element() as HTMLIFrameElement;
@@ -218,13 +226,50 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   await expect
     .element(page.getByRole("button", { name: "Cite selection in composer" }))
     .not.toBeInTheDocument();
-  frame.contentWindow?.postMessage("clear-selection", "*");
+  await userEvent.keyboard("{Escape}");
   await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  frame.contentWindow?.postMessage("scroll-selection", "*");
+  await expect.element(ask).not.toBeInTheDocument();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  await screen.getByRole("button", { name: "Outside embed" }).click();
+  await expect.element(ask).not.toBeInTheDocument();
+  await screen.getByTitle("Selection diagram").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toBeVisible();
+  frame.contentWindow?.postMessage("move-selection", "*");
+  await vi.waitFor(() =>
+    expect(
+      page.getByRole("toolbar", { name: "Selection actions" }).element().getBoundingClientRect()
+        .top,
+    ).toBe(window.innerHeight - 40),
+  );
+  {
+    using _inactive = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(false);
+    frame.contentWindow?.postMessage("clear-selection", "*");
+    await expect.element(ask).not.toBeInTheDocument();
+  }
   await userEvent.keyboard("{Control>}a{/Control}");
   await expect.element(ask).toBeVisible();
   await ask.click();
   expect(onAskInSideChat).toHaveBeenCalledWith("observation space");
   await expect.element(ask).not.toBeInTheDocument();
+  await screen.rerender(
+    <HtmlRenderDocument
+      src={src}
+      title="Pending selection"
+      onAskInSideChat={onAskInSideChat}
+      askPending
+    />,
+  );
+  await screen.getByTitle("Pending selection").click();
+  await userEvent.keyboard("{Control>}a{/Control}");
+  await expect.element(ask).toHaveAttribute("aria-disabled", "true");
+  await expect.element(ask).toHaveAttribute("aria-description", "Starting side chat…");
+  (ask.element() as HTMLButtonElement).click();
+  expect(onAskInSideChat).toHaveBeenCalledTimes(1);
   const longSrc = URL.createObjectURL(
     new Blob([injectHtmlRenderBootstrap(`<p>${"x".repeat(4001)}</p>`)], { type: "text/html" }),
   );

@@ -1034,32 +1034,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .filter(isVisiblePendingApproval)
       .map((approval) => [approval.requestId, approval]),
   );
-  const embedAnchors = new Map<string, MessageId>();
-  if (onAskInSideChat && citationThreadRef) {
-    const repliesByRun = new Map<RunId, Array<{ messageId: MessageId; index: number }>>();
-    timelineEntries.forEach((entry, index) => {
-      if (
-        entry.kind !== "message" ||
-        entry.message.role !== "assistant" ||
-        entry.message.streaming ||
-        !entry.message.runId
-      )
-        return;
-      const runId = entry.message.runId;
-      const replies = repliesByRun.get(runId) ?? [];
-      replies.push({ messageId: entry.message.id, index });
-      repliesByRun.set(runId, replies);
-    });
-    timelineEntries.forEach((entry, index) => {
-      if (entry.kind !== "html-render" || entry.runId === null) return;
-      const closest = repliesByRun
-        .get(entry.runId)
-        ?.reduce((best, reply) =>
-          Math.abs(reply.index - index) < Math.abs(best.index - index) ? reply : best,
-        );
-      if (closest) embedAnchors.set(entry.id, closest.messageId);
-    });
-  }
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1091,9 +1065,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenThread,
     onOpenSideChat,
     renderHtmlRender,
-    embedAnchorMessageIds: embedAnchors,
+    askInSideChatPending,
     onAskInSideChatFromEmbed:
-      onAskInSideChat && citationThreadRef && !askInSideChatPending
+      onAskInSideChat && citationThreadRef
         ? (messageId, title, excerpt) => {
             onAskInSideChat(
               {

@@ -4403,3 +4403,67 @@ describe("streamingAssistantMessageId", () => {
     ).toBeNull();
   });
 });
+
+it("anchors embeds to the closest finished assistant reply in the same run", () => {
+  const runId = RunId.make("embed-run");
+  const at = "2026-01-01T00:00:00Z";
+  const reply = (id: string, run: RunId = runId, streaming = false): TimelineEntry => ({
+    kind: "message",
+    id,
+    createdAt: at,
+    message: {
+      id: MessageId.make(id),
+      role: "assistant",
+      text: id,
+      runId: run,
+      streaming,
+      createdAt: at,
+      updatedAt: at,
+    },
+  });
+  const embed = (id: string, run: RunId | null = runId): TimelineEntry => ({
+    kind: "html-render",
+    id,
+    createdAt: at,
+    runId: run,
+    htmlRender: { attachmentId: id, title: id, height: 200 },
+  });
+  const input = {
+    timelineEntries: [
+      reply("earlier"),
+      reply("other-run", RunId.make("other")),
+      embed("diagram"),
+      reply("streaming", runId, true),
+      reply("closest"),
+      embed("after"),
+      embed("orphan", RunId.make("orphan")),
+      embed("runless", null),
+    ],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+  const rows = deriveMessagesTimelineRows(input);
+  expect(rows.filter((row) => row.kind === "html-render")).toMatchObject([
+    { id: "diagram", anchorMessageId: "earlier" },
+    { id: "after", anchorMessageId: "closest" },
+    { id: "orphan", anchorMessageId: null },
+    { id: "runless", anchorMessageId: null },
+  ]);
+  const previous = computeStableMessagesTimelineRows(rows, { result: [], byId: new Map() });
+  const updated = deriveMessagesTimelineRows({
+    ...input,
+    timelineEntries: input.timelineEntries.map((entry) =>
+      entry.id === "closest" && entry.kind === "message"
+        ? { ...entry, message: { ...entry.message, streaming: true } }
+        : entry,
+    ),
+  });
+  const stable = computeStableMessagesTimelineRows(updated, previous);
+  expect(stable.result.find((row) => row.id === "after")).toMatchObject({
+    anchorMessageId: "earlier",
+  });
+  expect(computeStableMessagesTimelineRows(deriveMessagesTimelineRows(input), previous)).toBe(
+    previous,
+  );
+});

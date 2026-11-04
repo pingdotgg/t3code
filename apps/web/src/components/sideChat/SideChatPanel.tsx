@@ -419,13 +419,7 @@ export function SideChatPanel(props: {
   };
 
   const reveal = () => {
-    if (
-      citation === null ||
-      shell?.sideChat?.anchor.embedTitle !== undefined ||
-      citation.end <= citation.start ||
-      revealCitation(citation)
-    )
-      return;
+    if (citation === null || citation.end <= citation.start || revealCitation(citation)) return;
     // A maximized panel or a sheet would hide the highlight the lesson scrolls to.
     showLesson(lessonRef, window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches);
     // Only the hash changes, so the lesson stays mounted and scrolls to the highlight.
@@ -672,7 +666,10 @@ export function SideChatPanel(props: {
           <>
             {citation === null ? null : (
               <div className="shrink-0 px-3 pt-2">
-                <SideChatExcerpt text={citation.text} onReveal={reveal} />
+                <SideChatExcerpt
+                  text={citation.text}
+                  onReveal={citation.end > citation.start ? reveal : undefined}
+                />
               </div>
             )}
             <div className="min-h-0 flex-1">

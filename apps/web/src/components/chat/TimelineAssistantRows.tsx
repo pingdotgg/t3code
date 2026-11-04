@@ -290,7 +290,7 @@ export function HtmlRenderTimelineRow({
   const ctx = use(TimelineRowCtx);
   const { onAppFullscreenChange } = ctx;
   const onFullscreenChange = (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen);
-  const messageId = ctx.embedAnchorMessageIds.get(row.id);
+  const messageId = row.anchorMessageId;
   const ask = ctx.onAskInSideChatFromEmbed;
 
   if (ctx.renderHtmlRender) {
@@ -304,8 +304,9 @@ export function HtmlRenderTimelineRow({
         htmlRender={row.htmlRender}
         threadRef={ctx.threadRef ?? undefined}
         onFullscreenChange={onFullscreenChange}
+        askPending={ctx.askInSideChatPending}
         onAskInSideChat={
-          messageId !== undefined && ask
+          messageId !== null && ask
             ? (excerpt) => ask(messageId, row.htmlRender.title, excerpt)
             : undefined
         }

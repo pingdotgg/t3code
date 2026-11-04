@@ -141,13 +141,13 @@ it.each([
     message: {
       jsonrpc: "2.0",
       method: "t3/notifications/selection-changed",
-      params: { text: "selected", rect: { x: 1, y: 2, width: 30, height: 14 } },
+      params: { text: "selected", rect: { x: 1, y: 2 } },
     },
-    expected: { text: "selected", rect: { x: 1, y: 2, width: 30, height: 14 } },
+    expected: { text: "selected", rect: { x: 1, y: 2 } },
     invalid: {
       jsonrpc: "2.0",
       method: "t3/notifications/selection-changed",
-      params: { text: "selected", rect: { x: 1, y: 2, width: -1, height: 14 } },
+      params: { text: "selected", rect: { x: 1, y: NaN } },
     },
   },
   {

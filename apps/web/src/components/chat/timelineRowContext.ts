@@ -76,7 +76,7 @@ export interface TimelineRowSharedState {
    * loads it through its own route.
    */
   renderHtmlRender: ((row: Extract<TimelineRow, { kind: "html-render" }>) => ReactNode) | undefined;
-  embedAnchorMessageIds: ReadonlyMap<string, MessageId>;
+  askInSideChatPending: boolean;
   onAskInSideChatFromEmbed:
     | ((messageId: MessageId, title: string, excerpt: string) => void)
     | undefined;

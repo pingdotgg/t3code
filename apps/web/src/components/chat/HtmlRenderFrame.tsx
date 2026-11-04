@@ -26,6 +26,7 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
 
 export function HtmlRenderFrame(props: {
   readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
+  readonly askPending?: boolean | undefined;
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef: ScopedThreadRef | undefined;
@@ -81,6 +82,7 @@ export function HtmlRenderFrame(props: {
             ref={documentRef}
             onBridgeReady={() => setBridgeReady(true)}
             onAskInSideChat={props.onAskInSideChat}
+            askPending={props.askPending}
             src={src}
             title={title}
             threadRef={props.threadRef}
@@ -90,7 +92,10 @@ export function HtmlRenderFrame(props: {
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             {props.onAskInSideChat && bridgeReady ? (
-              <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+              <HtmlRenderAskButton
+                askPending={props.askPending}
+                onClick={() => documentRef.current?.askInSideChat()}
+              />
             ) : null}
             <Tooltip>
               <TooltipTrigger
@@ -124,6 +129,7 @@ export function HtmlRenderFrame(props: {
             <HtmlRenderDialog
               src={expandedSrc}
               title={title}
+              askPending={props.askPending}
               threadRef={props.threadRef}
               onAskInSideChat={
                 props.onAskInSideChat

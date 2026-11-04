@@ -12,6 +12,7 @@ import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 
 export function HtmlRenderDialog(props: {
   readonly onAskInSideChat?: ((excerpt: string) => void) | undefined;
+  readonly askPending?: boolean | undefined;
   readonly src: string;
   readonly title: string;
   readonly threadRef?: ScopedThreadRef | undefined;
@@ -34,7 +35,10 @@ export function HtmlRenderDialog(props: {
         <div className="relative w-[92vw]">
           {props.onAskInSideChat && bridgeReady ? (
             <div className="absolute right-8 -top-10 z-20">
-              <HtmlRenderAskButton onClick={() => documentRef.current?.askInSideChat()} />
+              <HtmlRenderAskButton
+                askPending={props.askPending}
+                onClick={() => documentRef.current?.askInSideChat()}
+              />
             </div>
           ) : null}
           <Button
@@ -53,6 +57,7 @@ export function HtmlRenderDialog(props: {
                 ref={documentRef}
                 onBridgeReady={() => setBridgeReady(true)}
                 onAskInSideChat={props.onAskInSideChat}
+                askPending={props.askPending}
                 src={props.src}
                 title={props.title}
                 threadRef={props.threadRef}

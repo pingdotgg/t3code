@@ -5,7 +5,10 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 
 /** The highlighted passage a side chat was asked about, pinned above its timeline. */
-export function SideChatExcerpt(props: { readonly text: string; readonly onReveal: () => void }) {
+export function SideChatExcerpt(props: {
+  readonly text: string;
+  readonly onReveal?: (() => void) | undefined;
+}) {
   const { text } = props;
   // Expansion belongs to one excerpt: a different text starts collapsed instead of inheriting it.
   const [expandedText, setExpandedText] = useState<string | null>(null);
@@ -22,14 +25,19 @@ export function SideChatExcerpt(props: { readonly text: string; readonly onRevea
     return observeResize(quote, () => setOverflows(quote.scrollHeight > quote.clientHeight));
   }, [quote, expanded]);
 
+  const Excerpt = props.onReveal ? "button" : "div";
   return (
     <div className="flex min-w-0 flex-col items-start gap-0.5">
-      <button
-        type="button"
-        aria-label="Show this highlight where it was asked"
+      <Excerpt
+        type={props.onReveal ? "button" : undefined}
+        aria-label={props.onReveal ? "Show this highlight where it was asked" : undefined}
         // The label replaces the quote as the button's name, so the quote is its description.
-        aria-describedby={quoteId}
-        className="block w-full min-w-0 cursor-pointer rounded-sm border-border border-l-2 pl-2 text-left text-muted-foreground text-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-describedby={props.onReveal ? quoteId : undefined}
+        className={cn(
+          "block w-full min-w-0 rounded-sm border-border border-l-2 pl-2 text-left text-muted-foreground text-xs",
+          props.onReveal &&
+            "cursor-pointer outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        )}
         onClick={props.onReveal}
       >
         {/* A new excerpt remounts the box so it is measured again even when its size is unchanged.
@@ -42,7 +50,7 @@ export function SideChatExcerpt(props: { readonly text: string; readonly onRevea
         >
           {text}
         </span>
-      </button>
+      </Excerpt>
       {overflows ? (
         <Button
           size="xs"
