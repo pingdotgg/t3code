@@ -22,7 +22,8 @@ export function BranchNamingSettings(props: {
   mode: BranchNamingMode | null;
   prefix: string | null;
   instructions: string | null;
-  disabled: boolean;
+  /** Per setting, since a policy can lock one and leave the others to the user. */
+  disabled: Readonly<Record<"mode" | "prefix" | "instructions", boolean>>;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
   // Save on exit too: Android Back hides the keyboard without ending editing.
@@ -66,7 +67,7 @@ export function BranchNamingSettings(props: {
           description={MODES[mode].description}
           selected={props.mode === mode}
           separated={index > 0}
-          disabled={props.disabled}
+          disabled={props.disabled.mode}
           onPress={() => props.onChange({ branchNamingMode: mode })}
         />
       ))}
@@ -81,7 +82,7 @@ export function BranchNamingSettings(props: {
             onChangeText={(text) => edit("branchNamePrefix", text)}
             defaultValue={props.prefix ?? ""}
             placeholder={props.prefix === null ? "Mixed" : "No prefix"}
-            editable={!props.disabled}
+            editable={!props.disabled.prefix}
             autoCapitalize="none"
             autoCorrect={false}
             className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
@@ -104,7 +105,7 @@ export function BranchNamingSettings(props: {
                 ? "Mixed. Enter instructions for all selected targets."
                 : "Use julius/ followed by the issue ID and a short description."
             }
-            editable={!props.disabled}
+            editable={!props.disabled.instructions}
             multiline
             autoCapitalize="sentences"
             className="min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
