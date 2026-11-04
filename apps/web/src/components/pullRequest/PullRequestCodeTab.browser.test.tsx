@@ -236,3 +236,36 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
 });
+
+it("counts only file conversations as off the diff, not overview threads", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const thread = {
+    line: null,
+    side: "right" as const,
+    isResolved: false,
+    isOutdated: false,
+    comments: [],
+  };
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        reviewThreads: [
+          { ...thread, id: "file", path: "removed.ts" },
+          { ...thread, id: "overview", path: null },
+        ],
+      }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />,
+    { container },
+  );
+
+  await expect.element(screen.getByText("1 conversation", { exact: true })).toBeInTheDocument();
+});

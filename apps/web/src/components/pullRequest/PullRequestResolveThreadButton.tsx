@@ -31,9 +31,10 @@ export function PullRequestResolveThreadButton({
   thread: Pick<PullRequestReviewThread, "id" | "isResolved" | "canResolve">;
   onRefresh: () => void;
 }) {
-  // Held until a refreshed detail arrives, so the button does not re-enable on the old label.
-  const [sent, setSent] = useState<PullRequestDetailView | "pending" | null>(null);
-  if (sent !== null && sent !== "pending" && sent !== detail) setSent(null);
+  // Held until refreshed activity arrives: `detail` is rebuilt whenever the core detail reloads,
+  // which can land before activity does and would re-enable the button on the old label.
+  const [sent, setSent] = useState<PullRequestDetailView["reviewThreads"] | "pending" | null>(null);
+  if (sent !== null && sent !== "pending" && sent !== detail.reviewThreads) setSent(null);
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
@@ -52,7 +53,7 @@ export function PullRequestResolveThreadButton({
       toastManager.add({ type: "error", title: "The conversation could not be updated" });
       return;
     }
-    setSent(detail);
+    setSent(detail.reviewThreads);
     onRefresh();
   };
 

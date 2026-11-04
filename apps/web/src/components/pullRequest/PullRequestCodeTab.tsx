@@ -1446,11 +1446,13 @@ function PullRequestCodeTab({
     );
   }
 
-  const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
+  // Threads on the change request as a whole belong to Summary and Timeline, not to a file.
+  const orphanThreads = detail.reviewThreads.filter(
+    (thread): thread is PullRequestReviewThread & { path: string } =>
+      thread.path !== null && !placedThreadIds.has(thread.id),
+  );
   const orphanFiles = new Map<string, PullRequestReviewThread[]>();
   for (const thread of orphanThreads) {
-    // Threads on the change request as a whole belong to Summary and Timeline, not to a file.
-    if (thread.path === null) continue;
     const existing = orphanFiles.get(thread.path);
     if (existing) existing.push(thread);
     else orphanFiles.set(thread.path, [thread]);

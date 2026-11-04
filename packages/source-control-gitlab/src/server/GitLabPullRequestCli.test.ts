@@ -865,6 +865,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
               },
               { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
               {
+                id: "jkl012",
+                notes: [
+                  { id: 6, body: "not resolvable", created_at: "2026-07-03Z", resolvable: false },
+                ],
+              },
+              {
                 id: "ghi789",
                 notes: [
                   {
@@ -875,6 +881,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
                     resolved: false,
                     position: null,
                   },
+                  { id: 5, body: "added", created_at: "2026-07-02T01:00:00Z" },
                 ],
               },
             ]),
@@ -898,6 +905,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         isResolved: true,
       });
       expect(threads[1]).toMatchObject({ path: null, line: null, isResolved: false });
+      expect(threads[1]?.comments.map(({ id }) => id)).toEqual(["4", "5"]);
       assert.strictEqual(threads[0]?.comments.length, 2);
     }),
   );
