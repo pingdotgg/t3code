@@ -545,7 +545,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       assert.include(
         output,
-        `Background service still running the version before ${version}. Run \`t3 service restart\` when you are ready to switch it to ${version}.`,
+        `Background service still running the version before ${version}. Run \`t3-learn service restart\` when you are ready to switch it to ${version}.`,
       );
     }).pipe(
       Effect.scoped,
