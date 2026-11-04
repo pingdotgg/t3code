@@ -7,6 +7,14 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  Outlet,
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -402,16 +410,44 @@ it("answers at once when a focused option is activated from the keyboard", async
 it("ignores a click that lands on an option as closing Settings reveals the question", async () => {
   using _timers = fakeTimers();
   const onToggleOption = vi.fn();
-  await using screen = await render(
-    <AnsweringPanel
-      questions={prompt.questions.slice(0, 1)}
-      onToggleOption={onToggleOption}
-      onAdvance={() => {}}
-    />,
-    { router: "/settings" },
-  );
+  let finishChatLoad!: () => void;
+  const chatLoaded = new Promise<void>((resolve) => {
+    finishChatLoad = resolve;
+  });
+  const rootRoute = createRootRoute({
+    component: () => (
+      <>
+        <AnsweringPanel
+          questions={prompt.questions.slice(0, 1)}
+          onToggleOption={onToggleOption}
+          onAdvance={() => {}}
+        />
+        <Outlet />
+      </>
+    ),
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      createRoute({ getParentRoute: () => rootRoute, path: "settings" }),
+      // A slow thread route: the location reaches "/" while Settings is still the committed match.
+      createRoute({ getParentRoute: () => rootRoute, path: "/", loader: () => chatLoaded }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/settings"] }),
+    disableGlobalCatchBoundary: true,
+  });
+  // The return from Settings needs a pending route, which the default router lacks.
+  await using screen = await render(<RouterProvider router={router} />, { router: false });
   await advanceClock(1_000);
-  await act(() => screen.router!.navigate({ to: "/" }));
+  // Inside act so the location change commits before the clock moves.
+  let navigation!: Promise<void>;
+  await act(() => {
+    navigation = router.navigate({ to: "/" });
+  });
+  await advanceClock(1_000);
+  await act(() => {
+    finishChatLoad();
+    return navigation;
+  });
 
   await userEvent.click(screen.getByRole("button", { name: /Incremental/ }));
   await advanceClock(1_000);

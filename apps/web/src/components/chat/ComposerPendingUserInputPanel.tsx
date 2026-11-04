@@ -1,5 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { useLocation } from "@tanstack/react-router";
+import { useMatches } from "@tanstack/react-router";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -121,8 +121,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setOptimisticSingleSelect(null);
   }
 
-  const coveredByAppModal = useLocation({
-    select: (location) => isAppModalPage(location.pathname),
+  // Matches, not location, so this flips with the modal _chat.tsx renders over the chat.
+  const coveredByAppModal = useMatches({
+    select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
   });
   const visibleQuestionId = isCollapsed || coveredByAppModal ? undefined : activeQuestion?.id;
 
