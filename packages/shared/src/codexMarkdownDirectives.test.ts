@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -86,6 +87,15 @@ describe("remarkCodexDirectives", () => {
     expect(text).toContain("Prices rose 3%.");
     expect(text).toContain("Rates held.");
     expect(text).not.toMatch(WEB_CITATION_MARKER);
+  });
+
+  it("keeps web citation markers out of a bare URL they follow", () => {
+    const markdown = "See https://nodejs.orgciteturn0search0 for details.";
+    const processor = unified().use(remarkParse).use(remarkGfm).use(remarkCodexDirectives);
+    const tree = processor.runSync(processor.parse(markdown), { value: markdown }) as TestNode;
+    const link = tree.children?.[0]?.children?.find((node) => node.type === "link");
+
+    expect(link?.url).toBe("https://nodejs.org");
   });
 
   it.each([

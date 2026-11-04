@@ -255,6 +255,10 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
     node.value = node.value.replace(WEB_CITATION_MARKER, "");
     return;
   }
+  // GFM autolinks take a marker that directly follows a bare URL into the href.
+  if (node.type === "link" && node.url?.includes(WEB_CITATION_OPEN)) {
+    node.url = node.url.replace(WEB_CITATION_MARKER, "");
+  }
   if (node.type === "textDirective" && node.name === CODEX_FILE_CITATION_NAME) {
     renderFileCitation(node, source, insideLink);
     return;
