@@ -2,7 +2,6 @@ import {
   ModelSelection,
   OrchestrationV2ThreadProjection,
   ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -21,8 +20,6 @@ import {
 
 export interface ProviderSwitchPlanV2 {
   readonly instanceChanged: boolean;
-  readonly modelChanged: boolean;
-  readonly targetProviderThreadId: ProviderThreadId | null;
   readonly releaseProviderSessionIds: ReadonlyArray<ProviderSessionId>;
   readonly transition: ProviderSessionTransition;
 }
@@ -68,7 +65,6 @@ export const layer: Layer.Layer<
         function* ({ projection, targetModelSelection }) {
           const current = projection.thread.modelSelection;
           const instanceChanged = current.instanceId !== targetModelSelection.instanceId;
-          const modelChanged = current.model !== targetModelSelection.model;
           const getMetadata = (instanceId: typeof current.instanceId) =>
             adapters.getMetadata !== undefined
               ? adapters.getMetadata(instanceId)
@@ -138,8 +134,6 @@ export const layer: Layer.Layer<
                             currentSession?.cwd ??
                             projection.thread.worktreePath ??
                             "<unresolved-workspace>",
-                          capabilities:
-                            negotiatedCapabilities ?? currentInstance.value.capabilities,
                         },
                   target: {
                     driver: targetInstance.value.driver,
@@ -154,7 +148,6 @@ export const layer: Layer.Layer<
                       projection.thread.worktreePath ??
                       currentSession?.cwd ??
                       "<unresolved-workspace>",
-                    capabilities: targetInstance.value.capabilities,
                     available: targetInstance.value.enabled,
                   },
                   ...(selectionTransition === undefined ? {} : { selectionTransition }),
@@ -166,17 +159,6 @@ export const layer: Layer.Layer<
               cause: transition.reason,
             });
           }
-          const targetProviderThread = projection.providerThreads
-            .filter(
-              (thread) =>
-                thread.appThreadId === projection.thread.id &&
-                thread.ownerNodeId === null &&
-                thread.providerInstanceId === targetModelSelection.instanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0];
           const releaseProviderSessionIds = projection.providerSessions
             .filter((session) => {
               if (!isLiveProviderSession(session)) return false;
@@ -192,8 +174,6 @@ export const layer: Layer.Layer<
             .map((session) => session.id);
           return {
             instanceChanged,
-            modelChanged,
-            targetProviderThreadId: targetProviderThread?.id ?? null,
             releaseProviderSessionIds,
             transition,
           };

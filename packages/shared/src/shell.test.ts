@@ -2,11 +2,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -14,6 +17,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyShellEnvironment,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -35,12 +39,16 @@ import {
   XcodeGitLocation,
 } from "./shell.ts";
 
+const decodeDesktopHostMessage = Schema.decodeUnknownSync(DesktopHostTelemetryMessage);
+
 const nativeProbe = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),
+  original: undefined as unknown as typeof import("node:child_process").execFile,
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
+  nativeProbe.original = original.execFile;
   return { ...original, execFile: nativeProbe.execFile.mockImplementation(original.execFile) };
 });
 
@@ -130,6 +138,13 @@ describe("readEnvironmentFromLoginShell", () => {
       SSH_AUTH_SOCK: "/tmp/secretive.sock",
     });
     expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith("/bin/zsh", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   });
 
   it("omits environment variables that are missing or empty", () => {
@@ -263,7 +278,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       Effect.gen(function* () {
         const started = Promise.withResolvers<void>();
         const kill = vi.fn(() => true);
-        const child = { kill } as unknown as ReturnType<
+        const child = { kill, unref: vi.fn() } as unknown as ReturnType<
           typeof import("node:child_process").execFile
         >;
         const execFile = nativeProbe.execFile;
@@ -283,6 +298,32 @@ describe("readEnvironmentFromWindowsShell", () => {
           execFile.mockClear();
         }
       }),
+  );
+
+  effectIt.effect("gives up on a shell that survives the kill and holds stdout open", () =>
+    Effect.gen(function* () {
+      const stdout = { destroy: vi.fn() };
+      const unref = vi.fn();
+      const child = { kill: vi.fn(() => true), stdout, unref } as unknown as ReturnType<
+        typeof import("node:child_process").execFile
+      >;
+      const execFile = nativeProbe.execFile;
+      execFile.mockClear();
+      execFile.mockImplementation(() => child);
+      try {
+        const fiber = yield* readEnvironmentFromWindowsShell(["PATH"]).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("6 seconds");
+        expect(execFile.mock.calls.map(([file]) => file)).toEqual(["pwsh.exe", "powershell.exe"]);
+        yield* TestClock.adjust("6 seconds");
+        expect(yield* Fiber.join(fiber)).toEqual({});
+        expect(stdout.destroy).toHaveBeenCalledTimes(2);
+        expect(unref).toHaveBeenCalledTimes(2);
+      } finally {
+        execFile.mockReset();
+        execFile.mockImplementation(nativeProbe.original);
+      }
+    }),
   );
 
   effectIt.effect("extracts environment variables from a PowerShell command", () =>
@@ -1043,5 +1084,48 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
       });
       expect(commandAvailable).toHaveBeenCalledTimes(1);
     }),
+  );
+});
+
+describe("desktop shell environment updates", () => {
+  it.each(["win32", "linux", "darwin"] as const)(
+    "applies shell updates with %s PATH semantics",
+    (platform) => {
+      const message = decodeDesktopHostMessage({
+        version: 1,
+        type: "shellEnvironment",
+        discovered: true,
+        platform,
+        environment: {
+          PATH: "C:\\fresh",
+          FNM_DIR: null,
+          __MISE_DIFF: null,
+          SSH_AUTH_SOCK: "/current.sock",
+          NODE_OPTIONS: "--bad",
+        },
+      });
+      expect(message.type).toBe("shellEnvironment");
+      if (message.type !== "shellEnvironment") throw new Error("Expected shell environment update");
+      const env: NodeJS.ProcessEnv = {
+        Path: "C:\\stale",
+        FNM_DIR: "stale",
+        __MISE_DIFF: "stale",
+        UNRELATED: "keep",
+      };
+      applyShellEnvironment(env, message.environment, platform);
+      expect(env).toEqual({
+        PATH: "C:\\fresh",
+        ...(platform === "win32" ? {} : { Path: "C:\\stale" }),
+        SSH_AUTH_SOCK: "/current.sock",
+        UNRELATED: "keep",
+      });
+      env.Path = "C:\\stale";
+      env.path = "C:\\other";
+      applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null }, platform);
+      expect(env).toEqual({
+        ...(platform === "win32" ? {} : { Path: "C:\\stale", path: "C:\\other" }),
+        UNRELATED: "keep",
+      });
+    },
   );
 });

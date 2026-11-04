@@ -5,7 +5,7 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../../components/ui/AppBar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   letterStopNotes,
@@ -48,9 +48,15 @@ const attentionLabels = {
   accessibility: "An accessibility call",
 };
 
-export function PullRequestGuideContent({ params }: { readonly params: PullRequestParams }) {
+export function PullRequestGuideContent({
+  params,
+  visible = true,
+}: {
+  readonly params: PullRequestParams;
+  readonly visible?: boolean;
+}) {
   const navigation = useNavigation();
-  const state = useReviewGuide(params);
+  const state = useReviewGuide(params, visible);
   const { guide, stale } = reviewGuideState(state.data);
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
@@ -113,6 +119,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   );
   const missing = wanted.some((path) => !loadedPaths.has(path));
   const { error: diffError, loadMore } = diff;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the next page of the paged diff query until the stop's files have loaded
   useEffect(() => {
     if (state.enabled && missing && !diffError) loadMore();
   }, [state.enabled, missing, diffError, loadMore]);
@@ -132,7 +139,8 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={`Stop ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={
@@ -181,7 +189,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <>
                 <GuideNotice state={state} />
                 <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
-                <PullRequestMarkdown markdown={stop.summary} />
+                <PullRequestMarkdown lineBreaks={false} markdown={stop.summary} />
                 {stop.attention ? (
                   <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
                     <View className="flex-row items-center gap-2">
@@ -190,7 +198,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                         {attentionLabels[stop.attention.kind]}
                       </Text>
                     </View>
-                    <PullRequestMarkdown markdown={stop.attention.note} />
+                    <PullRequestMarkdown lineBreaks={false} markdown={stop.attention.note} />
                   </View>
                 ) : null}
                 {stale ? (
@@ -230,7 +238,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                           <Text className="text-xs text-foreground-muted">
                             {note.path.split("/").at(-1)}:{note.line}
                           </Text>
-                          <PullRequestMarkdown markdown={note.body} />
+                          <PullRequestMarkdown lineBreaks={false} markdown={note.body} />
                         </View>
                       </View>
                     ))}
@@ -259,7 +267,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="gap-3">
                     <Text className="font-t3-semibold">Questions to consider</Text>
                     {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} markdown={question} />
+                      <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
                   </View>
                 ) : null}

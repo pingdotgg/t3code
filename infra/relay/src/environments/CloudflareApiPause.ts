@@ -35,7 +35,7 @@ export class CloudflareApiPause extends Context.Service<
   }
 >()("t3code-relay/environments/CloudflareApiPause") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const outsideTransaction = <A, E>(effect: Effect.Effect<A, E>) =>
     Effect.updateContext(effect, withoutSqlTransaction);
