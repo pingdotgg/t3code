@@ -933,10 +933,11 @@ function AdaptiveWorkspaceLayoutContent(
   // Android can resize the native row before React removes its split panes on a fold.
   const androidSplit = Platform.OS === "android" && layout.usesSplitView;
   // In the strip the column itself slides with the sidebar: Android only delivers touches inside a
-  // parent's bounds, so content may not slide out of its column.
+  // parent's bounds, so content may not slide out of its column. Every branch sets every key:
+  // Reanimated keeps a key a branch drops, so a fold mid-slide would leave the column shifted.
   const androidContentSlotStyle = useAnimatedStyle(() =>
     !androidSplit
-      ? { width: "100%" as const }
+      ? { width: "100%" as const, marginRight: 0, transform: [{ translateX: 0 }] }
       : stripSidebar
         ? {
             // Wide enough for the pane at either width; the margin gives the sidebar's share
@@ -948,7 +949,7 @@ function AdaptiveWorkspaceLayoutContent(
             marginRight: -sidebarSlotWidth,
             transform: [{ translateX: stripOffset.value }],
           }
-        : { width: renderedContentWidth.value },
+        : { width: renderedContentWidth.value, marginRight: 0, transform: [{ translateX: 0 }] },
   );
   // While the sidebar animates, clip the settled navigator instead of reflowing its text every frame.
   // In the strip it lifts entirely: the content outgrows its column, and a cap that follows
