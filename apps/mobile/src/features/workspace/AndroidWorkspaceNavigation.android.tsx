@@ -27,6 +27,7 @@ import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
+import { useChatsStatus } from "./useChatsStatus";
 
 // Matches RAIL_WIDTH in the native rail.
 export const ANDROID_WORKSPACE_RAIL_WIDTH = 72;
@@ -36,6 +37,8 @@ interface NativeNavigationProps extends ViewProps {
   readonly floating: boolean;
   readonly tabs: readonly string[];
   readonly selectedTab: AndroidWorkspaceNavigationTab;
+  readonly chatsBadgeColor: number;
+  readonly chatsAccessibilityLabel: string;
   readonly dark: boolean;
   readonly textScale: number;
   readonly newEnabled: boolean;
@@ -97,6 +100,7 @@ export function AndroidWorkspaceNavigation(props: {
     hidden,
     rail ? 5 : 4,
   );
+  const chats = useChatsStatus(selectedTab === "threads");
   // FloatingWorkspaceTabs starts the bar at the left inset, so a cutout narrows the room.
   const barWidth =
     (props.paneWidth ?? window.width) -
@@ -122,6 +126,8 @@ export function AndroidWorkspaceNavigation(props: {
         floating={floating}
         tabs={tabs}
         selectedTab={selectedTab}
+        chatsBadgeColor={chats.color === null ? 0 : nativeColor(chats.color)}
+        chatsAccessibilityLabel={chats.label}
         dark={themeAppearance === "dark"}
         textScale={scale}
         newEnabled={connectionState.hasConnections}

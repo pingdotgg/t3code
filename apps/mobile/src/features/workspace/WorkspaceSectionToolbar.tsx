@@ -11,6 +11,7 @@ import {
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
+import { useChatsStatus } from "./useChatsStatus";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -26,13 +27,19 @@ export function WorkspaceTabToolbarButtons() {
     hidden,
   );
   const selectedTint = useControlTheme().colors["--color-primary"];
+  const chats = useChatsStatus(selected === "threads");
   return (
     <>
       {visibleNavigationTabs(order, hidden).map((tab) => (
         <Toolbar.Button
           key={tab}
           identifier={`workspace-tab-${tab}`}
-          accessibilityLabel={WORKSPACE_TAB_LABELS[tab]}
+          accessibilityLabel={tab === "threads" ? chats.label : WORKSPACE_TAB_LABELS[tab]}
+          badge={
+            tab === "threads" && chats.color !== null
+              ? { value: " ", style: { backgroundColor: chats.color } }
+              : undefined
+          }
           icon={
             tab === "pullRequests"
               ? { type: "image", source: PULL_REQUEST_ICON, tinted: true }

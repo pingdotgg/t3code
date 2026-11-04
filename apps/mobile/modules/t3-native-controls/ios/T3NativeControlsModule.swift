@@ -37,6 +37,8 @@ public final class T3NativeControlsModule: Module {
       Prop("tabs") { (view: T3SidebarTabBarView, value: [String]) in view.tabs = value }
       Prop("selectedTab") { (view: T3SidebarTabBarView, value: String) in view.selectedTab = value }
       Prop("selectedColor") { (view: T3SidebarTabBarView, value: UIColor) in view.selectedColor = value }
+      Prop("chatsBadgeColor") { (view: T3SidebarTabBarView, value: UIColor?) in view.chatsBadgeColor = value }
+      Prop("chatsAccessibilityLabel") { (view: T3SidebarTabBarView, value: String) in view.chatsAccessibilityLabel = value }
       Prop("showsCompose") { (view: T3SidebarTabBarView, value: Bool) in view.showsCompose = value }
       Prop("compact") { (view: T3SidebarTabBarView, value: Bool) in view.compact = value }
       Prop("appearance") { (view: T3SidebarTabBarView, value: String) in view.appearance = value }
