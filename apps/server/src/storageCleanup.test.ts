@@ -267,6 +267,7 @@ const cleanupFixture = (
     let threads = [shell({ branch: "feature", worktreePath: worktree })];
     let storedWorktreePaths: string[] = [worktree];
     let repoWorktreeRows: Array<{ threadId: string; worktreePath: string }> = [];
+    let attachBeforeRemoval: Array<{ threadId: string; worktreePath: string }> | null = null;
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
@@ -282,6 +283,9 @@ const cleanupFixture = (
           Effect.gen(function* () {
             if (editBeforeRemoval && input.args.includes("remove"))
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
+            // The repository lease is the last step before removal.
+            if (attachBeforeRemoval !== null && input.args.includes("--git-common-dir"))
+              repoWorktreeRows = attachBeforeRemoval;
             return yield* git.execute(input);
           }),
         statusDetailsLocal: (...args) => {
@@ -319,6 +323,8 @@ const cleanupFixture = (
           ),
         getThreadShell: (threadId: ThreadId) =>
           Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
+        getThreadRepoWorktreePaths: () =>
+          Effect.sync(() => repoWorktreeRows.map((row) => ({ ...row, title: "Folder thread" }))),
       } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
       Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
         isLive: () => Effect.sync(() => sessionLive),
@@ -345,14 +351,12 @@ const cleanupFixture = (
                   }),
                 },
               ]
-            : strings.join("").includes("$.repoWorktrees")
-              ? repoWorktreeRows
-              : strings.join("").includes('AS "worktreePath"')
-                ? [
-                    ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                    ...storedWorktreePaths,
-                  ].map((worktreePath) => ({ worktreePath }))
-                : [],
+            : strings.join("").includes('AS "worktreePath"')
+              ? [
+                  ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                  ...storedWorktreePaths,
+                ].map((worktreePath) => ({ worktreePath }))
+              : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -409,6 +413,9 @@ const cleanupFixture = (
       },
       setRepoWorktrees: (rows: Array<{ threadId: string; worktreePath: string }>) => {
         repoWorktreeRows = rows;
+      },
+      attachBeforeRemoval: (rows: Array<{ threadId: string; worktreePath: string }>) => {
+        attachBeforeRemoval = rows;
       },
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
@@ -1319,6 +1326,49 @@ describe("storage cleanup reports and local file policies", () => {
           expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         }),
       ),
+  );
+  // Git records a reused checkout by its real path, while the thread that made
+  // it may use the configured spelling (/tmp for /private/tmp).
+  it.live("keeps a worktree attached under another spelling of its path", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { fs } = fixture;
+        const link = `${yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+        yield* fs.symlink(fixture.config.worktreesDir, link);
+        const linked = `${link}/feature`;
+        const real = yield* fs.realPath(fixture.worktree);
+        for (const [threadPath, attachedPath] of [
+          [linked, real],
+          [fixture.worktree, linked],
+        ] as const) {
+          fixture.setThreads([shell({ branch: "feature", worktreePath: threadPath })]);
+          fixture.setRepoWorktrees([{ threadId: "thread-2", worktreePath: attachedPath }]);
+          expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Another thread works in it as a repository worktree",
+          });
+        }
+        expect(yield* fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("keeps a worktree attached right before its removal, without cleaning it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setPolicy("tracked-changes");
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/notes.txt`, "untracked\n");
+        fixture.attachBeforeRemoval([{ threadId: "thread-2", worktreePath: fixture.worktree }]);
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Another thread works in it as a repository worktree",
+        });
+        expect(yield* fixture.fs.readFileString(`${fixture.worktree}/notes.txt`)).toBe(
+          "untracked\n",
+        );
+      }),
+    ),
   );
   it.live("lists attached repository worktrees as kept, not as unused folders", () =>
     runCleanupTest(

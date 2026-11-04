@@ -124,13 +124,13 @@ export const WorktreeMcpRepoEnsureInput = Schema.Struct({
   baseRef: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Branch or ref a new branch starts from. Required when the branch does not exist yet. Ignored when it exists.",
+        "Branch, tag, or commit a new branch starts from, resolved in the local repository unless startFromOrigin is on. For a branch only origin has, pass 'origin/<name>' or set startFromOrigin. Required when the branch does not exist yet. Ignored when it exists.",
     }),
   ),
   startFromOrigin: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Fetch origin and start a new branch from the remote-tracking commit of baseRef. Defaults to the project's 'new worktrees start from origin' setting.",
+        "Fetch origin and start a new branch from the remote-tracking commit of baseRef. Defaults to the project's 'new worktrees start from origin' setting. When off, nothing is fetched.",
     }),
   ),
   useExistingBranch: Schema.optional(

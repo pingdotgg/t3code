@@ -5,6 +5,7 @@ import {
   type ProjectId,
   type ThreadId,
   type ThreadRepoWorktree,
+  type VcsRemoveWorktreeInput,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -21,10 +22,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { withRepositoryLease } from "../workspace/workspaceLease.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 
@@ -61,9 +64,11 @@ export class RepoWorktreeRequestError extends Schema.TaggedError<RepoWorktreeReq
       "not_a_repository",
       "invalid_branch",
       "base_ref_required",
+      "base_missing",
       "branch_exists",
       "branch_missing",
       "branch_in_source_checkout",
+      "branch_mismatch",
       "location_invalid",
       "path_unavailable",
       "not_attached",
@@ -73,6 +78,9 @@ export class RepoWorktreeRequestError extends Schema.TaggedError<RepoWorktreeReq
     ]),
     path: Schema.optional(Schema.String),
     branch: Schema.optional(Schema.String),
+    baseRef: Schema.optional(Schema.String),
+    /** What Git checked out instead of the branch; absent for a detached HEAD. */
+    actualBranch: Schema.optional(Schema.String),
     remote: Schema.optional(Schema.Boolean),
   },
 ) {
@@ -80,6 +88,12 @@ export class RepoWorktreeRequestError extends Schema.TaggedError<RepoWorktreeReq
     const path = this.path ?? "the path";
     const branch = this.branch ?? "the branch";
     switch (this.reason) {
+      case "base_missing":
+        return this.remote === true
+          ? `Base '${this.baseRef}' is not a local branch or commit in ${path}; only origin has it.`
+          : `Base '${this.baseRef}' is not a branch, tag, or commit in ${path}.`;
+      case "branch_mismatch":
+        return `Git checked out ${this.actualBranch === undefined ? "a detached HEAD" : `'${this.actualBranch}'`} instead of '${branch}' at ${path}. That new worktree was removed and nothing was attached.`;
       case "outside_project":
         return `${path} is not a Git repository inside the project folder.`;
       case "not_a_repository":
@@ -126,12 +140,32 @@ export class RepoWorktreeDispatchError extends Schema.TaggedError<RepoWorktreeDi
 export class RepoWorktreeReadError extends Schema.TaggedError<RepoWorktreeReadError>()(
   "RepoWorktreeReadError",
   {
-    operation: Schema.Literals(["settings", "project"]),
+    operation: Schema.Literals(["settings", "project", "attachments"]),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Could not read the ${this.operation === "settings" ? "server settings" : "project"}.`;
+    return `Could not read the ${
+      this.operation === "settings"
+        ? "server settings"
+        : this.operation === "project"
+          ? "project"
+          : "threads' repository worktrees"
+    }.`;
+  }
+}
+
+/** A removal refused because a thread still works in the checkout; nothing was changed. */
+export class RepoWorktreeInUseError extends Schema.TaggedError<RepoWorktreeInUseError>()(
+  "RepoWorktreeInUseError",
+  {
+    path: Schema.String,
+    threadId: Schema.String,
+    threadTitle: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Thread "${this.threadTitle}" works in ${this.path} as a repository worktree, so it was kept. Detach it from that thread to delete it.`;
   }
 }
 
@@ -198,6 +232,13 @@ export class RepoWorktreeService extends Context.Service<
     readonly setSubmoduleCommit: (
       input: RepoWorktreeSetSubmoduleInput,
     ) => Effect.Effect<RepoWorktreeSetSubmoduleResult, RepoWorktreeFailure>;
+    /**
+     * Removes a worktree the user asked to delete, unless a thread has it
+     * attached as a repository worktree. Forced removals are refused the same way.
+     */
+    readonly removeWorktree: (
+      input: VcsRemoveWorktreeInput,
+    ) => Effect.Effect<void, RepoWorktreeInUseError | RepoWorktreeReadError | GitCommandError>;
   }
 >()("t3/git/RepoWorktreeService") {}
 
@@ -240,6 +281,7 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectService.ProjectService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -262,6 +304,9 @@ const make = Effect.gen(function* () {
   const realPathOr = (target: string) =>
     fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
   const sameWorktree = (left: string, right: string) => pathKey(left) === pathKey(right);
+  // Git reports a checkout by its real path while settings may reach it
+  // through a link (/tmp and /private/tmp), so attachments compare this.
+  const pathIdentity = (target: string) => realPathOr(target).pipe(Effect.map(pathKey));
 
   const run = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
     git.execute({ operation: `RepoWorktreeService.${operation}`, cwd, args, timeoutMs: 60_000 });
@@ -322,15 +367,69 @@ const make = Effect.gen(function* () {
     return { thread, settings, project };
   });
 
-  const attachedWorktree = (thread: OrchestrationV2AppThread, worktreePath: string) =>
-    (thread.repoWorktrees ?? []).find((entry) => sameWorktree(entry.worktreePath, worktreePath));
+  const attachedWorktree = Effect.fnUntraced(function* (
+    thread: OrchestrationV2AppThread,
+    worktreePath: string,
+  ) {
+    const target = yield* pathIdentity(worktreePath);
+    for (const entry of thread.repoWorktrees ?? []) {
+      if ((yield* pathIdentity(entry.worktreePath)) === target) return entry;
+    }
+    return undefined;
+  });
 
-  const requireAttached = (thread: OrchestrationV2AppThread, worktreePath: string) => {
-    const attached = attachedWorktree(thread, worktreePath);
-    return attached === undefined
-      ? Effect.fail(new RepoWorktreeRequestError({ reason: "not_attached", path: worktreePath }))
-      : Effect.succeed(attached);
-  };
+  const requireAttached = (thread: OrchestrationV2AppThread, worktreePath: string) =>
+    attachedWorktree(thread, worktreePath).pipe(
+      Effect.filterOrFail(
+        (attached): attached is ThreadRepoWorktree => attached !== undefined,
+        () => new RepoWorktreeRequestError({ reason: "not_attached", path: worktreePath }),
+      ),
+    );
+
+  // A name Git cannot resolve locally makes `worktree add -b` guess a remote
+  // branch and create that instead of the new branch, so the start point is
+  // always a commit resolved here, with no fetch.
+  const resolveLocalBase = Effect.fnUntraced(function* (
+    cwd: string,
+    baseRef: string,
+    hasOrigin: boolean,
+    label: string,
+  ) {
+    const looksLikeOption = baseRef.startsWith("-");
+    const resolved = looksLikeOption
+      ? { ok: false, stdout: "" }
+      : yield* probe(cwd, "resolveBaseRef", [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `${baseRef}^{commit}`,
+        ]);
+    if (resolved.ok && resolved.stdout !== "") return resolved.stdout;
+    const onOrigin =
+      hasOrigin &&
+      !looksLikeOption &&
+      (yield* probe(cwd, "remoteBaseExists", [
+        "show-ref",
+        "--verify",
+        "--quiet",
+        `refs/remotes/origin/${baseRef}`,
+      ])).ok;
+    return yield* new RepoWorktreeRequestError({
+      reason: "base_missing",
+      baseRef,
+      path: label,
+      remote: onOrigin,
+    });
+  });
+
+  const checkedOutBranch = (worktreePath: string) =>
+    probe(worktreePath, "verifyBranch", ["symbolic-ref", "--quiet", "HEAD"]).pipe(
+      Effect.map((head) =>
+        head.ok && head.stdout.startsWith("refs/heads/")
+          ? head.stdout.slice("refs/heads/".length)
+          : undefined,
+      ),
+    );
 
   const resolveRepository = Effect.fnUntraced(function* (
     workspaceRoot: string,
@@ -483,17 +582,22 @@ const make = Effect.gen(function* () {
     if (existing !== undefined) {
       const worktreePath = path.resolve(existing.path);
       const uncommittedFiles = yield* countUncommittedFiles(worktreePath);
-      const alreadyAttached = attachedWorktree(thread, worktreePath);
-      const repoWorktree: ThreadRepoWorktree = alreadyAttached ?? {
-        repository: repository.label,
-        repositoryPath: cwd,
-        worktreePath,
-        branch: input.branch,
-        baseRef: null,
-        origin: "reused",
-        attachedAt,
-      };
-      if (alreadyAttached === undefined) yield* dispatchAttach(thread.id, repoWorktree);
+      const alreadyAttached = yield* attachedWorktree(thread, worktreePath);
+      // An entry whose checkout was switched to this branch is relabeled, so
+      // the thread never lists a branch the checkout does not have.
+      const repoWorktree: ThreadRepoWorktree =
+        alreadyAttached === undefined
+          ? {
+              repository: repository.label,
+              repositoryPath: cwd,
+              worktreePath,
+              branch: input.branch,
+              baseRef: null,
+              origin: "reused",
+              attachedAt,
+            }
+          : { ...alreadyAttached, branch: input.branch };
+      if (alreadyAttached?.branch !== input.branch) yield* dispatchAttach(thread.id, repoWorktree);
       return {
         status: "reused",
         branchCreated: false,
@@ -547,7 +651,8 @@ const make = Effect.gen(function* () {
       plan = localExists
         ? { refName: input.branch, baseRef: null, startedFromOrigin: false }
         : {
-            refName: `origin/${input.branch}`,
+            // The full name sets origin's branch as upstream, which a commit would not.
+            refName: `refs/remotes/origin/${input.branch}`,
             newRefName: input.branch,
             baseRef: `origin/${input.branch}`,
             startedFromOrigin: true,
@@ -573,7 +678,7 @@ const make = Effect.gen(function* () {
             refName: input.baseRef,
             fallbackRemoteName: "origin",
           })).commitSha
-        : input.baseRef;
+        : yield* resolveLocalBase(cwd, input.baseRef, hasOrigin, repository.label);
       plan = {
         refName: startRef,
         newRefName: input.branch,
@@ -623,10 +728,37 @@ const make = Effect.gen(function* () {
             Effect.andThen(
               plan.newRefName === undefined
                 ? Effect.void
-                : gitWorkflow.deleteLocalBranch({ cwd, refName: input.branch, force: true }),
+                : Effect.gen(function* () {
+                    const created = yield* probe(cwd, "branchExists", [
+                      "show-ref",
+                      "--verify",
+                      "--quiet",
+                      branchRef,
+                    ]);
+                    if (created.ok) {
+                      yield* gitWorkflow.deleteLocalBranch({
+                        cwd,
+                        refName: input.branch,
+                        force: true,
+                      });
+                    }
+                  }),
             ),
             Effect.ignoreCause({ log: true }),
           );
+        // The result names a branch, so it must be the one Git checked out.
+        const actualBranch = yield* checkedOutBranch(repoWorktree.worktreePath).pipe(
+          Effect.onError(() => rollback),
+        );
+        if (actualBranch !== input.branch) {
+          yield* rollback;
+          return yield* new RepoWorktreeRequestError({
+            reason: "branch_mismatch",
+            branch: input.branch,
+            path: repoWorktree.worktreePath,
+            ...(actualBranch === undefined ? {} : { actualBranch }),
+          });
+        }
         // Interrupt-only causes keep the checkout: the attach may have
         // committed, and deleting a worktree the thread lists is worse than
         // leaving one behind.
@@ -649,17 +781,55 @@ const make = Effect.gen(function* () {
     function* (input) {
       const context = yield* loadEnabledContext(input.threadId);
       const repository = yield* resolveRepository(context.project.workspaceRoot, input.repository);
-      return yield* repositoryLocks.withLock(
+      return yield* withRepositoryLease(
         pathKey(repository.commonDir),
         ensureLocked(input, context, repository),
       );
     },
   );
 
+  const removeWorktree: RepoWorktreeService["Service"]["removeWorktree"] = Effect.fn(
+    "RepoWorktreeService.removeWorktree",
+  )(function* (input) {
+    const commonDir = yield* probe(input.cwd, "removeWorktree.commonDir", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]).pipe(Effect.orElseSucceed(() => ({ ok: false, stdout: "" })));
+    const leaseKey = yield* pathIdentity(
+      commonDir.ok && commonDir.stdout !== "" ? commonDir.stdout : input.cwd,
+    );
+    // Checked under the lease ensure attaches under, so the answer still holds
+    // when Git removes the folder.
+    yield* withRepositoryLease(
+      leaseKey,
+      Effect.gen(function* () {
+        const target = yield* pathIdentity(input.path);
+        const attachments = yield* projections
+          .getThreadRepoWorktreePaths()
+          .pipe(
+            Effect.mapError(
+              (cause) => new RepoWorktreeReadError({ operation: "attachments", cause }),
+            ),
+          );
+        for (const attachment of attachments) {
+          if ((yield* pathIdentity(attachment.worktreePath)) === target) {
+            return yield* new RepoWorktreeInUseError({
+              path: input.path,
+              threadId: attachment.threadId,
+              threadTitle: attachment.title,
+            });
+          }
+        }
+        yield* gitWorkflow.removeWorktree(input);
+      }),
+    );
+  });
+
   const detach: RepoWorktreeService["Service"]["detach"] = Effect.fn("RepoWorktreeService.detach")(
     function* (input) {
       const thread = yield* loadThread(input.threadId);
-      const attached = attachedWorktree(thread, input.worktreePath);
+      const attached = yield* attachedWorktree(thread, input.worktreePath);
       if (attached === undefined) return { detached: false, worktreePath: input.worktreePath };
       const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       yield* threadManagement
@@ -838,7 +1008,7 @@ const make = Effect.gen(function* () {
     } satisfies RepoWorktreeSetSubmoduleResult;
   });
 
-  return RepoWorktreeService.of({ ensure, detach, setSubmoduleCommit });
+  return RepoWorktreeService.of({ ensure, detach, setSubmoduleCommit, removeWorktree });
 });
 
 export const layer = Layer.effect(RepoWorktreeService, make);

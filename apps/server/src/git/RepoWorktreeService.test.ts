@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -50,25 +51,35 @@ const layerGitDriver = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
+type CreateWorktree = GitWorkflowService.GitWorkflowService["Service"]["createWorktree"];
+
 // GitWorkflowService adds project settings and caching on top of the driver;
 // these tests exercise the real git operations underneath it.
-const layerGitWorkflow = Layer.unwrap(
-  Effect.gen(function* () {
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    return Layer.mock(GitWorkflowService.GitWorkflowService)({
-      remoteExists: git.remoteExists,
-      fetchRemote: git.fetchRemote,
-      resolveRemoteTrackingCommit: git.resolveRemoteTrackingCommit,
-      pruneWorktrees: git.pruneWorktrees,
-      createWorktree: (input, options) => git.createWorktree(input, options),
-      removeWorktree: git.removeWorktree,
-      deleteLocalBranch: git.deleteLocalBranch,
-      invalidateStatus: () => Effect.void,
-    });
-  }),
-);
+const layerGitWorkflow = (
+  createWorktree?: (git: GitVcsDriver.GitVcsDriver["Service"]) => CreateWorktree,
+) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      return Layer.mock(GitWorkflowService.GitWorkflowService)({
+        remoteExists: git.remoteExists,
+        fetchRemote: git.fetchRemote,
+        resolveRemoteTrackingCommit: git.resolveRemoteTrackingCommit,
+        pruneWorktrees: git.pruneWorktrees,
+        createWorktree:
+          createWorktree?.(git) ?? ((input, options) => git.createWorktree(input, options)),
+        removeWorktree: git.removeWorktree,
+        deleteLocalBranch: git.deleteLocalBranch,
+        invalidateStatus: () => Effect.void,
+      });
+    }),
+  );
 
-function makeLayer(input: { readonly workspaceRoot: string; readonly worktreesDirectory: string }) {
+function makeLayer(input: {
+  readonly workspaceRoot: string;
+  readonly worktreesDirectory: string;
+  readonly createWorktree?: (git: GitVcsDriver.GitVcsDriver["Service"]) => CreateWorktree;
+}) {
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "repo-worktrees" },
@@ -91,7 +102,13 @@ function makeLayer(input: { readonly workspaceRoot: string; readonly worktreesDi
   });
   return RepoWorktreeService.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(layerThreads, layerSettings, layerProjects, layerGitWorkflow),
+      Layer.mergeAll(
+        layerThreads,
+        layerSettings,
+        layerProjects,
+        layerGitWorkflow(input.createWorktree),
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ),
     ),
     Layer.provideMerge(layerGitDriver),
     Layer.provideMerge(layerServerConfig),
@@ -175,10 +192,32 @@ const fixturePaths = Effect.gen(function* () {
     server: path.join(root, "folder", "server"),
     frameworkSource: path.join(root, "framework-source"),
     worktrees: path.join(root, "worktrees"),
+    /** The configured worktree location, which may be a link to `worktrees`. */
+    worktreesDirectory: path.join(root, "worktrees"),
   };
 });
 
 type Fixture = Effect.Success<typeof fixturePaths>;
+
+/**
+ * `folder/beta` cloned from a remote that also has `develop`, so the clone has
+ * a local main and only origin/develop.
+ */
+const cloneWithRemoteOnlyBranch = (fixture: Fixture) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const seed = path.join(fixture.root, "beta-seed");
+    const remote = path.join(fixture.root, "remotes", "beta.git");
+    const beta = path.join(fixture.folder, "beta");
+    yield* initRepo(seed);
+    yield* git(seed, ["switch", "-c", "develop"]);
+    const developCommit = yield* commitFile(seed, "develop.txt", "develop\n", "develop work");
+    yield* git(seed, ["switch", "main"]);
+    yield* git(fixture.root, ["clone", "--quiet", "--bare", seed, remote]);
+    yield* git(fixture.root, ["clone", "--quiet", remote, beta]);
+    yield* configureIdentity(beta);
+    return { beta, developCommit };
+  });
 
 const buildRepositories = (fixture: Fixture) =>
   Effect.gen(function* () {
@@ -192,25 +231,29 @@ const buildRepositories = (fixture: Fixture) =>
   });
 
 let threadCounter = 0;
-const createThread = Effect.gen(function* () {
-  const threads = yield* ThreadManagement.ThreadManagementService;
-  const threadId = ThreadId.make(`thread:repo-worktrees:${++threadCounter}`);
-  yield* threads.dispatch({
-    type: "thread.create",
-    commandId: CommandId.make(`create:${threadId}`),
-    threadId,
-    projectId,
-    title: "Folder thread",
-    modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    createdBy: "user",
-    creationSource: "web",
+const createThreadIn = (
+  workspace: { readonly branch: string; readonly worktreePath: string } | null,
+) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const threadId = ThreadId.make(`thread:repo-worktrees:${++threadCounter}`);
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId,
+      title: workspace === null ? "Folder thread" : "Worktree thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: workspace?.branch ?? null,
+      worktreePath: workspace?.worktreePath ?? null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return threadId;
   });
-  return threadId;
-});
+const createThread = createThreadIn(null);
 
 const readThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -221,15 +264,35 @@ const readThread = (threadId: ThreadId) =>
 const requestReason = (error: RepoWorktreeService.RepoWorktreeFailure) =>
   error._tag === "RepoWorktreeRequestError" ? error.reason : error._tag;
 
-const withFixture = <A, E, R>(test: (fixture: Fixture) => Effect.Effect<A, E, R>) =>
+const withFixture = <A, E, R>(
+  test: (fixture: Fixture) => Effect.Effect<A, E, R>,
+  options: {
+    /** Configure the worktree location through a link, as /tmp is on macOS. */
+    readonly linkedWorktreesDirectory?: boolean;
+    readonly createWorktree?: (git: GitVcsDriver.GitVcsDriver["Service"]) => CreateWorktree;
+  } = {},
+) =>
   Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
     const fixture = yield* fixturePaths;
+    let worktreesDirectory = fixture.worktrees;
+    if (options.linkedWorktreesDirectory === true) {
+      worktreesDirectory = `${fixture.worktrees}-link`;
+      yield* fileSystem.makeDirectory(fixture.worktrees, { recursive: true });
+      yield* fileSystem.symlink(fixture.worktrees, worktreesDirectory);
+    }
     return yield* Effect.gen(function* () {
       yield* buildRepositories(fixture);
-      return yield* test(fixture);
+      return yield* test({ ...fixture, worktreesDirectory });
     }).pipe(
       Effect.provide(
-        makeLayer({ workspaceRoot: fixture.folder, worktreesDirectory: fixture.worktrees }),
+        makeLayer({
+          workspaceRoot: fixture.folder,
+          worktreesDirectory,
+          ...(options.createWorktree === undefined
+            ? {}
+            : { createWorktree: options.createWorktree }),
+        }),
       ),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
@@ -549,6 +612,216 @@ describe("RepoWorktreeService", () => {
           worktreePath,
         });
       }),
+    ),
+  );
+
+  // Given an unresolvable start point, `git worktree add -b feature/b <path>
+  // develop` creates and checks out develop from origin/develop instead.
+  it.effect("starts a new branch from a base only origin has without Git guessing", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* RepoWorktreeService.RepoWorktreeService;
+        const threadId = yield* createThread;
+        const { beta, developCommit } = yield* cloneWithRemoteOnlyBranch(fixture);
+        const hasLocalDevelop = gitExitCode(beta, [
+          "show-ref",
+          "--verify",
+          "--quiet",
+          "refs/heads/develop",
+        ]);
+
+        const refused = yield* service
+          .ensure({
+            threadId,
+            repository: "beta",
+            branch: "feature/b",
+            baseRef: "develop",
+            startFromOrigin: false,
+          })
+          .pipe(Effect.flip);
+        assert.equal(requestReason(refused), "base_missing");
+        assert.include(refused.message, "only origin has it");
+        assert.isFalse(yield* fileSystem.exists(path.join(fixture.worktrees, "beta")));
+        assert.notEqual(yield* hasLocalDevelop, 0);
+        assert.deepEqual((yield* readThread(threadId)).repoWorktrees ?? [], []);
+
+        // Explicit remote base without a fetch, and a fetched one.
+        for (const request of [
+          { branch: "feature/b", baseRef: "origin/develop", startFromOrigin: false },
+          { branch: "feature/c", baseRef: "develop", startFromOrigin: true },
+        ]) {
+          const created = yield* service.ensure({ threadId, repository: "beta", ...request });
+          const worktreePath = created.repoWorktree.worktreePath;
+          assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), request.branch);
+          assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), developCommit);
+          assert.equal(created.repoWorktree.branch, request.branch);
+        }
+        assert.notEqual(yield* hasLocalDevelop, 0);
+        assert.equal(yield* git(beta, ["branch", "--show-current"]), "main");
+
+        // Continuing origin's branch itself takes an explicit choice, and tracks it.
+        const continueDevelop = { threadId, repository: "beta", branch: "develop" };
+        const unconfirmed = yield* service.ensure(continueDevelop).pipe(Effect.flip);
+        assert.equal(requestReason(unconfirmed), "branch_exists");
+        const continued = yield* service.ensure({ ...continueDevelop, useExistingBranch: true });
+        const developPath = continued.repoWorktree.worktreePath;
+        assert.equal(yield* git(developPath, ["branch", "--show-current"]), "develop");
+        assert.equal(yield* git(developPath, ["rev-parse", "HEAD"]), developCommit);
+        assert.equal(
+          yield* git(developPath, ["rev-parse", "--abbrev-ref", "develop@{upstream}"]),
+          "origin/develop",
+        );
+      }),
+    ),
+  );
+
+  it.effect("never attaches a worktree on a branch other than the one requested", () =>
+    withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const service = yield* RepoWorktreeService.RepoWorktreeService;
+          const threadId = yield* createThread;
+
+          const refused = yield* service
+            .ensure({ threadId, repository: "alpha", branch: "feature/b", baseRef: "main" })
+            .pipe(Effect.flip);
+          assert.equal(requestReason(refused), "branch_mismatch");
+          assert.include(refused.message, "'surprise' instead of 'feature/b'");
+          assert.isFalse(
+            yield* fileSystem.exists(path.join(fixture.worktrees, "alpha", "feature-b")),
+          );
+          assert.notEqual(
+            yield* gitExitCode(fixture.alpha, [
+              "show-ref",
+              "--verify",
+              "--quiet",
+              "refs/heads/feature/b",
+            ]),
+            0,
+          );
+          assert.deepEqual((yield* readThread(threadId)).repoWorktrees ?? [], []);
+        }),
+      {
+        // A real checkout of another branch, standing in for Git choosing one.
+        createWorktree: (git) => (input, options) =>
+          git.createWorktree({ ...input, newRefName: "surprise" }, options),
+      },
+    ),
+  );
+
+  it.effect("relabels an attached worktree after its checkout switched branch", () =>
+    withFixture(() =>
+      Effect.gen(function* () {
+        const service = yield* RepoWorktreeService.RepoWorktreeService;
+        const threadId = yield* createThread;
+        const { worktreePath } = (yield* service.ensure({
+          threadId,
+          repository: "alpha",
+          branch: "feature/first",
+          baseRef: "main",
+        })).repoWorktree;
+        yield* git(worktreePath, ["switch", "--quiet", "-c", "feature/second"]);
+
+        const reused = yield* service.ensure({
+          threadId,
+          repository: "alpha",
+          branch: "feature/second",
+        });
+        assert.deepEqual(
+          [reused.status, reused.alreadyAttached, reused.repoWorktree.branch],
+          ["reused", true, "feature/second"],
+        );
+        assert.deepEqual(
+          (yield* readThread(threadId)).repoWorktrees?.map((entry) => [
+            entry.worktreePath,
+            entry.branch,
+          ]),
+          [[worktreePath, "feature/second"]],
+        );
+      }),
+    ),
+  );
+
+  it.effect("treats a linked worktree location and Git's real path as one checkout", () =>
+    withFixture(
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const service = yield* RepoWorktreeService.RepoWorktreeService;
+          const first = yield* createThread;
+          const second = yield* createThread;
+          const request = { repository: "alpha", branch: "feature/shared", baseRef: "main" };
+
+          const created = yield* service.ensure({ threadId: first, ...request });
+          const reused = yield* service.ensure({ threadId: second, ...request });
+          assert.equal(
+            yield* fileSystem.realPath(created.repoWorktree.worktreePath),
+            reused.repoWorktree.worktreePath,
+          );
+          assert.notEqual(created.repoWorktree.worktreePath, reused.repoWorktree.worktreePath);
+
+          const again = yield* service.ensure({ threadId: first, ...request });
+          assert.isTrue(again.alreadyAttached);
+          assert.equal((yield* readThread(first)).repoWorktrees?.length, 1);
+          assert.deepEqual(
+            yield* service.detach({
+              threadId: first,
+              worktreePath: reused.repoWorktree.worktreePath,
+            }),
+            { detached: true, worktreePath: created.repoWorktree.worktreePath },
+          );
+        }),
+      { linkedWorktreesDirectory: true },
+    ),
+  );
+
+  it.effect("keeps a worktree that a folder thread attached when its own thread deletes it", () =>
+    withFixture(
+      (fixture) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const service = yield* RepoWorktreeService.RepoWorktreeService;
+          // An ordinary thread's worktree, made through the linked location.
+          const worktreePath = path.join(fixture.worktreesDirectory, "alpha", "feature-login");
+          yield* git(fixture.alpha, [
+            "worktree",
+            "add",
+            "-b",
+            "feature/login",
+            worktreePath,
+            "main",
+          ]);
+          yield* fileSystem.writeFileString(path.join(worktreePath, "draft.txt"), "draft\n");
+          yield* createThreadIn({ branch: "feature/login", worktreePath });
+          const folderThread = yield* createThread;
+          const attached = yield* service.ensure({
+            threadId: folderThread,
+            repository: "alpha",
+            branch: "feature/login",
+          });
+          assert.equal(attached.status, "reused");
+          assert.equal(attached.uncommittedFiles, 1);
+
+          const refused = yield* service
+            .removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true })
+            .pipe(Effect.flip);
+          assert.equal(refused._tag, "RepoWorktreeInUseError");
+          assert.include(refused.message, '"Folder thread"');
+          assert.equal(
+            yield* fileSystem.readFileString(path.join(worktreePath, "draft.txt")),
+            "draft\n",
+          );
+
+          yield* service.detach({ threadId: folderThread, worktreePath });
+          yield* service.removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true });
+          assert.isFalse(yield* fileSystem.exists(worktreePath));
+        }),
+      { linkedWorktreesDirectory: true },
     ),
   );
 });

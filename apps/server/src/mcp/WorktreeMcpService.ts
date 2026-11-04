@@ -556,19 +556,27 @@ function repoWorktreeFailure(error: RepoWorktreeService.RepoWorktreeFailure): Wo
         error.message,
       );
     case "RepoWorktreeRequestError":
-      return failure(
-        "invalid_request",
-        error.reason === "branch_exists"
-          ? `${error.message} To continue it, call again with useExistingBranch:true.`
-          : error.reason === "base_ref_required"
-            ? `${error.message} Pass baseRef.`
-            : error.message,
-      );
+      return failure("invalid_request", `${error.message}${requestHint(error)}`);
     case "RepoWorktreeDispatchError":
     case "RepoWorktreeReadError":
       return failure("operation_failed", error.message);
     case "GitCommandError":
       return failure("operation_failed", error.message);
+  }
+}
+
+function requestHint(error: RepoWorktreeService.RepoWorktreeRequestError): string {
+  switch (error.reason) {
+    case "branch_exists":
+      return " To continue it, call again with useExistingBranch:true.";
+    case "base_ref_required":
+      return " Pass baseRef.";
+    case "base_missing":
+      return error.remote === true
+        ? ` Pass baseRef 'origin/${error.baseRef}' to start from origin's last fetched commit, or startFromOrigin:true to fetch it first.`
+        : "";
+    default:
+      return "";
   }
 }
 

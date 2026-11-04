@@ -45,7 +45,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withRepositoryLease, withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -288,19 +288,22 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  // Repository worktrees of threads that still exist, archived ones included.
-  // Cleanup never removes them, and a thread's own worktree that another thread
-  // also works in counts as shared.
+  // A repository worktree is recorded with the path Git reported, which can be
+  // another spelling (/private/tmp for /tmp) of a thread's own worktree path.
+  const pathIdentity = (target: string) =>
+    fs.realPath(target).pipe(
+      Effect.orElseSucceed(() => path.resolve(target)),
+      Effect.map(pathKey),
+    );
+
+  // Repository worktrees of threads that still exist, archived ones included,
+  // keyed by path identity. Cleanup never removes them, and a thread's own
+  // worktree that another thread also works in counts as shared.
   const readRepoWorktreePaths = Effect.fn("StorageCleanup.readRepoWorktreePaths")(function* () {
-    const rows = yield* sql<{ threadId: string; worktreePath: string | null }>`
-      SELECT t.thread_id AS "threadId", json_extract(r.value, '$.worktreePath') AS "worktreePath"
-      FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.repoWorktrees') r
-      WHERE t.deleted_at IS NULL
-    `.pipe(NodeSqliteClient.readOnly);
+    const rows = yield* projections.getThreadRepoWorktreePaths().pipe(NodeSqliteClient.readOnly);
     const paths = new Map<string, { readonly path: string; readonly threadIds: Set<string> }>();
     for (const row of rows) {
-      if (row.worktreePath === null) continue;
-      const key = pathKey(row.worktreePath);
+      const key = yield* pathIdentity(row.worktreePath);
       const entry = paths.get(key) ?? {
         path: path.resolve(row.worktreePath),
         threadIds: new Set(),
@@ -647,7 +650,7 @@ const make = Effect.gen(function* () {
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (group.length > 1 && worktreeOwner(group) === undefined)
           return keep(`shared by ${group.length} threads`);
-        if (repoWorktreePaths.has(pathKey(worktreePath)))
+        if (repoWorktreePaths.has(yield* pathIdentity(worktreePath)))
           return keep("another thread works in it as a repository worktree");
         if (project === undefined) return keep("project is unavailable");
         if (
@@ -771,7 +774,7 @@ const make = Effect.gen(function* () {
             (entry) => path.resolve(entry.worktreePath) === worktreePath,
           );
           if (hasTerminal(worktreePath)) return "open terminal";
-          if ((yield* readRepoWorktreePaths()).has(pathKey(worktreePath)))
+          if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath)))
             return "another thread works in it as a repository worktree";
           if (deleted) {
             if (
@@ -858,15 +861,39 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        // Clean only untracked files; Git must still refuse removal if a tracked
-        // edit arrives after our last status check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        yield* cleanupGit(
-          project.workspaceRoot,
-          ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", worktreePath],
-          "git worktree remove",
+        const commonDir = yield* git.execute({
+          operation: "StorageCleanup.repositoryLease",
+          cwd: project.workspaceRoot,
+          args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+          allowNonZeroExit: true,
+        });
+        const leaseKey = yield* pathIdentity(
+          commonDir.exitCode === 0 && commonDir.stdout.trim() !== ""
+            ? commonDir.stdout.trim()
+            : project.workspaceRoot,
         );
+        // Attaching takes this lease too, so the last attachment check holds
+        // through the clean and the removal.
+        const removed = yield* withRepositoryLease(
+          leaseKey,
+          Effect.gen(function* () {
+            if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath))) {
+              keep("another thread works in it as a repository worktree");
+              return false;
+            }
+            // Clean only untracked files; Git must still refuse removal if a
+            // tracked edit arrives after our last status check.
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+            yield* cleanupGit(
+              project.workspaceRoot,
+              ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", worktreePath],
+              "git worktree remove",
+            );
+            return true;
+          }),
+        );
+        if (!removed) return;
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout
@@ -890,7 +917,7 @@ const make = Effect.gen(function* () {
       );
     }
     const candidatePaths = new Set(
-      candidates.map((thread) => pathKey(path.resolve(thread.worktreePath!))),
+      yield* Effect.forEach(candidates, (thread) => pathIdentity(thread.worktreePath!)),
     );
     for (const [key, attached] of repoWorktreePaths) {
       if (

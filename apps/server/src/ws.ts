@@ -42,6 +42,7 @@ import {
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
   type GitActionProgressEvent,
+  GitCommandError,
   type GitManagerServiceError,
   type MessageId,
   type AcpRegistryImportSessionInput,
@@ -202,6 +203,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as RepoWorktreeService from "./git/RepoWorktreeService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1236,6 +1238,7 @@ const layerWsRpc = (
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -2831,7 +2834,30 @@ const layerWsRpc = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          repoWorktrees.removeWorktree(input).pipe(
+            Effect.catchTags({
+              RepoWorktreeInUseError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "RepoWorktreeService.removeWorktree",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+                ),
+              RepoWorktreeReadError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "RepoWorktreeService.removeWorktree",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: error.message,
+                    cause: error,
+                  }),
+                ),
+            }),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>
@@ -3110,6 +3136,7 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+    const repoWorktrees = yield* RepoWorktreeService.RepoWorktreeService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3183,6 +3210,7 @@ export const layer = Layer.unwrap(
                   reviewGuides,
                 ),
               ),
+              Layer.provide(Layer.succeed(RepoWorktreeService.RepoWorktreeService, repoWorktrees)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

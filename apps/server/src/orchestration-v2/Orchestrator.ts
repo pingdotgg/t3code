@@ -2421,10 +2421,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is archived.`,
           });
         }
-        if (current.some((entry) => entry.worktreePath === command.repoWorktree.worktreePath)) {
-          return;
-        }
-        repoWorktrees = [...current, command.repoWorktree];
+        const listed = current.find(
+          (entry) => entry.worktreePath === command.repoWorktree.worktreePath,
+        );
+        if (listed?.branch === command.repoWorktree.branch) return;
+        // A listed path is relabeled in place after its checkout switched branch.
+        repoWorktrees =
+          listed === undefined
+            ? [...current, command.repoWorktree]
+            : current.map((entry) => (entry === listed ? command.repoWorktree : entry));
       } else {
         repoWorktrees = current.filter((entry) => entry.worktreePath !== command.worktreePath);
         if (repoWorktrees.length === current.length) return;

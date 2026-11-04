@@ -426,6 +426,15 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
     ProjectionStoreV2Error
   >;
+  /** Repository worktrees attached to threads that are not deleted, archived ones included. */
+  readonly getThreadRepoWorktreePaths: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly worktreePath: string;
+    }>,
+    ProjectionStoreV2Error
+  >;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -5682,6 +5691,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const getThreadRepoWorktreePaths: ProjectionStoreV2Shape["getThreadRepoWorktreePaths"] = () =>
+      sql<{ readonly thread_id: string; readonly title: string; readonly worktree_path: string }>`
+        SELECT t.thread_id,
+          json_extract(t.payload_json, '$.title') AS title,
+          json_extract(r.value, '$.worktreePath') AS worktree_path
+        FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.repoWorktrees') r
+        WHERE t.deleted_at IS NULL
+          AND json_extract(r.value, '$.worktreePath') IS NOT NULL
+      `.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            threadId: ThreadId.make(row.thread_id),
+            title: row.title,
+            worktreePath: row.worktree_path,
+          })),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const shellThreadStateFromRow = (input: {
       readonly row: ShellThreadRow;
       readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
@@ -6016,6 +6044,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates,
       getThreadsWithPullRequests,
       getThreadWorktreePaths,
+      getThreadRepoWorktreePaths,
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
@@ -6173,6 +6202,20 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               thread.archivedAt === null &&
               thread.worktreePath !== null
                 ? [{ threadId: thread.id, worktreePath: thread.worktreePath }]
+                : [],
+            ),
+          ),
+        ),
+      getThreadRepoWorktreePaths: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()].flatMap(({ thread }) =>
+              thread.deletedAt === null
+                ? (thread.repoWorktrees ?? []).map((entry) => ({
+                    threadId: thread.id,
+                    title: thread.title,
+                    worktreePath: entry.worktreePath,
+                  }))
                 : [],
             ),
           ),
