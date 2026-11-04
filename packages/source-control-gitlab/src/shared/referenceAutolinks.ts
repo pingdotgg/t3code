@@ -1,14 +1,15 @@
 import type { ReferenceAutolink } from "@t3tools/source-control-core/shared/definition";
 
 // GitLab's autolinked references: `#12` issues and `!12` merge requests, qualified by
-// `project` (same namespace) or a full `group/sub/project` path; a SHA of 7 to 40 characters,
+// `project` (same namespace) or a full `group/sub/project` path; `GL-12` and `[issue:12]`
+// (or `[issue:project/12]`) issues; a SHA of 7 to 40 characters,
 // optionally qualified the same way with `@`; `@user` and `@group/subgroup`.
 const PROJECT = String.raw`[\w.-]+(?:\/[\w.-]+)*`;
 const REFERENCE = new RegExp(
-  String.raw`(?<![\w./\\-])(?:(${PROJECT})?([#!])([1-9]\d*)|(?:(${PROJECT})@)?([a-f\d]{7,40})(?![\w])|@([\w](?:[\w.-]*[\w])?(?:\/[\w](?:[\w.-]*[\w])?)*))(?![\w])`,
+  String.raw`(?<![\w./\\-])(?:(${PROJECT})?([#!])([1-9]\d*)|(?:(${PROJECT})@)?([a-f\d]{7,40})(?![\w])|@([\w](?:[\w.-]*[\w])?(?:\/[\w](?:[\w.-]*[\w])?)*)|GL-([1-9]\d*)|\[issue:(?:(${PROJECT})\/)?([1-9]\d*)\])(?![\w])`,
   "giu",
 );
-const CANDIDATE = /[#!@]|\b[a-f\d]{7,40}\b/iu;
+const CANDIDATE = /[#!@]|\bGL-\d|\[issue:|\b[a-f\d]{7,40}\b/iu;
 const SHORT_SHA_LENGTH = 7;
 const ROUTE = { "#": "issues", "!": "merge_requests" } as const;
 
@@ -30,13 +31,32 @@ export function gitLabReferenceAutolinks(
     qualifier?.includes("/") ? qualifier : qualifier ? `${namespace}/${qualifier}` : path.join("/");
   const links: ReferenceAutolink[] = [];
   for (const match of text.matchAll(REFERENCE)) {
-    const [matched, referenceProject, sigil, number, commitProject, sha, mention] = match;
+    const [
+      matched,
+      referenceProject,
+      sigil,
+      number,
+      commitProject,
+      sha,
+      mention,
+      prefixedIssue,
+      bracketProject,
+      bracketIssue,
+    ] = match;
     if (number && (sigil === "#" || sigil === "!")) {
       links.push({
         index: match.index,
         text: matched,
         label: matched,
         url: `${url.origin}/${project(referenceProject)}/-/${ROUTE[sigil]}/${number}`,
+        kind: "reference",
+      });
+    } else if (bracketIssue || (prefixedIssue && matched.startsWith("GL-"))) {
+      links.push({
+        index: match.index,
+        text: matched,
+        label: matched,
+        url: `${url.origin}/${project(bracketProject)}/-/issues/${bracketIssue ?? prefixedIssue}`,
         kind: "reference",
       });
     } else if (sha) {
