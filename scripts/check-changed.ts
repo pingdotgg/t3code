@@ -143,6 +143,107 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
+// Ignored files that checks read: generated sources, declarations, and env files.
+const isIgnoredCheckInput = (file: string) => {
+  const parts = file.replace(/\/$/, "").split("/");
+  // Only directories: the old `**/node_modules/**` exclusion kept a file with that name.
+  if (parts.slice(0, -1).includes("node_modules")) return false;
+  const name = parts[parts.length - 1]!;
+  return (
+    parts.slice(0, -1).some((part) => part === ".generated" || part === ".astro") ||
+    name.endsWith(".d.ts") ||
+    name.startsWith(".env")
+  );
+};
+
+// Windows takes a command line of at most 32,767 UTF-16 units. A batch of pathspecs is
+// kept under this budget, which leaves room for `git -c core.quotePath=false`.
+const COMMAND_BUDGET = 30_000;
+// An argument costs its length, a space, two quotes, and one escape per quote or backslash.
+const commandUnits = (args: ReadonlyArray<string>) =>
+  args.reduce((sum, arg) => sum + arg.length + 3 + (arg.match(/["\\]/g)?.length ?? 0), 0);
+export const chunkByCommandLength = (
+  items: ReadonlyArray<string>,
+  fixed: ReadonlyArray<string>,
+  budget = COMMAND_BUDGET,
+) => {
+  const chunks: Array<Array<string>> = [];
+  let units = Infinity;
+  for (const item of items) {
+    const cost = commandUnits([item]);
+    if (units + cost > budget) {
+      chunks.push([]);
+      units = commandUnits(fixed);
+    }
+    chunks[chunks.length - 1]!.push(item);
+    units += cost;
+  }
+  return chunks;
+};
+
+// A pathspec only filters what git prints, and on Windows the walk follows pnpm's
+// junctions until MAX_PATH. `--directory` lists an ignored directory without entering it;
+// the others are then expanded by name, except those under node_modules. `-z` keeps paths
+// that git would otherwise quote intact.
+export const ignoredCheckInputs = Effect.fn("checkChanged.ignoredCheckInputs")(function* (
+  root: string,
+  budget = COMMAND_BUDGET,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const ignored = ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"];
+  const split = (stdout: Buffer) => stdout.toString().split("\0").filter(Boolean);
+  const list = (args: ReadonlyArray<string>) =>
+    git(root, [...ignored, ...args]).pipe(Effect.map(split));
+  const listed = yield* list(["--directory"]);
+  // ls-files hides a directory whose path is still a file in the index, even when it is
+  // ignored. git reports such a path as deleted or unmerged, unless the entry is marked
+  // assume-unchanged (tag `h`) or skip-worktree (`S`, `s`): then git never looks.
+  const reported = split(yield* git(root, ["diff-files", "-z", "--name-only", "--diff-filter=DU"]));
+  const marked = split(yield* git(root, ["ls-files", "-v", "-z"]))
+    .filter((entry) => /^[a-zS] /.test(entry))
+    .map((entry) => entry.slice(2));
+  const markedDirectories = yield* Effect.filter(
+    marked,
+    (file) =>
+      fs.stat(path.join(root, file)).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ),
+    { concurrency: 16 },
+  );
+  const replaced = [...reported, ...markedDirectories].map((file) => `${file}/`);
+  const collapsed = [...new Set([...listed, ...replaced])].sort();
+  // git lists an untracked directory whose contents are all ignored together with those
+  // contents; expanding it would walk its node_modules again.
+  const directories = collapsed.filter(
+    (entry, index) =>
+      entry.endsWith("/") &&
+      !entry.split("/").includes("node_modules") &&
+      !(collapsed[index + 1] ?? "").startsWith(entry),
+  );
+  // A nested repository inside the pathspecs' common prefix makes git print nothing or die.
+  // `.git/` is never listed, and it keeps that prefix empty.
+  const sentinel = [":(literal).git/"];
+  const expanded: Array<string> = [];
+  for (const chunk of chunkByCommandLength(
+    directories.map((dir) => `:(literal)${dir}`),
+    [...ignored, "--", ...sentinel],
+    budget,
+  )) {
+    expanded.push(...(yield* list(["--", ...sentinel, ...chunk])));
+  }
+  // The old command also printed an ignored nested repository as its directory, whatever its
+  // name. One inside node_modules stays unlisted: finding it means walking node_modules.
+  const files = [...collapsed, ...expanded]
+    .filter((entry) => !entry.endsWith("/"))
+    .filter(isIgnoredCheckInput);
+  const repositories = expanded.filter(
+    (entry) => entry.endsWith("/") && !entry.split("/").includes("node_modules"),
+  );
+  return [...new Set([...files, ...repositories])].sort();
+});
+
 export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
   root: string,
   explicitRef: Option.Option<string>,
@@ -267,18 +368,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         "--",
       ]),
     );
-    const ignored = yield* lines(
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--",
-      ":(glob)**/.generated/**",
-      ":(glob)**/.astro/**",
-      ":(glob)**/*.d.ts",
-      ":(glob)**/.env*",
-      ":(exclude,glob)**/node_modules/**",
-    );
+    const ignored = yield* ignoredCheckInputs(root);
     for (const file of [
       // Raw bytes of changed files too: .gitattributes normalizes line endings in
       // the diff, but the formatter reads the file as it is on disk.

@@ -16,10 +16,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  chunkByCommandLength,
   comparisonBase,
   defaultConcurrency,
   docReaderTests,
   gitLines,
+  ignoredCheckInputs,
   runSteps,
   splitTests,
   type Step,
@@ -445,4 +447,300 @@ it.each(["install", "lint"])("reports a failing %s step with its output", (step)
   expect(
     NodeFS.existsSync(NodePath.join(project.root, "node_modules/.cache/check-changed.json")),
   ).toBe(false);
+});
+
+// The command that listed ignored inputs before ignoredCheckInputs: a pathspec-filtered walk
+// of every ignored directory. `-z` only changes how git delimits and quotes paths, not
+// which paths it selects.
+const walkedIgnoredInputs = (git: (...args: Array<string>) => string) =>
+  git(
+    "-c",
+    "core.quotePath=false",
+    "ls-files",
+    "-z",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--",
+    ":(glob)**/.generated/**",
+    ":(glob)**/.astro/**",
+    ":(glob)**/*.d.ts",
+    ":(glob)**/.env*",
+    ":(exclude,glob)**/node_modules/**",
+  )
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+
+// Runs ignoredCheckInputs on a repository, recording the git commands it starts.
+const listIgnoredInputs = (root: string, gitEnv: Record<string, string>, budget?: number) => {
+  const calls: Array<ReadonlyArray<string>> = [];
+  return Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const listed = yield* ignoredCheckInputs(root, budget).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") calls.push(command.args.map(String));
+          return spawner.spawn(ChildProcess.setEnv(command, gitEnv));
+        }),
+      ),
+    );
+    return { listed, calls };
+  }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+};
+
+// An empty global config: git for Windows rejects the NUL device as a config path.
+const withIgnoredFixture = async (
+  body: (fixture: {
+    root: string;
+    gitEnv: Record<string, string>;
+    git: (...args: Array<string>) => string;
+    write: (file: string, content?: string) => void;
+  }) => Promise<void>,
+) => {
+  const dir = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ignored-inputs-")),
+  );
+  const root = NodePath.join(dir, "repo");
+  const globalConfig = NodePath.join(dir, "gitconfig");
+  const gitEnv = { ...env, GIT_CONFIG_GLOBAL: globalConfig };
+  try {
+    NodeFS.writeFileSync(globalConfig, "");
+    const write = (file: string, content = file) => {
+      const path = NodePath.join(root, file);
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, content);
+    };
+    const git = (...args: Array<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env: gitEnv });
+    await body({ root, gitEnv, git, write });
+  } finally {
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+it("lists ignored generated, declaration, and env files without entering node_modules", async () => {
+  await withIgnoredFixture(async ({ root, gitEnv, git, write }) => {
+    write(
+      ".gitignore",
+      "node_modules/\ndist/\ndist_old/\n.astro\n.env*\n!.env.example\n/.generated/\napps/*/.generated/\n*.log\n",
+    );
+    // Enough tracked packages, each with an ignored dist/, for several expansion calls.
+    const packages = Array.from({ length: 60 }, (_, i) => `many/p${i}`);
+    for (const file of [
+      "src/a.ts",
+      "src/tracked.d.ts",
+      "apps/web/.env.example",
+      "packages/replaced/dist",
+      "sib/tracked.ts",
+      "vendor/lib/a.ts",
+      ...packages.map((pkg) => `${pkg}/src.ts`),
+    ])
+      write(file);
+    git("init");
+    git("add", "-f", ".");
+    git("commit", "-m", "init");
+    // A tracked file replaced by an ignored directory: ls-files hides the directory.
+    NodeFS.rmSync(NodePath.join(root, "packages/replaced/dist"));
+    // A nested repository in the tracked vendor/lib: git mishandles it as a pathspec prefix.
+    git("init", "vendor/lib");
+    for (const file of [
+      "packages/replaced/dist/index.d.ts",
+      "vendor/lib/dist/x.d.ts",
+      // dist/ sorts right before dist_old/: a prefix test without the trailing
+      // slash would take dist/ for its parent.
+      "sib/dist/a.d.ts",
+      "sib/dist_old/a.d.ts",
+      ".generated/x.ts",
+      ".generated/sub/y.d.ts",
+      "apps/mobile/.generated/z.ts",
+      "apps/web/.astro/types.d.ts",
+      "apps/web/.astro/data.json",
+      "packages/shared/dist/index.d.ts",
+      "packages/shared/dist/deep/b.d.ts",
+      "packages/shared/dist/readme.txt",
+      ".env",
+      ".env.local",
+      "apps/x/.env.production",
+      "src/debug.log",
+      "src/new.d.ts",
+      "apps/\u00fcn\u00ef/dist/\u00fc.d.ts",
+      // Never listed: node_modules at any depth.
+      "node_modules/pkg/index.d.ts",
+      "node_modules/.generated/q.ts",
+      "apps/web/node_modules/p/.env",
+      "packages/shared/dist/node_modules/m/t.d.ts",
+      "apps/web/node_modules/.astro/a.d.ts",
+      // A package folder left behind by another branch: only ignored files, among them
+      // its own node_modules. Its contents are listed with it, so it must not be walked.
+      "stale/dist/x.d.ts",
+      "stale/node_modules/pkg/index.d.ts",
+      "stale/.env",
+      // Listed: only a directory named node_modules is excluded, not a file.
+      "apps/web/.astro/node_modules",
+      ...packages.map((pkg) => `${pkg}/dist/index.d.ts`),
+    ])
+      write(file);
+    // git quotes these in plain output; NTFS does not allow them.
+    if (NodePath.sep === "/") {
+      for (const file of ['dist/q"uote.d.ts', ".generated/ta\tb.ts", "back\\slash/dist/b.d.ts"])
+        write(file);
+    }
+
+    const budget = 600;
+    const { listed, calls } = await listIgnoredInputs(root, gitEnv, budget);
+
+    // git is only asked to enter a directory by name, in batches that fit the budget, and
+    // never one under node_modules or one whose contents the first listing already gave.
+    const listings = calls.filter((args) => args.includes("ls-files") && !args.includes("-v"));
+    const expansions = listings.filter((args) => !args.includes("--directory"));
+    assert.strictEqual(listings.length, 1 + expansions.length);
+    assert.isTrue(listings[0]!.includes("--directory"));
+    assert.isAtLeast(expansions.length, 4);
+    for (const args of expansions) {
+      // The budget leaves room for `git -c core.quotePath=false`, the first two arguments.
+      assert.isAtMost(
+        args
+          .slice(2)
+          .map((arg) => `"${arg}"`)
+          .join(" ").length,
+        budget,
+      );
+      const pathspecs = args.slice(args.indexOf("--") + 1);
+      assert.strictEqual(pathspecs[0], ":(literal).git/");
+      assert.isFalse(pathspecs.some((spec) => spec.includes("node_modules")));
+      assert.isFalse(pathspecs.includes(":(literal)stale/"));
+      // A name is never read as a pattern, so git cannot be sent into a sibling by a `[1]`.
+      assert.isTrue(pathspecs.every((spec) => spec.startsWith(":(literal)")));
+    }
+
+    const walked = walkedIgnoredInputs(git);
+    assert.isAbove(walked.length, 10);
+    for (const file of [
+      "stale/dist/x.d.ts",
+      "stale/.env",
+      "apps/web/.astro/node_modules",
+      "many/p59/dist/index.d.ts",
+      "packages/replaced/dist/index.d.ts",
+      "vendor/lib/dist/x.d.ts",
+      "sib/dist/a.d.ts",
+    ])
+      assert.include(listed, file);
+    assert.isFalse(listed.includes("stale/node_modules/pkg/index.d.ts"));
+    assert.deepStrictEqual(listed, walked);
+  });
+});
+
+it("lists what the old command listed for marked paths and ignored nested repositories", async () => {
+  await withIgnoredFixture(async ({ root, gitEnv, git, write }) => {
+    write(".gitignore", "node_modules/\ndist/\nvendored/\n.env*\n");
+    for (const file of [
+      "src/a.ts",
+      "assume/dist",
+      "skip/dist",
+      "both/dist",
+      "sparse/dist",
+      "vendor/lib/a.ts",
+    ])
+      write(file);
+    git("init");
+    git("add", "-f", ".");
+    git("commit", "-m", "init");
+    git("update-index", "--assume-unchanged", "assume/dist");
+    git("update-index", "--skip-worktree", "skip/dist");
+    git("update-index", "--assume-unchanged", "--skip-worktree", "both/dist");
+    // A tracked file that was never replaced, marked as a sparse checkout would.
+    git("update-index", "--skip-worktree", "sparse/dist");
+    const check = async () => {
+      const { listed } = await listIgnoredInputs(root, gitEnv);
+      assert.deepStrictEqual(listed, walkedIgnoredInputs(git));
+      return listed;
+    };
+    // The only ignored directory, in a nested repository: one call, whose pathspecs would
+    // share a prefix through that repository without the .git/ sentinel.
+    git("init", "vendor/lib");
+    write("vendor/lib/dist/x.d.ts");
+    assert.deepStrictEqual(await check(), ["vendor/lib/dist/x.d.ts"]);
+
+    // The old command lists a marked path's files, because it walks the directory.
+    for (const file of ["assume/dist", "skip/dist", "both/dist"]) {
+      NodeFS.rmSync(NodePath.join(root, file));
+      write(`${file}/index.d.ts`, "export type A = string;");
+    }
+    const first = await check();
+    for (const file of ["assume", "skip", "both"]) assert.include(first, `${file}/dist/index.d.ts`);
+    assert.include(first, "vendor/lib/dist/x.d.ts");
+
+    // An ignored nested repository changes the list when it is created or deleted: the old
+    // command printed its directory, as the repository itself or inside an ignored folder.
+    write("dist/x.d.ts");
+    git("init", "dist");
+    write("vendored/lib/y.d.ts");
+    git("init", "vendored/lib");
+    const withRepositories = await check();
+    assert.include(withRepositories, "dist/");
+    assert.include(withRepositories, "vendored/lib/");
+    NodeFS.rmSync(NodePath.join(root, "dist/.git"), { recursive: true, force: true });
+    NodeFS.rmSync(NodePath.join(root, "vendored/lib/.git"), { recursive: true, force: true });
+    const without = await check();
+    assert.isFalse(without.includes("dist/"));
+    assert.isFalse(without.includes("vendored/lib/"));
+    assert.include(without, "dist/x.d.ts");
+    assert.include(without, "vendored/lib/y.d.ts");
+  });
+});
+
+describe("chunkByCommandLength", () => {
+  // The quoted command line, as the longest form Windows would see it.
+  const commandLine = (args: ReadonlyArray<string>) =>
+    ["git", "-c", "core.quotePath=false", ...args]
+      .map((arg) => `"${arg.replace(/(["\\])/g, "\\$1")}"`)
+      .join(" ");
+  const fixed = [
+    "ls-files",
+    "-z",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--",
+    ":(literal).git/",
+  ];
+
+  it("keeps long paths under the 32,767-unit command line limit, whatever their count", () => {
+    // 80-character components, four deep: 340 characters a path, so 100 of them fill 35,000.
+    const prefix = Array.from({ length: 4 }, (_, i) => String.fromCharCode(97 + i).repeat(80));
+    const items = Array.from(
+      { length: 100 },
+      (_, i) => `:(literal)${prefix.join("/")}/p${String(i).padStart(3, "0")}/.generated/`,
+    );
+    assert.isAbove(commandLine([...fixed, ...items]).length, 32_767);
+    const chunks = chunkByCommandLength(items, fixed);
+    assert.isAbove(chunks.length, 1);
+    assert.deepStrictEqual(chunks.flat(), items);
+    for (const chunk of chunks)
+      assert.isAtMost(commandLine([...fixed, ...chunk]).length, 32_767 - 2_000);
+  });
+
+  it("counts UTF-16 units, quotes and backslashes, and keeps short paths in one call", () => {
+    const short = Array.from({ length: 300 }, (_, i) => `:(literal)many/p${i}/dist/`);
+    assert.strictEqual(chunkByCommandLength(short, fixed).length, 1);
+    // Three of each cost about 3,000 units apiece on the command line, so two fit in 7,000: an
+    // emoji is two UTF-16 units, and a backslash or quote is written with an escape.
+    for (const name of ["😀".repeat(1_495), "\\".repeat(1_495), '"'.repeat(1_495)]) {
+      const wide = [1, 2, 3].map((n) => `:(literal)${name}${n}/`);
+      const chunks = chunkByCommandLength(wide, fixed, 7_000);
+      assert.deepStrictEqual(
+        chunks.map((chunk) => chunk.length),
+        [2, 1],
+      );
+      for (const chunk of chunks) assert.isAtMost(commandLine([...fixed, ...chunk]).length, 7_000);
+    }
+    // A path longer than the budget still goes out, alone, instead of being dropped.
+    assert.deepStrictEqual(chunkByCommandLength(["x".repeat(500), "y"], fixed, 100), [
+      ["x".repeat(500)],
+      ["y"],
+    ]);
+    assert.deepStrictEqual(chunkByCommandLength([], fixed), []);
+  });
 });
