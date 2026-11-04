@@ -17,6 +17,7 @@ import type {
 import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
+  enrichedModelReference,
   enrichedSkillDisplayName,
   enrichedSkillReference,
   enrichedThreadLinkPresentation,
@@ -59,7 +60,7 @@ export function withChipIcon(
 
 function presentation(
   url: string,
-  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
+  props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "models" | "textStyle">,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
@@ -71,6 +72,13 @@ function presentation(
       label: enrichedSkillDisplayName(skill),
       icon: CONTEXT_CHIP_ICON_SOURCES.skill,
       chip: { accent: contextChipPresentation("skill").accent, tintsIcon: true },
+    };
+  const model = enrichedModelReference(url, props.models);
+  if (model)
+    return {
+      label: model.label,
+      ...(model.iconUrl ? { icon: { uri: model.iconUrl } } : {}),
+      chip: { accent: contextChipPresentation("model").accent, tintsIcon: false },
     };
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
@@ -94,7 +102,7 @@ export function useEnrichedLinkVariants(
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
 ) {
-  const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
+  const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
@@ -107,11 +115,11 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, textStyle });
+        : presentation(url, { linkCustomization, skills, models, textStyle });
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [urls, linkCustomization, skills, models, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

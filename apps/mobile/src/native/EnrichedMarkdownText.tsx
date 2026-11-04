@@ -28,7 +28,8 @@ import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
-  enrichedSkillLinkRegex,
+  enrichedTextLinkRegex,
+  enrichedModelReference,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
 
@@ -187,28 +188,45 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : urls,
     );
   };
-  const skillRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
-  // Skill links come from linkRecognition, which runs as the text is drawn, so
-  // onLinksChange never reports them. Joined so a streaming tick keeps the value.
-  const skillLinkKey = useMemo(
-    () =>
-      skillRegex
-        ? [...new Set(markdown.match(new RegExp(skillRegex.source, "gu")) ?? [])].join("\n")
-        : "",
-    [markdown, skillRegex],
+  const textLinkRegex = useMemo(
+    () => enrichedTextLinkRegex(props.skills, props.models),
+    [props.skills, props.models],
   );
-  const linkUrls = skillLinkKey
-    ? [...new Set([...parsedLinkUrls, ...skillLinkKey.split("\n")])]
+  // Recognized text links are added as the text is drawn, so
+  // onLinksChange never reports them. Joined so a streaming tick keeps the value.
+  const textLinkKey = useMemo(
+    () =>
+      textLinkRegex
+        ? [...new Set(markdown.match(new RegExp(textLinkRegex.source, "gu")) ?? [])].join("\n")
+        : "",
+    [markdown, textLinkRegex],
+  );
+  const linkUrls = textLinkKey
+    ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
-  const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
+  const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
     menu: NonNullable<ReturnType<NonNullable<typeof props.fileContextMenu>>>;
   } | null>(null);
   const { fileContextMenu, onFileContextMenuAction } = props;
-  const onLinkPress = (url: string) =>
+  const onLinkPress = (url: string) => {
+    if (enrichedModelReference(url, props.models)) return;
     (fileHrefs.has(url) ? (props.onImagePress ?? props.onLinkPress) : props.onLinkPress)?.(url);
+  };
+  const modelContextMenu = (url: string) => {
+    const model = enrichedModelReference(url, props.models);
+    return model
+      ? {
+          title: model.label,
+          actions: [
+            { id: "enriched-copy-link", title: "Copy model reference" },
+            { id: "enriched-share-link", title: "Share model reference" },
+          ],
+        }
+      : undefined;
+  };
   const performMenuAction = (url: string, actionId: string) => {
     if (actionId === "enriched-open-link") onLinkPress(url);
     else if (actionId === "enriched-copy-link") copyTextWithHaptic(url);
@@ -219,14 +237,15 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     Platform.OS === "ios" && (fileContextMenu || props.onLinkPress || props.onImagePress)
       ? Object.fromEntries(
           linkUrls.map((url) => {
-            const menu = fileContextMenu?.(url) ?? {
-              title: url,
-              actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
-                { id: "enriched-share-link", title: "Share link" },
-              ],
-            };
+            const menu = modelContextMenu(url) ??
+              fileContextMenu?.(url) ?? {
+                title: url,
+                actions: [
+                  { id: "enriched-open-link", title: "Open link" },
+                  { id: "enriched-copy-link", title: "Copy link" },
+                  { id: "enriched-share-link", title: "Share link" },
+                ],
+              };
             return [
               enrichedLinkVariantPattern(url),
               menu.actions.map((action) => ({
@@ -291,13 +310,14 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
         ? ({ url }: { url: string }) => {
-            const menu = props.fileContextMenu?.(url) ?? {
-              title: url,
-              actions: [
-                { id: "enriched-open-link", title: "Open link" },
-                { id: "enriched-copy-link", title: "Copy link" },
-              ],
-            };
+            const menu = modelContextMenu(url) ??
+              props.fileContextMenu?.(url) ?? {
+                title: url,
+                actions: [
+                  { id: "enriched-open-link", title: "Open link" },
+                  { id: "enriched-copy-link", title: "Copy link" },
+                ],
+              };
             setActiveMenu({ url, menu });
             openAndroidMenu?.();
           }

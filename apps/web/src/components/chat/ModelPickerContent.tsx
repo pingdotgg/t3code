@@ -30,7 +30,7 @@ import {
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
-import { rankModelPickerSearch } from "./modelPickerSearch";
+import { rankModelPickerSearch } from "@t3tools/client-runtime/model-search";
 import {
   Combobox,
   ComboboxEmpty,

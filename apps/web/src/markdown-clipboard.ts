@@ -410,7 +410,9 @@ function sanitizedHtmlFrom(container: Element): string {
       }
       continue;
     }
-    node.remove();
+    const markdownCopy = node.getAttribute("data-markdown-copy");
+    if (markdownCopy !== null) node.replaceWith(markdownCopy);
+    else node.remove();
   }
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
