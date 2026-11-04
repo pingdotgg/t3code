@@ -32,9 +32,9 @@ export function threadContextsReferencedByAnswer(
   return threadContexts.filter((record) => referencedIds.has(record.contextId));
 }
 
-export interface PendingUserInputProgress {
+export interface PendingUserInputProgress<Question extends UserInputQuestion = UserInputQuestion> {
   questionIndex: number;
-  activeQuestion: UserInputQuestion | null;
+  activeQuestion: Question | null;
   activeDraft: PendingUserInputDraftAnswer | undefined;
   selectedOptionValues: ReadonlyArray<string>;
   customAnswer: string;
@@ -73,11 +73,11 @@ function countAnsweredPendingUserInputQuestions(
   }, 0);
 }
 
-export function derivePendingUserInputProgress(
-  questions: ReadonlyArray<UserInputQuestion>,
+export function derivePendingUserInputProgress<Question extends UserInputQuestion>(
+  questions: ReadonlyArray<Question>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
   questionIndex: number,
-): PendingUserInputProgress {
+): PendingUserInputProgress<Question> {
   const normalizedQuestionIndex =
     questions.length === 0 ? 0 : Math.max(0, Math.min(questionIndex, questions.length - 1));
   const activeQuestion = questions[normalizedQuestionIndex] ?? null;

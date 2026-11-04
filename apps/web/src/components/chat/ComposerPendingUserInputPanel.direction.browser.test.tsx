@@ -11,7 +11,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 type Question = {
   header: string;
   question: string;
-  options: { label: string; description: string }[];
+  options: { label: string; description: string; preview?: string }[];
 };
 
 const renderPanel = (questions: Question[], questionIndex = 0) =>
@@ -97,4 +97,21 @@ it("keeps one direction for the whole set when a single question is Hebrew", asy
   await expect
     .element(screen.getByText("גרסה 3 (חדשה!)", { exact: true }))
     .toHaveStyle({ direction: "rtl" });
+});
+
+it("shows option previews next to their option, outside its button", async () => {
+  await using screen = await renderPanel([
+    {
+      header: "Layout",
+      question: "Which layout?",
+      options: [
+        { label: "Sidebar", description: "Nav on the left", preview: "![Sidebar](mock.png)" },
+        { label: "Top bar", description: "Nav on top" },
+      ],
+    },
+  ]);
+
+  const preview = screen.getByText("![Sidebar](mock.png)", { exact: true });
+  await expect.element(preview).toBeVisible();
+  expect(preview.element().closest("button")).toBeNull();
 });
