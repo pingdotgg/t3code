@@ -384,7 +384,7 @@ import {
   makeThreadErrorSetter,
 } from "./ChatView.logic";
 
-// T3 Learn shows its own side chat instead (med's decision D1, 2026-11-03).
+// T3 Learn shows its own side chat instead of upstream's /side, /btw and + menu entry.
 const UPSTREAM_SIDE_CHATS_SHOWN = false;
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];

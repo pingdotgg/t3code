@@ -6,8 +6,6 @@ import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import "~/index.css";
-
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
@@ -52,7 +50,6 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
             ...lease,
             session: {
               ...lease.session,
-              initialConfig: lease.session.initialConfig.pipe(Effect.map(configWithSideChats)),
               subscribeServerConfig: () =>
                 lease.session
                   .subscribeServerConfig()
