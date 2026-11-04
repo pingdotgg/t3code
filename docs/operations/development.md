@@ -304,6 +304,7 @@ C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
 Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
 Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
 toolchain as release CI does.
+The packaged ELF compatibility check uses binutils’ `readelf`, included by the C/C++ toolchain.
 
 Ubuntu 24.04 and Debian 13:
 
