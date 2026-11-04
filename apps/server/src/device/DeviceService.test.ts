@@ -74,6 +74,81 @@ it.effect.each([400, 500])(
     }),
 );
 
+it.effect.each([false, true])(
+  "discovers physical Android devices after hub discovery fails with emulator available=%s",
+  (androidAvailable) =>
+    Effect.gen(function* () {
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                simulators: [],
+                emulators: [],
+                errors: androidAvailable
+                  ? [{ message: "[android-utils] Failed to list devices:" }]
+                  : [],
+              }),
+            ),
+          ),
+        ),
+        androidAvailable: Effect.succeed(androidAvailable),
+        run: (command, args) => {
+          if (command === "emulator") return Effect.succeed({ stdout: "", stderr: "", code: 0 });
+          expect(command).toBe("adb");
+          const stdout =
+            args[0] === "devices"
+              ? "List of devices attached\n100.81.218.20:5555 device model:KFONWI\nunauthorized unauthorized\noffline offline\nemulator-5554 device model:sdk\nqemu device model:sdk\n"
+              : args[1] === "qemu"
+                ? "[ro.boot.qemu]: [1]\n"
+                : "[ro.product.model]: [KFONWI]\n[ro.build.version.release]: [9]\n[ro.kernel.qemu]: [0]\n";
+          return Effect.succeed({ stdout, stderr: "", code: 0 });
+        },
+      });
+      expect((yield* operations.list).devices).toEqual([
+        {
+          id: "100.81.218.20:5555",
+          name: "KFONWI",
+          version: "Android 9",
+          platform: "android",
+          booted: true,
+          physical: true,
+        },
+      ]);
+    }),
+);
+
+it.effect.each(["devices", "getprop"])(
+  "reports failed ADB %s fallback without failing discovery",
+  (operation) =>
+    Effect.gen(function* () {
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, Response.json({ simulators: [], emulators: [] })),
+          ),
+        ),
+        androidAvailable: Effect.succeed(false),
+        run: (_command, args) =>
+          Effect.succeed(
+            args[0] === "devices" && operation === "getprop"
+              ? { stdout: "List of devices attached\nphone device\n", stderr: "", code: 0 }
+              : { stdout: "", stderr: "private command output", code: 1 },
+          ),
+      });
+      const result = yield* operations.list;
+      expect(result.devices).toEqual([]);
+      expect(result.detail).toContain(operation);
+      expect(result.detail).toContain("exit code 1");
+      expect(result.detail).not.toContain("private command output");
+    }),
+);
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },

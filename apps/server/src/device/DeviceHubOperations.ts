@@ -129,6 +129,51 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    // The hub returns before reading ADB when avdmanager is missing or fails.
+    if (
+      !androidAvailable ||
+      hubList.errors?.some((error) => error.message.startsWith("[android-utils] "))
+    ) {
+      const connected = yield* run("adb", ["devices", "-l"]);
+      if (connected.code === 0) {
+        for (const line of connected.stdout.split(/\r?\n/)) {
+          const [serial, state] = line.trim().split(/\s+/);
+          if (
+            !serial ||
+            state !== "device" ||
+            serial.startsWith("emulator-") ||
+            devices.some((device) => device.platform === "android" && device.id === serial)
+          )
+            continue;
+          const properties = yield* run("adb", ["-s", serial, "shell", "getprop"]);
+          if (properties.code !== 0) {
+            details.push(
+              `Could not read a connected Android device (adb getprop, exit code ${properties.code}).`,
+            );
+            continue;
+          }
+          const property = (name: string) =>
+            properties.stdout
+              .split(/\r?\n/)
+              .find((line) => line.startsWith(`[${name}]: [`))
+              ?.slice(name.length + 5, -1);
+          if (property("ro.kernel.qemu") === "1" || property("ro.boot.qemu") === "1") continue;
+          const release = property("ro.build.version.release");
+          devices.push({
+            id: serial,
+            name: property("ro.product.model") || serial,
+            platform: "android",
+            version: release ? `Android ${release}` : "Android",
+            booted: true,
+            physical: true,
+          });
+        }
+      } else if (connected.code !== 127) {
+        details.push(
+          `Could not list connected Android devices (adb devices -l, exit code ${connected.code}).`,
+        );
+      }
+    }
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
