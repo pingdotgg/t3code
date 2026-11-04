@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 // Minimal manual runner for the hmr dev mode: invokes the Framework service
 // directly (no playwright), starts `next dev` with proxied bindings, probes
 // three routes, and exits. Useful for debugging test/hmr.test.ts failures.
@@ -10,7 +11,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 

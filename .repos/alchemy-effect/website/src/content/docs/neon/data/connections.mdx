@@ -13,7 +13,7 @@ Both `Neon.Project` and `Neon.Branch` expose the same four
 attributes:
 
 ```typescript
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 
 const project = yield* Neon.Project("app-db");
 const branch = yield* Neon.Branch("preview", { project });
@@ -89,8 +89,11 @@ Guides:
   provision Neon, front it with Hyperdrive, bind it into a Worker.
 - [Branching](/neon/data/branching) — copy-on-write branches, each with
   its own connection outputs.
+- [Roles](/neon/data/roles) — connect as your own Postgres role instead
+  of the owner.
 
 Reference:
 
 - [Project API reference](/providers/neon/project)
 - [Branch API reference](/providers/neon/branch)
+- [Role API reference](/providers/neon/role)
