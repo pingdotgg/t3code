@@ -1315,9 +1315,7 @@ export const layer: Layer.Layer<
           resumedRetryHandoff = yield* prepareRetryHandoff(context);
           const fits = yield* deliverContextHandoffs({
             handoffs: [...handoffs, ...resumedRetryHandoff],
-            ...(projection.thread.sideChat === undefined
-              ? {}
-              : { historyThreadId: projection.thread.sideChat.lessonThreadId }),
+            historyThreadId: projection.thread.sideChat?.lessonThreadId,
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(message) || goalCommand,
@@ -1335,9 +1333,7 @@ export const layer: Layer.Layer<
           const { handoff } = yield* recoveryHandoff;
           const fitsFresh = yield* deliverContextHandoffs({
             handoffs: withRecoveryHandoff(handoff),
-            ...(projection.thread.sideChat === undefined
-              ? {}
-              : { historyThreadId: projection.thread.sideChat.lessonThreadId }),
+            historyThreadId: projection.thread.sideChat?.lessonThreadId,
             providerThread: freshThread,
             budget: freshContext.budget,
             optional: isOptionalSideChatHandoff,
@@ -1784,9 +1780,7 @@ export const layer: Layer.Layer<
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff],
-            ...(lessonSideChat === undefined
-              ? {}
-              : { historyThreadId: lessonSideChat.lessonThreadId }),
+            historyThreadId: lessonSideChat?.lessonThreadId,
             deferInline: compact || goalCommand,
             optional: isOptionalSideChatHandoff,
             providerThread: runningProviderThread,

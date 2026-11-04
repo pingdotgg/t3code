@@ -33,7 +33,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
-    readonly historyThreadId?: ThreadId;
+    /** The thread a history-less handoff points at; a side chat names its lesson. */
+    readonly historyThreadId?: ThreadId | undefined;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     /** Handoffs that are dropped whole, rather than failing the turn, when they do not fit. */
@@ -66,7 +67,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         .join("\n");
       if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
         const strategies = Array.from(new Set(handoffs.map((handoff) => handoff.strategy)));
-        coverage = `Context handoff (${strategies.join(", ")}). ${handoffs.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.historyThreadId ?? input.providerThread.appThreadId ?? handoffs[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+        coverage = `Context handoff (${strategies.join(", ")}). ${handoffs.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? handoffs[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
       }
       const seen = new Set(input.alreadyDeliveredItemIds);
       const messages = handoffs
