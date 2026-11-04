@@ -155,12 +155,16 @@ it.effect(
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       yield* seedPendingTranscripts;
-      yield* sql`
-        UPDATE projection_thread_messages SET created_at = '0000-not-a-date'
-        WHERE message_id = 'thread:first:old'
-      `;
 
-      yield* importer.importPendingTranscripts;
+      yield* importer.importPendingTranscripts.pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          const [query, params] = statement.compile();
+          return query.includes("FROM projection_thread_messages") &&
+            params.includes("thread:first")
+            ? Effect.die("transcript read failed")
+            : Effect.succeed(statement);
+        }),
+      );
 
       const later = yield* projections.getThreadProjection(ThreadId.make("thread:later"));
       assert.deepStrictEqual(
