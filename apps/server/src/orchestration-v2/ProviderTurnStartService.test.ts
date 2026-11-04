@@ -1045,7 +1045,7 @@ function makeLocalCommandHarness(input: {
   };
 }
 
-effectIt.effect.each(["clean", "dirty", "head", "cwd", "missing-evidence"])(
+effectIt.effect.each(["clean", "dirty", "head", "cwd", "missing-evidence", "steered"])(
   "checks a verified checkout at provider start: %s",
   (scenario) =>
     Effect.gen(function* () {
@@ -1071,6 +1071,11 @@ effectIt.effect.each(["clean", "dirty", "head", "cwd", "missing-evidence"])(
         ...projection,
         thread:
           scenario === "cwd" ? { ...projection.thread, worktreePath: "/other" } : projection.thread,
+        attempts: projection.attempts.map((attempt) =>
+          scenario === "steered"
+            ? { ...attempt, attemptOrdinal: 2, reason: "steering_restart" as const }
+            : attempt,
+        ),
         runs: projection.runs.map((candidate) =>
           candidate.id !== run.id
             ? candidate
@@ -1089,11 +1094,15 @@ effectIt.effect.each(["clean", "dirty", "head", "cwd", "missing-evidence"])(
         Effect.succeed({
           commitSha: scenario === "head" ? "c".repeat(40) : evidence.commitSha,
           treeSha: evidence.treeSha,
-          clean: scenario !== "dirty",
+          clean: scenario !== "dirty" && scenario !== "steered",
         }),
       );
       yield* harness.start;
-      if (scenario === "clean") {
+      if (scenario === "steered") {
+        expect(harness.startRootRun).toHaveBeenCalledOnce();
+        expect(harness.inspectCheckout).not.toHaveBeenCalled();
+        expect(harness.projection().runs.at(-1)?.launchEvidence?.providerStart).toBeUndefined();
+      } else if (scenario === "clean") {
         expect(harness.startRootRun).toHaveBeenCalledOnce();
         expect(harness.inspectCheckout).toHaveBeenCalledWith(evidence.worktreePath);
         expect(harness.projection().runs.at(-1)?.launchEvidence?.providerStart).toEqual({

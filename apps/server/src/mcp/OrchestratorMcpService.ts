@@ -1519,8 +1519,11 @@ const make = Effect.gen(function* () {
           "runtimeRequests",
           "nodes",
         ],
-        // Progress reads only active or undelivered tasks under the child.
-        { messageRoles: ["user"], omitSettledLeafNodes: true, omitSettledSubagents: true },
+        {
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          omitSettledSubagents: !includeExecutionEvidence,
+        },
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);

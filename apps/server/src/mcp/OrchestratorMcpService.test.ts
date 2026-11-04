@@ -550,8 +550,15 @@ describe("OrchestratorMcpService", () => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection() : childProjection()),
+          getThreadRecords: (threadId, _collections, filter) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection()
+                : {
+                    ...childProjection(),
+                    ...(filter?.omitSettledSubagents ? { subagents: [] } : {}),
+                  },
+            ),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
           getProjectThreadRecords: () => Effect.succeed(childProjection()),
           waitForThread: () =>

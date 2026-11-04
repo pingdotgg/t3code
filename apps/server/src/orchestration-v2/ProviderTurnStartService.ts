@@ -729,7 +729,8 @@ export const layer: Layer.Layer<
       let verifiedProviderStart: OrchestrationV2RunLaunchEvidence["providerStart"];
       if (
         run.workspacePreparation?.type === "worktree" &&
-        run.workspacePreparation.requireFreshOrigin === true
+        run.workspacePreparation.requireFreshOrigin === true &&
+        attempt.reason === "initial"
       ) {
         const evidence = run.launchEvidence;
         const cwd = resolvedRuntimePolicy.cwd;

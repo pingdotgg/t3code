@@ -467,7 +467,7 @@ export const make = Effect.gen(function* () {
       const tree = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",
         cwd,
-        args: ["rev-parse", "--verify", "HEAD^{tree}"],
+        args: ["rev-parse", "--verify", `${refs.stdout.trim()}^{tree}`],
       });
       const status = yield* git.execute({
         operation: "GitWorkflowService.inspectCheckout",

@@ -99,7 +99,7 @@ export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.T
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(
     ProviderInstanceId.annotate({
-      description: "Provider instance id from `orchestrator_capabilities`.",
+      description: "Instance id from orchestrator_capabilities.",
     }),
   ),
   driverKind: Schema.optional(
@@ -110,20 +110,17 @@ export const OrchestratorMcpTarget = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   options: Schema.optional(
     OrchestratorMcpTargetOptions.annotate({
-      description:
-        "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears.",
+      description: "Catalog options, e.g. {effort:'max'}. Override inherited; []/{} clears.",
     }),
   ),
   environmentId: Schema.optional(
     EnvironmentId.annotate({
-      description:
-        "Linked environment to run in. Provider and model default to yours; others come from `orchestrator_capabilities` with this `environmentId`.",
+      description: "Linked environment. Inherit provider/model; discover others there.",
     }),
   ),
   projectId: Schema.optional(
     ProjectId.annotate({
-      description:
-        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+      description: "With environmentId: target project. Default: matching repository.",
     }),
   ),
 });
@@ -176,27 +173,25 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "Default shared: parent checkout. worktree: separate parent-commit checkout; no uncommitted edits.",
     }),
   ),
   worktreeBaseBranch: Schema.optional(TrimmedNonEmptyString).annotate({
-    description:
-      "With isolation 'worktree': fetch this branch from origin and verify a clean checkout before execution. Omit to start from the parent commit. Local tasks only.",
+    description: "Local worktree: fetch origin branch; verify clean before execution.",
   }),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
-      description:
-        "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
+      description: "Default async. wait only when needed this turn; ends on question/approval.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Mode 'wait' only. Default 10 min. A timeout does not cancel the child.",
+    description: "wait only: default 10 min; timeout leaves child running.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({
       description:
-        "Omit unless the user asks for a supervised child. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
+        "Omit unless supervised child requested. Narrow modes need human approval, not read-only. Cannot exceed yours.",
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
@@ -286,7 +281,7 @@ export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
   includeExecutionEvidence: Schema.optional(Schema.Boolean).annotate({
     description:
-      "Export host-recorded execution facts for a settled local task with a verified origin checkout. Unavailable facts fail the request. The SHA-256 is integrity only, not a signature, provider attestation, or a pass verdict.",
+      "Settled local leaf + verified origin checkout only; missing facts fail. SHA-256: integrity, not attestation/success.",
   }),
 });
 export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInput.Type;
