@@ -4,6 +4,7 @@ import {
   NodeId,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpRunFailure,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
@@ -24,6 +25,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
+import { usageLimitGuidance } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -432,9 +434,10 @@ const make = Effect.gen(function* () {
       .pipe(Effect.asVoid);
 
   /**
-   * The last reply `runId` gave on the task's thread there, which is its
-   * result, read whole however long it is. A failed run prefers its error
-   * from the activity view over an earlier reply, without taking another run's.
+   * The last reply `runId` gave on the task's thread there, read whole. A failed run
+   * prefers its error over an earlier reply, without taking another run's, and its usage
+   * limit adds a local child's guidance. The thread reports only its latest run's failure,
+   * and an older peer none.
    */
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
     scope: ThreadScope,
@@ -444,6 +447,7 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
+    let failure: OrchestratorMcpRunFailure | undefined;
     let afterPosition: number | undefined;
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
@@ -461,6 +465,7 @@ const make = Effect.gen(function* () {
           read.items.findLast(
             (item) => item.type === "error" && (runId === null || item.runId === runId),
           ) ?? error;
+        failure ??= read.thread.failure;
       }
       if (!read.hasMore || read.nextPosition === null) break;
       afterPosition = read.nextPosition;
@@ -481,7 +486,13 @@ const make = Effect.gen(function* () {
       text += part.text ?? "";
       textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
     }
-    return text;
+    return failure?.class === "usage_limit" && runId !== null && failure.runId === runId
+      ? `${text}${usageLimitGuidance({
+          providerInstanceId: failure.providerInstanceId,
+          resetAt: failure.resetAt,
+          remote,
+        })}`
+      : text;
   });
 
   /**

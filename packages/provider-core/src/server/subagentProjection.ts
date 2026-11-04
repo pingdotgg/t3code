@@ -10,6 +10,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -19,7 +20,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
@@ -176,9 +177,43 @@ export function makeSubagentConversationArtifacts(input: {
   return { message, turnItem };
 }
 
+type SubagentResultRun = Pick<
+  OrchestrationV2Run,
+  "id" | "status" | "rootNodeId" | "providerInstanceId"
+>;
+
+/**
+ * The parent can move the child instead of retrying on the limited instance. `remote`
+ * names a child in a linked environment, which the parent reaches by those ids.
+ */
+export function usageLimitGuidance(input: {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly resetAt: string | null | undefined;
+  readonly remote?: { readonly environmentId: string; readonly threadId: string };
+}): string {
+  const reset = input.resetAt ? `, resets ${input.resetAt}` : "";
+  const child =
+    input.remote === undefined
+      ? "this child"
+      : `this child (environmentId ${input.remote.environmentId}, threadId ${input.remote.threadId})`;
+  return `\nUsage limit on provider instance ${input.providerInstanceId}${reset}. To continue sooner with its history: t3_thread_configure ${child} to another instance, then t3_thread_send.`;
+}
+
+function usageLimitNote(
+  run: SubagentResultRun,
+  turnItems: OrchestrationV2ThreadProjection["turnItems"],
+): string {
+  const failure = latestRootProviderFailure(run, turnItems);
+  if (failure?.class !== "usage_limit") return "";
+  return usageLimitGuidance({
+    providerInstanceId: run.providerInstanceId,
+    resetAt: failure.resetAt,
+  });
+}
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
-  run: OrchestrationV2Run,
+  run: SubagentResultRun,
 ): {
   readonly text: string;
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
@@ -217,7 +252,9 @@ export function subagentResultForRun(
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
+    (failure?.type === "error"
+      ? `${failure.failure.message}${usageLimitNote(run, projection.turnItems)}`
+      : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
@@ -228,6 +265,30 @@ export function subagentResultForRun(
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
+}
+
+const DELEGATED_RESULT_INLINE_BYTES = 16_000;
+
+export function delegatedCompletionWakeDetail(
+  taskIds: ReadonlyArray<string>,
+  tasks: ReadonlyArray<Pick<OrchestrationV2Subagent, "id" | "title" | "status" | "result">>,
+): string {
+  let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
+  return taskIds
+    .map((taskId) => {
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+      if (task?.result != null) {
+        const detail = `${label}:\n${task.result}`;
+        const bytes = Buffer.byteLength(detail);
+        if (bytes <= remainingBytes) {
+          remainingBytes -= bytes;
+          return detail;
+        }
+      }
+      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
+    })
+    .join("\n\n");
 }
 
 export function delegatedTaskProgress(projection: {

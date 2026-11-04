@@ -7,6 +7,7 @@ import {
   EventId,
   MessageId,
   NodeId,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
   ProjectId,
   ProviderDriverKind,
@@ -98,6 +99,11 @@ interface BoxThread {
   readonly reply: Ref.Ref<string | null>;
   readonly error: Ref.Ref<string | null>;
   readonly laterError: Ref.Ref<string | null>;
+  /** The structured failure the thread there records for one of its runs, which a later run's status sets. */
+  readonly providerFailure: Ref.Ref<{
+    readonly runId: RunId;
+    readonly failure: OrchestrationV2ProviderFailure;
+  } | null>;
   /** A later run's reply, after the task's own, as a follow-up message would leave. */
   readonly laterReply: Ref.Ref<string | null>;
   /** The run each wait asked for, in order. */
@@ -144,6 +150,10 @@ const makeBoxThread = Effect.gen(function* () {
     reply: yield* Ref.make<string | null>("Working…"),
     error: yield* Ref.make<string | null>(null),
     laterError: yield* Ref.make<string | null>(null),
+    providerFailure: yield* Ref.make<{
+      readonly runId: RunId;
+      readonly failure: OrchestrationV2ProviderFailure;
+    } | null>(null),
     laterReply: yield* Ref.make<string | null>(null),
     waitedFor: yield* Ref.make<ReadonlyArray<RunId | undefined>>([]),
     nested: yield* Ref.make(false),
@@ -219,12 +229,14 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ...(linkOrigin === null ? {} : { linkOrigin }),
       };
     });
-  const runOf = (status: OrchestrationV2Run["status"]) =>
+  const runOf = (status: OrchestrationV2Run["status"], id: RunId = runId, ordinal = 1) =>
     ({
-      id: runId,
+      id,
       threadId: ThreadId.make("thread:box"),
-      ordinal: 1,
+      ordinal,
       status,
+      rootNodeId: null,
+      providerInstanceId: instanceId,
       modelSelection,
       requestedAt: DateTime.makeUnsafe(0),
       startedAt: DateTime.makeUnsafe(0),
@@ -235,9 +247,34 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const shell = yield* shellOf(threadId);
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
+      const recorded = yield* Ref.get(thread.providerFailure);
+      // A failure recorded for the later run means that run ran, and failed, after the task's.
+      const runs =
+        recorded?.runId === boxLaterRunId
+          ? [runOf(status), runOf("failed", boxLaterRunId, 2)]
+          : [runOf(status)];
       return shell === null
         ? (null as never)
-        : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
+        : {
+            ...idleThreadProjection(shell),
+            runs: runless ? [] : runs,
+            turnItems:
+              recorded === null
+                ? []
+                : [
+                    {
+                      id: TurnItemId.make(`item:failure:${recorded.runId}`),
+                      threadId,
+                      runId: recorded.runId,
+                      nodeId: null,
+                      ordinal: 1,
+                      status: "failed",
+                      updatedAt: DateTime.makeUnsafe(0),
+                      type: "error",
+                      failure: recorded.failure,
+                    } as never,
+                  ],
+          };
     });
   // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
@@ -1418,6 +1455,66 @@ it.effect.each([false, true])(
         expect(yield* Ref.get(thread.waitedFor)).toEqual([boxRunId]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const usageLimitError = "You've hit your usage limit.";
+const usageLimitFailure: OrchestrationV2ProviderFailure = {
+  class: "usage_limit",
+  message: usageLimitError,
+  code: "usage_limit_exceeded",
+  retryable: false,
+  resetAt: "2026-11-05T02:00:00.000Z",
+};
+const usageLimitGuidance = (threadId: ThreadId) =>
+  `${usageLimitError}\nUsage limit on provider instance codex, resets 2026-11-05T02:00:00.000Z. To continue sooner with its history: t3_thread_configure this child (environmentId environment-box, threadId ${threadId}) to another instance, then t3_thread_send.`;
+
+it.effect.each([
+  { case: "its own run's usage limit", run: boxRunId, failure: usageLimitFailure, guided: true },
+  {
+    case: "a later run's usage limit",
+    run: boxLaterRunId,
+    failure: usageLimitFailure,
+    guided: false,
+  },
+  {
+    case: "a provider error",
+    run: boxRunId,
+    failure: { ...usageLimitFailure, class: "provider_error" as const },
+    guided: false,
+  },
+  { case: "an older peer without the failure", run: null, failure: null, guided: false },
+])("a failed remote run reports usage-limit guidance only for $case", (row) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+      yield* Ref.set(thread.reply, null);
+      yield* Ref.set(thread.error, usageLimitError);
+      yield* Ref.set(
+        thread.providerFailure,
+        row.run === null || row.failure === null ? null : { runId: row.run, failure: row.failure },
+      );
+      yield* Ref.set(thread.status, "failed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      const childThreadId = (yield* Ref.get(thread.launched))!;
+      const result = row.guided ? usageLimitGuidance(childThreadId) : usageLimitError;
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "failed", result });
+      const status = yield* a.call("task_status", { taskId: delegated.taskId });
+      expect(status.structuredContent).toMatchObject({
+        status: "failed",
+        summary: result,
+        latestTerminalSummary: result,
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("keeps a successful remote reply despite an error item in the run's activity", () =>

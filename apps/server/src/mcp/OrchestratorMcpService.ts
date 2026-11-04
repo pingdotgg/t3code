@@ -45,6 +45,7 @@ import {
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
+  type OrchestratorMcpRunFailure,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
@@ -66,7 +67,11 @@ import {
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+  runRanAfter,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -829,6 +834,7 @@ function threadDetail(
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
+  failure: OrchestratorMcpRunFailure | undefined,
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
@@ -844,6 +850,7 @@ function threadDetail(
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
     model: projection.thread.modelSelection.model,
+    ...(failure === undefined ? {} : { failure }),
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
@@ -870,6 +877,45 @@ function threadDetail(
     ...threadSnooze(shell, nowMs),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
+  };
+}
+
+/** The auto-resume is current only while dispatch would still accept it; see Orchestrator.dispatchMessage. */
+function runFailure(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
+  run: OrchestrationV2Run | undefined,
+  turnItems: OrchestrationV2ThreadProjection["turnItems"],
+): OrchestratorMcpRunFailure | undefined {
+  const providerFailure = latestRootProviderFailure(run ?? null, turnItems);
+  if (run === undefined || providerFailure === null) return undefined;
+  const resetAt = providerFailure.resetAt ?? null;
+  const recovery = projection.thread.limitRecovery;
+  const armed =
+    providerFailure.class === "usage_limit" &&
+    recovery?.autoResume === true &&
+    recovery.runId === run.id &&
+    recovery.resetAt === resetAt &&
+    projection.thread.providerInstanceId === run.providerInstanceId &&
+    latestExecutedRun(projection.runs)?.id === run.id &&
+    projection.thread.archivedAt === null &&
+    projection.thread.settledOverride !== "settled" &&
+    !projection.runtimeRequests.some((request) => request.status === "pending");
+  const snoozedUntil = projection.thread.snoozedUntil;
+  const autoResumeAt = armed
+    ? snoozedUntil != null &&
+      resetAt !== null &&
+      DateTime.toEpochMillis(snoozedUntil) > Date.parse(resetAt)
+      ? DateTime.formatIso(snoozedUntil)
+      : resetAt
+    : null;
+  return {
+    runId: run.id,
+    providerInstanceId: run.providerInstanceId,
+    class: providerFailure.class,
+    code: providerFailure.code,
+    retryable: providerFailure.retryable,
+    resetAt,
+    autoResumeAt,
   };
 }
 
@@ -1595,6 +1641,9 @@ const make = Effect.gen(function* () {
         : subagentResultForRun(childProjection, terminalRun).text
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
+    const resultFailure = isTerminalTaskStatus(status)
+      ? runFailure(childControls, taskResultRun ?? childRun, childProjection.turnItems)
+      : undefined;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
     const modelSelection = childRun?.modelSelection ??
       childControls.thread.modelSelection ?? {
@@ -1617,6 +1666,7 @@ const make = Effect.gen(function* () {
       model: modelSelection.model,
       options: modelSelection.options ?? [],
       summary: derivedResult,
+      ...(resultFailure === undefined ? {} : { failure: resultFailure }),
       resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
       latestTerminalStatus:
@@ -3082,6 +3132,16 @@ const make = Effect.gen(function* () {
           }
         }
       }
+      const latestExecuted = latestExecutedRun(target.runs) ?? undefined;
+      const failureItems =
+        latestExecuted?.status === "failed"
+          ? (yield* threadManagement
+              .getThreadRecords(target.thread.id, ["turnItems"], {
+                turnItemRunIds: [latestExecuted.id],
+                turnItemTypes: ["error"],
+              })
+              .pipe(Effect.mapError(threadManagementFailure))).turnItems
+          : [];
       return {
         thread: threadDetail(
           scope,
@@ -3089,6 +3149,7 @@ const make = Effect.gen(function* () {
           timeline.totalItems,
           shell,
           yield* Clock.currentTimeMillis,
+          runFailure(target, latestExecuted, failureItems),
         ),
         recentRuns: target.runs
           .toSorted((left, right) => right.ordinal - left.ordinal)
