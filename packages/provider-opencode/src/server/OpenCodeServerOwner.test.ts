@@ -85,28 +85,6 @@ it.effect("shares concurrent borrowers and closes after the idle TTL", () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("closes only an idle server so the next borrower starts the updated binary", () =>
-  Effect.gen(function* () {
-    const testRuntime = yield* makeRuntime;
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: "opencode",
-          directory: "/project",
-        });
-        yield* owner.withServer(() => owner.closeIfIdle);
-        expect(yield* Ref.get(testRuntime.closes)).toBe(0);
-
-        yield* owner.closeIfIdle;
-        expect(yield* Ref.get(testRuntime.closes)).toBe(1);
-        expect(yield* owner.withServer((server) => Effect.succeed(server.url))).toBe(
-          "http://127.0.0.1:2",
-        );
-      }),
-    ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, testRuntime.runtime));
-  }),
-);
-
 it.effect("retries a failed start and closes on owner scope shutdown", () =>
   Effect.gen(function* () {
     const testRuntime = yield* makeRuntime;

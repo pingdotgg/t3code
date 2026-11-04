@@ -455,7 +455,7 @@ export const OpenCodeDriver: ProviderDriver<
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, pathService),
           )
-        : serverOwner.closeIfIdle;
+        : Effect.void;
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>({
