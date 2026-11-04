@@ -224,8 +224,10 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
-address or `localhost`. The [background service](./background-service.md) listens on private
-networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
+address or `localhost`. A [background service](./background-service.md) installed before
+`T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
+Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
+`T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts
 with network access and Tailscale Serve off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
