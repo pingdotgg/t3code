@@ -147,6 +147,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      ...(snapshot.isInMergeQueue === undefined ? {} : { isInMergeQueue: snapshot.isInMergeQueue }),
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -349,6 +350,7 @@ export function ThreadPullRequestsMiniList({
             : resolvePullRequestIndicatorPresentation({
                 state: snapshot.state,
                 isDraft: snapshot.isDraft,
+                isInMergeQueue: snapshot.isInMergeQueue,
                 baseBranch: snapshot.baseBranch,
                 ...(snapshot.mergeability === undefined
                   ? {}
@@ -434,6 +436,7 @@ export function prStatusIndicator(
   const presentation = resolvePullRequestIndicatorPresentation({
     state: pr.state,
     isDraft: pr.isDraft === true,
+    isInMergeQueue: pr.isInMergeQueue,
     baseBranch: pr.baseRef,
     ...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability }),
   });
@@ -453,11 +456,13 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  isInMergeQueue,
   mergeability,
   baseBranch,
   className,
 }: Pick<NonNullable<ThreadPr>, "state"> & {
   readonly isDraft?: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
   readonly baseBranch?: string | undefined;
   readonly className?: string | undefined;
@@ -465,6 +470,7 @@ export function ChangeRequestStatusIcon({
   const presentation = resolvePullRequestIndicatorPresentation({
     state,
     isDraft,
+    isInMergeQueue,
     ...(mergeability === undefined ? {} : { mergeability }),
     ...(baseBranch === undefined ? {} : { baseBranch }),
   });
@@ -764,6 +770,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
             <ChangeRequestStatusIcon
               state={pr.state}
               isDraft={pr.isDraft}
+              isInMergeQueue={pr.isInMergeQueue}
               {...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability })}
               baseBranch={pr.baseRef}
               className="size-3"
@@ -845,12 +852,14 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   );
 }
 
-function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): string {
+function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"] | "queued"): string {
   switch (state) {
     case "draft":
       return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
     case "open":
       return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
+    case "queued":
+      return "group-hover/sidebar-row:text-amber-600 dark:group-hover/sidebar-row:text-amber-300/90";
     case "merged":
       return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
     case "closed":
@@ -908,7 +917,9 @@ export function ThreadSearchPullRequestNumber({
       ? null
       : pr.state === "open" && pr.isDraft
         ? "draft"
-        : pr.state;
+        : pr.state === "open" && pr.isInMergeQueue
+          ? "queued"
+          : pr.state;
   return (
     <span
       aria-label={presentation.label}

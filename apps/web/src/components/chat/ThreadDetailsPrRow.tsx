@@ -227,6 +227,7 @@ export function ThreadDetailsPrRow({
       : resolvePullRequestIndicatorPresentation({
           state: detail.state,
           isDraft: detail.isDraft,
+          isInMergeQueue: detail.isInMergeQueue,
           mergeability: detail.mergeability,
           baseBranch: detail.baseBranch,
         });
@@ -239,6 +240,7 @@ export function ThreadDetailsPrRow({
     <ChangeRequestStatusIcon
       state={pr.state}
       isDraft={pr.isDraft}
+      isInMergeQueue={pr.isInMergeQueue}
       {...(pr.mergeability === undefined ? {} : { mergeability: pr.mergeability })}
       baseBranch={pr.baseRef}
       className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)}

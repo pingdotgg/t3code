@@ -178,6 +178,25 @@ describe("prStatusIndicator mergeability", () => {
     });
   });
 
+  it("shows a queued pull request as queued unless it conflicts", () => {
+    const queued = (mergeability: "mergeable" | "conflicting") => {
+      const linked = link(mergeability);
+      return prStatusIndicator(
+        linkedPullRequestSnapshotStatus({
+          ...linked,
+          snapshot: { ...linked.snapshot!, isInMergeQueue: true },
+        })?.pr,
+        provider,
+      );
+    };
+    expect(queued("mergeable")).toMatchObject({
+      label: "PR queued",
+      Icon: PullRequestGlyph.queued,
+      tooltipLead: "PR #42 - Queued",
+    });
+    expect(queued("conflicting")).toMatchObject({ Icon: PullRequestGlyph.conflicting });
+  });
+
   it("keeps lifecycle tone when mergeability is unknown or absent", () => {
     expect(
       prStatusIndicator(linkedPullRequestSnapshotStatus(link("unknown"))?.pr, provider),

@@ -202,6 +202,15 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
+
+  it("stops offering a merge once the pull request is queued", () => {
+    const queued = { ...open, isInMergeQueue: true };
+    expect(resolvePullRequestPrimaryControl(queued)).toBe("queued");
+    expect(resolvePullRequestPrimaryControl({ ...queued, autoMergeEnabled: true })).toBe("queued");
+    expect(resolvePullRequestPrimaryControl({ ...queued, mergeability: "conflicting" })).toBe(
+      "resolve",
+    );
+  });
 });
 
 describe("stacked pull request classification", () => {

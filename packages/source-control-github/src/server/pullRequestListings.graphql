@@ -8,7 +8,8 @@
 # `additions` and `deletions` are asked for only with `$stats`: measured over twelve repositories
 # at a hundred rows, a search answers in ~4.0s without them and ~7.1s with them, for two numbers at
 # the end of a row. The cross-repository search reads them afterwards, in `PullRequestStats`.
-# `stack` and `stackEntry` exist on github.com only (`$stacks`).
+# `stack` and `stackEntry` exist on github.com only (`$stacks`). `isInMergeQueue` is asked for there
+# only (`$mergeQueue`): an older Enterprise server may not know it, which fails the whole read.
 fragment PullRequestRow on PullRequest {
   stack @include(if: $stacks) {
     number
@@ -32,6 +33,7 @@ fragment PullRequestRow on PullRequest {
   baseRefName
   state
   isDraft
+  isInMergeQueue @include(if: $mergeQueue)
   mergeable
   reviewDecision
   latestReviews(first: 20) {
@@ -90,6 +92,7 @@ query PullRequestSearch(
   $first: Int!
   $after: String
   $stacks: Boolean!
+  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
@@ -112,6 +115,7 @@ query PullRequestList(
   $first: Int!
   $after: String
   $stacks: Boolean!
+  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   repository(owner: $owner, name: $name) {

@@ -558,6 +558,12 @@ describe("pull request detail decoding", () => {
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
   });
 
+  it("reads merge queue membership, and leaves it absent when not asked", () => {
+    expect(detailOf([], { isInMergeQueue: true }).isInMergeQueue).toBe(true);
+    expect(detailOf([], { isInMergeQueue: false }).isInMergeQueue).toBe(false);
+    expect(detailOf([])).not.toHaveProperty("isInMergeQueue");
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     const detail = detailOf([
       inWorkflow({

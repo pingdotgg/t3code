@@ -424,6 +424,7 @@ export function pullRequestDetailToVcsStatus(
     headRef: detail.headBranch,
     state: detail.state,
     ...(detail.isDraft === true ? { isDraft: true } : {}),
+    ...(detail.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
     updatedAt: detail.updatedAt,
     ...(detail.mergeability === undefined ? {} : { mergeability: detail.mergeability }),
   };

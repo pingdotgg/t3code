@@ -91,6 +91,7 @@ export interface ProviderChangeRequest {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly mergeability: PullRequestMergeability;
   readonly additions: number;
   readonly deletions: number;
@@ -122,6 +123,7 @@ export interface ProviderChangeRequestSummary {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
   readonly headSha?: string | undefined;

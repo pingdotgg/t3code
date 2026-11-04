@@ -1122,6 +1122,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         _0_name: "web",
         _0_number: 7,
         _0_stacks: true,
+        _0_mergeQueue: true,
         _1_number: 8,
       });
     }),

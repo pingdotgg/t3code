@@ -120,6 +120,29 @@ describe("resolveThreadPrSource compatibility", () => {
   };
   const branchRef = { ...legacyRef, number: 2, url: "https://github.com/t3tools/t3code/pull/2" };
 
+  it("presents a queued pull request as queued unless it conflicts", () => {
+    const snapshot = {
+      state: "open" as const,
+      title: "Change 7",
+      headBranch: "change-7",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: null,
+      syncedAt: "2026-09-08T00:00:00.000Z",
+      isInMergeQueue: true,
+    };
+    expect(presentThreadLinkedPullRequests([linkedPr(7, { snapshot })])).toMatchObject({
+      isInMergeQueue: true,
+      accessibilityLabel: "#7 pull request queued",
+      textClassName: "text-adaptive-amber-700-400",
+    });
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(7, { snapshot: { ...snapshot, mergeability: "conflicting" } }),
+      ]),
+    ).toMatchObject({ isInMergeQueue: false, conflicting: true });
+  });
+
   it("polls the stored reference before the server config loads", () => {
     expect(
       resolveThreadPrSource(

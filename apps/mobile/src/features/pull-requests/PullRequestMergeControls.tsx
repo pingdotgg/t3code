@@ -110,14 +110,16 @@ export function PullRequestMergeControls(props: {
             ? { label: "Draft", icon: PullRequestGlyph.draft }
             : pr.mergeability === "conflicting"
               ? { label: "Resolve conflicts to merge", icon: PullRequestGlyph.conflicting }
-              : pr.autoMergeEnabled
-                ? {
-                    label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
-                    icon: "clock",
-                  }
-                : checkingStack && !busy
-                  ? { label: "Checking stack…", icon: PullRequestGlyph.merged }
-                  : null;
+              : pr.isInMergeQueue
+                ? { label: "In the merge queue", icon: PullRequestGlyph.queued }
+                : pr.autoMergeEnabled
+                  ? {
+                      label: `Auto-merge pending${pr.autoMergeMethod ? ` (${pr.autoMergeMethod})` : ""}`,
+                      icon: "clock",
+                    }
+                  : checkingStack && !busy
+                    ? { label: "Checking stack…", icon: PullRequestGlyph.merged }
+                    : null;
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
     !busy &&
