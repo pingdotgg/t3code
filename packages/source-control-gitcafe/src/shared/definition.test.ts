@@ -83,6 +83,33 @@ describe("GitCafe change request URLs", () => {
   });
 });
 
+describe("GitCafe media", () => {
+  it("claims attachments on its own hosts as credentialed media", () => {
+    const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+    expect(media("https://Git.Cafe/api/attachments/attach_01m6hzm1mhene8zncba8bn5fb2?x=1")).toEqual(
+      {
+        fetchUrl: "https://git.cafe/api/attachments/attach_01m6hzm1mhene8zncba8bn5fb2",
+        fileName: "attach_01m6hzm1mhene8zncba8bn5fb2",
+        immutable: true,
+      },
+    );
+    expect(media("https://staging.git.cafe/api/attachments/attach_one")?.fetchUrl).toBe(
+      "https://staging.git.cafe/api/attachments/attach_one",
+    );
+    for (const url of [
+      "http://git.cafe/api/attachments/attach_one",
+      "https://git.cafe:8443/api/attachments/attach_one",
+      "https://git.cafe.evil.test/api/attachments/attach_one",
+      "https://github.com/api/attachments/attach_one",
+      "https://git.cafe/api/attachments/attach_one/../../repos",
+      "https://git.cafe/api/repos/team/repo",
+      "https://git.cafe/avatars/one",
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+});
+
 describe("GitCafe remotes", () => {
   it("recognises its own hosts only, without a port", () => {
     expect(recognizeRemoteWith(definition, "https://git.cafe:8443/a/b")).toEqual({

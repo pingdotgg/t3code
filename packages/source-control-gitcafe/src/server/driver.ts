@@ -11,6 +11,7 @@ import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafePullRequestProvider from "./GitCafePullRequestProvider.ts";
 import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts";
+import * as GitCafeMediaFetch from "./gitCafeMediaFetch.ts";
 
 const services = GitCafeApi.layer.pipe(Layer.provideMerge(GitCafeCredentials.layer));
 
@@ -18,6 +19,7 @@ const makeInstance = Effect.all({
   sourceControl: GitCafeSourceControlProvider.make,
   discovery: GitCafeSourceControlProvider.makeDiscovery,
   pullRequests: GitCafePullRequestProvider.make,
+  fetchMedia: GitCafeMediaFetch.make,
 });
 
 export const driver = defineSourceControlDriver({
