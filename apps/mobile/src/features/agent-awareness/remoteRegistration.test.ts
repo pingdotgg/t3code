@@ -656,6 +656,153 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
+
+  const stubAndroidDeviceRelay = () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    const registrations: Array<{
+      readonly preferences: { readonly notificationsEnabled: boolean };
+    }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/devices")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    return registrations;
+  };
+
+  it.effect("does not report a device registered when its push token lookup fails", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
+      new Error("Default FirebaseApp is not initialized"),
+    );
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+
+      expect(getAgentAwarenessRegistrationStatus()).toBe("failed");
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(registrations[0]).not.toHaveProperty("pushToken");
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("saves a preference change when no push token can be read", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
+      new Error("SERVICE_NOT_AVAILABLE"),
+    );
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      yield* updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true });
+
+      expect(registrations.at(-1)).toMatchObject({
+        preferences: { notificationsEnabled: true, liveActivitiesEnabled: true },
+      });
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("keeps notifications enabled when a refresh cannot read the push token", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect(
+    "does not report notifications enabled after permission is granted without a token",
+    () => {
+      const registrations = stubAndroidDeviceRelay();
+      vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
+        granted: false,
+      } as never);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
+        new Error("Default FirebaseApp is not initialized"),
+      );
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+      return Effect.gen(function* () {
+        yield* runBackgroundOperations();
+        expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: false } }]);
+        expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+        yield* refreshAgentAwarenessRegistration();
+
+        expect(getAgentAwarenessRegistrationStatus()).toBe("failed");
+      }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
+
+  it.effect("saves a preference change when the push token cannot be re-read", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true });
+
+      expect(registrations).toMatchObject([
+        { preferences: { notificationsEnabled: true } },
+        {
+          pushToken: "fcm-token",
+          preferences: { notificationsEnabled: true, liveActivitiesEnabled: true },
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect("preserves relay rejection errors with React Native response headers", () => {
     vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({

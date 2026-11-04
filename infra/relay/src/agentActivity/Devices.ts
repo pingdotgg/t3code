@@ -222,6 +222,7 @@ const make = Effect.gen(function* () {
           iosMajorVersion: relayMobileDevices.iosMajorVersion,
           androidApiLevel: relayMobileDevices.androidApiLevel,
           appVersion: relayMobileDevices.appVersion,
+          pushToken: relayMobileDevices.pushToken,
           preferences: relayMobileDevices.preferencesJson,
           updatedAt: relayMobileDevices.updatedAt,
         })
@@ -240,7 +241,8 @@ const make = Effect.gen(function* () {
         androidApiLevel: row.androidApiLevel,
         appVersion: row.appVersion,
         notifications: {
-          enabled: row.preferences.notificationsEnabled,
+          // Clients keep the preference on while the device has no token; nothing is delivered then.
+          enabled: row.preferences.notificationsEnabled && row.pushToken !== null,
           notifyOnApproval: row.preferences.notifyOnApproval,
           notifyOnInput: row.preferences.notifyOnInput,
           notifyOnCompletion: row.preferences.notifyOnCompletion,
