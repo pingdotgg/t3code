@@ -609,7 +609,6 @@ function startAnnotation(
   let voicePhase: DesktopPreviewAnnotationVoiceState["phase"] = "idle";
   let voiceSettings = false;
   let voiceBusy = false;
-  let voicePreparing = false;
   let voiceAvailable = false;
   let voiceKeyCode: string | null = null;
   let pendingVoiceSubmission: PreviewAnnotationSubmission | null = null;
@@ -711,12 +710,7 @@ function startAnnotation(
       return;
     }
     if (!voiceAvailable || (voiceBusy && voicePhase !== "recording")) return;
-    const action = voicePhase === "recording" ? "stop" : "start";
-    voiceBusy = true;
-    if (action === "start") voicePreparing = true;
-    comment.readOnly = true;
-    updateStatus();
-    sendVoice(action);
+    sendVoice(voicePhase === "recording" ? "stop" : "start");
   });
   voiceFinish.addEventListener("click", (event) => {
     if (event.isTrusted) sendVoice("stop");
@@ -738,7 +732,6 @@ function startAnnotation(
     const submissionChanged = voiceBusy !== state.blocksSubmission;
     const previewChanged = voicePreview.textContent !== (state.preview ?? "");
     voicePhase = state.phase;
-    voicePreparing = state.phase === "preparing";
     voiceSettings = state.errorAction === "settings";
     voiceBusy = state.blocksSubmission;
     voiceAvailable = state.available;
@@ -888,7 +881,7 @@ function startAnnotation(
       sendVoice("cancel");
     }
     editor.style.display = hasTargets ? "flex" : "none";
-    submit.disabled = !hasTargets || voicePreparing || pendingCapture;
+    submit.disabled = !hasTargets || voicePhase === "preparing" || pendingCapture;
     submit.style.opacity = hasTargets ? "1" : "0.45";
     adjust.disabled = !hasTargets;
     stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
@@ -1623,12 +1616,6 @@ function startAnnotation(
         event.preventDefault();
         event.stopImmediatePropagation();
         voiceKeyCode = event.code || event.key;
-        if (!event.repeat && !voiceBusy) {
-          voiceBusy = true;
-          voicePreparing = true;
-          comment.readOnly = true;
-          updateStatus();
-        }
         sendVoice("key", event);
         return;
       }
@@ -1650,7 +1637,7 @@ function startAnnotation(
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (submission === "send" && !sendEnabled) return;
-    if (voicePreparing) return;
+    if (voicePhase === "preparing") return;
     // Submitting while dictating finishes the recording and submits once the text lands.
     if (voiceBusy) {
       if (pendingVoiceSubmission === null) {
