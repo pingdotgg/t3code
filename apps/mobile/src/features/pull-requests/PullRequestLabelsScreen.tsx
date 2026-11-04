@@ -69,8 +69,9 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     isSelected: (candidate) => candidate.isApplied,
     single: false,
     commit: async ({ add, remove }) => {
-      await send(remove, false);
+      // Adds first, so the row never shows empty between the two writes.
       await send(add, true);
+      await send(remove, false);
     },
   });
   // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.

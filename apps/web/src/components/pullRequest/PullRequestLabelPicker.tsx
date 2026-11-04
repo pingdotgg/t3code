@@ -83,8 +83,9 @@ export function PullRequestLabelPicker({
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
       onCommit={async ({ add, remove }) => {
-        await send(remove, false);
+        // Adds first, so the row never shows empty between the two writes.
         await send(add, true);
+        await send(remove, false);
       }}
     >
       {(candidate, selected) => {
