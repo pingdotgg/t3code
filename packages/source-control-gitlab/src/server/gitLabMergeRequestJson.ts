@@ -483,6 +483,7 @@ const RawLabelSchema = Schema.Struct({
   name: Schema.String,
   color: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
+  archived: Schema.optional(Schema.Boolean),
 });
 const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
 const decodeLabel = decodeJsonResult(RawLabelSchema);
@@ -493,6 +494,7 @@ export function decodeLabelNameJson(raw: string): Result.Result<string | null, D
 
 export interface GitLabProjectLabel extends PullRequestLabel {
   readonly description: string | null;
+  readonly archived: boolean;
 }
 
 export interface GitLabProjectLabels {
@@ -517,6 +519,7 @@ export function decodeProjectLabelsJson(
         name,
         color: trimmed(label.value.color),
         description: trimmed(label.value.description),
+        archived: label.value.archived === true,
       });
     }
   }

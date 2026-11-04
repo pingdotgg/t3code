@@ -1678,10 +1678,13 @@ export const make = Effect.gen(function* () {
       );
       const applied = new Set(mergeRequest.labels.map((label) => label.name));
       return {
-        candidates: project.labels.map((label) => ({
-          ...label,
-          isApplied: applied.has(label.name),
-        })),
+        // GitLab's own picker hides archived labels; applied ones stay so they can be removed.
+        candidates: project.labels
+          .filter((label) => !label.archived || applied.has(label.name))
+          .map(({ archived: _archived, ...label }) => ({
+            ...label,
+            isApplied: applied.has(label.name),
+          })),
         truncated: project.truncated,
       };
     }),

@@ -1160,14 +1160,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
               ? JSON.stringify([
                   { name: "bug", color: "#d9534f", description: "Something is broken" },
                   { name: "docs", color: null, description: null },
+                  { name: "legacy", color: null, description: null, archived: true },
+                  { name: "wontfix", color: null, description: null, archived: true },
                 ])
-              : mergeRequestJson({ labels: ["bug"] }),
+              : mergeRequestJson({ labels: ["bug", "wontfix"] }),
           ),
         ),
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const list = yield* cli.listLabelCandidates({ cwd: "/w", repository: "acme/web", number: 7 });
+      const list = yield* cli.listLabelCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
 
       expect(
         mockedExecute.mock.calls
@@ -1178,6 +1184,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         candidates: [
           { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
           { name: "docs", color: null, description: null, isApplied: false },
+          { name: "wontfix", color: null, description: null, isApplied: true },
         ],
         truncated: false,
       });
