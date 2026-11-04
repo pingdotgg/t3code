@@ -129,18 +129,16 @@ export const offlineMessages = createOfflineOutbox({
       { reportFailure: false },
     );
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    const settingsSynced = await waitForAtomValue({
+    const shellSynced = await waitForAtomValue({
       registry: appAtomRegistry,
-      atom: environmentThreadShells.threadShellAtom(
-        scopeThreadRef(message.environmentId, message.input.threadId),
-      ),
-      predicate: (thread) =>
-        thread?.runtimeMode === message.input.runtimeMode &&
-        thread.interactionMode === message.input.interactionMode,
+      atom: environmentShell.stateValueAtom(message.environmentId),
+      predicate: (shell) =>
+        shell.snapshot._tag === "Some" &&
+        shell.snapshot.value.snapshotSequence >= (result.value.sequence ?? 0),
       timeoutMs: 5_000,
     });
-    if (!settingsSynced)
-      throw new Error("Thread settings have not synchronized. Reconnect and retry.");
+    if (!shellSynced)
+      throw new Error("Environment data has not synchronized. Reconnect and retry.");
     releaseDraftAttachments(message.attachments);
   },
 });
