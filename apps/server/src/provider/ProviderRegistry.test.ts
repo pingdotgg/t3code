@@ -3090,6 +3090,7 @@ it.layer(
             label: "Reasoning",
             type: "select",
             options: [
+              { id: "default", label: "Default", isDefault: true },
               { id: "low", label: "Low" },
               { id: "high", label: "High" },
             ],

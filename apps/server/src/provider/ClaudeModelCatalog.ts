@@ -165,7 +165,11 @@ export function claudeReportedModels(
                 id: "effort",
                 label: "Reasoning",
                 type: "select",
-                options: efforts.map((id) => ({ id, label: CLAUDE_EFFORT_LABELS[id] ?? id })),
+                // `default` is not an effort, so choosing it sends none and Claude Code picks.
+                options: [
+                  { id: "default", label: "Default", isDefault: true },
+                  ...efforts.map((id) => ({ id, label: CLAUDE_EFFORT_LABELS[id] ?? id })),
+                ],
               },
             ]
           : [],

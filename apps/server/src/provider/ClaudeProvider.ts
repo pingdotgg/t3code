@@ -325,10 +325,12 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * With gateway model discovery on, Claude Code refreshes its model cache in the background after
  * initialization, so the probe subprocess outlives init by Claude Code's discovery timeout.
  */
-function claudeGatewayDiscoveryGraceMs(environment: NodeJS.ProcessEnv): number {
-  const enabled = environment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY?.trim().toLowerCase();
+function claudeGatewayDiscoveryGraceMs(environment: Readonly<Record<string, unknown>>): number {
+  const enabled = String(environment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY ?? "")
+    .trim()
+    .toLowerCase();
   if (!enabled || enabled === "0" || enabled === "false") return 0;
-  if (!environment.ANTHROPIC_BASE_URL?.trim()) return 0;
+  if (!String(environment.ANTHROPIC_BASE_URL ?? "").trim()) return 0;
   const configured = Number(environment.CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : 3_000;
 }
@@ -351,10 +353,13 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
-    const graceMs = claudeGatewayDiscoveryGraceMs({
-      ...claudeEnvironment,
-      ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
-    });
+    // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
+    const graceMs = includeUsage
+      ? claudeGatewayDiscoveryGraceMs({
+          ...claudeEnvironment,
+          ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
+        })
+      : 0;
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
