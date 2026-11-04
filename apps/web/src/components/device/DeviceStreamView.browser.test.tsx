@@ -32,6 +32,7 @@ function setup() {
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
   const pastes: unknown[] = [];
+  const inputs: string[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
@@ -60,7 +61,9 @@ function setup() {
         }
         if (typeof message !== "string" && message[0] === 0x12) {
           pastes.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+          inputs.push("paste");
         }
+        if (typeof message !== "string" && message[0] === 0x06) inputs.push("key");
       }
       close() {}
     },
@@ -80,6 +83,7 @@ function setup() {
     },
     touches,
     pastes,
+    inputs,
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -254,4 +258,27 @@ it("pastes into the foreground iOS app when a menu paste targets text outside th
     .dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
   await vi.waitFor(() => expect(input.pastes).toHaveLength(2));
   expect(runAction).toHaveBeenCalledTimes(2);
+});
+
+it("sends keys typed during a paste after the pasted text", async () => {
+  using input = setup();
+  let grant!: () => void;
+  runAction.mockImplementationOnce(
+    () => new Promise((resolve) => (grant = () => resolve({ _tag: "Success" }))) as never,
+  );
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.container.querySelector<HTMLElement>('[role="application"]')!;
+  host.focus();
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "code 42");
+  host.dispatchEvent(
+    new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+  );
+  host.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", key: "Enter", bubbles: true }));
+  host.dispatchEvent(new KeyboardEvent("keyup", { code: "Enter", key: "Enter", bubbles: true }));
+  await vi.waitFor(() => expect(runAction).toHaveBeenCalledOnce());
+  grant();
+  await vi.waitFor(() => expect(input.inputs).toEqual(["paste", "key", "key"]));
 });

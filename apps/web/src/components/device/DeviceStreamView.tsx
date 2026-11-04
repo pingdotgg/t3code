@@ -165,10 +165,17 @@ export function DeviceStreamView(props: {
         decision: "grant",
       },
     });
-  const paste = async (text: string) => {
+  const inputQueue = useRef(Promise.resolve());
+  const sendInOrder = (send: () => unknown) => {
+    inputQueue.current = inputQueue.current.then(send).then(() => undefined, reportError);
+  };
+  const paste = (text: string) => {
     if (!client || text === "") return;
-    if (foregroundApp?.id) await allowPaste(foregroundApp.id);
-    client.sendText(text);
+    const appId = foregroundApp?.id;
+    sendInOrder(async () => {
+      if (appId) await allowPaste(appId);
+      client.sendText(text);
+    });
   };
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
@@ -383,11 +390,11 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
-          client?.sendKey(event.nativeEvent, "down");
+          sendInOrder(() => client?.sendKey(event.nativeEvent, "down"));
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
-          client?.sendKey(event.nativeEvent, "up");
+          sendInOrder(() => client?.sendKey(event.nativeEvent, "up"));
         }}
       >
         <div
