@@ -277,9 +277,15 @@ export const make = Effect.gen(function* () {
           const info = yield* fileSystem.lstat(normalizedDestination);
           const realDestination = yield* fileSystem.realPath(normalizedDestination);
           const home = yield* HostProcess.HomeDirectory;
-          const protectedPaths = [home, config.cwd, config.baseDir];
+          const protectedPaths = yield* Effect.forEach(
+            [home, config.cwd, config.baseDir],
+            (protectedPath) =>
+              fileSystem
+                .realPath(path.resolve(protectedPath))
+                .pipe(Effect.orElseSucceed(() => path.resolve(protectedPath))),
+          );
           const containsProtectedPath = protectedPaths.some((protectedPath) => {
-            const relative = path.relative(realDestination, path.resolve(protectedPath));
+            const relative = path.relative(realDestination, protectedPath);
             return (
               relative === "" ||
               (!relative.startsWith(`..${path.sep}`) &&
