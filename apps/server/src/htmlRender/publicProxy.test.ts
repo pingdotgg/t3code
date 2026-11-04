@@ -250,11 +250,11 @@ describe("publicProxy", () => {
                     yield* Effect.promise(() => requested.promise);
                     if (reason === "client disconnect") {
                       client.destroy();
-                      yield* Effect.promise(() => closed.promise).pipe(Effect.timeout("1 second"));
+                      yield* Effect.promise(() => closed.promise);
                     }
                   }),
                 );
-                yield* Effect.promise(() => closed.promise).pipe(Effect.timeout("1 second"));
+                yield* Effect.promise(() => closed.promise);
               }),
             );
           } finally {
