@@ -2,6 +2,7 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildReviewThreads,
   decodeCommentsJson,
   decodeCommitsJson,
   decodePullRequestJson,
@@ -171,12 +172,14 @@ describe("decodeCommentsJson", () => {
             content: { raw: "gone" },
             created_on: "2026-05-15T02:00:00+00:00",
             deleted: true,
+            inline: { path: "src/app.ts", to: 10 },
           },
           {
             id: 3,
             content: { raw: "wip" },
             created_on: "2026-05-15T02:00:00+00:00",
             pending: true,
+            inline: { path: "src/app.ts", to: 20 },
           },
           { id: 4, content: { raw: "   " }, created_on: "2026-05-15T02:00:00+00:00" },
         ]),
@@ -190,6 +193,7 @@ describe("decodeCommentsJson", () => {
       author: { login: "Release Bot" },
       createdAt: "2026-05-15T01:58:38.220Z",
     });
+    expect(buildReviewThreads(decoded.entries)).toEqual([]);
   });
 
   it("reads a comment pinned to a file as a review comment", () => {
@@ -208,6 +212,92 @@ describe("decodeCommentsJson", () => {
 
     expect(decoded.comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
+
+  it.each([
+    {
+      ancestor: "posted ancestors",
+      deletedId: null,
+      pendingId: null,
+      expectedIds: ["10", "11", "12"],
+      threadCommentIds: ["10", "11", "12"],
+    },
+    {
+      ancestor: "a deleted root",
+      deletedId: 10,
+      pendingId: null,
+      expectedIds: ["11", "12"],
+      threadCommentIds: ["11", "12"],
+    },
+    {
+      ancestor: "a deleted intermediate reply",
+      deletedId: 11,
+      pendingId: null,
+      expectedIds: ["10", "12"],
+      threadCommentIds: ["10", "12"],
+    },
+    {
+      ancestor: "a pending root",
+      deletedId: null,
+      pendingId: 10,
+      expectedIds: ["11", "12"],
+      threadCommentIds: [],
+    },
+    {
+      ancestor: "a pending intermediate reply",
+      deletedId: null,
+      pendingId: 11,
+      expectedIds: ["10", "12"],
+      threadCommentIds: ["10"],
+    },
+    {
+      ancestor: "a pending deleted root",
+      deletedId: 10,
+      pendingId: 10,
+      expectedIds: ["11", "12"],
+      threadCommentIds: [],
+    },
+  ])(
+    "assembles replies with $ancestor",
+    ({ deletedId, pendingId, expectedIds, threadCommentIds }) => {
+      const decoded = expectSuccess(
+        decodeCommentsJson(
+          page([
+            {
+              id: 10,
+              content: deletedId === 10 ? null : { raw: "Rename this." },
+              created_on: "2026-05-15T02:00:00+00:00",
+              inline: { path: "src/app.ts", to: 10 },
+              deleted: deletedId === 10,
+              pending: pendingId === 10,
+            },
+            {
+              id: 11,
+              content: deletedId === 11 ? null : { raw: "What name would you prefer?" },
+              created_on: "2026-05-15T02:01:00+00:00",
+              parent: { id: 10 },
+              deleted: deletedId === 11,
+              pending: pendingId === 11,
+            },
+            {
+              id: 12,
+              content: { raw: "Use the full name." },
+              created_on: "2026-05-15T02:02:00+00:00",
+              parent: { id: 11 },
+            },
+          ]),
+        ),
+      );
+
+      expect(decoded.comments.map((comment) => comment.id)).toEqual(expectedIds);
+      expect(decoded.entries.some((comment) => comment.pending === true)).toBe(false);
+      const threads = buildReviewThreads(decoded.entries);
+      expect(threads).toHaveLength(threadCommentIds.length === 0 ? 0 : 1);
+      if (threadCommentIds.length > 0) {
+        expect(threads[0]).toMatchObject({ id: "10", path: "src/app.ts", line: 10, side: "right" });
+        expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(threadCommentIds);
+      }
+    },
+  );
 });
 
 describe("decodeCommitsJson", () => {
