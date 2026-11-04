@@ -997,6 +997,7 @@ type ShellPendingTurnItemRow = PayloadRow & {
 
 type ShellAwaitingWakeRow = ShellPendingTurnItemRow & {
   readonly provider_thread_id: string;
+  readonly task_payload_json: string;
   readonly run_payload_json: string;
   readonly message_payload_json: string | null;
   readonly message_run_payload_json: string | null;
@@ -6425,10 +6426,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }
     `;
 
-    // Claimed tasks are rare and indexed; the run, message and turn joins only run for them.
+    // Finished tasks owed a wake are rare and indexed; the run, message and turn joins only run for them.
     const selectShellAwaitingWakeRows = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellAwaitingWakeRow>`
         SELECT s.thread_id, p.provider_thread_id, item.payload_json,
+          s.payload_json AS task_payload_json,
           owner.provider_instance_id AS owning_provider_instance_id,
           r.payload_json AS run_payload_json,
           m.payload_json AS message_payload_json,
@@ -6453,7 +6455,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ON m.message_id = json_extract(r.payload_json, '$.delegatedCompletion.delivery.messageId')
         LEFT JOIN orchestration_v2_projection_runs mr ON mr.run_id = m.run_id
         WHERE s.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
-          AND s.completion_delivery_state = 'claimed'
+          AND s.completion_delivery_state IN ('claimed', 'pending')
+          AND json_type(r.payload_json, '$.delegatedCompletion.delivery') = 'object'
       `;
 
     const runMapsByThreadId = (input: {
@@ -6557,6 +6560,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           messages: message === null ? [] : [message],
           providerTurns: messageTurn === null ? [] : [messageTurn],
           providerThreads: [{ id: row.provider_thread_id }],
+          subagents: [yield* decodeSubagentPayload(row.task_payload_json)],
           turnItems: [yield* decodeShellTurnItem(row)],
         });
         if (items.length === 0) continue;
@@ -7307,7 +7311,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             OR EXISTS (
               SELECT 1 FROM orchestration_v2_projection_subagents task
-              WHERE task.thread_id = t.thread_id AND task.completion_delivery_state = 'claimed'
+              INNER JOIN orchestration_v2_projection_runs task_run ON task_run.run_id = task.run_id
+              WHERE task.thread_id = t.thread_id
+                AND task.completion_delivery_state IN ('claimed', 'pending')
+                AND json_type(task_run.payload_json, '$.delegatedCompletion.delivery') = 'object'
             )
           ) AS may_be_live
         FROM orchestration_v2_projection_threads t

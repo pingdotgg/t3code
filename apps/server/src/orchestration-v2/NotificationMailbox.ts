@@ -3,6 +3,7 @@ import {
   type MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -53,13 +54,27 @@ export function pendingDelegatedCompletionWake(
     : delivery;
 }
 
+const TERMINAL_TASK_STATUSES: ReadonlyArray<OrchestrationV2Subagent["status"]> = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
+
 /**
- * Finished delegated task items whose completion wake has not started its run. A run without its
- * provider thread is never offered a wake, so its tasks hold nothing.
+ * Finished delegated task items whose completion wake has not started its run: claimed into a
+ * pending wake, or left pending behind a running wake, whose end reserves them a successor. A run
+ * without its provider thread is never offered a wake, so its tasks hold nothing.
  */
 export function delegatedTaskItemsAwaitingWake<Item extends OrchestrationV2TurnItem>(
   projection: DelegatedCompletionRecords & {
     readonly providerThreads: ReadonlyArray<{ readonly id: string }>;
+    readonly subagents: ReadonlyArray<
+      Pick<
+        OrchestrationV2Subagent,
+        "id" | "runId" | "origin" | "status" | "completionWake" | "completionDelivery"
+      >
+    >;
     readonly turnItems: ReadonlyArray<Item>;
   },
 ): ReadonlyArray<Item> {
@@ -73,6 +88,21 @@ export function delegatedTaskItemsAwaitingWake<Item extends OrchestrationV2TurnI
     }
     for (const taskId of pendingDelegatedCompletionWake(projection, run)?.taskIds ?? []) {
       taskIds.add(taskId);
+    }
+    if (run.delegatedCompletion?.disposition !== "open" || run.delegatedCompletion.delivery == null)
+      continue;
+    // Mirrors the successor reservation: a live run's blocking wait takes settled_only results.
+    const runIsLive = ["preparing", "starting", "running"].includes(run.status);
+    for (const task of projection.subagents) {
+      if (
+        task.runId === run.id &&
+        task.origin === "app_owned" &&
+        task.completionDelivery?.state === "pending" &&
+        TERMINAL_TASK_STATUSES.includes(task.status) &&
+        (!runIsLive || task.completionWake === "always")
+      ) {
+        taskIds.add(task.id);
+      }
     }
   }
   if (taskIds.size === 0) return [];

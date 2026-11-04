@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -1365,38 +1366,45 @@ const delegatedCompletionWakeHoldsEveryShell = Effect.gen(function* () {
       result: "done",
     },
   });
-  yield* store.apply({
-    id: EventId.make("event:delegated-wake-hold:task"),
-    type: "subagent.updated",
-    threadId,
-    runId: parentRun.id,
-    nodeId: taskId,
-    driver,
-    providerInstanceId,
-    occurredAt: now,
-    payload: {
-      id: taskId,
+  const applyTask = (
+    name: string,
+    policy: Pick<OrchestrationV2Subagent, "completionWake" | "completionDelivery">,
+  ) =>
+    store.apply({
+      id: EventId.make(`event:delegated-wake-hold:${name}`),
+      type: "subagent.updated",
       threadId,
       runId: parentRun.id,
-      parentNodeId: parentRun.rootNodeId,
-      origin: "app_owned",
-      createdBy: "agent",
+      nodeId: taskId,
       driver,
       providerInstanceId,
-      providerThreadId: null,
-      childThreadId: null,
-      nativeTaskRef: null,
-      prompt: "Do the work",
-      title: "Delegated task",
-      model: null,
-      completionWake: "always",
-      completionDelivery: { state: "claimed", observedByRunId: null },
-      status: "completed",
-      result: "done",
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    },
+      occurredAt: now,
+      payload: {
+        id: taskId,
+        threadId,
+        runId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: "Delegated task",
+        model: null,
+        ...policy,
+        status: "completed",
+        result: "done",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      },
+    });
+  yield* applyTask("task", {
+    completionWake: "always",
+    completionDelivery: { state: "claimed", observedByRunId: null },
   });
   const heldTaskIds = Effect.gen(function* () {
     yield* assertShellIndexCoversShells();
@@ -1417,6 +1425,7 @@ const delegatedCompletionWakeHoldsEveryShell = Effect.gen(function* () {
         ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId)),
       ),
       taskIds((yield* store.getSettlementCandidates(threadId))[0]),
+      taskIds((yield* store.getAgentAwarenessSnapshot(threadId)).threads[0]),
     ];
     for (const held of producers) assert.deepEqual(held, producers[0]);
     return producers[0];
@@ -1471,6 +1480,31 @@ const delegatedCompletionWakeHoldsEveryShell = Effect.gen(function* () {
     userMessageId: MessageId.make("message:delegated-wake-hold:steered-into"),
   });
   assert.deepEqual(yield* heldTaskIds, [itemId]);
+  yield* applyRun("wake-run-read", { ...wakeRun, status: "completed" });
+  assert.deepEqual(yield* heldTaskIds, []);
+
+  // A sibling that finished behind that wake waits for the successor its end reserves.
+  yield* applyTask("task-pending", {
+    completionWake: "always",
+    completionDelivery: { state: "pending", observedByRunId: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+
+  // A live parent's blocking wait takes a settled_only result instead.
+  yield* applyTask("task-settled-only", {
+    completionWake: "settled_only",
+    completionDelivery: { state: "pending", observedByRunId: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, [itemId]);
+  yield* applyRun("parent-live", { ...parentRun, status: "running", completedAt: null });
+  assert.deepEqual(yield* heldTaskIds, []);
+
+  // With no wake outstanding, nothing reserves one.
+  yield* applyRun("parent-settled", {
+    ...parentRun,
+    delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
+  });
+  assert.deepEqual(yield* heldTaskIds, []);
 });
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
