@@ -13,7 +13,6 @@ const {
   setDesktopNameMock,
   mkdirSyncMock,
   writeFileSyncMock,
-  copyFileSyncMock,
   execFileSyncMock,
   readFileSyncMock,
 } = vi.hoisted(() => ({
@@ -24,7 +23,6 @@ const {
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
-  copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
 }));
@@ -50,7 +48,6 @@ vi.mock("node:fs", () => ({
   readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
-  copyFileSync: copyFileSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -69,7 +66,6 @@ describe("DesktopPreReadyPlatform", () => {
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
-    copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
   });
@@ -129,14 +125,16 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "t3code.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      iconInstalled = destination === "/xdg/icons/com.t3tools.T3Code.desktop.png";
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path.endsWith("prod-resources/icon.png")) return Buffer.from([1, 2, 3]);
+      throw new Error("ENOENT");
     });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
     writeFileSyncMock.mockImplementation((path: string, contents: string) => {
       if (path === "/xdg/applications/com.t3tools.T3Code.desktop") desktopEntry = contents;
+      if (path === "/xdg/icons/com.t3tools.T3Code.desktop.png") iconInstalled = true;
     });
 
     return Effect.scoped(
@@ -169,6 +167,40 @@ describe("DesktopPreReadyPlatform", () => {
         assert.isTrue(identity.iconInstalled);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect("leaves an identical pre-ready entry and icon untouched across launches", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    const files = new Map<string, string | Buffer>([
+      [
+        "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png",
+        Buffer.from([1, 2, 3]),
+      ],
+    ]);
+    readFileSyncMock.mockImplementation((path: string) => {
+      const content = files.get(path);
+      if (content === undefined) throw new Error("ENOENT");
+      return content;
+    });
+    writeFileSyncMock.mockImplementation((path: string, content: string | Buffer) =>
+      files.set(path, content),
+    );
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      assert.include(
+        files.get("/xdg/applications/com.t3tools.T3Code.desktop"),
+        "Exec=/Applications/current.AppImage %U",
+      );
+      writeFileSyncMock.mockClear();
+      yield* DesktopPreReadyPlatform.make;
+      assert.equal(writeFileSyncMock.mock.calls.length, 0);
+      assert.equal(setDesktopNameMock.mock.calls.length, 2);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
   });
 
   it.effect("points the early portal entry at a configured distribution launcher", () => {

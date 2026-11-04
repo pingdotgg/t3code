@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -105,7 +107,17 @@ function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
 }
 
 const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
-  left.length === right.length && left.every((byte, index) => byte === right[index]);
+  Buffer.compare(left, right) === 0;
+
+const desktopEntryList = (content: string, group: string, key: string): readonly string[] => {
+  let inGroup = false;
+  for (const raw of content.split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (line.startsWith("[")) inGroup = line === `[${group}]`;
+    if (inGroup && line.startsWith(`${key}=`)) return line.slice(key.length + 1).split(";");
+  }
+  return [];
+};
 
 export class DesktopLinuxUrlHandler extends Context.Service<
   DesktopLinuxUrlHandler,
@@ -150,9 +162,10 @@ export const make = Effect.gen(function* () {
     const existing = yield* fileSystem
       .readFileString(desktopEntryPath)
       .pipe(Effect.orElseSucceed(() => null));
-    if (existing === content) return;
+    if (existing === content) return false;
     yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
     yield* fileSystem.writeFileString(desktopEntryPath, content);
+    return true;
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -252,6 +265,40 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const desktopDatabaseIsCurrent = Effect.gen(function* () {
+    const cachePath = environment.path.join(environment.linuxApplicationsDir, "mimeinfo.cache");
+    const entryAt = yield* modifiedAt(desktopEntryPath);
+    const cachedAt = yield* modifiedAt(cachePath);
+    if (cachedAt < entryAt) return false;
+    const cache = yield* fileSystem.readFileString(cachePath);
+    return desktopEntryList(cache, "MIME Cache", `x-scheme-handler/${scheme}`).includes(
+      environment.linuxDesktopEntryName,
+    );
+  }).pipe(Effect.orElseSucceed(() => false));
+
+  const isDefaultHandler = Effect.gen(function* () {
+    const env = yield* HostProcess.Environment;
+    // KDE and LXQt also maintain desktop-specific association stores through xdg-mime.
+    if (
+      env.KDE_FULL_SESSION ||
+      env.KDE_SESSION_VERSION ||
+      /kde|plasma|lxqt/iu.test([env.XDG_CURRENT_DESKTOP, env.DESKTOP_SESSION, env.DE].join(":"))
+    )
+      return false;
+    const config = yield* DesktopConfig.DesktopConfig;
+    const home = yield* HostProcess.HomeDirectory;
+    const configHome = Option.getOrElse(config.xdgConfigHome, () =>
+      environment.path.join(home, ".config"),
+    );
+    const defaults = yield* fileSystem.readFileString(
+      environment.path.join(configHome, "mimeapps.list"),
+    );
+    return (
+      desktopEntryList(defaults, "Default Applications", `x-scheme-handler/${scheme}`)[0] ===
+      environment.linuxDesktopEntryName
+    );
+  }).pipe(Effect.orElseSucceed(() => false));
+
   const setDefaultHandler = Effect.scoped(
     Effect.gen(function* () {
       const command = ChildProcess.make(
@@ -290,15 +337,18 @@ export const make = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
     }
-    yield* writeDesktopEntry;
+    const entryChanged = yield* writeDesktopEntry;
     if (!environment.isPackaged) return;
 
     yield* Effect.gen(function* () {
       const { png } = yield* assets.iconPaths;
       if (Option.isNone(png)) return;
       // The AppImage mount is temporary; the chooser needs the icon after exit.
+      const icon = yield* fileSystem.readFile(png.value);
+      const current = yield* fileSystem.readFile(iconPath).pipe(Effect.option);
+      if (Option.isSome(current) && sameBytes(current.value, icon)) return;
       yield* fileSystem.makeDirectory(iconsDir, { recursive: true });
-      yield* fileSystem.copyFile(png.value, iconPath);
+      yield* fileSystem.writeFile(iconPath, icon);
     }).pipe(
       Effect.catch((error) =>
         logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),
@@ -307,18 +357,20 @@ export const make = Effect.gen(function* () {
 
     yield* installThemeIcons;
 
-    yield* updateDesktopDatabase.pipe(
-      // GIO verifies scheme associations through mimeinfo.cache. A missing cache updater must not block xdg-mime.
-      Effect.catch((error) =>
-        logWarning("desktop MIME cache refresh failed", {
-          applicationsDir: environment.linuxApplicationsDir,
-          message: error.message,
-          ...(error.exitCode === undefined ? {} : { exitCode: error.exitCode }),
-        }),
-      ),
-    );
+    const databaseCurrent = !entryChanged && (yield* desktopDatabaseIsCurrent);
+    if (!databaseCurrent)
+      yield* updateDesktopDatabase.pipe(
+        // GIO verifies scheme associations through mimeinfo.cache. A missing cache updater must not block xdg-mime.
+        Effect.catch((error) =>
+          logWarning("desktop MIME cache refresh failed", {
+            applicationsDir: environment.linuxApplicationsDir,
+            message: error.message,
+            ...(error.exitCode === undefined ? {} : { exitCode: error.exitCode }),
+          }),
+        ),
+      );
 
-    yield* setDefaultHandler;
+    if (!databaseCurrent || !(yield* isDefaultHandler)) yield* setDefaultHandler;
     yield* logInfo("registered URL scheme handler", { scheme });
   }).pipe(
     Effect.catch((error) =>

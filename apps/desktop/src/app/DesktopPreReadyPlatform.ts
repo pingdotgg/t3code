@@ -104,34 +104,44 @@ export const make = Effect.gen(function* () {
         if (iconPath !== undefined) {
           try {
             NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
+            const icon = NodeFS.readFileSync(
               NodePath.posix.join(
                 Electron.app.getAppPath(),
                 "apps/desktop/prod-resources/icon.png",
               ),
-              iconPath,
             );
+            let current: Buffer | undefined;
+            try {
+              current = NodeFS.readFileSync(iconPath);
+            } catch {}
+            if (current === undefined || !current.equals(icon)) {
+              NodeFS.writeFileSync(iconPath, icon);
+            }
           } catch {}
         }
-        NodeFS.writeFileSync(
-          NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
-          renderUrlHandlerDesktopEntry({
-            displayName: resolveDesktopAppBranding({
-              isDevelopment: linux.isDevelopment,
-              appVersion: Electron.app.getVersion(),
-            }).displayName,
-            execTarget:
-              Option.getOrUndefined(
-                Option.orElse(
-                  linuxDesktopEntryConfig.launcherPath,
-                  () => linuxDesktopEntryConfig.appImagePath,
-                ),
-              ) ?? process.execPath,
-            scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
-            ...(iconPath === undefined ? {} : { iconPath }),
-          }),
-          "utf8",
-        );
+        const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+        const content = renderUrlHandlerDesktopEntry({
+          displayName: resolveDesktopAppBranding({
+            isDevelopment: linux.isDevelopment,
+            appVersion: Electron.app.getVersion(),
+          }).displayName,
+          execTarget:
+            Option.getOrUndefined(
+              Option.orElse(
+                linuxDesktopEntryConfig.launcherPath,
+                () => linuxDesktopEntryConfig.appImagePath,
+              ),
+            ) ?? process.execPath,
+          scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
+          ...(iconPath === undefined ? {} : { iconPath }),
+        });
+        let existing: string | undefined;
+        try {
+          existing = NodeFS.readFileSync(desktopEntryPath, "utf8");
+        } catch {}
+        if (existing !== content) {
+          NodeFS.writeFileSync(desktopEntryPath, content, "utf8");
+        }
       } catch {}
       // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
