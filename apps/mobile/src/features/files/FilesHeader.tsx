@@ -43,7 +43,6 @@ export function FilesHeader(props: {
       >
         <AppBar
           embedded
-          sidebar={false}
           title="Files"
           subtitle={props.projectName}
           hideBottomBorder

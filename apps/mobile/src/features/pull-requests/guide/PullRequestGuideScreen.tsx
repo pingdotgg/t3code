@@ -141,7 +141,6 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       {Platform.OS === "android" ? (
         <AppBar
           embedded
-          sidebar={false}
           title={`Stop ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={

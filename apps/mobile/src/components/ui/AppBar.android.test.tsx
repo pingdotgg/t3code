@@ -27,9 +27,7 @@ vi.mock("./useToolbarLayout", () => ({
   useToolbarLayout: () => ({ height: 48, paddingTop: 0, paddingBottom: 0 }),
 }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../features/layout/workspace-sidebar-toolbar", () => ({
-  AndroidWorkspaceSidebarButton: () => null,
-}));
+vi.mock("../../features/layout/useSidebarToggle", () => ({ useSidebarToggle: () => null }));
 vi.mock("../../features/settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeVariables: {} }),
 }));
@@ -50,7 +48,7 @@ it("renders a sheet bar without search outside a navigation container", () => {
   const root = createRoot(container);
   roots.push(root);
 
-  act(() => root.render(<AppBar sheet sidebar={false} title="Arrange threads" />));
+  act(() => root.render(<AppBar sheet title="Arrange threads" />));
 
   expect(container.textContent).toBe("Arrange threads");
 });
