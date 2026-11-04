@@ -43,13 +43,12 @@ describe("insertPullRequestMention", () => {
     });
   });
 
-  it("reuses the space that already follows", () => {
+  it("reuses the space that already follows and moves past it", () => {
     const text = "@ju please look";
     const trigger = detectPullRequestMention(text, 3)!;
-    expect(insertPullRequestMention(text, trigger, "julius")).toEqual({
-      text: "@julius please look",
-      cursor: "@julius".length,
-    });
+    const inserted = insertPullRequestMention(text, trigger, "julius");
+    expect(inserted).toEqual({ text: "@julius please look", cursor: "@julius ".length });
+    expect(detectPullRequestMention(inserted.text, inserted.cursor)).toBeNull();
   });
 });
 

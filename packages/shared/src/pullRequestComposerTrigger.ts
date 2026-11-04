@@ -30,12 +30,11 @@ export function insertPullRequestMention(
   login: string,
 ): { text: string; cursor: number } {
   const followedBySpace = /\s/.test(text[trigger.rangeEnd] ?? "");
-  return replaceTextRange(
-    text,
-    trigger.rangeStart,
-    trigger.rangeEnd,
-    followedBySpace ? `@${login}` : `@${login} `,
-  );
+  if (!followedBySpace) {
+    return replaceTextRange(text, trigger.rangeStart, trigger.rangeEnd, `@${login} `);
+  }
+  const inserted = replaceTextRange(text, trigger.rangeStart, trigger.rangeEnd, `@${login}`);
+  return { ...inserted, cursor: inserted.cursor + 1 };
 }
 
 // GitLab's project users search answers nothing below three characters, so shorter queries
