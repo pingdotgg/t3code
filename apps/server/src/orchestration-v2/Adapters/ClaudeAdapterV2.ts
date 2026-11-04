@@ -149,7 +149,7 @@ import {
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import {
   claudeLaunchArgDirectories,
-  claudeLaunchArgSettingSources,
+  claudeLaunchArgSettingsScope,
   discoverClaudeSkills,
   resolveClaudeLocalSettingsDirectory,
 } from "../../provider/Drivers/ClaudeSkills.ts";
@@ -10489,7 +10489,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 adapterOptions.environment,
                 turnInput.runtimePolicy.cwd ?? undefined,
                 launchArgSettings?.env,
-                claudeLaunchArgSettingSources(adapterOptions.settings?.launchArgs),
+                claudeLaunchArgSettingsScope(adapterOptions.settings?.launchArgs),
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),

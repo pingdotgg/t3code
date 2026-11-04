@@ -560,6 +560,11 @@ export const resolveClaudeLocalSettingsDirectory = Effect.fn("resolveClaudeLocal
   },
 );
 
+export interface ClaudeLaunchArgSettingsScope {
+  readonly settingSources?: ReadonlySet<string>;
+  readonly projectConfigRoot?: string;
+}
+
 /**
  * The `env` values a Claude process in `cwd` sees: user, project, local, then --settings, with
  * managed settings over all of them. Reads the files each call so a new session sees edits.
@@ -569,22 +574,32 @@ export const readClaudeSessionSettingsEnv = Effect.fn("readClaudeSessionSettings
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
   launchArgEnv?: Readonly<Record<string, unknown>>,
-  settingSources?: ReadonlySet<string>,
+  scope: ClaudeLaunchArgSettingsScope = {},
 ): Effect.fn.Return<ClaudeSettingsEnv, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
-  const loads = (source: string) => settingSources === undefined || settingSources.has(source);
+  const loads = (source: string) =>
+    scope.settingSources === undefined || scope.settingSources.has(source);
+  const configuredRoot =
+    scope.projectConfigRoot === undefined
+      ? undefined
+      : path.resolve(cwd ?? ".", scope.projectConfigRoot);
+  const projectRoot = configuredRoot ?? cwd;
   const localDirectory =
-    cwd === undefined ? undefined : yield* resolveClaudeLocalSettingsDirectory(cwd);
+    configuredRoot === undefined && cwd !== undefined
+      ? yield* resolveClaudeLocalSettingsDirectory(cwd)
+      : undefined;
   const settingsEnv: ClaudeSettingsEnv = {};
   for (const settingsPath of [
     ...(loads("user") ? [path.join(configDirPath, "settings.json")] : []),
-    ...(cwd !== undefined && loads("project") ? [path.join(cwd, ".claude", "settings.json")] : []),
-    ...(cwd !== undefined && loads("local")
+    ...(projectRoot !== undefined && loads("project")
+      ? [path.join(projectRoot, ".claude", "settings.json")]
+      : []),
+    ...(projectRoot !== undefined && loads("local")
       ? [
-          path.join(cwd, ".claude", "settings.local.json"),
-          ...(localDirectory !== undefined && localDirectory !== cwd
+          path.join(projectRoot, ".claude", "settings.local.json"),
+          ...(localDirectory !== undefined && localDirectory !== projectRoot
             ? [path.join(localDirectory, ".claude", "settings.local.json")]
             : []),
         ]
@@ -597,14 +612,17 @@ export const readClaudeSessionSettingsEnv = Effect.fn("readClaudeSessionSettings
   return settingsEnv;
 });
 
-/** The sources named by --setting-sources; --settings and managed settings always apply. */
-export function claudeLaunchArgSettingSources(
-  launchArgs?: string,
-): ReadonlySet<string> | undefined {
-  const value = parseCliArgs(launchArgs ?? "").flags["setting-sources"];
-  return typeof value === "string"
-    ? new Set(value.split(",").map((source) => source.trim()))
-    : undefined;
+/** Launch arguments that decide which settings files load; --settings and managed always apply. */
+export function claudeLaunchArgSettingsScope(launchArgs?: string): ClaudeLaunchArgSettingsScope {
+  const flags = parseCliArgs(launchArgs ?? "").flags;
+  const settingSources = flags["setting-sources"];
+  const projectConfigRoot = flags["project-config-root"];
+  return {
+    ...(typeof settingSources === "string"
+      ? { settingSources: new Set(settingSources.split(",").map((source) => source.trim())) }
+      : {}),
+    ...(projectConfigRoot ? { projectConfigRoot } : {}),
+  };
 }
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.

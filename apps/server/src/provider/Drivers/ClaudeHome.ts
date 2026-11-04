@@ -9,6 +9,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
+  type ClaudeLaunchArgSettingsScope,
   type ClaudeSettingsEnv,
   readClaudeSessionSettingsEnv,
   readClaudeSettingsEnv,
@@ -121,11 +122,11 @@ export const resolveClaudeSessionEnvironment = Effect.fn("resolveClaudeSessionEn
     environment: NodeJS.ProcessEnv,
     cwd: string | undefined,
     launchArgEnv?: Readonly<Record<string, unknown>>,
-    settingSources?: ReadonlySet<string>,
+    scope?: ClaudeLaunchArgSettingsScope,
   ) {
     return withClaudeEntrypoint(
       environment,
-      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv, settingSources),
+      yield* readClaudeSessionSettingsEnv(config, cwd, environment, launchArgEnv, scope),
     );
   },
 );
