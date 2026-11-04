@@ -380,7 +380,7 @@ export default function DiffPanel({
     canReadFiles && isGitSelection && activeThread && activeCwd
       ? ({
           cwd: activeCwd,
-          sourceKind: selectedGitSourceKind,
+          ...(selectedGitSourceKind === "commit" ? {} : { sourceKind: selectedGitSourceKind }),
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
