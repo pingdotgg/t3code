@@ -12,9 +12,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -54,7 +56,13 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly metadataServer?: boolean;
+    readonly metadataHost?: string;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -108,7 +116,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  const controls = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    metadataServer: options.metadataServer ?? false,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -156,6 +169,25 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         return selected;
       }),
   });
+  const metadataRequests: Array<string> = [];
+  const httpClient = HttpClient.make((request) => {
+    if (!request.url.startsWith(`http://${options.metadataHost ?? "169.254.169.254"}`)) {
+      return Effect.die("Unexpected quota request");
+    }
+    metadataRequests.push(request.url);
+    return controls.metadataServer
+      ? Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(null, { headers: { "Metadata-Flavor": "Google" } }),
+          ),
+        )
+      : Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request }),
+          }),
+        );
+  });
   const observedSpawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
@@ -201,10 +233,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "GEMINI_HOME", value: "/must-not-be-used" },
       { name: "ANTIGRAVITY_HARNESS_PATH", value: "/must-not-be-used" },
       { name: "BROWSER", value: "must-not-run" },
+      { name: "CLOUDSDK_CONFIG", value: "" },
+      { name: "GCE_METADATA_HOST", value: "" },
+      ...(options.environment ?? []),
     ].map((variable) => ({ ...variable, sensitive: false })),
   }).pipe(
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
+    Effect.provideService(HttpClient.HttpClient, httpClient),
   );
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
@@ -238,6 +274,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     acquisitions,
     releases,
     launches,
+    metadataRequests,
     readRequests,
     assertClosed,
   };
@@ -355,6 +392,103 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports missing Google Cloud credentials before Agent Platform starts",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
+        const h = yield* makeHarness({
+          config: { authMethod: "agent-platform", gcpProject: "proj", gcpLocation: "us-central1" },
+          environment: [{ name: "HOME", value: home }],
+        });
+        const result = yield* h.refresh().pipe(Effect.result);
+        expect(Result.isFailure(result) ? result.failure.detail : "refresh succeeded").toContain(
+          "gcloud auth application-default login",
+        );
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).not.toBe("authenticated");
+        expect(h.launches).toEqual([]);
+
+        const gcloudDirectory = path.join(home, ".config", "gcloud");
+        yield* fs.makeDirectory(gcloudDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(gcloudDirectory, "application_default_credentials.json"),
+          "{}",
+        );
+        yield* h.refresh();
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "starts Agent Platform with metadata server credentials and no local credentials file",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
+        const h = yield* makeHarness({
+          config: { authMethod: "agent-platform", gcpProject: "proj", gcpLocation: "us-central1" },
+          environment: [
+            { name: "HOME", value: home },
+            { name: "GCE_METADATA_HOST", value: "metadata.internal:8080" },
+          ],
+          metadataHost: "metadata.internal:8080",
+          metadataServer: false,
+        });
+        const error = yield* h.refresh().pipe(Effect.flip);
+        expect(error.detail).toContain("gcloud auth application-default login");
+        h.controls.metadataServer = true;
+        yield* TestClock.adjust("30 seconds");
+        yield* h.refresh();
+        yield* h.refresh();
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+        expect(h.metadataRequests).toEqual([
+          "http://metadata.internal:8080",
+          "http://metadata.internal:8080",
+        ]);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "signs out of Agent Platform after its Google Cloud credentials are removed",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
+        const credentials = path.join(
+          home,
+          ".config",
+          "gcloud",
+          "application_default_credentials.json",
+        );
+        yield* fs.makeDirectory(path.dirname(credentials), { recursive: true });
+        yield* fs.writeFileString(credentials, "{}");
+        const h = yield* makeHarness({
+          config: { authMethod: "agent-platform", gcpProject: "proj", gcpLocation: "us-central1" },
+          // The mock advertises sign-out only when it lists an auth method.
+          environment: [
+            { name: "HOME", value: home },
+            { name: "T3_ACP_AUTH_METHOD_ID", value: "agent-platform" },
+          ],
+        });
+        const auth = h.instance.auth;
+        if (!auth) return yield* Effect.die("Antigravity does not expose sign-in.");
+        yield* h.refresh();
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+
+        yield* fs.remove(credentials);
+        const state = yield* auth.logout(Effect.void);
+        expect(state.message).toBe("Signed out of Google.");
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
+        expect((yield* h.readRequests).map((request) => request.method)).toContain("logout");
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );

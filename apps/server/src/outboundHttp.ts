@@ -26,6 +26,15 @@ export function installHttp1FetchDispatcher(): void {
   );
 }
 
+/** A fetch on its own Agent, so neither the global dispatcher nor an env proxy applies. */
+export function makeDirectFetch() {
+  const undici = requireUndici("undici") as typeof Undici;
+  const dispatcher = new undici.Agent();
+  const fetch: typeof Undici.fetch = (input, init) => undici.fetch(input, { ...init, dispatcher });
+  // The same WHATWG fetch, typed by npm undici rather than the copy behind Node's globals.
+  return { fetch: fetch as typeof globalThis.fetch, close: () => dispatcher.destroy() };
+}
+
 /** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936). */
 export function keepOutboundFetchOnHttp1(): void {
   if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
