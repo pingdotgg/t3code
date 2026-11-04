@@ -474,7 +474,6 @@ const requestAndApply = Effect.fn("requestPullRequestSyncHarness")(function* (
   yield* applyRecordedSyncs(fixture);
 });
 
-/** A thread with an open pull request whose merge command marks the end of earlier events. */
 // What `az repos pr create` prints: the REST GitPullRequest, whose `url` is an API URL.
 const AZURE_PULL_REQUEST_CREATED = JSON.stringify(
   {
@@ -507,6 +506,7 @@ const AZURE_PULL_REQUEST_CREATED = JSON.stringify(
   2,
 );
 
+/** A thread with an open pull request whose merge command marks the end of earlier events. */
 const MERGING_THREAD = ThreadId.make("merging");
 
 /** The link commands `events` dispatch, read once the reactor has handled them all. */
@@ -1763,6 +1763,13 @@ describe("PullRequestSyncReactor", () => {
         'az repos pr create --source-branch feature --target-branch main --title "Fix the thing"',
       output: AZURE_PULL_REQUEST_CREATED,
       linked: [42],
+    },
+    {
+      name: "an Azure DevOps pull request listed beside a create that printed nothing",
+      input:
+        "az repos pr list --top 1 --query '[0]' && az repos pr create --title test > /dev/null",
+      output: AZURE_PULL_REQUEST_CREATED,
+      linked: [],
     },
     {
       name: "an Azure DevOps pull request after a push",
