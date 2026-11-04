@@ -34,7 +34,9 @@ class T3VoiceTranscriptionModule : Module() {
       withContext(Dispatchers.IO) {
         require(android.net.Uri.parse(uri).scheme == "file") { "Expected a local recording." }
         withRecordedPcm(context, uri) { pcm ->
-          requireCompleteAudio(pcm.length() <= 16000L * 2 * 301) { "Recording exceeds five minutes." }
+          requireCompleteAudio(pcm.length() <= 16000L * 2 * 301) {
+            "Recording exceeds five minutes."
+          }
           pcm.readBytes()
         }
       }
