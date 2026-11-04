@@ -1,4 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -7,7 +8,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -20,6 +23,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -123,6 +127,7 @@ const encodeHttp2Fallback = Schema.encodeSync(Http2Fallback);
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
 const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
+export const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
 
 /** Preserve user-chosen PATH binaries and overrides; CLI downloads require consent. */
 function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): boolean {
@@ -226,6 +231,60 @@ export const make = Effect.gen(function* () {
   );
   const quicStallsRef = yield* Ref.make<ReadonlyArray<number>>([]);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
+
+  const { logsDir } = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  const relayClientLogPath = path.join(logsDir, RELAY_CLIENT_LOG_FILE);
+  // Synchronous appends avoid a flush timer for this low-volume log.
+  const fallbackLoggers = yield* Effect.service(Logger.CurrentLoggers);
+  let writeFailureReported = false;
+  const relayClientLog = yield* Effect.try(
+    () =>
+      new RotatingFileSink({
+        filePath: relayClientLogPath,
+        maxBytes: 1024 * 1024,
+        maxFiles: 2,
+        throwOnError: true,
+      }),
+  ).pipe(
+    Effect.map((sink) =>
+      Logger.make((options) => {
+        try {
+          const entry = Logger.formatJson.log(options);
+          const bytes = Buffer.byteLength(entry) + 1;
+          sink.write(
+            bytes <= 1024 * 1024
+              ? `${entry}\n`
+              : `${JSON.stringify({
+                  timestamp: options.date.toISOString(),
+                  level: options.logLevel.toUpperCase(),
+                  message: ["Relay client log entry omitted: exceeds 1 MiB", { bytes }],
+                })}\n`,
+          );
+        } catch {
+          if (!writeFailureReported) {
+            writeFailureReported = true;
+            for (const logger of fallbackLoggers) {
+              logger.log({
+                ...options,
+                logLevel: "Warn",
+                message: ["Relay client log unavailable", { filePath: relayClientLogPath }],
+              });
+            }
+          }
+        }
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.logWarning("Relay client log unavailable", {
+        filePath: relayClientLogPath,
+        cause: error,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  // Forked connector fibers inherit this logger after the applyConfig span ends.
+  const withRelayClientLog = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    relayClientLog ? Effect.withLogger(effect, relayClientLog) : effect;
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
@@ -760,6 +819,7 @@ export const make = Effect.gen(function* () {
           return yield* reconcileConfig(config);
         }),
       ),
+    withRelayClientLog,
   );
 
   const readMetrics = <S extends Schema.Decoder<unknown>>(url: string, schema: S) =>

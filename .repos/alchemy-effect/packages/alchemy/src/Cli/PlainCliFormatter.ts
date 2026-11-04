@@ -11,9 +11,7 @@ const compactFlagType = (type: string): string => {
   const value = bracketed ? type.slice(1, -1) : type;
   const choices = value.split("|");
   const compact =
-    choices.length > 2
-      ? `${choices.slice(0, 2).join("|")}|…`
-      : `${value.slice(0, 21)}…`;
+    choices.length > 2 ? `${choices.slice(0, 2).join("|")}|…` : `${value.slice(0, 21)}…`;
   return bracketed ? `<${compact}>` : compact;
 };
 
@@ -62,14 +60,14 @@ const wrapLines = (text: string, width: number): string =>
  * to the terminal width — CI logs, redirected output, and coding agents
  * get parseable, bounded lines.
  */
-export const plainCliFormatter = (options: {
-  columns: number;
-}): CliOutput.Formatter => {
+export const plainCliFormatter = (options: { columns: number }): CliOutput.Formatter => {
   const columns = Math.max(60, Math.min(options.columns, 120));
   const fallback = CliOutput.defaultFormatter({ colors: false });
   return {
-    ...fallback,
-    formatHelpDoc: (doc) =>
-      wrapLines(fallback.formatHelpDoc(compactDoc(doc)), columns),
+    formatCliError: fallback.formatCliError,
+    formatError: fallback.formatError,
+    formatErrors: fallback.formatErrors,
+    formatVersion: fallback.formatVersion,
+    formatHelpDoc: (doc) => wrapLines(fallback.formatHelpDoc(compactDoc(doc)), columns),
   };
 };
