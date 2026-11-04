@@ -35,7 +35,7 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   }
 });
 
-it("filters roles, explicit NC licenses, future engines, unknown architectures and unsupported files", () => {
+it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {
   const model = catalog.models[0]!;
   for (const override of [
     { role: "langid" as const },
@@ -62,6 +62,17 @@ it("filters roles, explicit NC licenses, future engines, unknown architectures a
   }
   for (const license of ["other", "apache-2.0", "cc-by-4.0", "cc-by-sa-4.0", "unlicense"]) {
     expect(generate([{ ...model, license, minEngine: "0.4.1" }]).models).toHaveLength(1);
+  }
+  const moonshine = catalog.models.find((entry) => entry.id === "moonshine-tiny-ja")!;
+  for (const [id, allowed] of [
+    ["moonshine-tiny-ja", false],
+    ["moonshine-base-vi", false],
+    ["moonshine-base-es", false],
+    ["moonshine-base", true],
+    ["moonshine-streaming-tiny-ja", true],
+  ] as const) {
+    const entry = { ...moonshine, id, repository: `handy-computer/${id}-gguf`, license: "mit" };
+    expect(generate([entry]).models, id).toHaveLength(allowed ? 1 : 0);
   }
 });
 
