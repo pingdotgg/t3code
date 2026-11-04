@@ -715,6 +715,21 @@ describe("decodeReviewDecisionsJson", () => {
       approval: { approved: false, approvedBy: approvedBy() },
       decision: null,
     },
+    {
+      reading: "a reviewer requesting changes after another approved",
+      enterprise: false,
+      approval: {
+        approved: true,
+        approvedBy: approvedBy("julius"),
+        reviewers: {
+          nodes: [
+            { mergeRequestInteraction: { reviewState: "APPROVED" } },
+            { mergeRequestInteraction: { reviewState: "REQUESTED_CHANGES" } },
+          ],
+        },
+      },
+      decision: "changes-requested",
+    },
   ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
     expect([...decisionsOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([[7, decision]]);
   });

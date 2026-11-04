@@ -41,6 +41,7 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeMutationErrorsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
@@ -54,6 +55,7 @@ import {
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
+  APPROVALS_GRAPHQL_QUERY,
   REVIEW_DECISIONS_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
@@ -185,6 +187,34 @@ export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedError<G
   }
 }
 
+export class GitLabMutationRefusedError extends Schema.TaggedError<GitLabMutationRefusedError>()(
+  "GitLabMutationRefusedError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.String,
+    reasons: Schema.Array(Schema.String),
+  },
+) {
+  get detail(): string {
+    return `GitLab refused it: ${this.reasons.join("; ")}`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+const SET_SELF_AS_REVIEWER_MUTATION = `mutation($projectPath: ID!, $iid: String!, $reviewers: [String!]!) {
+  mergeRequestSetReviewers(
+    input: { projectPath: $projectPath, iid: $iid, reviewerUsernames: $reviewers, operationMode: APPEND }
+  ) { errors }
+}`;
+
+const REQUEST_CHANGES_MUTATION = `mutation($projectPath: ID!, $iid: String!) {
+  mergeRequestRequestChanges(input: { projectPath: $projectPath, iid: $iid }) { errors }
+}`;
+
 export type GitLabPullRequestCliError =
   | GitLabCli.GitLabCliError
   | GitLabMergeRequestReadError
@@ -193,7 +223,8 @@ export type GitLabPullRequestCliError =
   | GitLabDiffCommitParentUnavailableError
   | GitLabDiffFileContentsUnavailableError
   | GitLabDiffRefsUnavailableError
-  | GitLabViewerUnavailableError;
+  | GitLabViewerUnavailableError
+  | GitLabMutationRefusedError;
 
 /** GitLab's `per_page` limit. */
 const MAX_PAGE_SIZE = 100;
@@ -1170,6 +1201,28 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const graphqlMutation = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly operation: string;
+    readonly query: string;
+    readonly variables: Record<string, unknown>;
+  }) =>
+    graphqlRead({ ...input, decode: decodeMutationErrorsJson }).pipe(
+      Effect.flatMap((reasons) =>
+        reasons.length === 0
+          ? Effect.void
+          : Effect.fail(
+              new GitLabMutationRefusedError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: input.operation,
+                reasons,
+              }),
+            ),
+      ),
+    );
+
   const mergeRequestStats = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1316,15 +1369,20 @@ export const make = Effect.gen(function* () {
   }): Effect.Effect<
     ReadonlyMap<number, PullRequestReviewDecision | null>,
     GitLabPullRequestCliError
-  > =>
-    graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getReviewDecisions",
-      query: REVIEW_DECISIONS_GRAPHQL_QUERY,
-      variables: { fullPath: input.repository, iids: input.numbers.map(String) },
-      decode: decodeReviewDecisionsJson,
-    });
+  > => {
+    const read = (query: string) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getReviewDecisions",
+        query,
+        variables: { fullPath: input.repository, iids: input.numbers.map(String) },
+        decode: decodeReviewDecisionsJson,
+      });
+    return read(REVIEW_DECISIONS_GRAPHQL_QUERY).pipe(
+      Effect.catchTags({ GitLabCliCommandError: () => read(APPROVALS_GRAPHQL_QUERY) }),
+    );
+  };
 
   const viewerUsername = (input: { readonly cwd: string; readonly host?: string | undefined }) =>
     api({ cwd: input.cwd, host: input.host, path: "user" }).pipe(
@@ -1772,6 +1830,26 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
+        });
+      }
+      if (input.verdict === "request-changes") {
+        // GitLab keeps the verdict on the reviewer, so whoever requests changes joins the
+        // reviewers first, as on GitHub. Appending someone already there changes nothing.
+        const viewer = yield* viewerUsername(input);
+        const target = { projectPath: input.repository, iid: String(input.number) };
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: SET_SELF_AS_REVIEWER_MUTATION,
+          variables: { ...target, reviewers: [viewer] },
+        });
+        yield* graphqlMutation({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "submitReview",
+          query: REQUEST_CHANGES_MUTATION,
+          variables: target,
         });
       }
     }),

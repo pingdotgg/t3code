@@ -999,14 +999,23 @@ export function decodeRepositoryBlobsJson(
   return Result.succeed(blobs);
 }
 
-export const REVIEW_DECISIONS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+const reviewDecisionsQuery = (reviewStates: boolean) => `query($fullPath: ID!, $iids: [String!]) {
   metadata { enterprise }
   project(fullPath: $fullPath) {
     mergeRequests(iids: $iids, first: 100) {
-      nodes { iid approved approvedBy(first: 1) { nodes { username } } }
+      nodes {
+        iid
+        approved
+        approvedBy(first: 1) { nodes { username } }
+        ${reviewStates ? "reviewers { nodes { mergeRequestInteraction { reviewState } } }" : ""}
+      }
     }
   }
 }`;
+
+export const REVIEW_DECISIONS_GRAPHQL_QUERY = reviewDecisionsQuery(true);
+/** For servers from before reviewers had a review state, which reject the whole query. */
+export const APPROVALS_GRAPHQL_QUERY = reviewDecisionsQuery(false);
 
 const RawReviewDecisionsSchema = Schema.Struct({
   data: Schema.Struct({
@@ -1030,6 +1039,31 @@ const RawReviewDecisionsSchema = Schema.Struct({
                         }),
                       ),
                     ),
+                    reviewers: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Struct({
+                          nodes: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Array(
+                                Schema.NullOr(
+                                  Schema.Struct({
+                                    mergeRequestInteraction: Schema.optional(
+                                      Schema.NullOr(
+                                        Schema.Struct({
+                                          reviewState: Schema.optional(
+                                            Schema.NullOr(Schema.String),
+                                          ),
+                                        }),
+                                      ),
+                                    ),
+                                  }),
+                                ),
+                              ),
+                            ),
+                          ),
+                        }),
+                      ),
+                    ),
                   }),
                 ),
               ),
@@ -1047,6 +1081,7 @@ const decodeReviewDecisions = decodeJsonResult(RawReviewDecisionsSchema);
  * Only Enterprise Edition holds `approved` to the project's approval rules, so an unapproved
  * merge request there still needs review even when someone, such as a bot, approved it.
  * Community Edition reports `approved` once anyone approves and requires no review.
+ * A reviewer who requested changes outranks both until they review again.
  */
 export function decodeReviewDecisionsJson(
   raw: string,
@@ -1059,13 +1094,16 @@ export function decodeReviewDecisionsJson(
   const decisions = new Map<number, PullRequestReviewDecision | null>();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const number = Number(node?.iid);
+    if (node === null || !Number.isSafeInteger(number)) continue;
     if (
-      node === null ||
-      !Number.isSafeInteger(number) ||
-      node.approved == null ||
-      node.approvedBy?.nodes == null
-    )
+      node.reviewers?.nodes?.some(
+        (reviewer) => reviewer?.mergeRequestInteraction?.reviewState === "REQUESTED_CHANGES",
+      )
+    ) {
+      decisions.set(number, "changes-requested");
       continue;
+    }
+    if (node.approved == null || node.approvedBy?.nodes == null) continue;
     const approvals = node.approvedBy.nodes.length;
     if (node.approved === false && approvals === 0 && enterprise == null) continue;
     decisions.set(
@@ -1078,6 +1116,28 @@ export function decodeReviewDecisionsJson(
     );
   }
   return Result.succeed(decisions);
+}
+
+const decodeMutationPayloads = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Record(
+      Schema.String,
+      Schema.NullOr(
+        Schema.Struct({ errors: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))) }),
+      ),
+    ),
+  }),
+);
+
+/** GitLab answers a refused mutation with HTTP 200 and the reasons in each payload's `errors`. */
+export function decodeMutationErrorsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string>, DecodeFailure> {
+  const decoded = decodeMutationPayloads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    Object.values(decoded.success.data).flatMap((payload) => payload?.errors ?? []),
+  );
 }
 
 /**

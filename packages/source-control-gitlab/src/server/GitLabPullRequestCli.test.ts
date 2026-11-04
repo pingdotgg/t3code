@@ -148,6 +148,48 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("keeps approvals from a server that has no reviewer review states", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ cwd, stdin }) =>
+        (stdin ?? "").includes("reviewState")
+          ? Effect.fail(
+              new GitLabCli.GitLabCliCommandError({
+                operation: "execute",
+                command: "glab",
+                cwd,
+                cause: new Error("Field 'reviewState' doesn't exist"),
+              }),
+            )
+          : Effect.succeed(
+              output(
+                JSON.stringify({
+                  data: {
+                    metadata: { enterprise: false },
+                    project: {
+                      mergeRequests: {
+                        nodes: [
+                          { iid: "7", approved: true, approvedBy: { nodes: [{ username: "r" }] } },
+                        ],
+                      },
+                    },
+                  },
+                }),
+              ),
+            ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const decisions = yield* cli.getReviewDecisions({
+        cwd: "/w",
+        repository: "acme/web",
+        numbers: [7],
+      });
+
+      expect([...decisions]).toEqual([[7, "approved"]]);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   it.effect("asks GitLab for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
@@ -941,6 +983,49 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
       expect(argsOfCall(2)[1]).toContain("/notes");
       expect(argsOfCall(3)[1]).toContain("/approve");
+    }),
+  );
+
+  it.effect("requests changes as a reviewer and reports what GitLab refused", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ username: "bilal" }))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify({ data: { mergeRequestSetReviewers: { errors: [] } } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                data: { mergeRequestRequestChanges: { errors: ["Merge request is locked"] } },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          verdict: "request-changes",
+          body: "",
+          comments: [],
+        }),
+      );
+
+      const target = { projectPath: "acme/web", iid: "7" };
+      const setReviewers = JSON.parse(callAt(1).stdin ?? "");
+      expect(setReviewers.query).toContain("operationMode: APPEND");
+      expect(setReviewers.variables).toEqual({ ...target, reviewers: ["bilal"] });
+      const requestChanges = JSON.parse(callAt(2).stdin ?? "");
+      expect(requestChanges.query).toContain("mergeRequestRequestChanges");
+      expect(requestChanges.variables).toEqual(target);
+      assert.strictEqual(error._tag, "GitLabMutationRefusedError");
+      expect(error.detail).toBe("GitLab refused it: Merge request is locked");
     }),
   );
 
