@@ -3,7 +3,6 @@ import {
   EnvironmentId,
   MessageId,
   ThreadId,
-  TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
@@ -28,10 +27,6 @@ vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
     url: "about:blank",
     expiresAt: Date.now() + 60 * 60_000,
   }),
-}));
-vi.mock(import("~/assets/assetUrls"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useAssetUrlRefresh: () => async () => "about:blank",
 }));
 
 import { render } from "../../../test/render";
@@ -127,32 +122,27 @@ it("offers no fork on a side chat's finished reply", async () => {
 
 it("shows an HTML card from a side chat's reply inline, with full screen", async () => {
   setup();
-  const fixture = makeStreamingTimelineFixture("Here is how it moves.");
-  const reply = fixture.visibleTurnItems.find(
-    (row) => row.item.type === "assistant_message" && row.item.runId === fixture.historyRunId,
-  )!;
-  state.visibleTurnItems = [
-    ...fixture.visibleTurnItems.slice(0, 2),
-    {
-      ...reply,
-      sourceItemId: TurnItemId.make("html-card"),
-      item: {
-        ...reply.item,
-        id: TurnItemId.make("html-card"),
-        ordinal: 2,
-        type: "dynamic_tool",
-        toolName: "mcp__t3-code__html_render",
-        input: { title: "Pendulum", height: 240 },
-        output: {
-          structuredContent: {
-            htmlRender: { attachmentId: "render-pendulum.html", title: "Pendulum", height: 240 },
+  const fixture = makeStreamingTimelineFixture();
+  state.visibleTurnItems = fixture.visibleTurnItems.map((row) =>
+    row.item.type === "dynamic_tool"
+      ? {
+          ...row,
+          item: {
+            ...row.item,
+            toolName: "mcp__t3-code__html_render",
+            output: {
+              structuredContent: {
+                htmlRender: {
+                  attachmentId: "render-pendulum.html",
+                  title: "Pendulum",
+                  height: 240,
+                },
+              },
+            },
           },
-          content: [],
-        },
-      },
-    },
-    ...fixture.visibleTurnItems.slice(2),
-  ];
+        }
+      : row,
+  );
 
   await using screen = await render(<SideChatTimeline {...timelineProps(fixture, "html")} />, {
     container: timelineContainer(),
