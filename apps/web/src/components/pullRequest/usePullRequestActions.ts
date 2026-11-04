@@ -11,6 +11,7 @@ import type {
   PullRequestDetail,
   PullRequestMergeMethod,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -29,7 +30,7 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { composerTargetKey, type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -42,6 +43,7 @@ import {
   handoffPrompt,
   handoffReviewComments,
   readableFailure,
+  stripPullRequestHandoffReferences,
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
@@ -246,14 +248,57 @@ export type PullRequestHandoffDetail = Pick<
   "projectId" | "workspaceRoot" | "url"
 >;
 
-const lastHandoffPromptByDraft = new Map<DraftId, string>();
+// Persist handoffs across unmounts; replace only unchanged contributions to preserve user edits.
+const lastHandoffPromptByDraft = new Map<string, string>();
+
+export function writePullRequestTaskToComposer(
+  target: ScopedThreadRef | DraftId,
+  task: PullRequestThreadTask,
+) {
+  const store = useComposerDraftStore.getState();
+  const draft = store.getComposerDraft(target);
+  const key = composerTargetKey(target);
+  const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
+  const repeatedCommentIds = new Set(
+    (task.reviewComments ?? [])
+      .filter((comment) => previousCommentIds.has(comment.id))
+      .map((comment) => comment.id),
+  );
+  const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
+    draft?.prompt ?? "",
+    draft?.reviewComments ?? [],
+    repeatedCommentIds,
+  );
+  const prompt = handoffPrompt(
+    {
+      prompt: promptWithoutPreviousHandoff,
+      lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+    },
+    task.prompt,
+  );
+  lastHandoffPromptByDraft.set(key, task.prompt);
+  store.setPrompt(target, prompt);
+  store.setReviewComments(
+    target,
+    handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
+  );
+  for (const comment of task.reviewComments ?? []) {
+    if (!repeatedCommentIds.has(comment.id)) continue;
+    store.addReviewComment(target, comment, {
+      allowDuplicateReference: true,
+      insertAtCaret: false,
+    });
+  }
+}
 
 export function usePullRequestHandoffs({
   environmentId,
   detail,
+  composerDraftTarget,
 }: {
   environmentId: EnvironmentId;
   detail: PullRequestHandoffDetail | null;
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
 }) {
   const newThread = useNewThreadHandler();
   const prepareThread = usePreparePullRequestThreadAction({
@@ -281,24 +326,8 @@ export function usePullRequestHandoffs({
         () => null,
       ));
     if (session === null) return null;
-    const store = useComposerDraftStore.getState();
     if (task === null) return session;
-    const draft = store.getComposerDraft(session.draftId);
-    const existingComments = draft?.reviewComments ?? [];
-    const prompt = handoffPrompt(
-      {
-        prompt: draft?.prompt ?? "",
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(session.draftId),
-      },
-      task.prompt,
-    );
-    // Track only the handoff contribution so later handoffs preserve user text.
-    lastHandoffPromptByDraft.set(session.draftId, task.prompt);
-    store.setPrompt(session.draftId, prompt);
-    store.setReviewComments(
-      session.draftId,
-      handoffReviewComments(existingComments, task.reviewComments ?? []),
-    );
+    writePullRequestTaskToComposer(session.draftId, task);
     return session;
   };
 
@@ -332,6 +361,15 @@ export function usePullRequestHandoffs({
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!detail || handoff !== null) return;
+    if (composerDraftTarget !== undefined && task !== null) {
+      writePullRequestTaskToComposer(composerDraftTarget, task);
+      toastManager.add({
+        type: "success",
+        title: "Added to the composer",
+        description: "The task is in the composer. Read it over, then send.",
+      });
+      return;
+    }
     setHandoff(kind);
     // Explicit timeouts survive toast updates and would pin the result after loading.
     const toastId = toastManager.add({
