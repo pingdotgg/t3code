@@ -526,9 +526,10 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * Reading a location the server has not loaded boots its scan, and a location another caller
- * just booted lists no commands until its scan settles. Only reads after the scan's
- * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`.
+ * Reading a location the server has not loaded boots its scan, and only reads after the scan's
+ * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
+ * loaded location listing no commands is still scanning. OpenCode exposes no readiness signal,
+ * so one another caller booted moments earlier can still read partial.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
