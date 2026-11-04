@@ -181,7 +181,7 @@ describe("scan cache round trip", () => {
     ).toEqual(original);
   });
 
-  it.each([5, 6, 7, 8, 9, 10])(
+  it.each([5, 6, 7, 8, 9, 10, 11])(
     "retains v%s history while re-reading folder metadata and Codex provenance",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -223,6 +223,101 @@ describe("scan cache round trip", () => {
       const compatible = decodeScanCache({ ...encoded, version }, formats);
       expect(compatible.get("/gone-pi.jsonl")).toEqual(
         version >= 6 ? original.get("/gone-pi.jsonl") : restored.get("/gone-pi.jsonl"),
+      );
+    },
+  );
+
+  it.each([5, 6, 7, 8, 10])(
+    "retains v%s history and compatible positions of folderless formats but invalidates obsolete state",
+    (version) => {
+      const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
+      original.set("/gone-codex.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        provider: "codex",
+        malformedRecords: 1,
+        records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
+        position: position({
+          state: {
+            ...(version >= 6 ? initialCodexScanState() : {}),
+            model: "gpt-6-astra",
+            speed: "fast",
+            sessionId: "session-a",
+            lastUsageSignature: null,
+            sawSessionMeta: true,
+            suppressingForkCopies: false,
+            forkCopyAnchorMs: 0,
+          },
+        }),
+      });
+      original.set("/gone-pi.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        size: 256,
+        provider: "pi",
+        records: [record({ provider: "pi", model: "anthropic/claude-fable-5" })],
+        malformedRecords: 3,
+        position: position({ state: { sessionId: "session-a" } }),
+      });
+      const cleanCodex = {
+        ...original.get("/gone-codex.jsonl")!,
+        malformedRecords: 0,
+      };
+      original.set("/clean-codex.jsonl", cleanCodex);
+      const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+      const entry = encoded.files["/gone.jsonl"]!;
+      const legacy = {
+        ...encoded,
+        version,
+        files: {
+          ...encoded.files,
+          "/gone.jsonl": {
+            s: entry.s,
+            m: entry.m,
+            p: entry.p,
+            r: entry.r,
+            t: entry.t,
+            o: entry.o,
+            gl: entry.gl,
+            gh: entry.gh,
+            cs: entry.cs,
+          },
+        },
+      };
+
+      // Folder-aware formats re-read every pre-v12 entry; this covers reducer compatibility alone.
+      const folderless = new Map(
+        [...TEST_FORMAT_MAP].map(([kind, { workingDirectory: _folder, ...format }]) => [
+          kind,
+          format,
+        ]),
+      );
+      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), folderless);
+      expect(restored.get("/gone.jsonl")).toEqual(
+        version >= 10
+          ? original.get("/gone.jsonl")
+          : {
+              ...original.get("/gone.jsonl"),
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
+      expect(restored.get("/gone-codex.jsonl")).toEqual({
+        ...original.get("/gone-codex.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+      expect(restored.get("/clean-codex.jsonl")).toEqual({
+        ...cleanCodex,
+        size: version >= 8 ? cleanCodex.size : -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+      expect(restored.get("/gone-pi.jsonl")).toEqual(
+        version >= 6
+          ? original.get("/gone-pi.jsonl")
+          : {
+              ...original.get("/gone-pi.jsonl"),
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
       );
     },
   );
@@ -312,7 +407,7 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous)), TEST_FORMAT_MAP).size).toBe(0);
   });
 
-  it.each([8, 9])("preserves compatible v%s Codex positions without folder metadata", (version) => {
+  it.each([8, 9])("keeps v%s Codex folder metadata while restarting its parse", (version) => {
     const { workingDirectory: _folder, ...withoutFolder } = TEST_FORMAT_MAP.get("codex")!;
     const formats = new Map(TEST_FORMAT_MAP).set("codex", withoutFolder);
     for (const malformedRecords of [0, 1]) {
@@ -328,12 +423,11 @@ describe("scan cache round trip", () => {
         position: position({ state: initialCodexScanState() }),
       });
       const restored = decodeScanCache({ ...encodeScanCache(original), version }, formats);
-      const resets = version === 8 && malformedRecords > 0;
+      // Before v11 Codex never resumes, and a malformed entry re-parses whole.
       expect(restored.get("/gone.jsonl")).toEqual({
         ...original.get("/gone.jsonl"),
-        ...(resets
-          ? { size: -1, position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null } }
-          : {}),
+        ...(malformedRecords > 0 ? { size: -1 } : {}),
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
     }
   });

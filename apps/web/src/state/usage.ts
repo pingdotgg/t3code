@@ -11,7 +11,11 @@ import {
   UsageReadError,
 } from "@t3tools/contracts";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
-import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import {
+  needsCursorKeychainAccess,
+  refreshUsage,
+  usageSummaryInput,
+} from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -179,12 +183,23 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         });
         continue;
       }
+      const modelFilter = get(serverEnvironment.usageModelFilterAtom(environmentId));
       let window = input;
-      let result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      let result = get(
+        serverEnvironment.usageSummary({
+          environmentId,
+          input: usageSummaryInput(input, modelFilter),
+        }),
+      );
       let readByDay = false;
       if (fallbackInput !== null && isRejectedWindow(result)) {
         window = fallbackInput;
-        result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackInput }));
+        result = get(
+          serverEnvironment.usageSummary({
+            environmentId,
+            input: usageSummaryInput(fallbackInput, modelFilter),
+          }),
+        );
         readByDay = true;
       }
       let summary = AsyncResult.getOrElse(result, () => null);

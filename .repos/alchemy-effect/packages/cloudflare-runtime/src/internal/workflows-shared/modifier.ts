@@ -1,10 +1,10 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { RpcTarget } from "cloudflare:workers";
-import { computeHash } from "./lib/cache.ts";
-import { isReadableStreamLike, writeStreamOutput } from "./lib/streams.ts";
 import type { Event } from "./context.ts";
 import type { Engine } from "./engine.ts";
+import { computeHash } from "./lib/cache.ts";
+import { isReadableStreamLike, writeStreamOutput } from "./lib/streams.ts";
 
 export type StepSelector = {
   name: string;
@@ -101,17 +101,11 @@ export class WorkflowInstanceModifier extends RpcTarget {
 
   async disableRetryDelays(steps?: Array<StepSelector>): Promise<void> {
     if (!steps) {
-      await this.#state.storage.put(
-        MODIFIER_KEYS.DISABLE_ALL_RETRY_DELAYS,
-        true,
-      );
+      await this.#state.storage.put(MODIFIER_KEYS.DISABLE_ALL_RETRY_DELAYS, true);
     } else {
       for (const step of steps) {
         const valueKey = await this.#getStepCacheKey(step);
-        await this.#state.storage.put(
-          `${MODIFIER_KEYS.DISABLE_RETRY_DELAY}${valueKey}`,
-          true,
-        );
+        await this.#state.storage.put(`${MODIFIER_KEYS.DISABLE_RETRY_DELAY}${valueKey}`, true);
       }
     }
   }
@@ -125,14 +119,8 @@ export class WorkflowInstanceModifier extends RpcTarget {
   async mockStepResult(step: StepSelector, stepResult: unknown): Promise<void> {
     const valueKey = await this.#getStepCacheKey(step);
 
-    if (
-      await this.#state.storage.get(
-        `${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`,
-      )
-    ) {
-      throw new Error(
-        `[WorkflowIntrospector] Trying to mock step '${step.name}' multiple times!`,
-      );
+    if (await this.#state.storage.get(`${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`)) {
+      throw new Error(`[WorkflowIntrospector] Trying to mock step '${step.name}' multiple times!`);
     }
 
     if (isReadableStreamLike(stepResult)) {
@@ -148,39 +136,25 @@ export class WorkflowInstanceModifier extends RpcTarget {
         skipMetaWrite: true,
       });
 
-      await this.#state.storage.put(
-        `${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`,
-        {
-          __mockStreamOutput: true,
-          cacheKey: baseCacheKey,
-          meta: streamMeta,
-        },
-      );
+      await this.#state.storage.put(`${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`, {
+        __mockStreamOutput: true,
+        cacheKey: baseCacheKey,
+        meta: streamMeta,
+      });
     } else {
-      await this.#state.storage.put(
-        `${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`,
-        stepResult,
-      );
+      await this.#state.storage.put(`${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`, stepResult);
     }
   }
 
   // Same logic of `mockStepResult` but stores an error instead of a value.
-  async mockStepError(
-    step: StepSelector,
-    error: Error,
-    times?: number,
-  ): Promise<void> {
+  async mockStepError(step: StepSelector, error: Error, times?: number): Promise<void> {
     const valueKey = await this.#getStepCacheKey(step);
     const serializableError = {
       name: error.name,
       message: error.message,
     };
 
-    if (
-      await this.#state.storage.get(
-        `${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`,
-      )
-    ) {
+    if (await this.#state.storage.get(`${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`)) {
       throw new Error(
         `[WorkflowIntrospector] Trying to mock error on step '${step.name}' after mocking its result!`,
       );
@@ -204,11 +178,7 @@ export class WorkflowInstanceModifier extends RpcTarget {
   async forceStepTimeout(step: StepSelector, times?: number) {
     const valueKey = await this.#getStepCacheKey(step);
 
-    if (
-      await this.#state.storage.get(
-        `${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`,
-      )
-    ) {
+    if (await this.#state.storage.get(`${MODIFIER_KEYS.REPLACE_RESULT}${valueKey}`)) {
       throw new Error(
         `[WorkflowIntrospector] Trying to force timeout on step '${step.name}' after mocking its result!`,
       );
@@ -236,18 +206,12 @@ export class WorkflowInstanceModifier extends RpcTarget {
       type: event.type,
     };
 
-    await this.#state.storage.put(
-      `${MODIFIER_KEYS.MOCK_EVENT}${event.type}`,
-      true,
-    );
+    await this.#state.storage.put(`${MODIFIER_KEYS.MOCK_EVENT}${event.type}`, true);
     await this.#engine.receiveEvent(myEvent);
   }
 
   async forceEventTimeout(step: StepSelector): Promise<void> {
     const waitForEventKey = await this.#getWaitForEventCacheKey(step);
-    await this.#state.storage.put(
-      `${MODIFIER_KEYS.FORCE_EVENT_TIMEOUT}${waitForEventKey}`,
-      true,
-    );
+    await this.#state.storage.put(`${MODIFIER_KEYS.FORCE_EVENT_TIMEOUT}${waitForEventKey}`, true);
   }
 }

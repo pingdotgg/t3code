@@ -20,7 +20,7 @@ import { Keyboard, Platform, Pressable, ScrollView, TextInput, View } from "reac
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -306,7 +306,8 @@ function ZipArchiveHeader(props: {
         }}
       />
       {isAndroid ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={props.name}
           subtitle={props.subtitle}
           onBack={() => {
@@ -756,7 +757,8 @@ function ZipEntryView(props: {
         }}
       />
       {isAndroid ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={entry.name}
           subtitle={subtitle}
           onBack={props.onBack}
