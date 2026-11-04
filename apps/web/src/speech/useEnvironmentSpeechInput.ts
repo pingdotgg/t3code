@@ -385,7 +385,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         .finally(() => {
           refreshing = false;
         });
-    }, 350);
+    }, 1_000);
     return () => {
       disposed = true;
       window.clearInterval(timer);
