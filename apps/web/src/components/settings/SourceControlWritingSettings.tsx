@@ -91,7 +91,9 @@ export function SourceControlWritingSettingsSection() {
   const mixedWriterModel = useScopedSettingsMixed(["sourceControlWriterModelSelection"]);
   const mixedReviewGuideModel = useScopedSettingsMixed(["reviewGuideModelSelection"]);
   const mixedReviewGuideInstructions = useScopedSettingsMixed(["reviewGuideInstructions"]);
+  const mixedChangeRequestInstructions = useScopedSettingsMixed(["changeRequestInstructions"]);
   const reviewGuideInstructionsEdited = useRef(false);
+  const changeRequestInstructionsEdited = useRef(false);
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editingAllInstructions, setEditingAllInstructions] = useState(false);
@@ -288,6 +290,47 @@ export function SourceControlWritingSettingsSection() {
             />
           </div>
         ) : null}
+      </SettingsRow>
+
+      <SettingsRow
+        serverScoped
+        settingKeys={["changeRequestInstructions"]}
+        {...searchableSetting("change-request-instructions")}
+        description="Extra preferences for generated change request titles and descriptions. Applied on top of the writing style above."
+        resetAction={
+          mixedChangeRequestInstructions || settings.changeRequestInstructions !== "" ? (
+            <SettingResetButton
+              label="change request instructions"
+              onClick={() => updateSettings({ changeRequestInstructions: "" })}
+            />
+          ) : null
+        }
+      >
+        <div className="mt-3 max-w-2xl pb-3.5">
+          <Textarea
+            key={`${scopeKey}:${mixedChangeRequestInstructions}:${settings.changeRequestInstructions}`}
+            aria-label="Change request instructions"
+            onChange={() => {
+              changeRequestInstructionsEdited.current = true;
+            }}
+            rows={3}
+            defaultValue={mixedChangeRequestInstructions ? "" : settings.changeRequestInstructions}
+            placeholder={
+              mixedChangeRequestInstructions
+                ? "Mixed. Enter instructions to apply to all selected targets."
+                : "Mention related issues. Prefer a Testing section with concrete checks."
+            }
+            onBlur={(event) => {
+              const value = event.target.value.trim();
+              if (
+                changeRequestInstructionsEdited.current &&
+                (mixedChangeRequestInstructions || value !== settings.changeRequestInstructions)
+              )
+                updateSettings({ changeRequestInstructions: value });
+              changeRequestInstructionsEdited.current = false;
+            }}
+          />
+        </div>
       </SettingsRow>
 
       <SettingsRow

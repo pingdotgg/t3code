@@ -1006,6 +1006,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "change-request-instructions",
+    title: "Change request instructions",
+    to: "/settings/source-control",
+    searchTerms: [
+      "pull request pr merge request title description body generated content prompt custom preferences",
+    ],
+    environmentOnly: true,
+    scope: "project-defaults",
+  },
+  {
     id: "follow-change-request-templates",
     title: "Follow change request templates",
     to: "/settings/source-control",

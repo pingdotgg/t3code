@@ -114,6 +114,7 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
+  readonly changeRequestInstructions: string;
 }
 
 export class GitManager extends Context.Service<
@@ -2316,7 +2317,17 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
+    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
+    const extraChangeRequestInstructions = settings.changeRequestInstructions.trim();
+    const policy =
+      extraChangeRequestInstructions.length === 0
+        ? stylePolicy
+        : {
+            ...stylePolicy,
+            changeRequestInstructions: stylePolicy.changeRequestInstructions
+              ? `${stylePolicy.changeRequestInstructions}\n\n${extraChangeRequestInstructions}`
+              : extraChangeRequestInstructions,
+          };
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
@@ -2334,7 +2345,7 @@ export const make = Effect.gen(function* () {
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
+      policy,
       modelSelection: settings.modelSelection,
     });
 
@@ -3180,6 +3191,7 @@ export const make = Effect.gen(function* () {
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
                   style: settings.sourceControlWritingStyle,
+                  changeRequestInstructions: settings.changeRequestInstructions,
                 })
               : providerRegistry.getProviders.pipe(
                   Effect.map((providers) => ({
@@ -3189,6 +3201,7 @@ export const make = Effect.gen(function* () {
                       projectId,
                     ),
                     style: settings.sourceControlWritingStyle,
+                    changeRequestInstructions: settings.changeRequestInstructions,
                   })),
                 ),
           ),

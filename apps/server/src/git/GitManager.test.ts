@@ -2840,6 +2840,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("appends change request instructions on top of the writing style for PR content", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/change-request-instructions"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+      yield* runGit(repoDir, ["add", "feature.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add feature"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/change-request-instructions"]);
+
+      let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          changeRequestInstructions: "Mention related issues.",
+        },
+        providerScenario: { prListSequence: [[], []] },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedPolicy).toEqual(
+        expect.objectContaining({
+          kind: "repo_conventions",
+          changeRequestInstructions: expect.stringMatching(
+            /Follow the repository's established change request title and body style[\s\S]*Mention related issues\./,
+          ),
+        }),
+      );
+    }),
+  );
+
   it.effect("includes CLAUDE.md for Claude writers only when it differs from AGENTS.md", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -163,7 +163,9 @@ If its badge is missing because several remotes hold that branch, set the branch
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
 Choose the writing style and model in **Settings → Source control**. **Repository conventions**
-uses the project's instructions and recent commit subjects.
+uses the project's instructions and recent commit subjects. **Change request instructions** add
+preferences for generated titles and descriptions without changing that writing style; projects
+can override them.
 
 ## Review and merge
 
