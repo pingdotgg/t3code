@@ -74,6 +74,49 @@ beforeEach(() => {
 });
 
 describe("ServerBrowserContexts", () => {
+  it("refuses launches when the egress proxy setting is unusable", async () => {
+    for (const value of ["socks5://127.0.0.1:18991", "http://user:pass@127.0.0.1:1", "bad-url"]) {
+      const pool = new ServerBrowserContexts({
+        ...options(),
+        env: { T3CODE_PREVIEW_EGRESS_PROXY: value },
+      });
+      await expect(pool.contextFor("default", "agent")).rejects.toThrow("PREVIEW_EGRESS_PROXY");
+      await expect(pool.contextFor("human-profile")).rejects.toThrow("PREVIEW_EGRESS_PROXY");
+      await pool.close();
+    }
+    expect(launches.launch).not.toHaveBeenCalled();
+    expect(launches.persistent).not.toHaveBeenCalled();
+  });
+
+  it("routes persistent and isolated browser launches through the configured proxy", async () => {
+    launches.launch.mockResolvedValue(makeBrowser() as unknown as Browser);
+    launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      env: { T3CODE_PREVIEW_EGRESS_PROXY: "http://127.0.0.1:18991" },
+    });
+    await pool.contextFor("default", "agent");
+    await pool.contextFor("human-profile");
+    for (const launch of [
+      launches.launch.mock.calls[0]?.[0],
+      launches.persistent.mock.calls[0]?.[1],
+    ]) {
+      expect(launch?.proxy).toEqual({ server: "http://127.0.0.1:18991", bypass: "<-loopback>" });
+      expect(launch?.args).toContain("--disable-quic");
+    }
+    await pool.close();
+  });
+
+  it("launches directly without proxy flags when no egress proxy is configured", async () => {
+    launches.launch.mockResolvedValue(makeBrowser() as unknown as Browser);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("default", "agent");
+    const launch = launches.launch.mock.calls[0]?.[0];
+    expect(launch?.proxy).toBeUndefined();
+    expect(launch?.args).not.toContain("--disable-quic");
+    await pool.close();
+  });
+
   it("lazily shares one browser across concurrent isolated sessions and reuses each context", async () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();

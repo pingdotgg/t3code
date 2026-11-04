@@ -313,6 +313,14 @@ For a systemd service, add `Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under
 your T3 service. Setting the variable in an agent's terminal does not change the
 environment of an already running T3 server.
 
+To send the server browser's and inline HTML previews' outside traffic through an
+HTTP proxy, set `T3CODE_PREVIEW_EGRESS_PROXY=http://host:port` in the T3 server's
+environment the same way. The proxy must accept HTTP `CONNECT` without credentials
+and apply its own address policy, because it resolves each name again. Loopback
+pages still load directly. If the value isn't a usable `http://host:port` URL, the
+browser won't start and previews refuse outside connections instead of connecting
+directly. Leave it unset to keep direct connections.
+
 ## Connect an outside agent
 
 Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive

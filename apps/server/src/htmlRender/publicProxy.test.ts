@@ -149,4 +149,165 @@ describe("publicProxy", () => {
       expect(socket.closed).toBe(true);
     }),
   );
+
+  describe("egress through the host proxy", () => {
+    const keys = ["T3CODE_PREVIEW_EGRESS_PROXY"] as const;
+    const withEnv = <A, E, R>(
+      values: Partial<Record<(typeof keys)[number], string>>,
+      effect: Effect.Effect<A, E, R>,
+    ) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const saved = keys.map((key) => [key, process.env[key]] as const);
+          for (const key of keys) delete process.env[key];
+          Object.assign(process.env, values);
+          return saved;
+        }),
+        () => effect,
+        (saved) =>
+          Effect.sync(() => {
+            for (const [key, value] of saved) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+      );
+
+    /** A fake egress proxy: records CONNECT lines, answers `status`, then echoes. */
+    const fakeEgress = (status: number) =>
+      Effect.acquireRelease(
+        Effect.callback<{ readonly server: NodeNet.Server; readonly seen: Array<string> }>(
+          (resume) => {
+            const seen: Array<string> = [];
+            const server = NodeNet.createServer((socket) => {
+              socket.on("error", () => {});
+              let head = "";
+              const onData = (chunk: Buffer) => {
+                head += chunk.toString("latin1");
+                const end = head.indexOf("\r\n\r\n");
+                if (end === -1) return;
+                socket.off("data", onData);
+                seen.push(head.split("\r\n")[0]!);
+                socket.write(`HTTP/1.1 ${status} X\r\n\r\n`);
+                if (status !== 200) return void socket.end();
+                const rest = head.slice(end + 4);
+                if (rest) socket.write(rest);
+                socket.on("data", (more) => socket.write(more));
+              };
+              socket.on("data", onData);
+            });
+            server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen })));
+          },
+        ),
+        ({ server }) =>
+          Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+      );
+
+    const portOf = (server: NodeNet.Server) => (server.address() as NodeNet.AddressInfo).port;
+
+    it.live.each(["client disconnect", "scope shutdown"] as const)(
+      "closes an unfinished CONNECT on %s",
+      (reason) =>
+        Effect.gen(function* () {
+          const requested = Promise.withResolvers<void>();
+          const closed = Promise.withResolvers<void>();
+          let upstream: NodeNet.Socket | undefined;
+          let client: NodeNet.Socket | undefined;
+          const server = NodeNet.createServer((socket) => {
+            upstream = socket;
+            socket.on("error", () => {});
+            socket.once("close", () => closed.resolve());
+            socket.once("data", () => requested.resolve());
+          });
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+          );
+          try {
+            yield* withEnv(
+              { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+              Effect.gen(function* () {
+                yield* Effect.scoped(
+                  Effect.gen(function* () {
+                    const port = yield* publicProxy;
+                    client = NodeNet.connect(port, "127.0.0.1", () => {
+                      client!.write(Buffer.from([5, 1, 0]));
+                      client!.write(
+                        Buffer.concat([Buffer.from([5, 1, 0]), ipv4Target("1.1.1.1", 443)]),
+                      );
+                    });
+                    client.on("error", () => {});
+                    client.on("data", () => {});
+                    yield* Effect.promise(() => requested.promise);
+                    if (reason === "client disconnect") {
+                      client.destroy();
+                      yield* Effect.promise(() => closed.promise).pipe(Effect.timeout("1 second"));
+                    }
+                  }),
+                );
+                yield* Effect.promise(() => closed.promise).pipe(Effect.timeout("1 second"));
+              }),
+            );
+          } finally {
+            client?.destroy();
+            upstream?.destroy();
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => server.close(() => resolve())),
+            );
+          }
+        }),
+    );
+
+    it.effect("tunnels a public target through the egress proxy and never dials it directly", () =>
+      Effect.gen(function* () {
+        const { server, seen } = yield* fakeEgress(200);
+        yield* withEnv(
+          { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+          Effect.gen(function* () {
+            const port = yield* publicProxy;
+            const { code, socket } = yield* connectThrough(port, domainTarget("1.1.1.1", 443));
+            expect(code).toBe(0);
+            const echoed = yield* Effect.callback<string>((resume) => {
+              socket.once("data", (chunk) => resume(Effect.succeed(chunk.toString())));
+              socket.write("ping");
+            });
+            socket.destroy();
+            expect(echoed).toBe("ping");
+            expect(seen).toEqual(["CONNECT 1.1.1.1:443 HTTP/1.1"]);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("refuses when the egress proxy refuses the destination", () =>
+      Effect.gen(function* () {
+        const { server, seen } = yield* fakeEgress(403);
+        yield* withEnv(
+          { T3CODE_PREVIEW_EGRESS_PROXY: `http://127.0.0.1:${portOf(server)}` },
+          Effect.gen(function* () {
+            const port = yield* publicProxy;
+            const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443));
+            socket.destroy();
+            expect(code).toBe(5);
+            expect(seen).toEqual(["CONNECT 1.1.1.1:443 HTTP/1.1"]);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("refuses rather than dialing directly when the proxy setting is unusable", () =>
+      Effect.gen(function* () {
+        for (const value of ["socks5://127.0.0.1:1", "http://user:pass@127.0.0.1:1", "not a url"]) {
+          yield* withEnv(
+            { T3CODE_PREVIEW_EGRESS_PROXY: value },
+            Effect.gen(function* () {
+              const port = yield* publicProxy;
+              const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443));
+              socket.destroy();
+              expect(code).toBe(2);
+            }),
+          ).pipe(Effect.scoped);
+        }
+      }),
+    );
+  });
 });
