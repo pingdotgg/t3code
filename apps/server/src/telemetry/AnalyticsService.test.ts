@@ -124,6 +124,7 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
+  enabledAtStartup = true,
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -145,7 +146,7 @@ const sendFor = (
       Layer.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
+            ...(enabledAtStartup ? { T3CODE_TELEMETRY_ENABLED: true } : {}),
             T3CODE_POSTHOG_KEY: "phc_test_key",
             T3CODE_POSTHOG_HOST: "http://localhost",
           }),
@@ -189,6 +190,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
           yield* analytics.record("test.allowed");
           yield* analytics.flush;
         }),
+        undefined,
+        false,
       ).pipe(Effect.provideService(HostProcess.Environment, env));
       assert.deepEqual(
         batches.flat().map((event) => event.event),
@@ -374,7 +377,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
-  it.effect("does not send batch requests when telemetry is disabled", () =>
+  it.effect.each([
+    { label: "is disabled", enabled: { T3CODE_TELEMETRY_ENABLED: false } },
+    { label: "is not configured (T3 Learn's default)", enabled: {} },
+  ])("does not send batch requests when telemetry $label", ({ enabled }) =>
     Effect.gen(function* () {
       const capturedPaths: Array<string> = [];
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -383,7 +389,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: false,
+          ...enabled,
           T3CODE_POSTHOG_KEY: "phc_test_key",
           T3CODE_POSTHOG_HOST: "http://localhost",
         }),
