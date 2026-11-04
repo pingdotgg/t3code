@@ -68,6 +68,15 @@ describe("HTML in native Markdown", () => {
     );
   });
 
+  it("keeps a heading bold when its icon is its own inline HTML node", () => {
+    const markdown =
+      'Intro <summary><img src="https://example.com/c.png" width="16" height="16" alt=""> Title</summary> tail';
+    expect(markdownWithHtml(markdown)).toContain("**Title**");
+    expect(markdownWithHtml('a<img src="https://example.com/c.png" width="16" alt=""> b')).toBe(
+      "a b",
+    );
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';

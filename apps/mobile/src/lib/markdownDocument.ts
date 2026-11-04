@@ -282,22 +282,35 @@ export function markdownWithHtml(markdown: string): string {
                 : [],
             ),
           );
+    // An icon that is its own node is dropped here, so the space after it is trimmed across siblings.
+    let previous = "\n";
+    let dropSpace = false;
     for (const child of children) {
       const start = child.position?.start.offset;
       const end = child.position?.end.offset;
       const linkLabel = inLink || (anchors?.open ?? 0) > 0;
       if (child.type === "text") {
-        if (linkLabel && start !== undefined && end !== undefined) {
-          const content = escapeLinkLabel(markdown.slice(start, end));
-          if (content !== markdown.slice(start, end)) edits.push({ start, end, content });
+        if (start !== undefined && end !== undefined) {
+          const source = markdown.slice(start, end);
+          let content = linkLabel ? escapeLinkLabel(source) : source;
+          if (dropSpace) content = content.replace(/^[ \t]/, "");
+          if (content !== source) edits.push({ start, end, content });
+          previous = content || previous;
         }
+        dropSpace = false;
         continue;
       }
       if (child.type !== "html") {
+        previous = "x";
+        dropSpace = false;
         visit(child, inTableCell, linkLabel);
         continue;
       }
       const content = markdownHtmlContent(child.value, { anchors, inTableCell });
+      if (content) {
+        previous = content;
+        dropSpace = false;
+      } else if (/^<img\b/i.test(child.value)) dropSpace = /[\s*_[(]$/.test(previous);
       if (start === undefined || end === undefined) continue;
       // Text before an outermost link is never edited, so this edit cannot overlap another.
       if (content.startsWith("[") && !linkLabel && bangBefore(markdown, start))
