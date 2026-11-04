@@ -23,6 +23,7 @@ import {
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   xAiBackgroundTaskLifecycleMutation,
+  xAiContextTokensFromMeta,
   xAiPromptCompleteFromSessionUpdate,
   xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
@@ -71,6 +72,19 @@ function parseRecordedToolCallUpdate(update: Record<string, unknown>): AcpToolCa
   if (event?._tag !== "ToolCallUpdated") throw new Error("expected a tool call update");
   return event.toolCall;
 }
+
+describe("xAiContextTokensFromMeta", () => {
+  it("reads only a safe non-negative integer totalTokens", () => {
+    expect(xAiContextTokensFromMeta({ totalTokens: 18_609 })).toBe(18_609);
+    expect(xAiContextTokensFromMeta({ totalTokens: 0 })).toBe(0);
+    for (const totalTokens of [-1, 1.5, Number.NaN, 2 ** 53, "18609", null]) {
+      expect(xAiContextTokensFromMeta({ totalTokens })).toBeUndefined();
+    }
+    expect(xAiContextTokensFromMeta({})).toBeUndefined();
+    expect(xAiContextTokensFromMeta(null)).toBeUndefined();
+    expect(xAiContextTokensFromMeta(undefined)).toBeUndefined();
+  });
+});
 
 describe("XAiAcpExtension", () => {
   it("recognizes Grok Task starts as native subagents", () => {
