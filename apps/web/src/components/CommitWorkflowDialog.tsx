@@ -104,8 +104,8 @@ export function CommitWorkflowDialog(props: {
           <DialogTitle>Split into logical commits</DialogTitle>
           <DialogDescription>
             Build a dependency-ordered commit sequence using your Source Control settings. This
-            action checks intermediate states and preserves the final contents and a backup of the
-            original history.
+            action preserves the final contents and a backup of the original history. Tests run only
+            if requested in additional instructions.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

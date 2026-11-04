@@ -187,7 +187,9 @@ responsibility and dependency. It uses the model and writing style from **Settin
 including project overrides, and runs independently as a quick action without chat history.
 Existing branch history requires a clean feature branch; leave the base branch blank to use the
 repository default. The workflow reads `.t3code/commit-message.md` and is instructed to build in a
-separate worktree, check intermediate states, preserve the final contents, and keep a backup ref.
+separate worktree, inspect dependency ordering, preserve the final contents, and keep a backup ref.
+Build, type, lint, test, and IDE checks run only when requested in **Additional instructions**;
+otherwise the action skips them and dependency/runtime setup.
 The dialog closes when the action starts. Follow its running state in the Git sidebar (or the
 progress overlay on mobile), where you can cancel it. A notification shows the result when it
 finishes. Nothing is pushed.

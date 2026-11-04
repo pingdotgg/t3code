@@ -183,9 +183,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           {isWorkflow && (
             <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px]">
               <Text className="text-foreground-secondary text-sm">
-                Build and check a dependency-ordered commit sequence using your Source Control
-                settings, independently without chat history. Final contents and a backup of the
-                original history are preserved. Nothing is pushed.
+                Build a dependency-ordered commit sequence using your Source Control settings,
+                independently without chat history. Final contents and a backup of the original
+                history are preserved. Tests run only if requested in additional instructions.
+                Nothing is pushed.
               </Text>
               {(["working_tree", "branch"] as const).map((scope) => (
                 <Pressable
