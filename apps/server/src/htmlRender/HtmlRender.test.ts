@@ -290,6 +290,127 @@ describe("HtmlRender", () => {
     }),
   );
 
+  it.effect("publishes a page by path exactly as the same HTML passed inline", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+      const png = path.join(directory, "shot.png");
+      yield* fileSystem.writeFile(png, PNG_BYTES);
+      const html = `﻿<!-- report --><!DOCTYPE HTML><html><body><img src="${png}"></body></html>`;
+      const file = path.join(directory, "report.html");
+      yield* fileSystem.writeFileString(file, html);
+      const threadId = ThreadId.make("thread-html-path");
+      const stored = (reference: { readonly attachmentId: string }) =>
+        fileSystem.readFileString(
+          resolveAttachmentPathById({
+            attachmentsDir: config.attachmentsDir,
+            attachmentId: reference.attachmentId,
+          }) ?? "",
+        );
+
+      const inline = yield* htmlRender.publish({ threadId, html, title: "Shot", height: 300 });
+      const byPath = yield* htmlRender.publish({
+        threadId,
+        path: file,
+        title: "Shot",
+        height: 300,
+      });
+
+      const page = yield* stored(byPath);
+      expect(page).toBe(yield* stored(inline));
+      expect(page).toContain(`data:image/png;base64,${Base64.encode(PNG_BYTES)}`);
+      expect(page).toContain('<style id="t3-theme">');
+      // A provider that drops the result finds the page by the arguments it sent.
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const call = { path: file, title: "Shot", height: 300 };
+      expect(yield* mcpSessions.takeHtmlRender(threadId, call)).toEqual(byPath);
+      expect(
+        yield* mcpSessions.takeHtmlRender(threadId, { html, title: "Shot", height: 300 }),
+      ).toEqual(inline);
+      for (const start of ['<?xml version="1.0"?>\n<html>', "  <HEAD>", "<body>", "<html/>"]) {
+        yield* fileSystem.writeFileString(file, `${start}<p>ok</p>`);
+        yield* htmlRender.publish({ threadId, path: file, title: "Ok", height: 200 });
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects page files that are not HTML, missing, or too large", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+      const reason = (page: HtmlRender.HtmlRenderPage) =>
+        htmlRender.preview(page).pipe(
+          Effect.flip,
+          Effect.map((error) => {
+            expect(error).toBeInstanceOf(HtmlRender.HtmlRenderPageFileError);
+            return error._tag === "HtmlRenderPageFileError" ? error.reason : error.message;
+          }),
+        );
+      const write = (name: string, content: string | Uint8Array) => {
+        const file = path.join(directory, name);
+        return (
+          typeof content === "string"
+            ? fileSystem.writeFileString(file, content)
+            : fileSystem.writeFile(file, content)
+        ).pipe(Effect.as(file));
+      };
+      const notHtml = "it does not start with <!doctype html> or an <html>, <head> or <body> tag.";
+      for (const [name, content] of [
+        ["id_ed25519.html", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk=\n"],
+        ["env.html", "API_KEY=abc123\n<html></html>"],
+        ["data.html", '{"html":"<html><body>API_KEY=abc123</body></html>"}'],
+        ["hidden.html", "<!-- <html> -->API_KEY=abc123"],
+        ["fragment.html", "<div><html></html></div>"],
+        ["htmlx.html", "<htmlx>API_KEY=abc123"],
+      ] as const) {
+        expect(yield* reason({ path: yield* write(name, content) })).toBe(notHtml);
+      }
+      const binary = yield* write(
+        "page.html",
+        new Uint8Array([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0xff]),
+      );
+      expect(yield* reason({ path: binary })).toBe("it is not UTF-8 text.");
+      expect(yield* reason({ path: path.join(directory, "missing.html") })).toBe(
+        "it does not exist or cannot be read.",
+      );
+      expect(yield* reason({ path: directory })).toBe("it is not a file.");
+      expect(yield* reason({ path: "report.html" })).toBe("use an absolute path.");
+      // Invalid UTF-8 past the byte bound proves stat rejects it before any read.
+      const huge = yield* write("huge.html", new Uint8Array(512_000 * 3 + 4).fill(0xff));
+      expect(yield* reason({ path: huge })).toBe(
+        "it is 1.5 MiB; a page must be at most 512,000 characters.",
+      );
+      const long = yield* write("long.html", `<html>${"x".repeat(512_000)}`);
+      expect(yield* reason({ path: long })).toBe(
+        "it is 512,006 characters; a page must be at most 512,000 characters.",
+      );
+      // The schema leaves both optional and unbounded; the service applies one rule to both.
+      for (const page of [
+        {},
+        { html: "" },
+        { html: "<p>x</p>", path: long },
+        { html: "x".repeat(512_001) },
+      ]) {
+        const error = yield* htmlRender.preview(page).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HtmlRender.HtmlRenderPageInputError);
+        const published = yield* htmlRender
+          .publish({
+            threadId: ThreadId.make("thread-html-input"),
+            ...page,
+            title: "X",
+            height: 200,
+          })
+          .pipe(Effect.flip);
+        expect(published).toBeInstanceOf(HtmlRender.HtmlRenderPageInputError);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   // Windows reports ENOENT asynchronously for this path instead of throwing ENOTDIR.
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "when the browser spawn throws synchronously",
@@ -427,6 +548,31 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
           });
         }
       }).pipe(Effect.provide(layerHtmlRender(executable)));
+    }),
+  );
+
+  it.live("previews a page by path exactly as the same HTML passed inline", (ctx) =>
+    Effect.gen(function* () {
+      const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+        const png = path.join(directory, "shot.png");
+        yield* fileSystem.writeFile(png, PNG_BYTES);
+        const html = `<!doctype html><h1>Moon garden</h1><img src="${png}" onload="console.log('image', this.naturalWidth)" onerror="console.log('no image')">`;
+        const file = path.join(directory, "page.html");
+        yield* fileSystem.writeFileString(file, html);
+
+        const inline = yield* htmlRender.preview({ html });
+        const byPath = yield* htmlRender.preview({ path: file });
+
+        expect(byPath).toEqual(inline);
+        // A missing image would be listed here.
+        expect(byPath.missingImages).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
     }),
   );
 

@@ -19,6 +19,8 @@ const KEPT_HTML_END_LENGTH = 8_000;
 interface KeptHtmlRender {
   readonly title: string;
   readonly height: number;
+  // A page passed by path matches calls with that path; inline HTML matches by its content.
+  readonly path: string | undefined;
   readonly htmlLength: number;
   readonly htmlHash: string;
   readonly htmlEnd: string;
@@ -35,13 +37,23 @@ export class McpProviderSessions extends Context.Service<
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
-      input: { readonly html: string; readonly title: string; readonly height: number },
+      input: {
+        readonly html?: string | undefined;
+        readonly path?: string | undefined;
+        readonly title: string;
+        readonly height: number;
+      },
       reference: HtmlRenderReference,
     ) => Effect.Effect<void>;
     // A reported attachment consumes that exact page; otherwise only unique input matches count.
     readonly takeHtmlRender: (
       threadId: ThreadId,
-      input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+      input: {
+        readonly html?: unknown;
+        readonly path?: unknown;
+        readonly title?: unknown;
+        readonly height?: unknown;
+      },
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
@@ -49,28 +61,37 @@ export class McpProviderSessions extends Context.Service<
 
 const matchingPageIndex = (
   kept: ReadonlyArray<KeptHtmlRender>,
-  input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+  input: {
+    readonly html?: unknown;
+    readonly path?: unknown;
+    readonly title?: unknown;
+    readonly height?: unknown;
+  },
 ): number => {
-  const html = input.html;
-  if (typeof html !== "string" || html.length === 0) {
+  const html = typeof input.html === "string" && input.html.length > 0 ? input.html : undefined;
+  const path = typeof input.path === "string" && input.path.length > 0 ? input.path : undefined;
+  if (html === undefined && path === undefined) {
     return -1;
   }
   const height =
     typeof input.height === "string" && input.height.trim() !== ""
       ? Number(input.height)
       : input.height;
-  const htmlHash = hashHtml(html);
-  const tail = html.startsWith(BOUNDED_TEXT_MARKER)
+  const htmlHash = html === undefined ? undefined : hashHtml(html);
+  const tail = html?.startsWith(BOUNDED_TEXT_MARKER)
     ? html.slice(BOUNDED_TEXT_MARKER.length)
     : undefined;
   const matches = kept.flatMap((page, index) =>
     page.title === input.title &&
     page.height === height &&
-    (page.htmlHash === htmlHash ||
-      (tail !== undefined &&
-        tail.length > 0 &&
-        tail.length < page.htmlLength &&
-        page.htmlEnd.endsWith(tail)))
+    (html === undefined
+      ? page.path === path
+      : page.path === undefined &&
+        (page.htmlHash === htmlHash ||
+          (tail !== undefined &&
+            tail.length > 0 &&
+            tail.length < page.htmlLength &&
+            page.htmlEnd.endsWith(tail))))
       ? [index]
       : [],
   );
@@ -112,6 +133,7 @@ const make = Effect.gen(function* () {
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
       function (threadId, input, reference) {
+        const html = input.path === undefined ? (input.html ?? "") : "";
         return Ref.update(htmlRenders, (current) =>
           new Map(current).set(
             threadId,
@@ -120,10 +142,11 @@ const make = Effect.gen(function* () {
               {
                 title: input.title,
                 height: input.height,
-                htmlLength: input.html.length,
-                htmlHash: hashHtml(input.html),
+                path: input.path,
+                htmlLength: html.length,
+                htmlHash: hashHtml(html),
                 // Copy the tail so its backing storage cannot retain the entire HTML string.
-                htmlEnd: Buffer.from(input.html.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
+                htmlEnd: Buffer.from(html.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
                   "utf16le",
                 ),
                 reference,
