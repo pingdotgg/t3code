@@ -101,6 +101,8 @@ function preview(): ReviewDiffPreviewResult {
         diff: "",
         diffHash: "empty",
         truncated: false,
+        patchesDeferred: true,
+        files: [],
       },
     ],
   };

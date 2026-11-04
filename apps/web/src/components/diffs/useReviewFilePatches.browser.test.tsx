@@ -69,7 +69,7 @@ function Probe({ source }: { source: ReviewDiffPreviewSource }) {
   );
 }
 
-it("retains an opened later file through metadata insertion, refresh failure and retry", async () => {
+it("retains automatic and explicitly opened files through metadata insertion, refresh failure and retry", async () => {
   state.patches.clear();
   const registry = AtomRegistry.make();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
@@ -89,9 +89,22 @@ it("retains an opened later file through metadata insertion, refresh failure and
   });
   act(() => registry.set(atom, loaded));
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
+  const automatic = [...state.patches].find(([key]) => JSON.parse(key)[1] === "e.txt")![1];
+  act(() =>
+    registry.set(
+      automatic,
+      AsyncResult.success({
+        ...loaded.value,
+        diff: loaded.value.diff.replaceAll("f.txt", "e.txt"),
+        files: tracked.files!.filter((file) => file.path === "e.txt"),
+      }),
+    ),
+  );
+  await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
   await screen.rerender(
     view(source(["a-new.txt", ...tracked.files!.map((f) => f.path)], "complete")),
   );
+  await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
   act(() =>
     registry.set(

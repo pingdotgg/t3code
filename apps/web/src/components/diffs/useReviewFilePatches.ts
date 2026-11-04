@@ -49,7 +49,14 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
   ]);
-  const [requested, setRequested] = useState(() => ({ scope, paths: [] as string[] }));
+  const files = sortedReviewFiles(source);
+  const automaticPaths = files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path);
+  const [requested, setRequested] = useState(() => ({ scope, paths: automaticPaths }));
+  const previousPaths = requested.scope === scope ? requested.paths : [];
+  const paths = [...new Set([...previousPaths, ...automaticPaths])];
+  if (requested.scope !== scope || paths.length !== previousPaths.length) {
+    setRequested({ scope, paths });
+  }
   const queries = reviewFileQueries({
     environmentId,
     cwd,
@@ -69,7 +76,6 @@ export function useReviewFilePatches({
     const query = queries.find(({ index }) => files[index]?.path === path)?.query;
     if (query) registry.refresh(query);
   });
-  const files = sortedReviewFiles(source);
   const pendingIndex = files.findIndex((_, index) => {
     const patch = patches.get(index);
     return !patch || patch._tag === "Initial";
