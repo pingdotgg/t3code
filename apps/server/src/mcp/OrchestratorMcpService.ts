@@ -62,6 +62,7 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -72,7 +73,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -92,6 +93,10 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+} from "../orchestration-v2/ProjectionStore.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -252,14 +257,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -271,10 +268,13 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
-    ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
+    ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined
+      ? {}
+      : { webhookUrl: task.webhook.url }),
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
+    ...(task.blockedByPolicy === undefined ? {} : { blockedByPolicy: task.blockedByPolicy }),
   };
 }
 
@@ -371,6 +371,15 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
+function knownOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (options === undefined || descriptors === undefined) return options;
+  return options.filter((option) => descriptors.some((descriptor) => descriptor.id === option.id));
 }
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
@@ -627,7 +636,7 @@ function pageIncludesTerminalTaskResult(input: {
     if (!matchesResult) return false;
 
     const text = turnItemText(row.item);
-    return text !== null && text.length <= input.maxChars;
+    return text !== null && text.length <= textPageEnd(text, 0, input.maxChars);
   });
 }
 
@@ -738,7 +747,14 @@ function threadTitle(input: {
 }): string {
   const detail = input.title?.trim() || input.prompt?.trim();
   if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
-  return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
+  if (detail.length <= 80) return detail;
+  let end = 77;
+  const previous = detail.charCodeAt(end - 1);
+  const next = detail.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${detail.slice(0, end)}...`;
 }
 
 function threadSettlement(
@@ -944,6 +960,15 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
   }
 }
 
+/** A cut inside a surrogate pair would leave half an emoji on each page. */
+function textPageEnd(text: string | null, offset: number, maxChars: number): number {
+  const end = offset + maxChars;
+  if (text === null || end >= text.length) return end;
+  const last = text.charCodeAt(end - 1);
+  if (last < 0xd800 || last > 0xdbff) return end;
+  return end - 1 > offset ? end - 1 : end + 1;
+}
+
 function timelineItem(input: {
   readonly row: OrchestrationV2ThreadProjection["visibleTurnItems"][number];
   readonly maxChars: number;
@@ -952,7 +977,7 @@ function timelineItem(input: {
 }): OrchestratorMcpThreadTimelineItem {
   const text = turnItemText(input.row.item);
   const offset = input.textOffset ?? 0;
-  const end = offset + input.maxChars;
+  const end = textPageEnd(text, offset, input.maxChars);
   const textTruncated = text !== null && text.length > end;
   const messageId =
     input.row.item.type === "user_message" || input.row.item.type === "assistant_message"
@@ -986,7 +1011,7 @@ function timelineItem(input: {
 }
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1034,21 +1059,13 @@ const make = Effect.gen(function* () {
           ),
         );
 
-  const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
+  const loadThreadRecords = <K extends ProjectionRecordField>(
+    threadId: ThreadId,
+    fields: ReadonlyArray<K>,
+    filter?: ProjectionRecordFilter,
+  ) =>
     threadManagement
-      .getThreadRecords(
-        threadId,
-        [
-          "runs",
-          "messages",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "contextTransfers",
-          "turnItems",
-        ],
-        { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
-      )
+      .getThreadRecords(threadId, fields, filter)
       .pipe(
         Effect.mapError((error) =>
           failure(
@@ -1057,6 +1074,21 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+
+  const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
+    loadThreadRecords(
+      threadId,
+      [
+        "runs",
+        "messages",
+        "providerThreads",
+        "providerTurns",
+        "runtimeRequests",
+        "contextTransfers",
+        "turnItems",
+      ],
+      { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
+    );
 
   // A dispatcher thread holds thousands of tasks, each with its full prompt; read only the ones named.
   const loadTasks = (threadId: ThreadId, taskIds: ReadonlyArray<NodeId>) =>
@@ -1069,11 +1101,9 @@ const make = Effect.gen(function* () {
 
   // Task waits read on every wake of a parent that may hold thousands of
   // tasks, so they read only the task they watch and what its status needs.
-  const loadTaskParent = (threadId: ThreadId, taskId: NodeId) =>
+  const loadTaskParent = (threadId: ThreadId) =>
     threadManagement
-      .getThreadRecords(threadId, ["runs", "subagents", "contextTransfers"], {
-        subagentIds: [taskId],
-      })
+      .getThreadRecords(threadId, ["runs", "contextTransfers"])
       .pipe(
         Effect.mapError((error) =>
           failure(
@@ -1106,7 +1136,6 @@ const make = Effect.gen(function* () {
 
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* (
     scope: McpInvocationScope,
-    includeUserMessages = true,
   ) {
     yield* requireCapability(scope);
     if (scope.thread === undefined) {
@@ -1115,7 +1144,8 @@ const make = Effect.gen(function* () {
         limits: clientModeCeiling(scope.client),
       } as const;
     }
-    const parent = yield* loadProjection(scope.thread.threadId, includeUserMessages);
+    // No loadCaller consumer reads the caller's own prompts.
+    const parent = yield* loadProjection(scope.thread.threadId, false);
     return {
       parent,
       limits: {
@@ -1152,6 +1182,7 @@ const make = Effect.gen(function* () {
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
     threadId: ThreadId,
+    includeHistory = true,
   ) {
     const shell = yield* threadManagement
       .getThreadShell(threadId)
@@ -1159,18 +1190,24 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
     }
-    return yield* loadProjectThread(shell.projectId, threadId);
+    // Native wait owns its history reads; keep legacy import and project validation here.
+    return yield* includeHistory
+      ? loadProjectThread(shell.projectId, threadId)
+      : threadManagement
+          .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
+          .pipe(Effect.mapError(threadManagementFailure));
   });
 
   const loadScopedThread = Effect.fn("OrchestratorMcpService.loadScopedThread")(function* (
     scope: McpInvocationScope,
     threadId: ThreadId,
+    includeHistory = true,
   ) {
     const caller = yield* loadCaller(scope);
     const target =
       caller.parent !== undefined && threadId === caller.parent.thread.id
         ? caller.parent
-        : yield* loadTargetThread(threadId);
+        : yield* loadTargetThread(threadId, includeHistory);
     return { ...caller, target } as const;
   });
 
@@ -1224,8 +1261,7 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
-    // Caller prompts are not used to read a timeline or acknowledge a child result.
-    const { parent } = yield* loadCaller(scope, false);
+    const { parent } = yield* loadCaller(scope);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
@@ -1395,10 +1431,10 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
+      ?.optionDescriptors;
     const requestedOptions = input.target?.options;
     if (requestedOptions !== undefined) {
-      const descriptors = provider.models.find((candidate) => candidate.slug === model)
-        ?.capabilities?.optionDescriptors;
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
         return yield* failure(
@@ -1410,7 +1446,9 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions ? inheritedSelection.options : undefined;
+    let options = inheritsOptions
+      ? knownOptions(inheritedSelection.options, descriptors)
+      : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -1430,9 +1468,7 @@ const make = Effect.gen(function* () {
   });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
-    clientRequestId === undefined
-      ? crypto.randomUUIDv4().pipe(Effect.orDie)
-      : Effect.succeed(clientRequestId);
+    clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
@@ -1442,8 +1478,7 @@ const make = Effect.gen(function* () {
     acknowledgementOperation = "task-status-acknowledge",
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     yield* requireCapability(scope);
-    const parentProjection = yield* loadTaskParent(scope.thread.threadId, taskId);
-    const task = parentProjection.subagents.find(
+    const task = (yield* loadTasks(scope.thread.threadId, [taskId])).find(
       (candidate) =>
         candidate.id === taskId &&
         candidate.origin === "app_owned" &&
@@ -1458,6 +1493,7 @@ const make = Effect.gen(function* () {
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
     }
+    const parentProjection = yield* loadTaskParent(scope.thread.threadId);
     const childControls = yield* threadManagement
       .getThreadRecords(
         task.childThreadId,
@@ -1470,7 +1506,8 @@ const make = Effect.gen(function* () {
           "runtimeRequests",
           "nodes",
         ],
-        { messageRoles: ["user"], omitSettledLeafNodes: true },
+        // Progress reads only active or undelivered tasks under the child.
+        { messageRoles: ["user"], omitSettledLeafNodes: true, omitSettledSubagents: true },
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
@@ -1696,7 +1733,17 @@ const make = Effect.gen(function* () {
       task.completionDelivery?.state !== "acknowledged" &&
       task.completionDelivery?.state !== "disposed"
     ) {
-      const parentProjection = yield* loadProjection(scope.thread.threadId);
+      const parentThreadId = scope.thread.threadId;
+      const parentProjection = yield* threadManagement
+        .getThreadRecords(parentThreadId, ["runs"])
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to read thread ${parentThreadId}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
       const observingRun = ThreadManagementService.latestActiveRun(parentProjection);
       yield* threadManagement
         .dispatch({
@@ -1774,12 +1821,23 @@ const make = Effect.gen(function* () {
           : TASK_WAKE_EVENTS;
       return yield* Stream.mergeAll(
         wakeEvents.map(({ thread, eventType }) =>
-          threadManagement.streamStoredEventsFrom({
-            threadId:
-              thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
-            afterSequence,
-            eventType,
-          }),
+          threadManagement
+            .streamStoredEventsFrom({
+              threadId:
+                thread === "parent" || childThreadId === null
+                  ? scope.thread.threadId
+                  : childThreadId,
+              afterSequence,
+              eventType,
+            })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  thread === "child" ||
+                  event.type !== "subagent.updated" ||
+                  event.payload.id === taskId,
+              ),
+            ),
         ),
         { concurrency: "unbounded" },
       ).pipe(
@@ -1792,6 +1850,52 @@ const make = Effect.gen(function* () {
     (effect, _scope, _taskId, timeoutMs) =>
       effect.pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten)),
   );
+
+  const refExists = (cwd: string, revision: string) =>
+    gitDriver.resolveCommit({ cwd, revision }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const resolveScheduledTaskBaseRef = Effect.fn(
+    "OrchestratorMcpService.resolveScheduledTaskBaseRef",
+  )(function* (cwd: string) {
+    const remoteName = yield* gitDriver
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.orElseSucceed(() => null));
+    const conventional = ["main", "master"];
+    if (remoteName !== null) {
+      const remoteDefault = yield* gitDriver
+        .resolveDefaultBranchName(cwd, remoteName)
+        .pipe(Effect.orElseSucceed(() => null));
+      // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
+      for (const branch of remoteDefault === null
+        ? conventional
+        : [remoteDefault, ...conventional]) {
+        // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
+        if (yield* refExists(cwd, `refs/remotes/${remoteName}/${branch}`)) {
+          return `${remoteName}/${branch}`;
+        }
+      }
+    }
+    // Local-only repositories, or a remote with neither a usable HEAD nor a conventional branch.
+    for (const branch of conventional) {
+      if (yield* refExists(cwd, `refs/heads/${branch}`)) return branch;
+    }
+    return "main";
+  });
+
+  const scheduledTaskWorkspaceStrategy = Effect.fn(
+    "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+  )(function* (boundToThread: boolean, projectId: ProjectId) {
+    if (boundToThread) return { type: "root" as const };
+    const { workspaceRoot } = yield* requireProject(projectId);
+    return {
+      type: "worktree" as const,
+      baseRef: yield* resolveScheduledTaskBaseRef(workspaceRoot),
+      startFromOrigin: true,
+    };
+  });
 
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
     function* (task: ScheduledTask) {
@@ -1904,7 +2008,7 @@ const make = Effect.gen(function* () {
         schedule: input.schedule,
         projectId,
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-        workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -1976,7 +2080,7 @@ const make = Effect.gen(function* () {
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2161,12 +2265,27 @@ const make = Effect.gen(function* () {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
-        inheritedOptions: inherited?.options ?? [],
+        inheritedOptions:
+          knownOptions(
+            inherited?.options,
+            providers
+              .find((provider) => provider.instanceId === inherited?.instanceId)
+              ?.models.find((model) => model.slug === inherited?.model)?.capabilities
+              ?.optionDescriptors,
+          ) ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
+          // Snapshots list instances any project enables; delegate_task checks the caller's project.
+          const enabledForCaller =
+            parent === undefined ||
+            resolveProjectProviderInstanceEnabled(
+              settings,
+              parent.thread.projectId,
+              provider.instanceId,
+            );
           const constraints = providerConstraints(
-            provider,
+            enabledForCaller ? provider : { ...provider, enabled: false },
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
           const { listed, omitted } = listCapabilityModels({
@@ -2442,7 +2561,7 @@ const make = Effect.gen(function* () {
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
       const key = yield* requestKey(input.clientRequestId);
-      const parentProjection = yield* loadProjection(scope.thread.threadId);
+      const parentProjection = yield* loadThreadRecords(scope.thread.threadId, []);
       // Cancelling stops the child and every task under it, each a write to a
       // thread its user may have raised above the parent's modes since it was
       // delegated. All of them are checked before anything is stopped.
@@ -2459,13 +2578,11 @@ const make = Effect.gen(function* () {
             shell.interactionMode,
           );
         }
-        const { subagents } = yield* threadManagement
-          .getThreadRecords(threadId, ["subagents"])
+        const childThreadIds = yield* threadManagement
+          .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.mapError(threadManagementFailure));
-        for (const task of subagents) {
-          if (task.origin === "app_owned" && task.childThreadId !== null) {
-            yield* assertStoppable(task.childThreadId);
-          }
+        for (const childThreadId of childThreadIds) {
+          yield* assertStoppable(childThreadId);
         }
       });
       yield* assertStoppable(childThreadId);
@@ -2606,7 +2723,7 @@ const make = Effect.gen(function* () {
           status: cancelled ? "cancelled" : current.status,
         } satisfies OrchestratorMcpTaskCancelResult;
       }
-      const child = yield* loadProjection(childThreadId);
+      const child = yield* loadThreadRecords(childThreadId, ["runs"]);
       if (
         current.workState !== "waiting_for_children" &&
         ThreadManagementService.latestActiveRun(child) === undefined &&
@@ -3019,7 +3136,7 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
-      const { parent, target } = yield* loadScopedThread(scope, input.threadId);
+      const { parent, target } = yield* loadScopedThread(scope, input.threadId, false);
       const result = yield* threadManagement
         .waitForThread({
           projectId: target.thread.projectId,
@@ -3160,7 +3277,7 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | ThreadManagementService.ThreadManagementService
   | ThreadLaunchService.ThreadLaunchService
   | GitVcsDriver.GitVcsDriver
