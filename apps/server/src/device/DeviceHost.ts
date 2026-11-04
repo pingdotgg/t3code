@@ -111,6 +111,7 @@ export interface DeviceOperations {
       /** Some Android devices could not be listed; the rest are. */
       readonly androidDiscoveryIncomplete?: boolean;
       readonly physicalAndroidDiscoveryIncomplete?: boolean;
+      readonly unreadablePhysicalAndroidDeviceIds?: ReadonlyArray<string>;
     },
     DeviceOperationError
   >;

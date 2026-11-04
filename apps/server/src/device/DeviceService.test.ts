@@ -1240,10 +1240,17 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
   (hostId) =>
     Effect.gen(function* () {
       let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
-      const run = () => Effect.sync(() => enumeration);
+      let adbDevices: string | undefined;
+      const run = (command: string, args: ReadonlyArray<string>) =>
+        Effect.sync(() =>
+          command === "adb" && args[0] === "devices" && adbDevices !== undefined
+            ? { code: 0, stdout: adbDevices, stderr: "" }
+            : enumeration,
+        );
       const hubDevices = [
         { id: "iphone", name: "iPhone", platform: "ios", physical: false },
         { id: "phone", name: "Pixel", platform: "android", physical: true },
+        { id: "phone-2", name: "Pixel 2", platform: "android", physical: true },
         { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
       ].map((device) => ({ ...device, booted: true, version: "test" }));
       let omitPhysical = false;
@@ -1315,6 +1322,12 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       const failedAdb = yield* service.list;
       expect(failedAdb.devices).toContainEqual({ ...hubDevices[1], hostId });
       expect(failedAdb.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
+      adbDevices = "List of devices attached\nphone device\n";
+      const failedProperties = yield* service.list;
+      expect(failedProperties.devices).toContainEqual({ ...hubDevices[1], hostId });
+      expect(failedProperties.devices.some((device) => device.id === "phone-2")).toBe(false);
+      expect(failedProperties.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
+      adbDevices = undefined;
       omitPhysical = false;
 
       enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
