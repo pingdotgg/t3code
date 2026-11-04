@@ -1,10 +1,6 @@
 import { useState, type FormEvent } from "react";
 
-export const NoteForm = ({
-  onCreate,
-}: {
-  onCreate: (body: string) => Promise<void>;
-}) => {
+export const NoteForm = ({ onCreate }: { onCreate: (body: string) => Promise<void> }) => {
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
 
