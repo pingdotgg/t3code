@@ -55,6 +55,7 @@ import {
   useConnectionDiagnosis,
 } from "../connection/ConnectionDiagnosisDetails";
 import { environmentStatusText } from "../connection/environmentStatusText";
+import { EnvironmentHostSummaryText } from "../connection/EnvironmentHostResources";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
@@ -100,6 +101,9 @@ function EnvironmentPickerRow(props: {
                 {status}
               </Text>
             </View>
+            {connection?.phase === "connected" ? (
+              <EnvironmentHostSummaryText environmentId={props.environmentId} />
+            ) : null}
           </View>
           {props.selected ? (
             <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />

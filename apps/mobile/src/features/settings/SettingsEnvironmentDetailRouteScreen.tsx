@@ -27,6 +27,7 @@ import { environmentSession, useEnvironmentScope, readEnvironmentScope } from ".
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { EnvironmentSystemSection } from "../connection/EnvironmentHostResources";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -232,6 +233,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config && !outdated ? (
               <>
+                {connected && canRead ? (
+                  <EnvironmentSystemSection environmentId={environmentId} />
+                ) : null}
                 <SettingsSection title="T3 Code">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>
