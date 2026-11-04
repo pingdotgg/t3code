@@ -2404,7 +2404,8 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  // Finalizing a child reads, from its parent, only that child's tasks and the transfers it sent.
+  // Finalizing a child reads, from its parent, only that child's tasks and the transfers it sent,
+  // and the other tasks of a delivery it joins by id.
   it.effect("finalizing a delegated child reads only that child's records from its parent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2413,14 +2414,30 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const projectId = ProjectId.make("project:narrow-finalize");
       const runId = RunId.make("run:narrow-finalize-parent");
       const rootNodeId = NodeId.make("node:narrow-finalize-parent");
+      const siblingTaskId = NodeId.make("node:narrow-finalize-seed");
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
       yield* seedParentWithTerminalTask({
         threadId,
         projectId,
         runId,
         rootNodeId,
-        taskId: NodeId.make("node:narrow-finalize-seed"),
-        deliveryState: "acknowledged",
+        taskId: siblingTaskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [siblingTaskId],
         now,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:narrow-finalize-delivery"),
+        threadId,
+        messageId,
+        text: `Delegated task ${siblingTaskId} reached a terminal state.`,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [siblingTaskId] },
       });
       const child = yield* seedRestartCancelledChild({
         parentThreadId: threadId,
@@ -2447,27 +2464,33 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       yield* orchestrator.recoverDelegatedTasks.pipe(
         Effect.provideService(Statement.CurrentTransformer, observe),
       );
-      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
-        (candidate) => candidate.id === child.taskId,
-      );
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const task = projection.subagents.find((candidate) => candidate.id === child.taskId);
       assert.equal(task?.status, "completed");
-      // The finalize read names the child: its tasks by child thread, its transfers by source.
-      assert.isTrue(
-        parentReads.some(
-          (query) =>
-            query.includes("FROM orchestration_v2_projection_subagents") &&
-            /AND child_thread_id (=|IN)/.test(query),
-        ),
-        "the parent's subagent read is not narrowed to the child",
+      // Every finalize read names its rows: tasks by child thread or id, transfers by source.
+      const subagentReads = parentReads.filter((query) =>
+        query.includes("FROM orchestration_v2_projection_subagents"),
       );
-      assert.isTrue(
-        parentReads.some(
-          (query) =>
-            query.includes("FROM orchestration_v2_projection_context_transfers") &&
-            /AND source_thread_id (=|IN)/.test(query),
-        ),
-        "the parent's context-transfer read is not narrowed to the child",
+      const transferReads = parentReads.filter((query) =>
+        query.includes("FROM orchestration_v2_projection_context_transfers"),
       );
+      assert.isNotEmpty(subagentReads);
+      assert.isNotEmpty(transferReads);
+      assert.deepEqual(
+        subagentReads.filter((query) => !/AND (child_thread_id|subagent_id) (=|IN)/.test(query)),
+        [],
+        "a parent subagent read is not narrowed",
+      );
+      assert.deepEqual(
+        transferReads.filter((query) => !/AND source_thread_id (=|IN)/.test(query)),
+        [],
+        "a parent context-transfer read is not narrowed",
+      );
+      // The delivery the child joins still names the sibling it was opened for.
+      const message = projection.messages.find((candidate) => candidate.id === messageId);
+      assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingTaskId, child.taskId]);
+      assert.include(message?.text ?? "", `Delegated task ${siblingTaskId} [completed]`);
+      assert.include(message?.text ?? "", `Delegated task ${child.taskId}`);
     }),
   );
 

@@ -12252,7 +12252,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   )(function* (input: {
     readonly parentProjection: Pick<
       OrchestrationV2ThreadProjection,
-      "thread" | "messages" | "runs" | "subagents" | "providerTurns"
+      "thread" | "messages" | "runs" | "subagents"
     >;
     readonly parentRun: OrchestrationV2Run | undefined;
     readonly task: OrchestrationV2Subagent;
@@ -12544,19 +12544,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
+      // Only this child's tasks and result transfers; a delivery's other tasks are read by id below.
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        ["runs", "messages", "subagents", "nodes", "turnItems", "contextTransfers"],
+        {
+          turnItemTypes: ["subagent"],
+          messageRoles: ["user"],
+          subagentChildThreadIds: [childThreadId],
+          contextTransferSourceThreadIds: [childThreadId],
+        },
       );
       const task = parentProjection.subagents.find(
         (candidate) =>
@@ -12597,8 +12594,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
+      // The delivery this result may join names its other tasks in its text.
+      const deliveryTaskIds = (parentRun?.delegatedCompletion?.delivery?.taskIds ?? []).filter(
+        (taskId) => !parentProjection.subagents.some((candidate) => candidate.id === taskId),
+      );
+      const deliveryTasks =
+        deliveryTaskIds.length === 0
+          ? []
+          : (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+              subagentIds: deliveryTaskIds,
+            })).subagents;
       const completionPlan = yield* planDelegatedCompletionDelivery({
-        parentProjection,
+        parentProjection: {
+          ...parentProjection,
+          subagents: [...parentProjection.subagents, ...deliveryTasks],
+        },
         parentRun,
         task,
         updatedTask,
