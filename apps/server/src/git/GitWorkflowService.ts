@@ -42,6 +42,14 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly inspectCheckout: (cwd: string) => Effect.Effect<
+      {
+        readonly commitSha: string;
+        readonly treeSha: string;
+        readonly clean: boolean;
+      },
+      GitCommandError
+    >;
     readonly hasRefNamed: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -449,6 +457,39 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    inspectCheckout: Effect.fn("GitWorkflowService.inspectCheckout")(function* (cwd) {
+      yield* ensureGitCommand("GitWorkflowService.inspectCheckout", cwd);
+      const refs = yield* git.execute({
+        operation: "GitWorkflowService.inspectCheckout",
+        cwd,
+        args: ["rev-parse", "--verify", "HEAD"],
+      });
+      const tree = yield* git.execute({
+        operation: "GitWorkflowService.inspectCheckout",
+        cwd,
+        args: ["rev-parse", "--verify", "HEAD^{tree}"],
+      });
+      const status = yield* git.execute({
+        operation: "GitWorkflowService.inspectCheckout",
+        cwd,
+        args: ["status", "--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none"],
+      });
+      const commitSha = refs.stdout.trim();
+      const treeSha = tree.stdout.trim();
+      if (
+        refs.stdoutTruncated ||
+        tree.stdoutTruncated ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commitSha) ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(treeSha)
+      )
+        return yield* new GitCommandError({
+          operation: "GitWorkflowService.inspectCheckout",
+          command: "git",
+          cwd,
+          detail: "Git did not return complete checkout identities.",
+        });
+      return { commitSha, treeSha, clean: !status.stdoutTruncated && status.stdout.trim() === "" };
+    }),
     fetchWorktreeBaseCommit: Effect.fn("GitWorkflowService.fetchWorktreeBaseCommit")(
       function (input) {
         return ensureGitCommand("GitWorkflowService.fetchWorktreeBaseCommit", input.cwd).pipe(

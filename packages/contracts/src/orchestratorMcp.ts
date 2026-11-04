@@ -38,6 +38,9 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2RunLaunchEvidence,
+  OrchestrationV2RunAttempt,
+  OrchestrationV2ProviderTurn,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -176,6 +179,10 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
     }),
   ),
+  worktreeBaseBranch: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "With isolation 'worktree': fetch this branch from origin and verify a clean checkout before execution. Omit to start from the parent commit. Local tasks only.",
+  }),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
@@ -237,11 +244,50 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  executionEvidence: Schema.optional(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      environmentId: EnvironmentId,
+      parentThreadId: ThreadId,
+      parentRunId: RunId,
+      projectId: ProjectId,
+      providerDriver: ProviderDriverKind,
+      taskId: NodeId,
+      childThreadId: ThreadId,
+      runId: RunId,
+      launch: OrchestrationV2RunLaunchEvidence,
+      attempts: Schema.Array(
+        Schema.Struct({
+          ...OrchestrationV2RunAttempt.fields,
+          startedAt: Schema.NullOr(IsoDateTime),
+          completedAt: Schema.NullOr(IsoDateTime),
+        }),
+      ),
+      providerTurns: Schema.Array(
+        Schema.Struct({
+          ...OrchestrationV2ProviderTurn.fields,
+          startedAt: Schema.NullOr(IsoDateTime),
+          completedAt: Schema.NullOr(IsoDateTime),
+        }),
+      ),
+      resultMessageId: Schema.NullOr(MessageId),
+      resultTurnItemId: Schema.NullOr(TurnItemId),
+      status: OrchestratorMcpTerminalDelegatedTaskStatus,
+      startedAt: IsoDateTime,
+      completedAt: IsoDateTime,
+      result: Schema.String,
+      sha256: Schema.String,
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
+  includeExecutionEvidence: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Export host-recorded execution facts for a settled local task with a verified origin checkout. Unavailable facts fail the request. The SHA-256 is integrity only, not a signature, provider attestation, or a pass verdict.",
+  }),
 });
 export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInput.Type;
 
