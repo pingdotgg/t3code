@@ -438,6 +438,22 @@ it("copies every row of a drag whose first row scrolls out of the mounted rows",
   );
 });
 
+it("copies a backward drag whose selection reports no direction", async () => {
+  using context = setup("origin/orphan");
+  const diff = await renderLongFileDiff(context, "backward-selection.sql");
+  await using _screen = diff.screen;
+  // macOS Chromium reports mouse selections this way.
+  using _direction = vi.spyOn(Selection.prototype, "direction", "get").mockReturnValue("none");
+  await pressRow(diff.row(12)!);
+  const first = diff.row(4)!;
+  await userEvent.hover(first, { position: charEdge(first, PRESS_OFFSET, "left") });
+  await commands.mouseUp();
+  const text = longFileLines.slice(3, 12).join("\n");
+  expect(await diff.copied()).toBe(
+    text.slice(PRESS_OFFSET, text.length - longFileLines[11]!.length + PRESS_OFFSET),
+  );
+});
+
 it("copies the browser's selection of a drag that continues into another file", async () => {
   using context = setup("origin/orphan");
   const lines = longFileLines.slice(0, 3);

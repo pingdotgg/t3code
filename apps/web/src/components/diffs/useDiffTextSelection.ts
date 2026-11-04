@@ -160,8 +160,11 @@ function readComposedRange(selection: Selection, root: ShadowRoot): AbstractRang
 }
 
 // The DOM selection's anchor and focus, with nodes inside `root` when the
-// selection is in this file.
-function readDomSelection(root: ShadowRoot): { anchor: DomPoint; focus: DomPoint } | null {
+// selection is in this file. Undirected selections report their start as the
+// anchor.
+function readDomSelection(
+  root: ShadowRoot,
+): { anchor: DomPoint; focus: DomPoint; directed: boolean } | null {
   const selection = document.getSelection();
   if (!selection || selection.rangeCount === 0) return null;
   let range: AbstractRange | null;
@@ -177,15 +180,29 @@ function readDomSelection(root: ShadowRoot): { anchor: DomPoint; focus: DomPoint
       return {
         anchor: { node: shadowSelection.anchorNode, offset: shadowSelection.anchorOffset },
         focus: { node: shadowSelection.focusNode, offset: shadowSelection.focusOffset },
+        directed: true,
       };
     }
     range = selection.getRangeAt(0);
   }
   const start = { node: range.startContainer, offset: range.startOffset };
   const end = { node: range.endContainer, offset: range.endOffset };
+  // macOS Chromium reports mouse selections with direction "none".
+  const directed = selection.direction !== "none";
   return selection.direction === "backward"
-    ? { anchor: end, focus: start }
-    : { anchor: start, focus: end };
+    ? { anchor: end, focus: start, directed }
+    : { anchor: start, focus: end, directed };
+}
+
+// The end of an undirected range that is not the gesture's anchor.
+function undirectedFocus(
+  anchor: RowPoint,
+  start: RowPoint | null,
+  end: RowPoint | null,
+): RowPoint | null {
+  if (start && end) return comparePoints(anchor, start) <= 0 ? end : start;
+  const seen = start ?? end;
+  return samePoint(seen, anchor) ? null : seen;
 }
 
 // Select All from a menu runs no keydown. With the caret in a file it selects
@@ -328,6 +345,11 @@ class DiffTextSelectionTracker {
   }
 
   onSelectionChange = () => {
+    // Several ranges (Firefox's Ctrl-drag) stay the browser's to draw and copy.
+    if ((document.getSelection()?.rangeCount ?? 0) > 1) {
+      this.selection = null;
+      return;
+    }
     const { engaged } = this;
     const engagedHost = engaged && !this.dragging ? this.hostOf(engaged) : null;
     if (engaged && engagedHost && selectsWholeFile(engagedHost) && this.selectFile(engaged)) {
@@ -345,8 +367,8 @@ class DiffTextSelectionTracker {
       this.selection = null;
       return;
     }
-    const seenAnchor = domToRowPoint(current.anchor);
-    const seenFocus = domToRowPoint(current.focus);
+    let seenAnchor = domToRowPoint(current.anchor);
+    let seenFocus = domToRowPoint(current.focus);
     const selection =
       this.selection?.instance === instance
         ? this.selection
@@ -357,8 +379,18 @@ class DiffTextSelectionTracker {
       // The anchor stays where the gesture began; the browser's drifts once
       // its row is virtualized away.
       selection.anchor ??= seenAnchor;
-      selection.focus = seenFocus ?? selection.focus;
+      const focus =
+        current.directed || !selection.anchor
+          ? seenFocus
+          : undirectedFocus(selection.anchor, seenAnchor, seenFocus);
+      selection.focus = focus ?? selection.focus;
     } else {
+      if (
+        !current.directed &&
+        (samePoint(seenAnchor, drawn?.focus ?? null) || samePoint(seenFocus, drawn?.anchor ?? null))
+      ) {
+        [seenAnchor, seenFocus] = [seenFocus, seenAnchor];
+      }
       if (seenAnchor && seenFocus && samePoint(seenAnchor, seenFocus)) {
         this.selection = null;
         return;
