@@ -14,6 +14,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
+  modelPreviewFormat,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   mediaMimeTypeFromExtension,
@@ -57,6 +58,7 @@ import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { AppBar } from "../../components/ui/AppBar";
 import { useContentTopInset } from "../../components/ui/useBarInset";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
+import { WorkspaceModelPreview } from "./WorkspaceModelPreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
@@ -200,6 +202,7 @@ function defaultViewMode(path: string | null): FileViewMode {
   return path !== null &&
     (isWorkspaceBrowserPreviewPath(path) ||
       isWorkspaceImagePreviewPath(path) ||
+      modelPreviewFormat(path) !== null ||
       isVideoPreviewFile(path) ||
       isAudioPreviewFile(path) ||
       filePreviewDelimiter({ name: path }) !== null)
@@ -260,12 +263,14 @@ function FileContent(props: {
   const delimiter = filePreviewDelimiter({ name: props.relativePath });
   const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
   const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
+  const modelFormat = modelPreviewFormat(props.relativePath);
+  const isModelFile = modelFormat !== null;
   const isVideoFile = isVideoPreviewFile(props.relativePath);
   const isAudioFile = isAudioPreviewFile(props.relativePath);
   const needsAssetUrl =
     isVideoFile ||
     isAudioFile ||
-    (props.activeMode === "preview" && (isImageFile || isBrowserFile));
+    (props.activeMode === "preview" && (isImageFile || isModelFile || isBrowserFile));
 
   if (needsAssetUrl && props.previewFailure !== null) {
     return (
@@ -306,6 +311,20 @@ function FileContent(props: {
         accessibilityLabel={basename(props.relativePath)}
         uri={props.previewUri}
         actionsSource={props.mediaSource}
+      />
+    );
+  }
+
+  if (props.activeMode === "preview" && modelFormat !== null) {
+    return (
+      <WorkspaceModelPreview
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        cwd={props.cwd}
+        relativePath={props.relativePath}
+        format={modelFormat}
+        name={basename(props.relativePath)}
+        previewUri={props.previewUri}
       />
     );
   }
@@ -659,11 +678,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
   const isImageFile =
     relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
+  const isModelFile = relativePath !== null && modelPreviewFormat(relativePath) !== null;
   const canPreview =
     relativePath !== null &&
     (isMarkdownPreviewFile(relativePath) ||
       isBrowserFile ||
       isImageFile ||
+      isModelFile ||
       isVideoFile ||
       isAudioFile ||
       filePreviewDelimiter({ name: relativePath }) !== null);
@@ -678,7 +699,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
-    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+    (isBrowserFile || isImageFile || isModelFile || isVideoFile || isAudioFile)
       ? relativePath
       : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
@@ -808,7 +829,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
 
   const fileMenuActions = (() => {
     if (relativePath === null) return [];
-    const canToggleMode = canPreview && !isImageFile && !isVideoFile && !isAudioFile;
+    const canToggleMode =
+      canPreview && !isImageFile && !isModelFile && !isVideoFile && !isAudioFile;
     return [
       canToggleMode
         ? ({
@@ -906,7 +928,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           } as const)
         : null,
       resolvedActiveMode === "preview" &&
-      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      (isBrowserFile || isImageFile || isModelFile || isVideoFile || isAudioFile)
         ? ({
             id: "refresh",
             title: "Refresh",
