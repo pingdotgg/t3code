@@ -94,6 +94,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
+import { CodexProbeTimeoutsSettingsRow } from "./CodexProbeTimeoutsSettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
@@ -1955,6 +1956,10 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
+      </SettingsSection>
+
+      <SettingsSection id="codex-probes" title="Codex probes">
+        <CodexProbeTimeoutsSettingsRow />
       </SettingsSection>
 
       <StorageCleanupSections />

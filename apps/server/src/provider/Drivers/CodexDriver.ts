@@ -1,5 +1,6 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,6 +25,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  readCodexProbeTimeouts,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
@@ -280,7 +282,6 @@ export const CodexDriver: ProviderDriver<
               environment: processEnv,
             }).pipe(
               Effect.scoped,
-              Effect.timeout("20 seconds"),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ]).pipe(
@@ -304,18 +305,21 @@ export const CodexDriver: ProviderDriver<
       resetCreditCoordinator
         .redeem(accountKey, (idempotencyKey) =>
           Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
-            const response = yield* client.request("account/rateLimitResetCredit/consume", {
-              idempotencyKey,
-            });
-            return response.outcome;
-          }).pipe(Effect.scoped, Effect.timeout("20 seconds")),
+            const timeouts = yield* readCodexProbeTimeouts();
+            return yield* Effect.gen(function* () {
+              const { client } = yield* withCodexAppServerClient({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                cwd: process.cwd(),
+                environment: processEnv,
+              });
+              const response = yield* client.request("account/rateLimitResetCredit/consume", {
+                idempotencyKey,
+              });
+              return response.outcome;
+            }).pipe(Effect.scoped, Effect.timeout(Duration.millis(timeouts.resetCredit)));
+          }),
         )
         .pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
