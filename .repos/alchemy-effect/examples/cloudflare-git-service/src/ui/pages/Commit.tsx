@@ -10,12 +10,7 @@
  * out of the initial bundle.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  getCommit,
-  getCommitDiff,
-  type CommitDiff,
-  type CommitInfo,
-} from "../client.ts";
+import { getCommit, getCommitDiff, type CommitDiff, type CommitInfo } from "../client.ts";
 import { CopyButton, ErrorBox, Spinner } from "../components.tsx";
 import { shortOid, subject, timeAgo } from "../format.ts";
 import { href, Link } from "../router.tsx";
@@ -58,10 +53,7 @@ const CommitPage = ({
   }, [oid, repo.repoId]);
 
   const body = useMemo(
-    () =>
-      data === null
-        ? ""
-        : data.commit.message.split("\n").slice(1).join("\n").trim(),
+    () => (data === null ? "" : data.commit.message.split("\n").slice(1).join("\n").trim()),
     [data],
   );
 
@@ -82,10 +74,8 @@ const CommitPage = ({
             </pre>
           )}
           <p className="mt-2 text-xs text-fg-muted">
-            <span className="font-semibold text-fg-default">
-              {commit.author.name}
-            </span>{" "}
-            committed {timeAgo(commit.author.date * 1000)}
+            <span className="font-semibold text-fg-default">{commit.author.name}</span> committed{" "}
+            {timeAgo(commit.author.date * 1000)}
             {commit.committer.name !== commit.author.name && (
               <> · committed by {commit.committer.name}</>
             )}
@@ -125,13 +115,12 @@ const CommitPage = ({
       {/* summary + truncation notice */}
       <p className="mb-3 text-sm text-fg-muted">
         {files.length} file{files.length === 1 ? "" : "s"} changed
-        {diff.parent === null &&
-          " (root commit — diffed against the empty tree)"}
+        {diff.parent === null && " (root commit — diffed against the empty tree)"}
       </p>
       {diff.truncated && (
         <div className="mb-3 rounded-md border border-attention/40 bg-attention/5 px-4 py-2 text-sm text-attention">
-          This commit changes more files than shown — the list was truncated at{" "}
-          {files.length} files by the server.
+          This commit changes more files than shown — the list was truncated at {files.length} files
+          by the server.
         </div>
       )}
 

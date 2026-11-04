@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ChatAttachmentId } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
-import { formatThreadTitleContext } from "./threadTitleContext.ts";
+import { formatThreadTitleContext, limitTitleMessage } from "./threadTitleContext.ts";
 
 describe("thread title context", () => {
   it.each(["", "Ultrathink:\n"])("keeps attachments without bootstrap text (%j)", (prefix) => {
@@ -53,5 +53,10 @@ describe("thread title context", () => {
     expect(result.message).toContain("ASSISTANT:\nFound the cause.");
     expect(result.message).not.toContain("System instructions");
     expect(result.message.match(/USER:/g)).toHaveLength(1);
+  });
+
+  it("cuts both ends of a long message without splitting an emoji", () => {
+    const result = limitTitleMessage(`${"a".repeat(9)}🚀${"b".repeat(20)}🚀${"c".repeat(9)}`, 41);
+    expect(result).toBe(`${"a".repeat(9)}\n[Content truncated]\n${"c".repeat(9)}`);
   });
 });

@@ -1,0 +1,40 @@
+import type * as comprehend from "@distilled.cloud/aws/comprehend";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `comprehend:DescribeTopicsDetectionJob` — get the
+ * properties (status, input/output config, timings) of an asynchronous
+ * topic modeling job started with {@link StartTopicsDetectionJob}.
+ *
+ * The binding takes no arguments and grants the action on `*` (job APIs
+ * have no resource-level IAM).
+ *
+ * ### Monitoring Analysis Jobs
+ * **Example:** Poll a TopicsDetection Job
+ * ```typescript
+ * // init
+ * const describeTopicsDetectionJob = yield* AWS.Comprehend.DescribeTopicsDetectionJob();
+ *
+ * // runtime
+ * const job = yield* describeTopicsDetectionJob({ JobId: jobId });
+ * // job.TopicsDetectionJobProperties?.JobStatus: "SUBMITTED" | "IN_PROGRESS" | "COMPLETED" | …
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeTopicsDetectionJob extends Binding.Service<
+  DescribeTopicsDetectionJob,
+  "AWS.Comprehend.DescribeTopicsDetectionJob",
+  () => Effect.Effect<
+    (
+      request: comprehend.DescribeTopicsDetectionJobRequest,
+    ) => Effect.Effect<
+      comprehend.DescribeTopicsDetectionJobResponse,
+      comprehend.DescribeTopicsDetectionJobError
+    >
+  >
+> {}
+export const DescribeTopicsDetectionJob = Binding.Service<DescribeTopicsDetectionJob>(
+  "AWS.Comprehend.DescribeTopicsDetectionJob",
+);
