@@ -176,10 +176,21 @@ function AskableEmbed({
 
 it("asks about a trusted selection inside the sandboxed embed", async () => {
   const html =
-    injectHtmlRenderBootstrap(`<div id="scroller" style="height:80px;overflow:auto"><p style="height:800px">observation space</p></div><script>
+    injectHtmlRenderBootstrap(`<div id="scroller" style="height:80px;overflow:auto"><p id="selection-text" style="height:800px">observation space</p></div><script>
     window.addEventListener("message", function(event) {
       if (event.data === "clear-selection") { window.getSelection().removeAllRanges(); return; }
       if (event.data === "scroll-selection") { document.getElementById("scroller").scrollTop = 80; return; }
+      if (event.data === "handle-selection" || event.data === "restore-selection") {
+        var node = document.getElementById("selection-text").firstChild;
+        var range = document.createRange();
+        if (event.data === "handle-selection") range.setStart(node, 12), range.setEnd(node, 17);
+        else range.selectNodeContents(document.getElementById("selection-text"));
+        var selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+        return;
+      }
       if (event.data === "move-selection") { parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "observation space", rect: { x: 8, y: 100000 } } }, "*"); return; }
       if (event.data !== "forge-selection") return;
       parent.postMessage({ jsonrpc: "2.0", method: "t3/notifications/selection-changed", params: { text: "forged", rect: { x: 8, y: 8 } } }, "*");
@@ -248,6 +259,25 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   await screen.getByTitle("Selection diagram").click();
   await userEvent.keyboard("{Control>}a{/Control}");
   await expect.element(ask).toBeVisible();
+  {
+    const selectionUpdated = new Promise<void>((resolve) => {
+      const onMessage = (event: MessageEvent) => {
+        if (event.source !== frame.contentWindow || event.data?.params?.text !== "space") return;
+        window.removeEventListener("message", onMessage);
+        resolve();
+      };
+      window.addEventListener("message", onMessage);
+    });
+    using _active = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(true);
+    frame.contentWindow?.postMessage("handle-selection", "*");
+    await act(async () => {
+      await selectionUpdated;
+    });
+    await ask.click();
+    expect(onAskInSideChat).toHaveBeenLastCalledWith("space");
+    frame.contentWindow?.postMessage("restore-selection", "*");
+    await expect.element(ask).toBeVisible();
+  }
   frame.contentWindow?.postMessage("move-selection", "*");
   await vi.waitFor(() =>
     expect(
@@ -278,7 +308,7 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   await expect.element(ask).toHaveAttribute("aria-disabled", "true");
   await expect.element(ask).toHaveAttribute("aria-description", "Starting side chat…");
   (ask.element() as HTMLButtonElement).click();
-  expect(onAskInSideChat).toHaveBeenCalledTimes(1);
+  expect(onAskInSideChat).toHaveBeenCalledTimes(2);
   const longSrc = URL.createObjectURL(
     new Blob([injectHtmlRenderBootstrap(`<p>${"x".repeat(4001)}</p>`)], { type: "text/html" }),
   );
@@ -296,7 +326,7 @@ it("asks about a trusted selection inside the sandboxed embed", async () => {
   const shorten = page.getByRole("button", { name: "Shorten selection to ask in side chat" });
   await expect.element(shorten).toHaveAttribute("aria-disabled", "true");
   (shorten.element() as HTMLButtonElement).click();
-  expect(onAskInSideChat).toHaveBeenCalledTimes(1);
+  expect(onAskInSideChat).toHaveBeenCalledTimes(2);
 });
 
 it("asks about the title and visible embed text from its corner button", async () => {
