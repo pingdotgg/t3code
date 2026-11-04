@@ -21,8 +21,9 @@ import { type ContextWindowSnapshot, formatContextWindowTokens } from "../../lib
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { ContextWindowMeter } from "./ContextWindowMeter";
+import { ContextWindowMeter, ContextWindowSegments } from "./ContextWindowMeter";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
@@ -101,18 +102,13 @@ export function ThreadDetailsContext({
   }
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used = maxTokens !== null ? Math.max(0, Math.min(100, usage.usedPercentage ?? 0)) : null;
-  const threshold = usage.autoCompactThreshold ?? null;
-  const tick =
-    maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
-      ? (threshold / maxTokens) * 100
-      : null;
   const tokens =
     maxTokens !== null
       ? `${formatContextWindowTokens(usage.usedTokens)} / ${formatContextWindowTokens(maxTokens)}`
       : `${formatContextWindowTokens(usage.usedTokens)} tokens`;
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
-      <div className={cn(USAGE_ROW_CLASS, "min-h-11")}>
+      <div className={cn(USAGE_ROW_CLASS, "h-8")}>
         <ContextWindowMeter
           usage={usage}
           side="left"
@@ -126,45 +122,24 @@ export function ThreadDetailsContext({
             >
               <GaugeIcon className="size-4 shrink-0" />
               <span className="flex h-6 items-center text-foreground">Context</span>
-              {used !== null ? (
-                <span className="relative h-1 min-w-0 rounded-full bg-muted-foreground/20">
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 left-0 rounded-full",
-                      used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground/80",
-                    )}
-                    style={{ width: used > 0 ? `max(${used}%, 2px)` : "0%" }}
-                  />
-                  {tick !== null ? (
-                    <span
-                      aria-hidden
-                      className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
-                      style={{ left: `${tick}%` }}
-                    />
-                  ) : null}
-                </span>
-              ) : (
-                <span />
-              )}
+              {used !== null ? <ContextWindowSegments usage={usage} /> : <span />}
               <span className="text-end tabular-nums text-muted-foreground">
                 {used !== null ? `${Math.round(used)}%` : ""}
-              </span>
-              <span className="col-span-2 col-start-3 whitespace-nowrap text-caption tabular-nums text-muted-foreground">
-                {tokens}
               </span>
             </ThreadDetailsControl>
           }
         />
-        <span className="flex self-start justify-end">
+        <span className="flex justify-end">
           {onCompact ? (
-            <ThreadDetailsControl
-              part="icon"
+            <Button
+              size="icon-xs"
+              variant="secondary"
               aria-label="Compact context"
               disabled={compactDisabled}
               onClick={onCompact}
             >
-              <Minimize2Icon className="size-3.5" />
-            </ThreadDetailsControl>
+              <Minimize2Icon className="size-[13px]" />
+            </Button>
           ) : null}
         </span>
       </div>

@@ -1,5 +1,4 @@
 import { type ComponentProps, type ReactNode, type Ref, useId, useState } from "react";
-import { ChevronRightIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
@@ -17,6 +16,7 @@ export function ThreadDetailsSection({
   action,
   empty = false,
   variant = "card",
+  spacing = "default",
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
   title: string;
@@ -25,6 +25,7 @@ export function ThreadDetailsSection({
   action?: ReactNode;
   empty?: boolean;
   variant?: "card" | "workspace" | "usage";
+  spacing?: "default" | "relaxed";
 }) {
   const contentId = useId();
   const [collapsed, setCollapsed] = useLocalStorage(
@@ -77,7 +78,10 @@ export function ThreadDetailsSection({
     >
       {card ? (
         <div
-          className={cn("flex items-center gap-1 ps-3 pe-1", isCollapsed ? "h-7" : "h-6.5 pb-1")}
+          className={cn(
+            "flex items-center gap-1 ps-3 pe-1",
+            isCollapsed ? "h-7" : spacing === "relaxed" ? "h-7.5 pb-1" : "h-6.5 pb-1",
+          )}
           draggable
           onDragStart={(event) => {
             event.dataTransfer.setData("application/x-t3-details-card", title);
@@ -96,12 +100,6 @@ export function ThreadDetailsSection({
             <span className="shrink-0">{title}</span>
             {summary ? (
               <span className="ms-auto truncate text-caption text-muted-foreground">{summary}</span>
-            ) : null}
-            {isCollapsed ? (
-              <ChevronRightIcon
-                aria-hidden
-                className={cn("size-3.5 shrink-0", !summary && "ms-auto")}
-              />
             ) : null}
           </ThreadDetailsControl>
           {action}

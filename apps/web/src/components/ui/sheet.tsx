@@ -132,7 +132,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
-      className={cn("text-title text-strong-foreground leading-none", className)}
+      className={cn("text-title text-strong-foreground leading-snug", className)}
       data-slot="sheet-title"
       {...props}
     />
