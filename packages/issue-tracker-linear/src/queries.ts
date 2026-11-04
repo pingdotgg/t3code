@@ -6,6 +6,9 @@ const PAGE_SIZE = 50;
 export const LIST_ISSUE_CAP = 250;
 
 // Sub-issue counts only need state types; lists keep this small to stay under query complexity limits.
+// Relations add two nested connections of 10. At 50 issues per page that is roughly +3,500 points on
+// top of ~2,500 for the rest, so a page stays near 6,000 of Linear's 10,000-point budget.
+const RELATED_ISSUE = "id identifier title state { type name color }";
 const ISSUE_FIELDS = `
   id identifier title url priority priorityLabel branchName updatedAt
   state { id name type color }
@@ -18,6 +21,8 @@ const ISSUE_FIELDS = `
   parent { id identifier }
   children(first: 25) { nodes { id state { type } } }
   attachments(first: 10) { nodes { id title url sourceType metadata } }
+  relations(first: 10) { nodes { type relatedIssue { ${RELATED_ISSUE} } } }
+  inverseRelations(first: 10) { nodes { type issue { ${RELATED_ISSUE} } } }
 `;
 
 const PAGE_INFO = "pageInfo { hasNextPage endCursor }";

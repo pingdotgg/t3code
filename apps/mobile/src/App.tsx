@@ -95,6 +95,10 @@ import {
 } from "./lib/rootNavigation";
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
+import {
+  hydrateLinearLocation,
+  recordLinearLocation,
+} from "./features/linear/linear-location-store";
 import { installAppUpdateChecks } from "./features/updates/app-updates";
 
 import "../global.css";
@@ -105,6 +109,7 @@ if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 void hydrateWorkspaceSelections();
+void hydrateLinearLocation();
 
 const linkingConfig = {
   initialRouteName: "Home",
@@ -163,6 +168,7 @@ const Navigation = createStaticNavigation(RootStack);
 
 function handleNavigationStateChange(state: NavigationState | undefined): void {
   recordWorkspaceSelections(state);
+  recordLinearLocation(state);
   presentPendingIncomingShare();
   resolvePendingNewTaskPromptLink(state);
   resolvePendingThreadPromptLink(state);

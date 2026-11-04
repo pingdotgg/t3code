@@ -1,3 +1,4 @@
+import { readStoredLinearSearch } from "../linear/linearNavigationState";
 import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
@@ -241,7 +242,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handleLinearClick = () => {
     closeMobileSidebar();
-    void navigate({ to: "/linear", search: {} });
+    void navigate({ to: "/linear", search: readStoredLinearSearch() });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();

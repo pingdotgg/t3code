@@ -13,12 +13,14 @@ import {
   sanitizeComposerContextLabel,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
+import { isLinearIssueBlocked } from "./linearBlocked.ts";
 import { isStateMoveEligible } from "./linearWriteBack.ts";
 import { formatLinearIssueMarkdown, type LinearIssueSnapshot } from "./linearIssueMarkdown.ts";
 
 /** Limits for what an agent reads about one issue. Mirrors the contract record's bounds. */
 const LINEAR_CONTEXT_DESCRIPTION_MAX_CHARS = 16_000;
 const LINEAR_CONTEXT_SUB_ISSUES_MAX = 50;
+const LINEAR_CONTEXT_BLOCKERS_MAX = 20;
 const LINEAR_CONTEXT_COMMENTS_MAX = 10;
 const LINEAR_CONTEXT_COMMENT_MAX_CHARS = 2_000;
 const LINEAR_CONTEXT_LABELS_MAX = 50;
@@ -179,11 +181,17 @@ function buildLinearIssueSnapshot(
       LINEAR_CONTEXT_DESCRIPTION_MAX_CHARS,
       DESCRIPTION_TRUNCATION_MARKER,
     ),
+    blockedBy: issue.blockedBy.slice(0, LINEAR_CONTEXT_BLOCKERS_MAX).map((blocker) => ({
+      identifier: clipShort(blocker.identifier),
+      title: clipShort(blocker.title),
+      stateType: blocker.state.type,
+    })),
     subIssues: include.subIssues
       ? detail.subIssues.slice(0, LINEAR_CONTEXT_SUB_ISSUES_MAX).map((sub) => ({
           identifier: clipShort(sub.identifier),
           title: clipShort(sub.title),
           stateType: sub.state.type,
+          ...(isLinearIssueBlocked(sub) ? { blocked: true } : {}),
         }))
       : [],
     // Detail holds the last 20 oldest to newest; keep the newest ones in that order.

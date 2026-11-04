@@ -1,7 +1,9 @@
 import type {
   LinearCycle,
+  LinearDuplicateRef,
   LinearIssue,
   LinearIssueDetail,
+  LinearIssueRef,
   LinearLinkedPullRequest,
   LinearMilestone,
   LinearPriority,
@@ -73,7 +75,51 @@ function parseLinkedPullRequests(
   return result;
 }
 
+type RelatedIssueNode = NonNullable<
+  NonNullable<NonNullable<IssueNode["relations"]>["nodes"][number]["relatedIssue"]>
+>;
+
+function toRef(node: RelatedIssueNode): LinearIssueRef {
+  return {
+    id: node.id,
+    identifier: node.identifier,
+    title: node.title,
+    state: { type: toStateType(node.state.type), name: node.state.name, color: node.state.color },
+  };
+}
+
+/**
+ * `relations` hold edges where this issue is the source and `inverseRelations` where it is the
+ * target, so `blocks` reads "blocks" forward and "blocked by" backward. `similar` is AI noise.
+ */
+function mapRelations(node: IssueNode): {
+  readonly blockedBy: ReadonlyArray<LinearIssueRef>;
+  readonly blocks: ReadonlyArray<LinearIssueRef>;
+  readonly relatedIssues: ReadonlyArray<LinearIssueRef>;
+  readonly duplicates: ReadonlyArray<LinearDuplicateRef>;
+} {
+  const outgoing = (node.relations?.nodes ?? []).flatMap((relation) =>
+    relation.relatedIssue === null ? [] : [{ type: relation.type, other: relation.relatedIssue }],
+  );
+  const incoming = (node.inverseRelations?.nodes ?? []).flatMap((relation) =>
+    relation.issue === null ? [] : [{ type: relation.type, other: relation.issue }],
+  );
+  const refs = (entries: typeof outgoing, type: string) =>
+    entries.filter((entry) => entry.type === type).map((entry) => toRef(entry.other));
+  const duplicates = (
+    entries: typeof outgoing,
+    direction: LinearDuplicateRef["direction"],
+  ): LinearDuplicateRef[] => refs(entries, "duplicate").map((ref) => ({ ...ref, direction }));
+  return {
+    blockedBy: refs(incoming, "blocks"),
+    blocks: refs(outgoing, "blocks"),
+    relatedIssues: [...refs(outgoing, "related"), ...refs(incoming, "related")],
+    duplicates: [...duplicates(outgoing, "duplicateOf"), ...duplicates(incoming, "duplicatedBy")],
+  };
+}
+
 export function mapIssue(node: IssueNode): LinearIssue {
+  const { blockedBy, blocks } = mapRelations(node);
   return {
     id: node.id,
     identifier: node.identifier,
@@ -94,6 +140,8 @@ export function mapIssue(node: IssueNode): LinearIssue {
     project: node.project,
     team: node.team,
     parent: node.parent,
+    blockedBy,
+    blocks,
     // Canceled sub-issues are neither work to do nor work done, so they leave both counts.
     subIssueCount: node.children.nodes.filter((child) => child.state.type !== "canceled").length,
     completedSubIssueCount: node.children.nodes.filter((child) => child.state.type === "completed")
@@ -205,6 +253,7 @@ export function mapIssueDetail(
   subIssues: ReadonlyArray<LinearIssue> | null,
 ): LinearIssueDetail {
   const { description, comments, ...node } = issue;
+  const { relatedIssues, duplicates } = mapRelations(node);
   return {
     issue: mapIssue({
       ...node,
@@ -220,6 +269,8 @@ export function mapIssueDetail(
         : clampProgress(node.projectMilestone.progress),
     subIssues: subIssues ?? [],
     subIssuesFailed: subIssues === null,
+    relatedIssues,
+    duplicates,
     comments: (comments?.nodes ?? [])
       .map((comment) => ({
         id: comment.id,

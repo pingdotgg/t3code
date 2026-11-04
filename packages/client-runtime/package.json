@@ -27,6 +27,10 @@
       "types": "./src/linear/search.ts",
       "default": "./src/linear/search.ts"
     },
+    "./linear/location": {
+      "types": "./src/linear/location.ts",
+      "default": "./src/linear/location.ts"
+    },
     "./linear/issue-list": {
       "types": "./src/linear/issueList.ts",
       "default": "./src/linear/issueList.ts"

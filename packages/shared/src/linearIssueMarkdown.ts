@@ -26,10 +26,20 @@ export function formatLinearIssueMarkdown(snapshot: LinearIssueSnapshot): string
   if (snapshot.assigneeName) lines.push(`- Assignee: ${snapshot.assigneeName}`);
   if (snapshot.labels.length > 0) lines.push(`- Labels: ${snapshot.labels.join(", ")}`);
   if (snapshot.description.trim()) lines.push("", snapshot.description.trim());
+  if (snapshot.blockedBy.length > 0) {
+    lines.push("", "## Blocked by", "");
+    for (const blocker of snapshot.blockedBy) {
+      lines.push(
+        `- ${SUB_ISSUE_CHECKBOX[blocker.stateType] ?? "[ ]"} ${blocker.identifier} ${blocker.title}`,
+      );
+    }
+  }
   if (snapshot.subIssues.length > 0) {
     lines.push("", "## Sub-issues", "");
     for (const sub of snapshot.subIssues) {
-      lines.push(`- ${SUB_ISSUE_CHECKBOX[sub.stateType] ?? "[ ]"} ${sub.identifier} ${sub.title}`);
+      lines.push(
+        `- ${SUB_ISSUE_CHECKBOX[sub.stateType] ?? "[ ]"} ${sub.identifier} ${sub.title}${sub.blocked ? " (blocked)" : ""}`,
+      );
     }
   }
   if (snapshot.comments.length > 0) {

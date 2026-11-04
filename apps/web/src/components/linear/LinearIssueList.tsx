@@ -1,6 +1,6 @@
 import type { LinearIssue } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -63,6 +63,9 @@ export function LinearIssueList({
   statePositions?: LinearStatePositions;
   context: LinearIssueRowContext;
 }) {
+  const { onListReady } = context;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the page its scroll container now has the list so it can restore the saved scroll once
+  useEffect(() => onListReady(), [onListReady]);
   const groups = groupLinearIssues(topLevelIssues(issues), groupBy, statePositions);
   return (
     <div className="flex flex-col gap-1">

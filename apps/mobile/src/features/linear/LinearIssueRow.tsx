@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/linear/activity";
 import type { EnvironmentId, LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
 import { memo, useState } from "react";
+import { blockedByTitle, isLinearIssueBlocked } from "@t3tools/shared/linearBlocked";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -11,6 +12,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { LinearBlockedBadge } from "./LinearBlockedBadge";
 import { LinearAvatar, LinearPriorityIcon, LinearStateIcon } from "./linearIcons";
 import { useLinearSubIssues } from "./useLinearData";
 
@@ -68,15 +70,20 @@ export interface LinearIssueRowContext {
   readonly onToggleExpanded: (issueId: string) => void;
 }
 
-/** Which issue rows show their sub-issues, for one screen's list. */
-export function useLinearExpandedIssues() {
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
-  const onToggleExpanded = (issueId: string) =>
-    setExpandedIds((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(issueId)) next.add(issueId);
-      return next;
-    });
+// Kept for the session so a screen reopened after leaving Linear shows the same rows expanded.
+const expandedBySession = new Map<string, ReadonlySet<string>>();
+
+/** Which issue rows show their sub-issues, for one screen's list; `memoryKey` names that screen. */
+export function useLinearExpandedIssues(memoryKey: string) {
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
+    () => expandedBySession.get(memoryKey) ?? new Set(),
+  );
+  const onToggleExpanded = (issueId: string) => {
+    const next = new Set(expandedIds);
+    if (!next.delete(issueId)) next.add(issueId);
+    expandedBySession.set(memoryKey, next);
+    setExpandedIds(next);
+  };
   return { expandedIds, onToggleExpanded };
 }
 
@@ -131,7 +138,7 @@ export const LinearIssueRow = memo(function LinearIssueRowView(props: {
       <View className="flex-row" style={{ paddingLeft: depth * 20 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${issue.identifier}, ${issue.title}, ${issue.state.name}, ${issue.priorityLabel}${issue.assignee ? `, assigned to ${issue.assignee.name}` : ""}${pill ? `, ${pill.label}` : ""}`}
+          accessibilityLabel={`${issue.identifier}, ${issue.title}, ${issue.state.name}, ${issue.priorityLabel}${issue.assignee ? `, assigned to ${issue.assignee.name}` : ""}${pill ? `, ${pill.label}` : ""}${isLinearIssueBlocked(issue) ? `, ${blockedByTitle(issue)}` : ""}`}
           accessibilityHint="Double tap to open."
           onPress={() => context.onSelect(issue.id)}
           className="min-w-0 flex-1 flex-row gap-3 px-4 active:bg-row-hover"
@@ -144,6 +151,7 @@ export const LinearIssueRow = memo(function LinearIssueRowView(props: {
               <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
                 {issue.identifier}
               </Text>
+              <LinearBlockedBadge issue={issue} />
               <View className="flex-1" />
               {pill ? <LinearActivityPill pill={pill} /> : null}
               <Text className="text-2xs tabular-nums text-foreground-tertiary">

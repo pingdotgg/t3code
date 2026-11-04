@@ -22,6 +22,7 @@ import {
 } from "./linearLaunch.ts";
 
 const isContextRecord = Schema.is(LinearIssueContextRecord);
+const decodeContextRecord = Schema.decodeUnknownSync(LinearIssueContextRecord);
 
 const makeIssue = (overrides: Partial<LinearIssue> = {}): LinearIssue =>
   ({
@@ -39,6 +40,8 @@ const makeIssue = (overrides: Partial<LinearIssue> = {}): LinearIssue =>
     project: { id: "p1", name: "RFID Gateway" },
     team: { id: "t1", key: "ATT", name: "Attraccess" },
     parent: null,
+    blockedBy: [],
+    blocks: [],
     subIssueCount: 0,
     completedSubIssueCount: 0,
     branchName: "jan/att-612-rfid",
@@ -61,6 +64,8 @@ const makeDetail = (overrides: Partial<LinearIssueDetail> = {}): LinearIssueDeta
     makeIssue({ id: "s-2", identifier: "ATT-614", title: "Port auth" }),
   ],
   subIssuesFailed: false,
+  relatedIssues: [],
+  duplicates: [],
   comments: [
     {
       id: "c1",
@@ -276,6 +281,34 @@ describe("buildLinearIssueMarkdown", () => {
     expect(markdown).not.toContain("## Sub-issues");
     expect(markdown).not.toContain("## Comments");
     expect(markdown).not.toContain("## Linked pull requests");
+  });
+
+  it("renders blockers before sub-issues and marks blocked sub-issues", () => {
+    const blocker = (type: LinearIssue["state"]["type"], n: number) => ({
+      id: `b${n}`,
+      identifier: `ATT-${n}`,
+      title: `Blocker ${n}`,
+      state: { type, name: type, color: "#000" },
+    });
+    const detail = makeDetail({
+      issue: makeIssue({ blockedBy: [blocker("started", 20), blocker("completed", 21)] }),
+      subIssues: [
+        makeIssue({ id: "s-1", identifier: "ATT-613", blockedBy: [blocker("backlog", 22)] }),
+        makeIssue({ id: "s-2", identifier: "ATT-614", blockedBy: [blocker("canceled", 23)] }),
+      ],
+    });
+    const markdown = buildLinearIssueMarkdown(detail, all);
+    expect(markdown).toContain("## Blocked by\n\n- [ ] ATT-20 Blocker 20\n- [x] ATT-21 Blocker 21");
+    expect(markdown.indexOf("## Blocked by")).toBeLessThan(markdown.indexOf("## Sub-issues"));
+    expect(markdown).toContain("ATT-613 Server-side RFID APDU handshake (blocked)");
+    expect(markdown).not.toContain("ATT-614 Server-side RFID APDU handshake (blocked)");
+    expect(buildLinearIssueMarkdown(makeDetail(), all)).not.toContain("## Blocked by");
+  });
+
+  it("decodes records saved before blockedBy existed", () => {
+    const { blockedBy: _omit, ...legacy } = buildLinearIssueContextRecord(makeDetail());
+    const decoded = decodeContextRecord(legacy);
+    expect(decoded.blockedBy).toEqual([]);
   });
 
   it("truncates to the provider input limit with a note", () => {

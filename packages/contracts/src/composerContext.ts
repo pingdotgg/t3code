@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -245,8 +246,19 @@ export const LinearIssueContextRecord = Schema.Struct({
   labels: Schema.Array(ShortString).check(Schema.isMaxLength(50)),
   branchName: ShortString,
   description: BoundedString(LINEAR_CONTEXT_TEXT_MAX_CHARS),
-  subIssues: Schema.Array(
+  /** Open and finished issues that block this one; absent on records saved before relations. */
+  blockedBy: Schema.Array(
     Schema.Struct({ identifier: ShortString, title: ShortString, stateType: ShortString }),
+  )
+    .check(Schema.isMaxLength(20))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  subIssues: Schema.Array(
+    Schema.Struct({
+      identifier: ShortString,
+      title: ShortString,
+      stateType: ShortString,
+      blocked: Schema.optional(Schema.Boolean),
+    }),
   ).check(Schema.isMaxLength(50)),
   comments: Schema.Array(
     Schema.Struct({

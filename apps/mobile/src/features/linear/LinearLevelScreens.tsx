@@ -204,7 +204,7 @@ export function LinearMilestoneScreen({
   const [text, setText] = useState("");
   const debouncedText = useDebouncedValue(text.trim(), SEARCH_DEBOUNCE_MS);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const expansion = useLinearExpandedIssues();
+  const expansion = useLinearExpandedIssues(`${environmentId}:${JSON.stringify(scope)}`);
 
   const search = linearSearchFor(scope, {
     ...filters,

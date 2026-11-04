@@ -7,6 +7,7 @@ import { isElectron } from "~/env";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { workspaceAreaProps } from "~/lib/workspaceFocus";
 import { registerCommands } from "~/shortcuts/dispatcher";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useDebouncedValue } from "~/state/queries";
 
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
@@ -28,6 +29,16 @@ import {
   LinearTeamCards,
 } from "./LinearLevels";
 import { LinearMilestoneView } from "./LinearMilestoneView";
+import {
+  getLinearListScroll,
+  readStoredLinearLocation,
+  setLinearListScroll,
+  writeStoredLinearLocation,
+} from "./linearNavigationState";
+import {
+  isStaleLocationForOrganization,
+  linearListKey,
+} from "@t3tools/client-runtime/linear/location";
 import { LinearLaunchProvider } from "./useLinearLaunch";
 import { classifyLinearFailure } from "@t3tools/client-runtime/linear/degradation";
 import { LinearGlyph } from "./linearIcons";
@@ -143,6 +154,31 @@ function LinearConnected({
   const jumpSearchInputRef = useRef<HTMLInputElement | null>(null);
   const issueSearchInputRef = useRef<HTMLInputElement | null>(null);
 
+  const listKey = linearListKey(search);
+  const organizationId = status.organization?.id ?? null;
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRestoredRef = useRef(false);
+  // Restore once per page mount: that is a return to Linear, not a later filter change.
+  const restoreScroll = useStableCallback(() => {
+    if (scrollRestoredRef.current) return;
+    scrollRestoredRef.current = true;
+    const saved = getLinearListScroll(listKey);
+    if (saved !== undefined && scrollRef.current !== null) scrollRef.current.scrollTop = saved;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- levels without a loaded issue list have their content on first paint
+  useEffect(() => {
+    if (level !== "milestone") restoreScroll();
+  }, [level, restoreScroll]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remembers the location in localStorage; a location restored from another Linear organization is reset instead
+  useEffect(() => {
+    if (isStaleLocationForOrganization(readStoredLinearLocation(), organizationId, search)) {
+      writeStoredLinearLocation({ organizationId, search: {} });
+      onNavigate({}, { replace: true });
+      return;
+    }
+    writeStoredLinearLocation({ organizationId, search });
+  }, [organizationId, search, onNavigate]);
+
   const patch = (change: LinearSearchPatch, options?: { replace?: boolean }) =>
     onNavigate(patchLinearSearch(search, change), { replace: options?.replace ?? true });
   const goToScope = (scope: LinearScope) => onNavigate(withLinearScope(search, scope));
@@ -210,6 +246,8 @@ function LinearConnected({
   const rowContext: LinearIssueRowContext = {
     activityByIssueId: activity.byIssueId,
     selectedIssueId: search.issue,
+    listKey,
+    onListReady: restoreScroll,
     onSelect: selectIssue,
   };
 
@@ -304,7 +342,15 @@ function LinearConnected({
               onJump={jump}
             />
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            ref={scrollRef}
+            onScroll={(event) => {
+              if (scrollRestoredRef.current) {
+                setLinearListScroll(listKey, event.currentTarget.scrollTop);
+              }
+            }}
+            className="min-h-0 flex-1 overflow-y-auto"
+          >
             <WorkspacePageContainer width="expanded" className="min-h-full gap-4 pt-4">
               {showPageBanner ? (
                 <LinearBanner degradation={degradation} onRetry={refresh} retrying={refreshing} />

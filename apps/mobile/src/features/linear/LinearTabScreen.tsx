@@ -1,4 +1,5 @@
 import { useAtomSet } from "@effect/atom-react";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { buildLinearJumpTargets, type LinearJumpTarget } from "@t3tools/client-runtime/linear/jump";
 import {
   jumpBackInIssueIds,
@@ -7,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/linear/activity";
 import type { LinearScope } from "@t3tools/client-runtime/linear/search";
 import type { LinearIssue, LinearTeam } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -43,6 +44,13 @@ import {
   useLinearSearchIssues,
   useLinearStatus,
 } from "./useLinearData";
+import {
+  clearLinearLocation,
+  currentLinearLocation,
+  hydrateLinearLocation,
+  setLinearLocationOrganization,
+} from "./linear-location-store";
+import { isLinearStackRoute, linearRoutesToResume } from "./linearResume";
 import { useLinearNavigation } from "./useLinearNavigation";
 
 const EMPTY_LIST: ReadonlyArray<never> = [];
@@ -87,6 +95,51 @@ function JumpResultRow(props: {
 }
 
 /**
+ * When the Linear tab opens (not on later renders), pushes the screens the user last had open,
+ * so leaving to a chat and coming back lands on the same scope or issue. The stack is the one a
+ * manual drill-down would build, so native back still goes level by level.
+ */
+function useResumeLinearLocation(input: {
+  readonly environmentId: string | null;
+  readonly organizationId: string | null;
+  readonly visible: boolean;
+}) {
+  const navigation = useNavigation();
+  const resumed = useRef(false);
+  const { environmentId, organizationId, visible } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reopens the remembered native stack once per visit to the Linear tab
+  useEffect(() => {
+    if (!visible) {
+      resumed.current = false;
+      return;
+    }
+    if (resumed.current || environmentId === null || organizationId === null) return;
+    let cancelled = false;
+    void hydrateLinearLocation().then(() => {
+      if (cancelled) return;
+      resumed.current = true;
+      const stored = currentLinearLocation();
+      const routes = linearRoutesToResume({ stored, environmentId, organizationId });
+      if (stored !== null && stored.environmentId === environmentId && routes.length === 0) {
+        clearLinearLocation();
+        return;
+      }
+      setLinearLocationOrganization(environmentId, organizationId);
+      const state = navigation.getState();
+      const top = state?.routes[state.index]?.name;
+      // A deep link already put a Linear screen on top; it wins and was recorded as the location.
+      if (isLinearStackRoute(top)) return;
+      for (const route of routes) {
+        navigation.dispatch(StackActions.push(route.name, route.params));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [environmentId, organizationId, visible, navigation]);
+}
+
+/**
  * The Linear tab: teams and "Jump back in" at the workspace level. Deeper levels are pushed
  * stack screens (see Stack.tsx), so native back is the breadcrumb.
  */
@@ -108,9 +161,14 @@ export function LinearTabScreen(props: {
     hasError: status.error !== null,
   });
   const connected = state === "connected";
+  useResumeLinearLocation({
+    environmentId,
+    organizationId: connected ? (status.data?.organization?.id ?? null) : null,
+    visible,
+  });
   const { refresh, refreshing } = useLinearRefresh(environmentId);
   const navigation = useLinearNavigation(environmentId, NO_SCOPE);
-  const expansion = useLinearExpandedIssues();
+  const expansion = useLinearExpandedIssues(`tab:${environmentId ?? ""}`);
   const activity = useLinearActivity(environmentId, connected);
   const term = tab.searchMode === "resting" ? "" : tab.query.trim();
   const debouncedTerm = useDebouncedValue(term, JUMP_SEARCH_DEBOUNCE_MS);

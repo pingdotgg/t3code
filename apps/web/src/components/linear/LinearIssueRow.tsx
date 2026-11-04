@@ -6,15 +6,21 @@ import { cn } from "~/lib/utils";
 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { RelativeTime } from "../RelativeTime";
+import { LinearBlockedBadge } from "./LinearBlockedBadge";
 import { LinearActivityPill } from "./LinearActivityPill";
 import { LinearAvatar, LinearPriorityIcon, LinearStateIcon } from "./linearIcons";
 import { pickActivityPill } from "@t3tools/client-runtime/linear/activity";
 import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
+import { isLinearIssueExpanded, setLinearIssueExpanded } from "./linearNavigationState";
 import { useLinearSubIssues } from "./useLinearData";
 
 export interface LinearIssueRowContext {
   readonly activityByIssueId: ReadonlyMap<string, LinearIssueActivity>;
   readonly selectedIssueId: string | undefined;
+  /** Identifies the list for in-session memory of which sub-issue rows are expanded. */
+  readonly listKey: string;
+  /** Called once the issue list is on screen, so the page can restore its scroll position. */
+  readonly onListReady: () => void;
   readonly onSelect: (issueId: string) => void;
 }
 
@@ -36,7 +42,11 @@ export function LinearIssueRow({
   depth?: number;
   context: LinearIssueRowContext;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => isLinearIssueExpanded(context.listKey, issue.id));
+  const toggleExpanded = () => {
+    setLinearIssueExpanded(context.listKey, issue.id, !expanded);
+    setExpanded(!expanded);
+  };
   const subIssues = useLinearSubIssues(expanded ? issue.id : undefined);
   const selected =
     context.selectedIssueId !== undefined &&
@@ -61,7 +71,7 @@ export function LinearIssueRow({
             type="button"
             aria-label={expanded ? "Collapse sub-issues" : "Expand sub-issues"}
             aria-expanded={expanded}
-            onClick={() => setExpanded((open) => !open)}
+            onClick={toggleExpanded}
             className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <ChevronRightIcon
@@ -89,6 +99,7 @@ export function LinearIssueRow({
               <span className={cn("min-w-0 truncate text-sm", finished && "text-muted-foreground")}>
                 {issue.title}
               </span>
+              <LinearBlockedBadge issue={issue} />
               {hasChildren ? (
                 <span className="inline-flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground">
                   <CornerDownRightIcon aria-hidden className="size-3" />

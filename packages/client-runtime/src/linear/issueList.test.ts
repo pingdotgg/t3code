@@ -30,6 +30,8 @@ function issue(
     project: null,
     team: { id: "t", key: "ATT", name: "Attraccess" },
     parent: null,
+    blockedBy: [],
+    blocks: [],
     subIssueCount: 0,
     completedSubIssueCount: 0,
     branchName: id,

@@ -33,6 +33,17 @@ issue**. You can still switch each one off for a single launch from the hint und
 or in the pipeline dialog. The issue is only moved when it is in Backlog, Triage or an unstarted
 state. A pipeline keeps one comment up to date as its steps finish.
 
+## Blocked issues and relations
+
+Issues that another issue blocks show a **Blocked** label in lists and in the sub-issue list of
+their parent, so you can see which sub-issues you can start now. Hover it (on the computer) to see
+the blocking issues. Only direct "blocked by" relations count, and an issue stops showing as blocked
+once every blocker is completed or canceled; a blocked parent does not block its sub-issues.
+
+An open issue lists its **Relations** (blocked by, blocking, related, duplicates) below its
+sub-issues, and each one opens that issue. Relations are read-only here; change them in Linear. The
+agent sees the issues that block the one you launch from.
+
 ## Choosing the machine
 
 With two or more connected machines that have the project, the pipeline dialog shows a **Machine**
@@ -63,6 +74,12 @@ machine's own T3 Code (Settings → Integrations → Linear).
 The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically. Running a pipeline from the phone also has a Machine row, with **Auto balance** that weighs every machine equally (the phone has no load-balancing preferences). It starts on the machine that serves Linear. Comments posted for a launch from the phone link to the hosted web app (app.t3.codes), because the phone has no web address of its own.
 
 ## Things to know
+
+- The Linear page remembers where you were: the team, project and milestone, filters, and the
+  selected issue. Opening Linear again, from the sidebar or the command palette, returns there, even
+  after a restart. Scroll position and expanded sub-issues are kept until you close the app. On
+  mobile, returning to the Linear tab reopens the screens you had open. Switching to a different
+  Linear workspace starts from the top.
 
 - Links to issues in your connected Linear workspace open in the Linear page, or the issue screen
   on mobile, instead of the browser. Command/Ctrl+Click opens them in your browser.

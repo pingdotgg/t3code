@@ -37,6 +37,25 @@ const AttachmentNode = Schema.Struct({
   metadata: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 
+const RelatedIssueNode = Schema.Struct({
+  id: Schema.String,
+  identifier: Schema.String,
+  title: Schema.String,
+  state: Schema.Struct({ type: Schema.String, name: Schema.String, color: Schema.String }),
+});
+
+// Optional and nullable: a failed relations field must not blank the issue (partial GraphQL data).
+const OutgoingRelations = Schema.optional(
+  Schema.NullOr(
+    nodes(Schema.Struct({ type: Schema.String, relatedIssue: Schema.NullOr(RelatedIssueNode) })),
+  ),
+);
+const IncomingRelations = Schema.optional(
+  Schema.NullOr(
+    nodes(Schema.Struct({ type: Schema.String, issue: Schema.NullOr(RelatedIssueNode) })),
+  ),
+);
+
 export const IssueNode = Schema.Struct({
   id: Schema.String,
   identifier: Schema.String,
@@ -63,6 +82,8 @@ export const IssueNode = Schema.Struct({
     Schema.Struct({ id: Schema.String, state: Schema.Struct({ type: Schema.String }) }),
   ),
   attachments: nodes(AttachmentNode),
+  relations: OutgoingRelations,
+  inverseRelations: IncomingRelations,
 });
 export type IssueNode = typeof IssueNode.Type;
 

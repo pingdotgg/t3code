@@ -6,6 +6,7 @@ import { View } from "react-native";
 
 import { linearSelectedEnvironmentIdAtom } from "../../state/linear";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
+import { clearLinearLocation } from "./linear-location-store";
 import type { LinearRouteParams } from "./linearRoutes";
 
 /** `linear/:environmentId` opens the Linear tab on that environment, replacing this stub route. */
@@ -17,6 +18,8 @@ export function LinearWorkspaceLinkScreen({
   const { environmentId } = route.params;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a deep link picks the Linear environment and switches the workspace to the Linear tab
   useEffect(() => {
+    // A link to the workspace itself means the root, so the remembered drill-down gives way to it.
+    clearLinearLocation();
     selectEnvironment(EnvironmentId.make(environmentId));
     selectTab("linear");
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Runs once per link; the tab selector changes identity every render.

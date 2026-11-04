@@ -156,6 +156,8 @@ const fullDetail = {
     project: null,
     team: { id: "team-1", key: "ATT", name: "Attraccess" },
     parent: null,
+    blockedBy: [],
+    blocks: [],
     subIssueCount: 0,
     completedSubIssueCount: 0,
     branchName: "jan/att-612",
@@ -166,6 +168,8 @@ const fullDetail = {
   milestoneProgress: null,
   subIssues: [],
   subIssuesFailed: false,
+  relatedIssues: [],
+  duplicates: [],
   comments: [
     {
       id: "c1",

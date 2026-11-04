@@ -1,4 +1,5 @@
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
+import { readStoredLinearSearch } from "./linear/linearNavigationState";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -1769,7 +1770,7 @@ function OpenCommandPaletteDialog(props: {
     title: "Open Linear",
     icon: <LinearGlyph className={ITEM_ICON_CLASS} />,
     run: async () => {
-      await navigate({ to: "/linear", search: {} });
+      await navigate({ to: "/linear", search: readStoredLinearSearch() });
     },
   });
 

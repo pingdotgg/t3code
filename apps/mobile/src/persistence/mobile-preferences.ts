@@ -20,6 +20,7 @@ import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import { StoredLinearLocation } from "../features/linear/linearResume";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
@@ -81,6 +82,7 @@ export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
+const isStoredLinearLocation = Schema.is(StoredLinearLocation);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
   environmentId: Schema.NonEmptyString,
@@ -134,6 +136,8 @@ export interface Preferences {
   readonly workspaceSelections?: WorkspaceSelections;
   /** The name of the pipeline last started from a Linear issue, for the sheet's "Last used". */
   readonly linearLastPipelineName?: string;
+  /** The Linear screens the user last had open, reopened when the Linear tab returns. */
+  readonly linearLocation?: StoredLinearLocation;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -217,6 +221,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
     linearLastPipelineName?: string;
+    linearLocation?: StoredLinearLocation;
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -375,6 +380,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isWorkspaceSelections(parsed.workspaceSelections)) {
     preferences.workspaceSelections = parsed.workspaceSelections;
+  }
+  if (isStoredLinearLocation(parsed.linearLocation)) {
+    preferences.linearLocation = parsed.linearLocation;
   }
   if (typeof parsed.linearLastPipelineName === "string") {
     preferences.linearLastPipelineName = parsed.linearLastPipelineName;

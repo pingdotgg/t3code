@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -199,6 +200,15 @@ export const LinearIssueState = Schema.Struct({
 });
 export type LinearIssueState = typeof LinearIssueState.Type;
 
+/** Compact reference to another issue, enough to render a relation row without a fetch. */
+export const LinearIssueRef = Schema.Struct({
+  id: LinearId,
+  identifier: Schema.String,
+  title: Schema.String,
+  state: Schema.Struct({ type: LinearStateType, name: Schema.String, color: Schema.String }),
+});
+export type LinearIssueRef = typeof LinearIssueRef.Type;
+
 export const LinearIssue = Schema.Struct({
   id: LinearId,
   identifier: Schema.String,
@@ -214,6 +224,10 @@ export const LinearIssue = Schema.Struct({
   project: Schema.NullOr(Schema.Struct({ id: LinearId, name: Schema.String })),
   team: Schema.Struct({ id: LinearId, key: Schema.String, name: Schema.String }),
   parent: Schema.NullOr(Schema.Struct({ id: LinearId, identifier: Schema.String })),
+  /** Issues that block this one. Defaults to empty when an older server omits the field. */
+  blockedBy: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Issues this one blocks. */
+  blocks: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   subIssueCount: NonNegativeInt,
   completedSubIssueCount: NonNegativeInt,
   branchName: Schema.String,
@@ -238,6 +252,13 @@ export const LinearAttachment = Schema.Struct({
 });
 export type LinearAttachment = typeof LinearAttachment.Type;
 
+export const LinearDuplicateRef = Schema.Struct({
+  ...LinearIssueRef.fields,
+  /** `duplicateOf`: this issue duplicates the other one. `duplicatedBy`: the other duplicates this. */
+  direction: Schema.Literals(["duplicateOf", "duplicatedBy"]),
+});
+export type LinearDuplicateRef = typeof LinearDuplicateRef.Type;
+
 export const LinearIssueDetail = Schema.Struct({
   issue: LinearIssue,
   description: Schema.String,
@@ -245,6 +266,8 @@ export const LinearIssueDetail = Schema.Struct({
   subIssues: Schema.Array(LinearIssue),
   /** Sub-issues could not be loaded; `subIssues` is empty but the rest of the detail is valid. */
   subIssuesFailed: Schema.Boolean,
+  relatedIssues: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  duplicates: Schema.Array(LinearDuplicateRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Last 20, oldest → newest. */
   comments: Schema.Array(LinearComment),
   attachments: Schema.Array(LinearAttachment),

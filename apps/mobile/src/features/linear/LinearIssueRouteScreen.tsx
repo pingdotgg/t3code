@@ -13,8 +13,10 @@ import {
   ThreadId,
   type LinearActivityItem,
   type LinearComment,
+  type LinearDuplicateRef,
   type LinearIssue,
   type LinearIssueDetail,
+  type LinearIssueRef,
   type LinearViewer,
 } from "@t3tools/contracts";
 import { useEffect, useState, type ReactNode } from "react";
@@ -35,6 +37,13 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import {
+  blockedBySummary,
+  isLinearIssueBlocked,
+  isLinearRefOpen,
+  sortBlockers,
+} from "@t3tools/shared/linearBlocked";
+import { LinearBlockedBadge } from "./LinearBlockedBadge";
 import { LinearActivityPill } from "./LinearIssueRow";
 import { useOpenLinearIssueLink } from "./useOpenLinearIssueLink";
 import {
@@ -213,8 +222,100 @@ function SubIssueRow(props: {
       <Text className="min-w-0 flex-1 py-2.5 text-sm" numberOfLines={2}>
         {issue.title}
       </Text>
+      <LinearBlockedBadge issue={issue} />
       <LinearAvatar user={issue.assignee} size={16} />
     </Pressable>
+  );
+}
+
+function RelationRow(props: {
+  readonly issue: LinearIssueRef;
+  readonly muted?: boolean;
+  readonly onSelect: (issueId: string) => void;
+}) {
+  const { issue } = props;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${issue.identifier}, ${issue.title}, ${issue.state.name}`}
+      onPress={() => props.onSelect(issue.id)}
+      className={cn(
+        "min-h-11 flex-row items-center gap-2.5 border-b border-border-subtle px-3.5 active:bg-row-hover",
+        props.muted && "opacity-60",
+      )}
+    >
+      <LinearStateIcon type={issue.state.type} color={issue.state.color} size={16} />
+      <Text className="font-mono text-xs text-foreground-muted">{issue.identifier}</Text>
+      <Text className="min-w-0 flex-1 py-2.5 text-sm" numberOfLines={2}>
+        {issue.title}
+      </Text>
+    </Pressable>
+  );
+}
+
+function RelationGroup(props: { readonly title: string; readonly children: ReactNode }) {
+  return (
+    <View className="gap-1">
+      <Text className="text-2xs font-t3-medium text-foreground-muted">{props.title}</Text>
+      <Card>{props.children}</Card>
+    </View>
+  );
+}
+
+const DUPLICATE_LABEL: Record<LinearDuplicateRef["direction"], string> = {
+  duplicateOf: "Duplicate of",
+  duplicatedBy: "Duplicated by",
+};
+
+function RelationsSection(props: {
+  readonly detail: LinearIssueDetail;
+  readonly onSelect: (issueId: string) => void;
+}) {
+  const { blockedBy, blocks } = props.detail.issue;
+  const { relatedIssues, duplicates } = props.detail;
+  if (blockedBy.length + blocks.length + relatedIssues.length + duplicates.length === 0) {
+    return null;
+  }
+  return (
+    <View className="gap-2">
+      <SectionHeader>Relations</SectionHeader>
+      {blockedBy.length > 0 ? (
+        <RelationGroup title="Blocked by">
+          {sortBlockers(blockedBy).map((ref) => (
+            <RelationRow
+              key={ref.id}
+              issue={ref}
+              muted={!isLinearRefOpen(ref)}
+              onSelect={props.onSelect}
+            />
+          ))}
+        </RelationGroup>
+      ) : null}
+      {blocks.length > 0 ? (
+        <RelationGroup title="Blocking">
+          {blocks.map((ref) => (
+            <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
+          ))}
+        </RelationGroup>
+      ) : null}
+      {relatedIssues.length > 0 ? (
+        <RelationGroup title="Related">
+          {relatedIssues.map((ref) => (
+            <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
+          ))}
+        </RelationGroup>
+      ) : null}
+      {(["duplicateOf", "duplicatedBy"] as const).map((direction) => {
+        const group = duplicates.filter((ref) => ref.direction === direction);
+        return group.length === 0 ? null : (
+          <RelationGroup key={direction} title={DUPLICATE_LABEL[direction]}>
+            {group.map((ref) => (
+              <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
+            ))}
+          </RelationGroup>
+        );
+      })}
+    </View>
   );
 }
 
@@ -278,6 +379,18 @@ function DetailBody(props: {
               Sub-issue of {issue.parent.identifier}
             </Text>
           </Pressable>
+        ) : null}
+        {isLinearIssueBlocked(issue) ? (
+          <View className="flex-row items-center gap-1 self-start">
+            <SymbolView
+              name="exclamationmark.circle"
+              size={12}
+              tintColorClassName="accent-icon-muted"
+            />
+            <Text className="text-xs font-t3-medium text-warning-foreground">
+              {blockedBySummary(issue)}
+            </Text>
+          </View>
         ) : null}
       </View>
 
@@ -433,6 +546,8 @@ function DetailBody(props: {
           <Text className="text-xs text-foreground-muted">Couldn't load sub-issues.</Text>
         </View>
       ) : null}
+
+      <RelationsSection detail={detail} onSelect={linearNavigation.openIssue} />
 
       {issue.linkedPullRequests.length > 0 ? (
         <View>
