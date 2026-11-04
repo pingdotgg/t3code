@@ -2376,7 +2376,9 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     await colors.click();
     await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));
     expect(screen.container.querySelector("iframe")).toBe(opened);
-    expect(getComputedStyle(opened!).filter).toBe(initiallyDark ? "none" : "invert(1)");
+    expect(getComputedStyle(opened!).filter).toBe(
+      initiallyDark ? "none" : "invert(1) hue-rotate(180deg)",
+    );
 
     // An agent command renews the signed URL but leaves the file alone.
     assetUrlState.mockReturnValue({

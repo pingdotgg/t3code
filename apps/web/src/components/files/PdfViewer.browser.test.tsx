@@ -130,7 +130,7 @@ it("fits, finds and selects text, and changes PDF colors without losing the read
     expect(selection.toString()).toBe("Budget and risks");
     await colors.click();
     await expect.element(colors).toHaveAttribute("aria-pressed", "true");
-    expect(getComputedStyle(canvas).filter).toBe("invert(1)");
+    expect(getComputedStyle(canvas).filter).toBe("invert(1) hue-rotate(180deg)");
     expect(region.querySelector('canvas[aria-label="Page 2"]')).toBe(canvas);
     expect([region.scrollTop, region.scrollLeft]).toEqual(position);
     expect(screen.container.textContent).toContain(zoom);

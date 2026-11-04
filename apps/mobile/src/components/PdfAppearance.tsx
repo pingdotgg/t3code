@@ -33,7 +33,10 @@ export function PdfAppearance(props: { readonly children: ReactNode }) {
           flex: 1,
           isolation: "isolate",
           backgroundColor: "white",
-          filter: Platform.OS === "android" && dark ? [{ invert: 1 }] : undefined,
+          filter:
+            Platform.OS === "android" && dark
+              ? [{ invert: 1 }, { hueRotate: "180deg" }]
+              : undefined,
         }}
       >
         {props.children}
