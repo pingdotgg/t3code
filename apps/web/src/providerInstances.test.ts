@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
@@ -251,6 +252,32 @@ describe("deriveProviderEntriesByEnvironment", () => {
     const personal = entries?.get("codex");
 
     expect(personal && shouldShowInstanceBadge(personal, entries?.values() ?? [])).toBe(true);
+  });
+});
+
+describe("brandProviderInstanceEntries", () => {
+  it("keeps an instance a project turns on as a sibling for the instance badge", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const settings = {
+      providerInstances: {
+        [ProviderInstanceId.make("codex_work")]: { driver: codex, enabled: false },
+      },
+      projectSettingsOverrides: {
+        [ProjectId.make("project-work")]: {
+          providerInstances: { [ProviderInstanceId.make("codex_work")]: { enabled: true } },
+        },
+      },
+    };
+    const entries = brandProviderInstanceEntries(
+      deriveProviderInstanceEntries([
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: codex, instanceId: "codex_work" }),
+      ]),
+      settings,
+    );
+    const personal = entries.find((entry) => entry.instanceId === "codex");
+
+    expect(personal && shouldShowInstanceBadge(personal, entries)).toBe(true);
   });
 });
 
