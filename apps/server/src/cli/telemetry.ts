@@ -53,10 +53,10 @@ const telemetryStatusCommand = Command.make("status", { baseDir: baseDirFlag }).
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const paths = yield* resolveCliServerPaths(flags.baseDir);
-      const { settings } = yield* readSettingsObject(paths.settingsPath);
-      yield* Console.log(
-        `Telemetry setting: ${settings.telemetryEnabled === false ? "off" : "on"} (${paths.settingsPath}).\n`,
-      );
+      const { exists, raw, settings } = yield* readSettingsObject(paths.settingsPath);
+      // The server cannot parse a blank file, so it treats telemetry as off.
+      const off = settings.telemetryEnabled === false || (exists && raw.trim().length === 0);
+      yield* Console.log(`Telemetry setting: ${off ? "off" : "on"} (${paths.settingsPath}).\n`);
       yield* noteEnvironmentOverride;
     }),
   ),

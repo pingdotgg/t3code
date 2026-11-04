@@ -68,6 +68,21 @@ it.layer(NodeServices.layer)("t3 telemetry", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("reports a blank settings file as off, like the server, and a missing one as on", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, settingsPath } = yield* makeBaseDir;
+      const missing = yield* runCli(["telemetry", "status", "--base-dir", baseDir]);
+      assert.isTrue(missing.some((line) => String(line).startsWith("Telemetry setting: on")));
+
+      yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+      yield* fs.writeFileString(settingsPath, "  \n");
+      const blank = yield* runCli(["telemetry", "status", "--base-dir", baseDir]);
+      assert.isTrue(blank.some((line) => String(line).startsWith("Telemetry setting: off")));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("says when the variable in this shell overrides the setting", () =>
     Effect.gen(function* () {
       const { baseDir } = yield* makeBaseDir;
