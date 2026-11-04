@@ -257,6 +257,41 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("leaves out of Reviewing what the viewer has voted on and still steps over it", () =>
+    Effect.gen(function* () {
+      const [voted, waiting, groupRequested] = pullRequestRows(3, 1);
+      const viewer = { displayName: "Bilal Hassan", uniqueName: "Bilal@acme.dev" };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              { ...voted, reviewers: [{ ...viewer, vote: 10 }] },
+              { ...waiting, reviewers: [{ ...viewer, vote: 0 }] },
+              {
+                ...groupRequested,
+                reviewers: [{ displayName: "[web]\\Reviewers", uniqueName: "web-reviewers" }],
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal@acme.dev",
+        limit: 2,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([2, 3]);
+      assert.isTrue(batch.truncated);
+      assert.strictEqual(batch.cursorAdvance, 3);
+    }),
+  );
+
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

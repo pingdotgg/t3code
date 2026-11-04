@@ -28,13 +28,18 @@ const RawIdentitySchema = Schema.Struct({
 
 const RawReviewerSchema = Schema.Struct({
   ...RawIdentitySchema.fields,
+  id: Schema.optional(Schema.NullOr(Schema.String)),
   /** 10 approved, 5 approved with suggestions, 0 none, -5 waiting for author, -10 rejected. */
   vote: Schema.optional(Schema.NullOr(Schema.Number)),
   isRequired: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const RawThreadPropertySchema = Schema.optional(
-  Schema.NullOr(Schema.Struct({ $value: Schema.optional(Schema.NullOr(Schema.String)) })),
+  Schema.NullOr(
+    Schema.Struct({
+      $value: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
+    }),
+  ),
 );
 
 const RawPullRequestSchema = Schema.Struct({
@@ -91,6 +96,8 @@ const RawThreadSchema = Schema.Struct({
       Schema.Struct({
         CodeReviewThreadType: RawThreadPropertySchema,
         CodeReviewVoteResult: RawThreadPropertySchema,
+        CodeReviewVotedByTfId: RawThreadPropertySchema,
+        CodeReviewVotedByDisplayName: RawThreadPropertySchema,
       }),
     ),
   ),
@@ -144,6 +151,8 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  /** Keyed by `identityKey`; vote threads name the voter only by identity id. */
+  readonly reviewersById: ReadonlyMap<string, PullRequestActor>;
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
@@ -156,6 +165,11 @@ function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | unde
   return login === null
     ? null
     : { login, name: trimmed(raw?.displayName), avatarUrl: trimmed(raw?.imageUrl) };
+}
+
+/** Azure writes identity ids both with and without dashes. */
+function identityKey(id: string | null | undefined): string | null {
+  return trimmed(id)?.replaceAll("-", "").toLowerCase() ?? null;
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {
@@ -220,13 +234,33 @@ function toReviewDecision(
   return votes.some((vote) => vote > 0) ? "approved" : "review-required";
 }
 
+type RawThreadProperties = NonNullable<Schema.Schema.Type<typeof RawThreadSchema>["properties"]>;
+
+function propertyText(property: RawThreadProperties[keyof RawThreadProperties]): string | null {
+  const value = property?.$value;
+  return trimmed(value === null || value === undefined ? value : String(value));
+}
+
 /** Azure records a vote as a system thread; GitHub's review states are what consumers read. */
 function toVoteReviewState(
-  properties: Schema.Schema.Type<typeof RawThreadSchema>["properties"],
-): "APPROVED" | "CHANGES_REQUESTED" | null {
-  if (properties?.CodeReviewThreadType?.$value?.trim() !== "VoteUpdate") return null;
-  const vote = Number(properties.CodeReviewVoteResult?.$value ?? "");
-  return vote > 0 ? "APPROVED" : vote < 0 ? "CHANGES_REQUESTED" : null;
+  properties: RawThreadProperties | null | undefined,
+): "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED" | null {
+  if (propertyText(properties?.CodeReviewThreadType) !== "VoteUpdate") return null;
+  const vote = Number(propertyText(properties?.CodeReviewVoteResult) ?? NaN);
+  if (!Number.isFinite(vote)) return null;
+  return vote > 0 ? "APPROVED" : vote < 0 ? "CHANGES_REQUESTED" : "DISMISSED";
+}
+
+/** A vote's comment is authored by a service account; the voter is in the thread properties. */
+function toVoter(
+  properties: RawThreadProperties | null | undefined,
+  reviewersById: ReadonlyMap<string, PullRequestActor>,
+): PullRequestActor | null {
+  const key = identityKey(propertyText(properties?.CodeReviewVotedByTfId));
+  const reviewer = key === null ? undefined : reviewersById.get(key);
+  if (reviewer !== undefined) return reviewer;
+  const name = propertyText(properties?.CodeReviewVotedByDisplayName);
+  return name === null ? null : { login: name, name, avatarUrl: null };
 }
 
 function toPullRequest(
@@ -234,10 +268,15 @@ function toPullRequest(
 ): AzureDevOpsPullRequest | null {
   const autoMergeMethod = toAutoMergeMethod(raw);
   const rawReviewers = raw.reviewers ?? [];
-  const reviewers = rawReviewers.flatMap((reviewer) => {
+  const reviewers: PullRequestActor[] = [];
+  const reviewersById = new Map<string, PullRequestActor>();
+  for (const reviewer of rawReviewers) {
     const actor = toActor(reviewer);
-    return actor === null ? [] : [actor];
-  });
+    if (actor === null) continue;
+    reviewers.push(actor);
+    const key = identityKey(reviewer.id);
+    if (key !== null) reviewersById.set(key, actor);
+  }
   const reviewRequestLogins = rawReviewers.flatMap((reviewer) => {
     const login = (reviewer.vote ?? 0) === 0 ? toActor(reviewer)?.login : undefined;
     return login === undefined ? [] : [login];
@@ -272,6 +311,7 @@ function toPullRequest(
     body: raw.description ?? "",
     reviewRequestLogins,
     reviewers,
+    reviewersById,
     reviewDecision: toReviewDecision(rawReviewers),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
@@ -335,6 +375,7 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
 
 export function decodeThreadsJson(
   raw: string,
+  reviewersById: ReadonlyMap<string, PullRequestActor> = new Map(),
 ): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
@@ -348,6 +389,7 @@ export function decodeThreadsJson(
     if (thread.isDeleted === true) continue;
     const path = toRepositoryPath(thread.threadContext?.filePath);
     const voteReviewState = toVoteReviewState(thread.properties);
+    const voter = voteReviewState === null ? null : toVoter(thread.properties, reviewersById);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       const isSystem = comment.commentType?.trim().toLowerCase() === "system";
@@ -363,7 +405,7 @@ export function decodeThreadsJson(
       comments.push({
         id: `${thread.id}:${comment.id ?? 0}`,
         kind: reviewState !== null ? "review" : path === null ? "issue-comment" : "review-comment",
-        author: toActor(comment.author),
+        author: reviewState === null ? toActor(comment.author) : voter,
         body: comment.content ?? "",
         createdAt: publishedDate,
         url: null,

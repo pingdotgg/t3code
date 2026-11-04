@@ -35,6 +35,7 @@ const PULL_REQUEST = {
   body: "",
   reviewRequestLogins: [],
   reviewers: [],
+  reviewersById: new Map(),
   reviewDecision: null,
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,

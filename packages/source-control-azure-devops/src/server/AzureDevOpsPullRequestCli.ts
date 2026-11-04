@@ -24,6 +24,7 @@ import {
   type AzureDevOpsItemContent,
   type AzureDevOpsIteration,
   type AzureDevOpsPullRequest,
+  type AzureDevOpsPullRequestBatch,
   type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -161,6 +162,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
+      readonly reviewersById: AzureDevOpsPullRequest["reviewersById"];
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
@@ -232,6 +234,26 @@ function involvementArgs(input: {
     case "all":
       return [];
   }
+}
+
+/** `--reviewer` keeps a pull request after the viewer votes on it; only an unvoted one waits on them. */
+function withoutVotedByViewer(
+  batch: AzureDevOpsPullRequestBatch,
+  viewer: string,
+): AzureDevOpsPullRequestBatch {
+  const login = viewer.toLowerCase();
+  const isViewer = (candidate: string) => candidate.toLowerCase() === login;
+  const kept = batch.items.flatMap((item, index) =>
+    item.reviewers.some((reviewer) => isViewer(reviewer.login)) &&
+    !item.reviewRequestLogins.some(isViewer)
+      ? []
+      : [{ item, rawIndex: batch.rawIndexes[index] ?? 0 }],
+  );
+  return {
+    items: kept.map((entry) => entry.item),
+    rawIndexes: kept.map((entry) => entry.rawIndex),
+    rawCount: batch.rawCount,
+  };
 }
 
 function actionArgs(
@@ -415,29 +437,33 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        const batch =
+          input.involvement === "reviewing"
+            ? withoutVotedByViewer(decoded.success, input.viewer)
+            : decoded.success;
 
-        const lastItemIndex = decoded.success.rawIndexes[remaining - 1];
+        const lastItemIndex = batch.rawIndexes[remaining - 1];
         if (lastItemIndex !== undefined) {
           const consumed = lastItemIndex + 1;
           return Effect.succeed({
-            items: [...input.items, ...decoded.success.items.slice(0, remaining)],
-            truncated: consumed < decoded.success.rawCount || decoded.success.rawCount === top,
+            items: [...input.items, ...batch.items.slice(0, remaining)],
+            truncated: consumed < batch.rawCount || batch.rawCount === top,
             cursorAdvance: input.cursorAdvance + consumed,
           });
         }
 
-        const items = [...input.items, ...decoded.success.items];
-        if (decoded.success.rawCount < top) {
+        const items = [...input.items, ...batch.items];
+        if (batch.rawCount < top) {
           return Effect.succeed({
             items,
             truncated: false,
-            cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
+            cursorAdvance: input.cursorAdvance + batch.rawCount,
           });
         }
         return listPullRequestPage({
           ...input,
-          skip: input.skip + decoded.success.rawCount,
-          cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
+          skip: input.skip + batch.rawCount,
+          cursorAdvance: input.cursorAdvance + batch.rawCount,
           items,
         });
       }),
@@ -552,7 +578,7 @@ export const make = Effect.gen(function* () {
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw) => decodeThreadsJson(raw, input.reviewersById),
       });
     }),
 

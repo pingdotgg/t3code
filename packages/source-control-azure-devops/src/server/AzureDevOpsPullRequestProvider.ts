@@ -365,6 +365,7 @@ export const make = Effect.gen(function* () {
                   cwd: input.cwd,
                   location: pullRequest.location,
                   number: input.number,
+                  reviewersById: pullRequest.reviewersById,
                 })
                 .pipe(
                   Effect.map((comments) => ({ comments, truncated: false })),
