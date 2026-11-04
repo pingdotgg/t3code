@@ -234,24 +234,14 @@ The [shared contract](../../packages/contracts/src/orchestratorMcp.ts) is author
 inputs and results, including target options and linked-environment fields.
 
 ```ts
-import type { OrchestratorMcpTarget, ProviderOptionSelection } from "@t3tools/contracts";
-
-type DelegateTaskInput = {
-  task: string;
-  target?: OrchestratorMcpTarget;
-  title?: string;
-  role?: "implementation" | "research" | "review" | "design" | "test" | "general";
-  isolation?: "shared" | "worktree";
-  mode?: "async" | "wait";
-  timeoutMs?: number;
-  clientRequestId?: string;
-  runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "auto" | "full-access";
-  interactionMode?: "inherit" | "plan" | "default";
-};
+import type {
+  OrchestratorMcpDelegateTaskInput as DelegateTaskInput,
+  OrchestratorMcpDelegateTaskResult as DelegateTaskResult,
+} from "@t3tools/contracts";
 ```
 
-Provider, model, runtime mode, and interaction mode inherit from the parent
-when omitted. A driver-only target inherits the parent's provider instance
+For local delegation, provider, model, runtime mode, and interaction mode inherit
+from the parent when omitted. A driver-only target inherits the parent's provider instance
 when it can run child tasks, and otherwise selects an available instance of
 that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
@@ -259,8 +249,11 @@ provider's first advertised model.
 
 Set `target.options` using the options returned by `orchestrator_capabilities`, such as
 `{effort: "max"}`. Supplied values override inherited selections; `{}` or `[]` clears them.
-Use `isolation: "worktree"` for a separate prepared checkout from the parent's commit;
-the default `"shared"` uses the parent's checkout. Uncommitted parent edits are not copied.
+For local delegation, use `isolation: "worktree"` for a separate prepared checkout from
+the parent's commit; the default `"shared"` uses the parent's checkout. Uncommitted parent
+edits are not copied. A linked-environment target (`target.environmentId`) runs in the remote
+project's checkout and rejects worktree isolation. To launch an isolated thread there, use
+`t3_thread_launch` with `environmentId` and a worktree `workspaceStrategy`.
 
 A provider runs a runtime mode it does not offer as `approval-required`, so a
 child would ask for approval on every command. `orchestrator_capabilities`
@@ -295,37 +288,6 @@ it grants no approval authority. Read the fresh full request in the child thread
 responding, since the durable record can outlive its provider callback. Async questions
 do not end the wait.
 
-```ts
-type DelegateTaskResult = {
-  taskId: string;
-  childThreadId: string | null;
-  remoteChild?: { environmentId: string; threadId: string; label: string };
-  link?: string;
-  childRunId: string | null;
-  childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
-  workState: "working" | "waiting_for_children" | "result_available";
-  hasPendingChildRuns: boolean;
-  providerInstanceId: string;
-  model: string | null;
-  options?: ProviderOptionSelection[];
-  summary: string | null;
-  resultContextTransferId: string | null;
-  latestTerminalRunId: string | null;
-  latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
-  latestTerminalSummary: string | null;
-  latestTerminalResultContextTransferId: string | null;
-  hasPendingQuestion: boolean;
-  pendingApproval: {
-    requestId: string;
-    kind: "command" | "file-read" | "file-change" | "mcp-elicitation" | "permission";
-    runId: string;
-  } | null;
-  waitTimedOut: boolean;
-  next?: "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
-};
-```
-
 ### `task_status`
 
 Reads a delegated task from the parent thread's durable projection. A task ID
@@ -352,16 +314,7 @@ optional cancellation reason.
 Creates between one and twenty ordinary top-level T3 threads:
 
 ```ts
-type CreateThreadsInput = {
-  threads: Array<{
-    prompt?: string;
-    title?: string;
-    target?: OrchestratorMcpTarget;
-    runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "auto" | "full-access";
-    interactionMode?: "inherit" | "plan" | "default";
-  }>;
-  clientRequestId?: string;
-};
+import type { OrchestratorMcpCreateThreadsInput as CreateThreadsInput } from "@t3tools/contracts";
 ```
 
 Each entry independently resolves provider, model, and modes. The new threads
