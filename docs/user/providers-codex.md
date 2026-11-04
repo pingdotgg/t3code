@@ -33,6 +33,33 @@ Running `codex login` does not change a managed ChatGPT connection. In
 and complete the wizard. Then select that instance from the thread's model
 picker. See [Use multiple accounts](#use-multiple-accounts).
 
+## Keep Codex separate from your other apps
+
+Enable **Separate Codex installation** when connecting a ChatGPT account or
+adding a Codex provider in **Settings → Providers**. T3 Code downloads a
+checksum-verified package from OpenAI's official GitHub releases and uses a fresh
+home for that provider's configuration, credentials, conversations, and SQLite
+state. The installation lives on the selected environment; other devices use it
+by connecting to that environment.
+
+For an existing provider, change the option in its settings and restart T3 Code on
+that environment before continuing active threads. Existing conversations and configuration stay
+in their original home and are not copied. Providers with separate homes cannot
+continue each other's Codex sessions. Turning the option off restores the normal
+path settings; it does not delete the separate home.
+
+For a native CLI login or proxy, install Codex from the provider's setup panel,
+then configure the reported **CODEX_HOME path** on that environment. To sign in
+manually, run the reported binary with `CODEX_HOME` set to that path. Proxy
+settings must be configured in that home or through the provider's environment
+and launch arguments. Binary and home overrides are ignored while the option is
+enabled. ChatGPT account linking continues to use OpenAI directly.
+
+Separate providers share T3 Code's downloaded package and its install/remove
+controls. Removing that package keeps their homes but makes them unavailable
+until it is installed again. This option does not isolate workspace files or
+provide additional account quota.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account

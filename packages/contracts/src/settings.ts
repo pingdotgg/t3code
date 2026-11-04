@@ -683,6 +683,14 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    isolateRuntime: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Separate Codex installation",
+        providerSettingsForm: { control: "switch" },
+        description:
+          "Use an official OpenAI download with separate settings and conversations. Existing path overrides are ignored. Restart the T3 Code server after changing this for an active provider.",
+      }),
+    ),
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
@@ -733,7 +741,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["isolateRuntime", "binaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

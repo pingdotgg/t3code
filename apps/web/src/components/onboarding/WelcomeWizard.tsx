@@ -923,7 +923,7 @@ function OnboardingCodexSetup({
     typeof instance.config === "object" &&
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
+  const updateConfig = (patch: Record<string, unknown>) => {
     void update({
       environmentId,
       input: {
@@ -938,7 +938,7 @@ function OnboardingCodexSetup({
                 ? instance.config
                 : {}),
               enabled: true,
-              setupMode,
+              ...patch,
             },
           },
         }),
@@ -964,7 +964,14 @@ function OnboardingCodexSetup({
       provider={provider}
       mode={mode}
       enabled={provider?.enabled ?? true}
-      onModeChange={changeMode}
+      isolated={
+        instance.config !== null &&
+        typeof instance.config === "object" &&
+        "isolateRuntime" in instance.config &&
+        instance.config.isolateRuntime === true
+      }
+      onIsolationChange={(isolateRuntime) => updateConfig({ isolateRuntime })}
+      onModeChange={(setupMode) => updateConfig({ setupMode })}
     />
   );
 }

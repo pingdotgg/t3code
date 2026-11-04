@@ -9,6 +9,13 @@ export const resolveManagedCodexHomeLayout = Effect.fn("resolveManagedCodexHomeL
   config: CodexSettings,
 ) {
   const path = yield* Path.Path;
+  if (config.isolateRuntime) {
+    return yield* resolveCodexHomeLayout({
+      ...config,
+      homePath: path.join(stateDir, "providers", "codex", instanceId, "home"),
+      shadowHomePath: "",
+    });
+  }
   return yield* resolveCodexHomeLayout({
     ...config,
     shadowHomePath:

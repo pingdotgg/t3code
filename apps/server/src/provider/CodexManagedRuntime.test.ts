@@ -31,11 +31,17 @@ const decodeCommand = Schema.decodeUnknownSync(
 );
 it.live.each(
   (["managed", "local"] as const).flatMap((source) =>
-    (["primary", "additional"] as const).map((account) => ({ source, account })),
+    (["primary", "additional"] as const).flatMap((account) =>
+      (source === "managed" ? [false, true] : [false]).map((isolated) => ({
+        source,
+        account,
+        isolated,
+      })),
+    ),
   ),
 )(
-  "$source Codex $account account shares home state without routing owned tokens through ambient CLI overrides",
-  ({ source, account }) =>
+  "$source Codex $account account (isolated=$isolated) keeps the selected home without routing owned tokens through ambient CLI overrides",
+  ({ source, account, isolated }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make(
         account === "primary" ? "codex" : "codex-personal",
@@ -68,19 +74,35 @@ it.live.each(
         source,
         version: "0.156.1",
       };
+      const acquire = () =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            leases++;
+            return executable;
+          }),
+          () =>
+            Effect.sync(() => {
+              leases--;
+            }),
+        );
       const layerInstaller = Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "/isolated/tools/codex",
         resolve: () => Effect.succeed(executable),
-        acquire: () =>
-          Effect.gen(function* () {
-            leases++;
-            yield* Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                leases--;
-              }),
-            );
-            return executable;
-          }),
+        acquire: isolated
+          ? () => Effect.die("Isolated setup must not use the automatic installer")
+          : acquire,
+        managed: Effect.succeed({
+          managedDirectory: "/isolated/tools/codex",
+          acquire,
+          resolve: () => Effect.succeed(executable),
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - No compatibility advisory is undefined, not void.
+          compatibility: () => Effect.succeed(undefined),
+          start: Effect.die("unused"),
+          cancel: () => Effect.die("unused"),
+          state: Effect.die("unused"),
+          changes: Stream.empty,
+          remove: () => Effect.die("unused"),
+        }),
       });
       yield* Effect.gen(function* () {
         const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
@@ -109,7 +131,11 @@ it.live.each(
         const runtime = yield* makeCodexManagedRuntime({
           instanceId,
           enabled: true,
-          config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
+          config: decodeSettings({
+            setupMode: "managed",
+            homePath: sharedHome,
+            isolateRuntime: isolated,
+          }),
           environment: ambient,
         });
         yield* Effect.gen(function* () {
@@ -117,8 +143,21 @@ it.live.each(
           assert.strictEqual(leases, 1);
           assert.strictEqual(effective.config.binaryPath, executable.executablePath);
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);
-          assert.equal(runtime.homeLayout.sharedHomePath, sharedHome);
-          if (account === "primary") {
+          if (isolated) {
+            assert.equal(runtime.homeLayout.mode, "direct");
+            assert.include(
+              effective.config.homePath,
+              path.join("providers", "codex", instanceId, "home"),
+            );
+            assert.equal(
+              effective.environment.CODEX_SQLITE_HOME,
+              path.join(effective.config.homePath, "sqlite"),
+            );
+            assert.isFalse(yield* fs.exists(path.join(effective.config.homePath, "config.toml")));
+            assert.isFalse(yield* fs.exists(path.join(effective.config.homePath, "sessions")));
+            assert.isFalse(yield* fs.exists(path.join(effective.config.homePath, "auth.json")));
+          } else if (account === "primary") {
+            assert.equal(runtime.homeLayout.sharedHomePath, sharedHome);
             assert.equal(effective.config.homePath, sharedHome);
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {

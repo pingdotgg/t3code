@@ -406,7 +406,7 @@ export function AddProviderInstanceDialog({
       return;
     }
     onCreated?.(brandedId);
-    if (isAcpRegistry && !isLocalAcp) {
+    if ((isAcpRegistry && !isLocalAcp) || (driver === "codex" && config.isolateRuntime === true)) {
       setCreatedInstanceId(brandedId);
       setIsSaving(false);
       setWizardStep(2);
