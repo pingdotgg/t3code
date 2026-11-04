@@ -3748,21 +3748,21 @@ describe("ensure_child_task", () => {
                   }),
             );
             const request = { ...input, requestKey: `simultaneous:${conflicting}` };
-            const results = yield* Effect.all(
+            const results = yield* Effect.forEach(
               [
                 service.ensureChildTask(ensureClient, request),
                 service.ensureChildTask(otherClient, {
                   ...request,
                   ...(conflicting ? { task: "Conflicting content before either commit" } : {}),
                 }),
-              ].map((call) =>
+              ],
+              (call) =>
                 call.pipe(
                   Effect.match({
                     onSuccess: (receipt) => ({ ok: true as const, receipt }),
                     onFailure: (error) => ({ ok: false as const, error }),
                   }),
                 ),
-              ),
               { concurrency: "unbounded" },
             );
             barrier.mockRestore();
@@ -3980,16 +3980,14 @@ describe("ensure_child_task", () => {
           const dispatch = threads.dispatch;
           using lostReply = vi.spyOn(threads, "dispatch").mockImplementation((command) =>
             dispatch(command).pipe(
-              Effect.flatMap((result) =>
-                command.type === "delegated_task.ensure"
-                  ? Effect.fail(
-                      new Orchestrator.OrchestratorDispatchError({
-                        commandId: command.commandId,
-                        commandType: command.type,
-                        cause: "response lost after commit",
-                      }),
-                    )
-                  : Effect.succeed(result),
+              Effect.filterOrFail(
+                () => command.type !== "delegated_task.ensure",
+                () =>
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "response lost after commit",
+                  }),
               ),
             ),
           );
