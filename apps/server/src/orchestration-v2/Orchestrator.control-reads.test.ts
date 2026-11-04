@@ -153,6 +153,8 @@ it.effect(
         requestId: RuntimeRequestId.make("child"),
         decision: "decline",
         feedback,
+        createdBy: "agent",
+        creationSource: "mcp",
       });
       const projection = yield* projections.getThreadProjection(threadId);
       assert.equal(
@@ -163,16 +165,23 @@ it.effect(
         projection.runtimeRequests.find((request) => request.id === "other")?.status,
         "pending",
       );
-      assert.equal(projection.messages.at(-1)?.text, feedback);
       const feedbackMessageId = MessageId.make("approval-feedback:child");
-      assert.ok(
-        projection.visibleTurnItems.some(
-          ({ item }) =>
-            item.type === "user_message" &&
-            item.messageId === feedbackMessageId &&
-            item.text === feedback,
-        ),
-      );
+      const feedbackMessage = projection.messages.find(({ id }) => id === feedbackMessageId);
+      assert.ok(feedbackMessage);
+      assert.deepInclude(feedbackMessage, {
+        text: feedback,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const feedbackTurnItem = projection.visibleTurnItems.find(
+        ({ item }) => item.type === "user_message" && item.messageId === feedbackMessageId,
+      )?.item;
+      assert.ok(feedbackTurnItem);
+      assert.deepInclude(feedbackTurnItem, {
+        text: feedback,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
       const history = yield* projections.getTimelinePage(threadId, { limit: 20, view: "messages" });
       assert.ok(
         history.items.some(
