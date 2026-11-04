@@ -47,7 +47,7 @@ export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
 // wait the full probe timeout for a LAN the device has already left. A route
-// that misses it connects over relay, then upgrades with a second reconnect.
+// that misses it connects over relay, then upgrades over a second connection.
 const ROUTE_CHECK_HEAD_START_MS = 500;
 
 export class ConnectionDriver extends Context.Service<
