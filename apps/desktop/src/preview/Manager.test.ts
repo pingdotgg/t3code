@@ -1128,7 +1128,6 @@ describe("PreviewManager", () => {
       },
       openDevTools,
       closeDevTools,
-      devToolsWebContents: { focus: vi.fn() },
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
       getTitle: () => "README.md",
