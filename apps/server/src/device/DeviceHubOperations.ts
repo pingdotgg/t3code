@@ -39,6 +39,21 @@ const HubActionResult = Schema.Struct({
   ),
 });
 
+// Hub diagnostics can carry a whole stderr dump.
+const boundDiagnostics = (text: string) =>
+  text.length > 2_000 ? `${text.slice(0, 1_999)}…` : text;
+
+// The hub's `error` is a util.inspect of Node's exec error; the stack and the
+// inspected fields follow the first frame, so keep the lines before it.
+const errorHead = (error: string) => {
+  const lines = error.split(/\r?\n/);
+  const firstFrame = lines.findIndex((line) => /^\s+at /.test(line));
+  return (firstFrame === -1 ? lines : lines.slice(0, firstFrame))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+};
+
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
@@ -109,7 +124,11 @@ export const makeDeviceHubOperations = (options: {
           /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
         ),
     );
-    const details = warnings?.map((error) => error.message) ?? [];
+    const details =
+      warnings?.map((error) => {
+        const head = errorHead(error.error ?? "");
+        return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
+      }) ?? [];
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
@@ -167,12 +186,7 @@ export const makeDeviceHubOperations = (options: {
           : /timed? out|timeout/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
-        ...(diagnostics
-          ? {
-              diagnostics:
-                diagnostics.length > 2_000 ? `${diagnostics.slice(0, 1_999)}…` : diagnostics,
-            }
-          : {}),
+        ...(diagnostics ? { diagnostics: boundDiagnostics(diagnostics) } : {}),
         cause: result,
       });
     }

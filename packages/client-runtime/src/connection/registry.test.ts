@@ -418,7 +418,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            Stream.die(new Error("Config is not used by registry tests.")),
+            options?.directEndpoints === undefined
+              ? Stream.never
+              : Stream.make({
+                  version: 1 as const,
+                  type: "snapshot" as const,
+                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                }),
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
@@ -2084,6 +2090,38 @@ describe("EnvironmentRegistry routes", () => {
 
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
           repaired,
+          RELAY_TARGET,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("re-pairing at another loopback address prefers the new route", () =>
+    Effect.gen(function* () {
+      const loopback = (connectionId: string, host: string) =>
+        [
+          new BearerConnectionTarget({ ...LAN_TARGET, connectionId }),
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId,
+            httpBaseUrl: `http://${host}:3773/`,
+            wsBaseUrl: `ws://${host}:3773/`,
+          }),
+        ] as const;
+      const [savedTarget, savedProfile] = loopback("bearer:ip", "127.0.0.1");
+      const [pastedTarget, pastedProfile] = loopback("bearer:localhost", "localhost");
+      const harness = yield* makeHarness(
+        [savedTarget, RELAY_TARGET],
+        [savedProfile],
+        [[savedTarget.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(lanRegistration(pastedTarget, pastedProfile));
+
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          pastedTarget,
+          savedTarget,
           RELAY_TARGET,
         ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);

@@ -106,7 +106,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       // fired in a project the caller was not checked against.
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId, projectId: listed.projectId })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
       const scope = yield* McpInvocationContext.McpInvocationContext;
       return {
         taskId: task.id,

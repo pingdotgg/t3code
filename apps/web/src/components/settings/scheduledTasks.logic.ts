@@ -79,6 +79,9 @@ function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSche
       JSON.stringify(a.filters) === JSON.stringify(b.filters)
     );
   }
+  if (a.type === "once") {
+    return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
+  }
   return (
     b.type === "fixed_time" &&
     a.timeOfDay === b.timeOfDay &&
