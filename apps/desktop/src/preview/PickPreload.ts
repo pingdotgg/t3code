@@ -924,7 +924,6 @@ function startAnnotation(
     for (const [key, change] of styleChanges) {
       if (change.targetId === target.id) styleChanges.delete(key);
     }
-    updateStatus();
   };
 
   const addSelected = (element: Element): void => {
@@ -939,7 +938,6 @@ function startAnnotation(
     selected.set(element, target);
     root.append(target.outline, target.label);
     updateSelectedVisual(target);
-    updateStatus();
     if (editorExpanded) {
       stylePanel.style.display = "grid";
       syncStyleControls();
@@ -950,12 +948,13 @@ function startAnnotation(
     const existing = selected.get(element);
     if (existing) {
       removeSelected(existing);
-      return;
+    } else {
+      if (!additive) {
+        for (const target of Array.from(selected.values())) removeSelected(target);
+      }
+      addSelected(element);
     }
-    if (!additive) {
-      for (const target of Array.from(selected.values())) removeSelected(target);
-    }
-    addSelected(element);
+    updateStatus();
   };
 
   const setStyleForSelected = (property: string, value: string): void => {
@@ -1369,6 +1368,7 @@ function startAnnotation(
       const rect = target.element.getBoundingClientRect();
       if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
         removeSelected(target);
+        updateStatus();
         return true;
       }
     }
@@ -1611,7 +1611,7 @@ function startAnnotation(
   const onKeyDown = (event: KeyboardEvent): void => {
     // Only the keyboard drives dictation; a page cannot synthesize the chord or Escape.
     if (voice && event.isTrusted && !event.isComposing && event.keyCode !== 229) {
-      if (event.key === "Escape" && (voiceBusy || voicePhase === "error")) {
+      if (event.key === "Escape" && voiceBusy) {
         event.preventDefault();
         event.stopImmediatePropagation();
         voiceKeyCode = null;
