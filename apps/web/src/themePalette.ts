@@ -1614,9 +1614,15 @@ function applySidebarSelectionForeground(root: HTMLElement, colors: ThemeColors)
           )
         : 0;
     };
-    if (contrastOnSelection(colors.accentSurfaceForeground) >= 4.5) {
+    const sidebarTextIsReadable = contrastOnSelection(colors.sidebarForeground) >= 4.5;
+    const usesHighlightSurface =
+      themeColorToHex(colors.sidebarRowSelected) === themeColorToHex(colors.accentSurface);
+    if (
+      (usesHighlightSurface || !sidebarTextIsReadable) &&
+      contrastOnSelection(colors.accentSurfaceForeground) >= 4.5
+    ) {
       foreground = "var(--contrast-accent-foreground)";
-    } else if (contrastOnSelection(colors.sidebarForeground) < 4.5) {
+    } else if (!sidebarTextIsReadable) {
       foreground = themeRgbToThemeColor(readableThemeForeground(surface));
     }
   }
