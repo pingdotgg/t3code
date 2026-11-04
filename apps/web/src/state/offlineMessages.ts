@@ -133,10 +133,7 @@ export const offlineMessages = createOfflineOutbox({
 });
 
 export async function cancelOfflineMessage(id: string) {
-  const message = offlineMessages
-    .getSnapshot()
-    .find((entry) => entry.input.message.messageId === id);
-  await offlineMessages.remove(id);
+  const message = await offlineMessages.remove(id);
   if (!message?.input.bootstrap?.createThread) return;
   const threadRef = scopeThreadRef(message.environmentId, message.input.threadId);
   if (

@@ -120,6 +120,12 @@ describe("offline outbox", () => {
     await retried.drain();
     expect(preparations).toBe(1);
     expect(h.sent.at(-1)?.input.bootstrap).toEqual(bootstrap);
+    const canceled = createOfflineOutbox(h.options);
+    await canceled.load();
+    await canceled.enqueue({ ...first, input: { ...first.input, bootstrap } });
+    await canceled.enqueue(message("follower"));
+    const removed = await Promise.all([canceled.remove("launch"), canceled.remove("follower")]);
+    expect(removed[1]).toMatchObject({ input: { bootstrap }, inheritedBootstrap: true });
   });
 
   it("does not publish a message when durable storage fails", async () => {

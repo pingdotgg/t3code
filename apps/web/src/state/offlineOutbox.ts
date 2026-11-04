@@ -65,6 +65,7 @@ export function createOfflineOutbox(options: {
           .filter((message) => message !== removed)
           .map((message) => (message === next && successor ? successor : message)),
       );
+      return removed;
     });
   const retry = (id: string) =>
     serialize(async () => {
