@@ -1,0 +1,167 @@
+---
+title: Integrate with Foldkit
+description: Derive Foldkit Commands from an Api, follow View snapshots, and seed the Model from Flags.
+---
+
+[Foldkit](https://foldkit.dev) changes its Model through Messages. Commands perform side effects. Subscriptions follow live data. The optional `@alchemy.run/domain/Foldkit` adapter connects these parts to a Domain Api.
+
+Install `foldkit` in the web package. Domain's root entry does not import it. The adapter targets the workspace's Foldkit `^0.169.0`.
+
+## Derive the Commands
+
+```typescript
+import * as DomainFoldkit from "@alchemy.run/domain/Foldkit";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+
+export const Bank = DomainFoldkit.make(CustomerApi);
+```
+
+`Bank` has one Command per Api command and a read namespace for each View, Aggregate, and Stream. Each read namespace has `watch` and `events`. View namespaces also have `SnapshotFlags` and `decodeSnapshotFlags`. The name `Message` is reserved: `make` does not compile for an Api with an entry named `Message`. Each Command takes `{ target, input, commandId }`. Its result is `Bank.Message.Succeeded<Name>` or `Bank.Message.Failed<Name>`.
+
+A success carries `reply` and `receipt: { stream, version }`. Pass the receipt to a read's `atLeast` option when that read must include the write.
+
+## Name each send
+
+```typescript
+import * as Schema from "effect/Schema";
+
+export const Flags = Schema.Struct({
+  session: Schema.String,
+  summary: Schema.Unknown,
+});
+
+export const Model = Schema.Struct({
+  accountId: AccountId,
+  commandIds: DomainFoldkit.CommandIds,
+  summary: Schema.Option((AccountSummary.definition.state ?? Schema.Never)),
+  summaryCursor: Schema.Option(Schema.Number),
+});
+export type Model = typeof Model.Type;
+```
+
+`AccountId` and `AccountSummary` come from the bank domain. The server or browser supplies a fresh `session` for each page load. Do not reuse a session from cached HTML.
+
+## Send a command from update
+
+```typescript
+import { Command, type Update } from "foldkit";
+import { defineMessageUnion } from "foldkit/message";
+import { modifyFields } from "foldkit/struct";
+
+export const Message = defineMessageUnion({
+  ClickedDeposit: {},
+  ReceivedBankResult: { result: Bank.Message },
+});
+export type Message = typeof Message.Type;
+
+const deposit = (model: Model): Update.Return<Model, Message, typeof CustomerApi.Client.Identifier> => {
+  const allocation = DomainFoldkit.next(model.commandIds);
+  return {
+    model: modifyFields(model, { commandIds: () => allocation.commandIds }),
+    commands: [Command.mapMessage(
+      Bank.DepositMoney({
+        target: model.accountId,
+        input: { amount: 1_000 },
+        commandId: allocation.commandId,
+      }),
+      (result) => Message.ReceivedBankResult({ result }),
+    )],
+  };
+};
+```
+
+Handle `ReceivedBankResult` through `Bank.Message.match`. The matcher preserves each command's reply and Rejection fields. Use a named branch for every result.
+
+| Failure | Meaning | App action |
+| --- | --- | --- |
+| `Rejected { rejection }` | The aggregate refused the command. | Show the reason. |
+| `Denied { error }` | Middleware refused the command. | Request authentication or MFA. |
+| `Unknown` | The reply did not establish the outcome. | Retry with the same `commandId`. |
+
+A Command defect produces `Unknown`. Read defects call `onDefect` with their Cause. Typed read failures call `onFailure`. Interruption ends the operation without a Message.
+
+A lost reply can follow a committed write. Do not turn `Unknown` into a business Rejection.
+
+## Follow a View's state
+
+```typescript
+import * as Option from "effect/Option";
+import { Subscription } from "foldkit";
+
+const SummaryMessage = defineMessageUnion({
+  ReceivedSummary: {
+    state: Schema.Option((AccountSummary.definition.state ?? Schema.Never)),
+    cursor: Schema.Number,
+  },
+  FailedWatchSummary: { reason: Schema.String },
+});
+
+const subscriptions = Subscription.make<
+  Model, typeof SummaryMessage.Type, typeof CustomerApi.Client.Identifier
+>()(() => ({
+  summary: Bank.AccountSummary.watch({
+    key: (model: Model) => model.accountId,
+    toMessage: (snapshot): typeof SummaryMessage.Type => SummaryMessage.ReceivedSummary(snapshot),
+    onFailure: (error): typeof SummaryMessage.Type => SummaryMessage.FailedWatchSummary({ reason: error._tag }),
+    onDefect: (): typeof SummaryMessage.Type => SummaryMessage.FailedWatchSummary({ reason: "Read defect" }),
+  }),
+}));
+
+const receivedSummary = (model: Model, snapshot: typeof SummaryMessage.ReceivedSummary.Type) =>
+  modifyFields(model, {
+    summary: () => snapshot.state,
+    summaryCursor: () => Option.some(snapshot.cursor),
+  });
+```
+
+The adapter converts absent state to `Option.none()`. Store the state and cursor together. A key change restarts the watch. A cursor change does not.
+
+Use `isEnabled: (model) => model.online` to stop the stream while offline. A return to online restarts it with a fresh snapshot.
+
+Use `watch` for state. A View can change its state without an output event, so `events` cannot replace the state watch.
+
+## Seed the first paint
+
+The server reads `client.AccountSummary.snapshot(accountId)` and encodes its state with the View's Schema. Put its `{ state, cursor }` into Flags.
+
+```typescript
+const seeded = Bank.AccountSummary.decodeSnapshotFlags(flags.summary);
+const summary = Option.flatMap(seeded, (snapshot) => snapshot.state);
+const summaryCursor = Option.map(seeded, (snapshot) => snapshot.cursor);
+```
+
+Keep the outer Flags field as `Schema.Unknown`. Decode that field in `init`. A stale state Schema then falls back to empty state and a fresh watch, instead of preventing boot.
+
+`Bank.AccountSummary.SnapshotFlags` is the Schema for this wire shape. It decodes `null` state to `Option.none()`. Its cursor must be a nonnegative integer.
+
+For an event feed seeded from Flags, use the same snapshot's cursor. See [Optimistic updates](/domain/optimistic-updates#resume-the-feed).
+
+## Provide the client and headers
+
+```typescript
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Socket from "effect/socket/Socket";
+
+const Headers = Layer.succeed(DomainFoldkit.CommandHeaders, {
+  get: (command) => Effect.succeed(
+    command === "WithdrawMoney" ? { "x-mfa-code": "000000" } : {},
+  ),
+});
+const Connection = CustomerApi.layerClient.pipe(
+  Layer.provide(Domain.protocolWebSocket(`${location.origin}/api`)),
+  Layer.provide(Socket.layerWebSocketConstructorGlobal),
+);
+const resources = Layer.merge(Connection, Headers);
+```
+
+Provide `resources` to `Runtime.makeApplication`. The MFA value above is the bank demo's code. A real app reads the current credential at execution time. Never put credentials in Command args or Messages.
+
+Live reads authenticate by cookie. Serve the app and Api on one origin. WebSocket push requires a store with `connect`, such as Cloudflare Durable Objects. Use `protocolHttp` for polling on other platforms. The adapter does not select a protocol.
+
+## Test and host the app
+
+Use `foldkit/story` to test Model changes and resolve Commands by their definitions. Use `Domain.InMemory` with the adapter's Command effects to test replies, refusals, and View reads.
+
+Build with `@foldkit/vite-plugin`. Host the web assets and forward `/api` to the Domain Worker on the same origin. The [bank example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-domain) includes the runtime, offline queue, tests, and Worker.

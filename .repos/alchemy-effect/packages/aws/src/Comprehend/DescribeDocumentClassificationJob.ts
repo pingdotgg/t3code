@@ -1,0 +1,40 @@
+import type * as comprehend from "@distilled.cloud/aws/comprehend";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `comprehend:DescribeDocumentClassificationJob` — get the
+ * properties (status, input/output config, timings) of an asynchronous
+ * document classification job started with {@link StartDocumentClassificationJob}.
+ *
+ * The binding takes no arguments and grants the action on `*` (job APIs
+ * have no resource-level IAM).
+ *
+ * ### Monitoring Analysis Jobs
+ * **Example:** Poll a DocumentClassification Job
+ * ```typescript
+ * // init
+ * const describeDocumentClassificationJob = yield* AWS.Comprehend.DescribeDocumentClassificationJob();
+ *
+ * // runtime
+ * const job = yield* describeDocumentClassificationJob({ JobId: jobId });
+ * // job.DocumentClassificationJobProperties?.JobStatus: "SUBMITTED" | "IN_PROGRESS" | "COMPLETED" | …
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeDocumentClassificationJob extends Binding.Service<
+  DescribeDocumentClassificationJob,
+  "AWS.Comprehend.DescribeDocumentClassificationJob",
+  () => Effect.Effect<
+    (
+      request: comprehend.DescribeDocumentClassificationJobRequest,
+    ) => Effect.Effect<
+      comprehend.DescribeDocumentClassificationJobResponse,
+      comprehend.DescribeDocumentClassificationJobError
+    >
+  >
+> {}
+export const DescribeDocumentClassificationJob = Binding.Service<DescribeDocumentClassificationJob>(
+  "AWS.Comprehend.DescribeDocumentClassificationJob",
+);

@@ -41,7 +41,7 @@ import {
   pullRequestDiffInitialPosition,
 } from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
-import { isPullRequestTestFile } from "./pullRequestFileFilters";
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -65,16 +65,15 @@ import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
@@ -111,6 +110,7 @@ import {
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
 import { usePullRequestFilesSection } from "./PullRequestFiles";
+import { usePullRequestMaintainerEdits } from "./usePullRequestMaintainerEdits";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMediaVisibleContext } from "./PullRequestMedia";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
@@ -212,7 +212,7 @@ function PullRequestIdentity(props: {
           {pr.author?.login ?? "Unknown author"}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated {relativeTime(pr.updatedAt)} ago
+          Updated <RelativeTime timestamp={pr.updatedAt} /> ago
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
@@ -416,7 +416,19 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const terminology = sourceControlClients.get(identity?.provider).changeRequest;
   const permissions = usePullRequestPermissions(params, pr);
   const action = usePullRequestAction(params, pr);
+  const maintainerEdits = usePullRequestMaintainerEdits(
+    params,
+    pr,
+    permissions.canEditMaintainerEdits,
+  );
   const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
+  const stateAction = action.available("close")
+    ? "close"
+    : action.available("reopen")
+      ? "reopen"
+      : null;
+  const runStateAction = () =>
+    stateAction === "close" ? action.confirmClose() : void action.perform("reopen");
   const confirmDeleteBranch = () =>
     pr &&
     action.confirm(
@@ -468,16 +480,16 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             unstable_headerSubtitle: connected
               ? params.repository
               : `${params.repository} · Offline`,
-            unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
+            unstable_headerLeftItems: sidebarHeaderItem ? () => [sidebarHeaderItem] : undefined,
           }}
-          optionsVersion={[layout.usesSplitView, sidebarHeaderItem]}
+          optionsVersion={[sidebarHeaderItem]}
         />
         {Platform.OS === "android" ? (
-          <AndroidScreenHeader
+          <AppBar
+            embedded
             title={`#${params.number}${connected ? "" : " · Offline"}`}
             subtitle={params.repository}
             onBack={layout.usesSplitView ? undefined : returnToList}
-            leading={layout.usesSplitView ? <AndroidWorkspaceSidebarButton /> : undefined}
             actions={[
               ...(permissions.verdicts.length
                 ? [
@@ -517,6 +529,19 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
+              ...(maintainerEdits.visible
+                ? [
+                    {
+                      accessibilityLabel: "Allow edits from maintainers",
+                      icon: "pencil" as const,
+                      selected: maintainerEdits.value,
+                      disabled: maintainerEdits.saving,
+                      subtitle: maintainerEdits.subtitle,
+                      overflowOnly: true,
+                      onPress: maintainerEdits.toggle,
+                    },
+                  ]
+                : []),
               ...(identity
                 ? [
                     {
@@ -535,6 +560,17 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       icon: "square.and.arrow.up" as const,
                       overflowOnly: true,
                       onPress: () => sharePullRequestLink(identity),
+                    },
+                  ]
+                : []),
+              ...(stateAction
+                ? [
+                    {
+                      accessibilityLabel: pullRequestActionLabel(stateAction, terminology),
+                      icon: PR_ACTION_ICONS[stateAction],
+                      destructive: stateAction === "close",
+                      overflowOnly: true,
+                      onPress: runStateAction,
                     },
                   ]
                 : []),
@@ -597,6 +633,17 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 <Toolbar.Label>Edit description</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
+            {maintainerEdits.visible ? (
+              <Toolbar.MenuAction
+                icon="pencil"
+                isOn={maintainerEdits.value}
+                disabled={maintainerEdits.saving}
+                subtitle={maintainerEdits.subtitle}
+                onPress={maintainerEdits.toggle}
+              >
+                <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
             {identity ? (
               <Toolbar.MenuAction
                 icon="arrow.up.right"
@@ -616,6 +663,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 onPress={() => sharePullRequestLink(identity)}
               >
                 <Toolbar.Label>Share…</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {stateAction ? (
+              <Toolbar.MenuAction
+                icon={PR_ACTION_ICONS[stateAction]}
+                destructive={stateAction === "close"}
+                onPress={runStateAction}
+              >
+                <Toolbar.Label>{pullRequestActionLabel(stateAction, terminology)}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
@@ -764,7 +820,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               </View>
                             </View>
                           ) : null}
-                          {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
+                          {tab === "guide" ? (
+                            <PullRequestGuideContent
+                              params={params}
+                              visible={section === "guide"}
+                            />
+                          ) : null}
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
@@ -838,19 +899,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
+                          {/* UIKit draws the tapped control's glass lens outside the hidden
+                              tab's opacity, so only the visible tab mounts the control. */}
+                          {Platform.OS !== "ios" || section === tab ? (
+                            <SegmentedControl
+                              options={[
+                                { value: "overview", label: "Overview" },
+                                ...(guidesEnabled
+                                  ? [{ value: "guide" as const, label: "Guide" }]
+                                  : []),
+                                { value: "activity", label: "Activity" },
+                              ]}
+                              selected={section}
+                              onSelect={selectSection}
+                              role="tab"
+                              size="compact"
+                            />
+                          ) : (
+                            <View style={{ height: 32 }} />
+                          )}
                         </View>
                       ) : null}
                     </>
@@ -889,7 +956,7 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
     <View className="flex-1 bg-screen">
       <NativeStackScreenOptions options={{ title, headerTitle: title }} />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader title={title} onBack={() => navigation.goBack()} />
+        <AppBar embedded title={title} onBack={() => navigation.goBack()} />
       ) : null}
       <View className="flex-1 items-center justify-center">
         <AppActivityIndicator accessibilityLabel="Loading changes" />
@@ -1005,7 +1072,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
   const hasTestFiles =
     result.parsed.kind === "files" &&
-    result.parsed.files.some((file) => isPullRequestTestFile(file.path));
+    result.parsed.files.some((file) => isTestChangedFile(file.path));
   const jumpStarted = () =>
     jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
   const scrollToFile = (fileId: string) => {
@@ -1086,7 +1153,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={title}
           onBack={() => navigation.goBack()}
           trailing={

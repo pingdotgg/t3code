@@ -1,3 +1,4 @@
+import { settingsSecretLiteral } from "@t3tools/contracts";
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -128,13 +129,15 @@ export const make = Effect.gen(function* () {
   const fromSettings = (host: string) =>
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
-      : sourceControlHost.settings.get.pipe(
+      : sourceControlHost.settings.getWithSecrets(GitCafeClient.definition.kind).pipe(
           Effect.map(
             (settings) =>
-              readSourceControlHostSettings(
-                GitCafeClient.settings,
-                settings.sourceControlHosts[GitCafeClient.definition.kind],
-              ).token || null,
+              settingsSecretLiteral(
+                readSourceControlHostSettings(
+                  GitCafeClient.settings,
+                  settings.sourceControlHosts[GitCafeClient.definition.kind],
+                ).token,
+              ) || null,
           ),
           Effect.orElseSucceed(() => null),
         );

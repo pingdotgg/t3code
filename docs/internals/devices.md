@@ -36,13 +36,34 @@ its sessions. Sessions it starts are recorded under the state directory and
 stopped by the next server if this one dies; sessions other tools started on
 the same account are never touched.
 
-Each session brings its own serve-sim preview host and agent-device daemon,
-with their own tokens. The proxy asks the host to route each request
-(`DeviceHostReady.upstream`) and adds the session token server-side, so
+Each session brings its own preview host (serve-sim, or serve-emu for Android)
+and agent-device daemon, with their own tokens. The proxy asks the host to
+route each request (`DeviceHostReady.upstream`) and adds the session token server-side, so
 clients never hold it. Agent config files are written per device
 (`DeviceOperations.agentEndpoint`), which is why `device_open` opens the
-device before targeting it. Device settings run `simctl` on the simulator's
-machine, which EAS does not expose, so they are unavailable there.
+device before targeting it. Device settings and tools run `simctl` or `adb` on
+the device's machine, which EAS does not expose, so they are unavailable there.
+
+## Simlock hosts lease through the agent-device front
+
+A [Simlock host](../../apps/server/src/device/SimlockDeviceHost.ts) (alpha) opens a
+device by running T3's own agent-device CLI against the gateway's agent-device
+front (`connect proxy`, then `open`), not with Simlock's lease HTTP API:
+agent-device cannot adopt a lease it did not allocate. The lease is bound to
+that one agent-device session and to the directory `open` ran in, so
+`agentEndpoint` hands every thread the same session, a `stateDir` holding its
+connection record, and no `--udid`/`--serial` (the gateway refuses selectors).
+Installs work only from that directory; `device_open` names it.
+
+Simlock serves a lease's screen and input to its holder in serve-sim's formats
+on both platforms: AVCC envelopes at `/v1/leases/<id>/stream` and serve-sim's
+input messages at `/v1/leases/<id>/input`, both with the agent token. Clients
+therefore treat a Simlock Android lease like iOS (`serveSimOnly` in the stream
+client), and `upstream` maps serve-sim's `stream.avcc` and `helper/ws` paths to
+those routes. Simlock has no MJPEG, screenshot, or host command routes, so the
+panel offers only input there.
+Leases are renewed while tracked and released at the host's age limit; one a
+crashed server left behind ends on its own one TTL later, so there is no ledger.
 
 ## The hub is never exposed
 
@@ -120,14 +141,9 @@ binary WebSocket; Android multiplexes SEMU-framed H.264 and JSON gestures over
 one WebSocket. [`DeviceStreamView.tsx`](../../apps/web/src/components/device/DeviceStreamView.tsx)
 speaks both so one panel covers both platforms.
 
-Simulators encode H.264 High 5.1 without frame reordering, but the hub's fallback
-encoder can omit the SPS VUI that declares its reorder limits. Chromium's hardware
-decoder then retains frames for seconds despite `optimizeForLatency` and an empty
-`decodeQueueSize`. The iOS AVCC viewer restores the missing metadata before
-configuring the decoder so hardware decoding can remain enabled. WebCodecs is
-secure-context only, so the viewer probes `isConfigSupported` and falls back to
-MJPEG on iOS when decoding is unavailable. Android has no MJPEG; there the panel
-reports that it cannot decode.
+WebCodecs is secure-context only, so the viewer probes `isConfigSupported` and falls back to
+MJPEG on iOS when decoding is unavailable. Android's SEMU socket has no MJPEG;
+there the panel reports that it cannot decode.
 
 serve-sim can also be locked to WebRTC, as on EAS Simulator, and then refuses
 AVCC with a 409 naming the transport. The viewer still asks for AVCC first, so
@@ -135,3 +151,6 @@ hubs that serve it pay nothing, and switches on that 409, or when its MJPEG
 image fails in a browser that has `RTCPeerConnection`. Offers are not trickled:
 serve-sim takes one offer with every candidate. The video element only feeds
 the same canvas sink, so the panel and the mobile WebView keep one surface.
+Android asks serve-emu's `/api` before opening its video socket and streams
+WebRTC when it is advertised (EAS Simulator), keeping a separate `video=0`
+socket for input so input can reconnect without restarting video.
