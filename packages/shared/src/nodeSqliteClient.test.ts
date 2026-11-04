@@ -546,6 +546,31 @@ it.effect("backs off a reader that never starts without logging each retry", () 
 );
 
 it.effect.each([
+  { phase: "the retry waits", beforeClose: Duration.zero, retries: 0 },
+  { phase: "a retried reader starts", beforeClose: Duration.seconds(1), retries: 1 },
+])("stops retrying the reader when the client closes while $phase", ({ beforeClose, retries }) =>
+  withWorkers(
+    { silent: true },
+    Effect.gen(function* () {
+      const startedAtClose = yield* withReaderClient((sql) =>
+        Effect.gen(function* () {
+          const read = yield* Effect.forkChild(readConnection(sql), { startImmediately: true });
+          yield* TestClock.adjust("10 seconds");
+          assert.deepEqual(yield* Fiber.join(read), { count: 1, connection: ["writer"] });
+
+          const startedBefore = startedWorkers.length;
+          yield* TestClock.adjust(beforeClose);
+          assert.equal(startedWorkers.length - startedBefore, retries);
+          return startedWorkers.length;
+        }),
+      );
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(startedWorkers.length, startedAtClose);
+    }),
+  ),
+);
+
+it.effect.each([
   {
     when: "the database is not in WAL mode",
     journalMode: "DELETE",
