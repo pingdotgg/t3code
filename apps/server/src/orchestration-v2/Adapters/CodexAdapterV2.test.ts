@@ -5848,35 +5848,78 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   // regression: #17501 Codex 429 retry exhaustion classifies as a usage limit
   it.effect.each([
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 500,
       completionStatus: 429,
       willRetry: false,
       expectedClass: "usage_limit",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: 500,
       willRetry: true,
       expectedClass: "provider_error",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: null,
       willRetry: false,
       expectedClass: "usage_limit",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: null,
       willRetry: true,
       expectedClass: "usage_limit",
     },
+    ...(
+      [
+        "responseStreamDisconnected",
+        "responseStreamConnectionFailed",
+        "httpConnectionFailed",
+      ] as const
+    ).flatMap(
+      (code) =>
+        [
+          {
+            code,
+            notificationStatus: null,
+            completionStatus: 503,
+            willRetry: false,
+            expectedClass: "provider_error",
+          },
+          {
+            code,
+            notificationStatus: 503,
+            completionStatus: null,
+            willRetry: false,
+            expectedClass: "transport_error",
+          },
+        ] as const,
+    ),
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: 503,
+      willRetry: true,
+      expectedClass: "provider_error",
+    },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: null,
+      willRetry: false,
+      expectedClass: "transport_error",
+    },
   ] as const)(
-    "honors completion HTTP status from $notificationStatus to $completionStatus (retry: $willRetry)",
-    ({ notificationStatus, completionStatus, expectedClass, willRetry }) =>
+    "honors $code completion HTTP status from $notificationStatus to $completionStatus (retry: $willRetry)",
+    ({ code, notificationStatus, completionStatus, expectedClass, willRetry }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const name = `${notificationStatus}-${completionStatus}-${willRetry}`;
+          const name = `${code}-${notificationStatus}-${completionStatus}-${willRetry}`;
           const nativeThreadId = `native-exhaustion-status-${name}`;
           const nativeTurnId = `turn-exhaustion-status-${name}`;
           const message = "Provider stopped this request.";
@@ -5897,7 +5940,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     error: {
                       message,
                       codexErrorInfo: {
-                        responseTooManyFailedAttempts: { httpStatusCode: notificationStatus },
+                        [code]: { httpStatusCode: notificationStatus },
                       },
                       additionalDetails,
                     },
@@ -5916,7 +5959,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       error: {
                         message,
                         codexErrorInfo: {
-                          responseTooManyFailedAttempts: { httpStatusCode: completionStatus },
+                          [code]: { httpStatusCode: completionStatus },
                         },
                       },
                     },
@@ -5940,9 +5983,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(terminal?.status, "failed");
           if (terminal?.status !== "failed") return;
           assert.equal(terminal.failure.class, expectedClass);
-          assert.equal(terminal.failure.code, "responseTooManyFailedAttempts");
+          assert.equal(terminal.failure.code, code);
           assert.equal(terminal.threadDisposition, "reusable");
-          const notificationClass = notificationStatus === 429 ? "usage_limit" : "provider_error";
+          const notificationClass =
+            code === "responseTooManyFailedAttempts"
+              ? notificationStatus === 429
+                ? "usage_limit"
+                : "provider_error"
+              : notificationStatus === null
+                ? "transport_error"
+                : "provider_error";
           assert.equal(
             terminal.failure.message,
             expectedClass === notificationClass ? additionalDetails : message,
