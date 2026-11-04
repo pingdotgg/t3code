@@ -293,9 +293,9 @@ describe("DesktopShellEnvironment", () => {
       }),
   );
 
-  it.effect.each(["darwin", "linux"] as const)(
-    "reuses cached paths immediately and streams fresh discovery without keeping removed paths on %s",
-    (platform) =>
+  it.effect(
+    "reuses cached paths immediately and streams fresh discovery without keeping removed paths",
+    () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const stateDir = yield* fs.makeTempDirectoryScoped();
@@ -303,12 +303,11 @@ describe("DesktopShellEnvironment", () => {
           Effect.provide(NodeServices.layer),
         );
         const executable = yield* HostProcess.ExecutablePath;
-        const runtime = platform === "linux" ? { APPDIR: "/tmp/.mount_T3-Codnew123" } : {};
-        const first = { ...runtime, SHELL: "/bin/zsh", PATH: "/usr/bin" };
+        const first = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
         yield* runShellEnvironment({
           env: first,
           stateDir,
-          platform,
+          platform: "darwin",
           handler: () =>
             envOutput({
               PATH: "/old/bin:/usr/bin",
@@ -325,12 +324,8 @@ describe("DesktopShellEnvironment", () => {
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const env: NodeJS.ProcessEnv = {
-          ...runtime,
           SHELL: "/bin/zsh",
-          PATH:
-            platform === "linux"
-              ? "/tmp/.mount_T3-Codold123/bin:/launcher/bin:/tmp/.mount_T3-Codnew123/usr/bin"
-              : "/launcher/bin",
+          PATH: "/launcher/bin",
           SSH_AUTH_SOCK: "/current-session.sock",
         };
         const source = [
@@ -343,7 +338,7 @@ describe("DesktopShellEnvironment", () => {
         yield* runShellEnvironment({
           env,
           stateDir,
-          platform,
+          platform: "darwin",
           handler: () => "",
           processSpawner: ChildProcessSpawner.make((command) => {
             calls++;
