@@ -18,12 +18,14 @@ export function AgentFileSyncCoordinator() {
     .map((env) => env.environmentId)
     .sort()
     .join(",");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Tracks native app activity so background clients stop relaying file changes.
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
       setActive(state === "active"),
     );
     return () => subscription.remove();
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the sync relay running only while the app is active and these connections are mounted.
   useEffect(
     () =>
       active

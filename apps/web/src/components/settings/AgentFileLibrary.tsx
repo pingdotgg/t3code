@@ -82,6 +82,7 @@ export function AgentFileLibrary({
       if (environmentId) appAtomRegistry.refresh(agentFileSync.links({ environmentId, input: {} }));
     }
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the subscription refresh timer while the library is mounted.
   useEffect(() => {
     const environmentIds = ids.split("\n") as EnvironmentId[];
     const timer = setInterval(() => {

@@ -15,6 +15,7 @@ export function AgentFileSyncCoordinator() {
     .map((env) => env.environmentId)
     .sort()
     .join(",");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the cross-environment sync relay running only while these connections are mounted.
   useEffect(
     () =>
       startAgentFileSyncRelay(

@@ -18,6 +18,7 @@ export function AgentFileSyncSection({ environmentId }: { environmentId: Environ
   const allowed = useAtomValue(agentFileSync.manage.permissionAtom(environmentId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the subscription refresh timer while these settings are mounted.
   useEffect(() => {
     const timer = setInterval(links.refresh, 15_000);
     return () => clearInterval(timer);
