@@ -30,7 +30,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { projectEnvironment } from "../state/projects";
-import { threadEnvironment } from "../state/threads";
+import { readThreadTriageScope, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
@@ -283,12 +283,16 @@ export function useThreadActions() {
   const deleteThreadMutation = useOrchestrationCommand(threadEnvironment.delete, {
     reportFailure: false,
   });
-  const settleThreadMutation = useOrchestrationCommand(threadEnvironment.settle, {
-    reportFailure: false,
-  });
-  const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
-    reportFailure: false,
-  });
+  const settleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.settle,
+    { reportFailure: false },
+    readThreadTriageScope,
+  );
+  const unsettleThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsettle,
+    { reportFailure: false },
+    readThreadTriageScope,
+  );
   const pinThreadMutation = useOrchestrationCommand(threadEnvironment.pin, {
     reportFailure: false,
   });
@@ -304,12 +308,16 @@ export function useThreadActions() {
   const reorderActiveThreadMutation = useOrchestrationCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });
-  const snoozeThreadMutation = useOrchestrationCommand(threadEnvironment.snooze, {
-    reportFailure: false,
-  });
-  const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
-    reportFailure: false,
-  });
+  const snoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.snooze,
+    { reportFailure: false },
+    readThreadTriageScope,
+  );
+  const unsnoozeThreadMutation = useOrchestrationCommand(
+    threadEnvironment.unsnooze,
+    { reportFailure: false },
+    readThreadTriageScope,
+  );
   const markThreadUnread = useMarkThreadUnread();
   const createProjectFromThread = useAtomCommand(projectEnvironment.createFromThread, {
     reportFailure: false,
@@ -897,16 +905,22 @@ export function useThreadActions() {
     return result;
   };
 
-  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) =>
-    ThreadUndo.executeThreadUndo(
+  const runUndoPlan = (target: ScopedThreadRef, plan: ThreadUndo.ThreadUndoPlan) => {
+    let cancelledQueued = false;
+    return ThreadUndo.executeThreadUndo(
       plan,
       async (step) => {
         switch (step.action) {
-          case "unsettle":
-            return unsettleThread(target);
+          case "unsettle": {
+            const result = await unsettleThread(target);
+            cancelledQueued =
+              result._tag === "Success" && ThreadUndo.cancelledPendingSync(result.value);
+            return result;
+          }
           case "unsnooze":
             return unsnoozeThread(target);
           case "pin":
+            if (cancelledQueued) return AsyncResult.success(undefined);
             return pinThread(
               target,
               step.orderKey === undefined ? {} : { orderKey: step.orderKey },
@@ -920,6 +934,7 @@ export function useThreadActions() {
       },
       (result) => result._tag === "Success",
     );
+  };
 
   const confirmAndDeleteThread = async (target: ScopedThreadRef) => {
     const permissionFailure = threadOperationFailure(target);

@@ -65,6 +65,39 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  // Offline, un-settle and wake can only cancel a change still waiting to sync.
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+  ])(
+    "keeps only settle and snooze directions offline where triage is remembered (reversed: %s, pending: %s)",
+    (reversed, pending) => {
+      const items = buildThreadActionMenuItems({
+        ...baseState,
+        canOperate: false,
+        canTriageOffline: true,
+        hasPendingSync: pending,
+        isPinned: reversed,
+        isSettled: reversed,
+        isSnoozed: reversed,
+      });
+      expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual([
+        reversed ? "unpin" : "pin",
+        ...(reversed && !pending ? ["unsettle", "unsnooze"] : []),
+        "rename",
+        "regenerate-title",
+        "auto-settle",
+        "archive",
+        "delete",
+      ]);
+      expect(
+        items.find((item) => item.id === "snooze")?.children?.some((child) => child.disabled) ??
+          false,
+      ).toBe(false);
+    },
+  );
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

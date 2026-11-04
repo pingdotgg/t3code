@@ -190,6 +190,7 @@ export interface EventSinkV2Shape {
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
+    readonly exceptEventTypes?: ReadonlyArray<OrchestrationV2DomainEvent["type"]>;
   }) => Effect.Effect<number, EventSinkV2Error>;
   readonly readByCommandId: (input: {
     readonly commandId: CommandId;

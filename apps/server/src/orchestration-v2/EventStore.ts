@@ -67,6 +67,7 @@ export interface EventStoreV2Shape {
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventStoreV2Error>;
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
+    readonly exceptEventTypes?: ReadonlyArray<OrchestrationV2DomainEvent["type"]>;
   }) => Effect.Effect<number, EventStoreV2Error>;
   readonly latestApplicationSequence: Effect.Effect<number, EventStoreV2Error>;
   readonly publishCommitted: (events: ReadonlyArray<ApplicationStoredEvent>) => Effect.Effect<void>;
@@ -131,15 +132,17 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
             .readAgentEvents({ commandId })
             .pipe(Stream.mapError((cause) => new EventStoreReadEventsError({ cause }))),
         latestSequence: Effect.fn("EventStoreV2.latestSequence")(function (input) {
-          return applicationEvents.latestAgentSequence(input?.threadId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new EventStoreReadEventsError({
-                  ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
-                  cause,
-                }),
-            ),
-          );
+          return applicationEvents
+            .latestAgentSequence(input?.threadId, input?.exceptEventTypes)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventStoreReadEventsError({
+                    ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
+                    cause,
+                  }),
+              ),
+            );
         }),
         latestApplicationSequence: applicationEvents.latestApplicationSequence.pipe(
           Effect.mapError((cause) => new EventStoreReadEventsError({ cause })),

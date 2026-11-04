@@ -2964,6 +2964,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     settledAt: Schema.optional(Schema.DateTimeUtc),
+    /** Rejects the command if the thread changed after this shell sequence; a session stop does not count. */
+    snapshotSequence: Schema.optional(NonNegativeInt),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
   Schema.Struct({
@@ -2984,6 +2986,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    /** Rejects the command if the thread changed after this shell sequence; a session stop does not count. */
+    snapshotSequence: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),

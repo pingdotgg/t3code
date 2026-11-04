@@ -568,6 +568,11 @@ function ThreadDetailBody(
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  // Offline, wake and un-settle only cancel a change still waiting to sync.
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(props.environmentId)).has(
+    props.selectedThread.id,
+  );
+  const canTriageThread = props.canOperateThread || pendingSync;
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(
@@ -651,7 +656,9 @@ function ThreadDetailBody(
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    const permitted =
+      action === "wake" || action === "unsettle" ? canTriageThread : props.canOperateThread;
+    if (statusPending || !permitted) return;
     const request: BackgroundWorkStopRequest = {
       threadKey: selectedThreadKey,
       taskIds:
@@ -831,7 +838,8 @@ function ThreadDetailBody(
                 : "Dismissing..."
             : actionLabel,
           accessibilityLabel: actionLabel,
-          disabled: !props.canOperateThread || statusPending,
+          disabled:
+            !(snoozed || settled ? canTriageThread : props.canOperateThread) || statusPending,
           onPress: () => void runStatusAction(snoozed ? "wake" : settled ? "unsettle" : "dismiss"),
         },
       };

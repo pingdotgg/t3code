@@ -121,6 +121,8 @@ const browserTestProject = {
       "pdfjs-dist",
       "sql.js",
       "tiff",
+      "@effect/vitest",
+      "effect/Logger",
     ],
   },
   test: {
