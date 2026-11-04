@@ -7,6 +7,7 @@ import {
   guessThreadLinkRef,
   hostedThreadLink,
   parseThreadLinkHref,
+  prepareThreadLinks,
   relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
@@ -325,5 +326,32 @@ describe("hosted thread links", () => {
     ].join("\n");
     expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
     expect(threadLinkRefs(nested, local)).toEqual([]);
+  });
+});
+
+describe("prepared thread links", () => {
+  it("reuses protected source while resolving current titles and environments", () => {
+    const markdown = "`<t3-thread://v1/code>`\n\n[old](t3-thread://v1/chat-1)";
+    const prepared = prepareThreadLinks(markdown);
+    expect(threadLinkRefs(prepared, local)).toEqual([ref("local")]);
+    expect(threadLinkRefs(prepared, EnvironmentId.make("remote"))).toEqual([ref("remote")]);
+    expect(relabelThreadLinks(prepared, local, titlesIn({ local: { "chat-1": "First" } }))).toBe(
+      markdown.replace("[old]", "[First]"),
+    );
+    expect(relabelThreadLinks(prepared, local, titlesIn({ local: { "chat-1": "Renamed" } }))).toBe(
+      markdown.replace("[old]", "[Renamed]"),
+    );
+    expect(
+      relabelThreadLinks(
+        prepared,
+        EnvironmentId.make("remote"),
+        titlesIn({ remote: { "chat-1": "Remote" } }),
+      ),
+    ).toBe(markdown.replace("[old]", "[Remote]"));
+    const changed = prepareThreadLinks(markdown.replace("chat-1", "chat-2"));
+    expect(threadLinkRefs(changed, local)).toEqual([ref("local", "chat-2")]);
+    expect(
+      relabelThreadLinks(changed, local, titlesIn({ local: { "chat-2": "New source" } })),
+    ).toBe(markdown.replace("chat-1", "chat-2").replace("[old]", "[New source]"));
   });
 });

@@ -195,18 +195,37 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`${THREAD_LINK_PROTOCOL}://v`) || markdown.includes(HOSTED_PREFIX);
 }
 
+/** Source and accepted links only; preparation retains no Markdown AST or resolved titles. */
+export function prepareThreadLinks(markdown: string) {
+  const matches = [];
+  // Hermes' matchAll yields matches without `groups`; exec keeps them.
+  for (const match of threadLinkMatches(markdown)) {
+    const groups = match.groups!;
+    if (groups.title !== undefined) continue;
+    const href = groups.href ?? groups.autolink ?? groups.bare;
+    const link = href === undefined ? null : parseThreadLinkHref(href);
+    if (link !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        link,
+        label: groups.label,
+      });
+    }
+  }
+  return { markdown, matches };
+}
+
+type PreparedThreadLinks = ReturnType<typeof prepareThreadLinks>;
+
 /** Every thread the markdown's links can name, so their titles are keyed reads. */
 export function threadLinkRefs(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
-  // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  for (const match of threadLinkMatches(markdown)) {
-    if (match.groups?.title !== undefined) continue;
-    const href = match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    if (link === null) continue;
+  const prepared = typeof source === "string" ? prepareThreadLinks(source) : source;
+  for (const { link } of prepared.matches) {
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
       refs.set(`${ref.environmentId}/${ref.threadId}`, ref);
     }
@@ -225,21 +244,17 @@ export function unknownThreadLinkLabel(
 
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
-  if (!hasThreadLinks(markdown)) return markdown;
+  const { markdown, matches } = typeof source === "string" ? prepareThreadLinks(source) : source;
   let result = "";
   let cursor = 0;
-  for (const match of threadLinkMatches(markdown)) {
-    const groups = match.groups!;
-    if (groups.title !== undefined) continue;
-    const href = groups.href ?? groups.autolink ?? groups.bare;
-    const link = href === undefined ? null : parseThreadLinkHref(href);
-    const replacement = link === null ? undefined : replace(link, groups.label);
+  for (const match of matches) {
+    const replacement = replace(match.link, match.label);
     if (replacement === undefined) continue;
-    result += markdown.slice(cursor, match.index) + replacement;
-    cursor = match.index + match[0].length;
+    result += markdown.slice(cursor, match.start) + replacement;
+    cursor = match.end;
   }
   return result + markdown.slice(cursor);
 }
@@ -250,11 +265,11 @@ export function replaceThreadLinks(
  * link, which may open elsewhere.
  */
 export function relabelThreadLinks(
-  markdown: string,
+  source: string | PreparedThreadLinks,
   messageEnvironmentId: EnvironmentId,
   title: (ref: ScopedThreadRef) => string | undefined,
 ): string {
-  return replaceThreadLinks(markdown, (written, label) => {
+  return replaceThreadLinks(source, (written, label) => {
     const environmentId = written.environmentId ?? messageEnvironmentId;
     const decoded = percentDecodedThreadLinkId(written.threadId);
     const threadId =
