@@ -284,7 +284,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
-                    mentionProjectId={reference.projectId}
+                    completionProjectId={reference.projectId}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -328,7 +328,7 @@ export function ReviewThreadCard({
                 <PullRequestMarkdownTextarea
                   autoFocus
                   size="sm"
-                  mentionScope={{ environmentId, projectId: reference.projectId }}
+                  completionScope={{ environmentId, projectId: reference.projectId }}
                   value={reply}
                   placeholder="Reply"
                   aria-label="Reply to this conversation"

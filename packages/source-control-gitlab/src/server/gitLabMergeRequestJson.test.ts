@@ -10,6 +10,7 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeReferenceCandidatesJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeReviewDecisionsJson,
@@ -733,6 +734,28 @@ describe("decodeReviewDecisionsJson", () => {
     expect(
       expectSuccess(decodeReviewDecisionsJson(JSON.stringify({ data: { project: null } }))),
     ).toEqual(new Map());
+  });
+});
+
+describe("decodeReferenceCandidatesJson", () => {
+  it("prefixes merge requests with ! and skips malformed entries", () => {
+    const raw = JSON.stringify([
+      { iid: 5, title: "Ship it", state: "merged" },
+      { iid: 6, title: "Draft", state: "opened" },
+      { iid: 7, title: "Locked", state: "locked" },
+      { title: "No iid", state: "opened" },
+    ]);
+    const decoded = decodeReferenceCandidatesJson(raw, "change-request");
+    expect(Result.isSuccess(decoded) && decoded.success).toEqual({
+      items: [
+        { reference: "!5", kind: "change-request", number: 5, title: "Ship it", state: "merged" },
+        { reference: "!6", kind: "change-request", number: 6, title: "Draft", state: "open" },
+        { reference: "!7", kind: "change-request", number: 7, title: "Locked", state: "closed" },
+      ],
+      rawCount: 4,
+    });
+    const issues = decodeReferenceCandidatesJson(raw, "issue");
+    expect(Result.isSuccess(issues) && issues.success.items[0]?.reference).toBe("#5");
   });
 });
 

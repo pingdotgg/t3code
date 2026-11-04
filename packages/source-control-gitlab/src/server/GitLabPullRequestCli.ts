@@ -8,6 +8,7 @@ import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/co
 import type {
   PullRequestAction,
   PullRequestActor,
+  PullRequestReferenceCandidate,
   PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
@@ -46,6 +47,7 @@ import {
   decodeProjectMergeCapabilitiesJson,
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
+  decodeReferenceCandidatesJson,
   decodeRepositoryBlobsJson,
   decodeReviewDecisionsJson,
   decodeTriggerJobChecksJson,
@@ -370,6 +372,19 @@ export class GitLabPullRequestCli extends Context.Service<
       GitLabPullRequestCliError
     >;
 
+    readonly searchProjectReferences: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly search?: string | undefined;
+    }) => Effect.Effect<
+      {
+        readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+        readonly truncated: boolean;
+      },
+      GitLabPullRequestCliError
+    >;
+
     readonly setReviewerRequest: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
@@ -557,6 +572,42 @@ function diffCursorPage(cursor: string): number | null {
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {
   const trimmed = search?.trim() ?? "";
   return trimmed.length === 0 ? [] : [["search", trimmed]];
+}
+
+const REFERENCE_PAGE_SIZE = 20;
+
+/**
+ * Recently updated issues and merge requests, by title for text. Issue and MR search cannot match
+ * a number, so a numeric query also asks for that iid of each.
+ */
+export function referenceSearches(search: string | undefined): ReadonlyArray<{
+  readonly kind: PullRequestReferenceCandidate["kind"];
+  readonly params: ReadonlyArray<readonly [string, string]>;
+}> {
+  const text = search?.trim() ?? "";
+  const numeric = /^\d+$/.test(text);
+  const recent: ReadonlyArray<readonly [string, string]> = [
+    ["order_by", "updated_at"],
+    ["sort", "desc"],
+    ...(numeric ? [] : searchParams(text)),
+  ];
+  const kinds = ["issue", "change-request"] as const;
+  return [
+    ...(numeric ? kinds.map((kind) => ({ kind, params: [["iids[]", text]] as const })) : []),
+    ...kinds.map((kind) => ({ kind, params: recent })),
+  ];
+}
+
+function mergeReferencePages(
+  pages: ReadonlyArray<{
+    readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+    readonly rawCount: number;
+  }>,
+) {
+  return {
+    items: pages.flatMap((page) => page.items),
+    truncated: pages.some((page) => page.rawCount >= REFERENCE_PAGE_SIZE),
+  };
 }
 
 function query(params: ReadonlyArray<readonly [string, string]>): string {
@@ -1059,6 +1110,35 @@ export const make = Effect.gen(function* () {
                 command: "glab",
                 cwd: input.cwd,
                 operation: "listReviewerCandidates",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
+
+  const projectReferences = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly kind: PullRequestReferenceCandidate["kind"];
+    readonly params: ReadonlyArray<readonly [string, string]>;
+  }) =>
+    api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/${
+        input.kind === "issue" ? "issues" : "merge_requests"
+      }?${query([...input.params, ["per_page", String(REFERENCE_PAGE_SIZE)]])}`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeReferenceCandidatesJson(result.stdout.trim(), input.kind);
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "searchProjectReferences",
                 cause: decoded.failure,
               }),
             );
@@ -1599,6 +1679,16 @@ export const make = Effect.gen(function* () {
         })),
       );
     }),
+
+    searchProjectReferences: Effect.fn("GitLabPullRequestCli.searchProjectReferences")(
+      function (input) {
+        return Effect.forEach(
+          referenceSearches(input.search),
+          ({ kind, params }) => projectReferences({ ...input, kind, params }),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map(mergeReferencePages));
+      },
+    ),
 
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {

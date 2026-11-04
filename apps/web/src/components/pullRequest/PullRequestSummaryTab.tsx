@@ -183,7 +183,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
-        mentionProjectId={editing.projectId}
+        completionProjectId={editing.projectId}
         threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
@@ -768,7 +768,7 @@ export function PullRequestSummaryTab({
               value={detail.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
-              mentionProjectId={reference.projectId}
+              completionProjectId={reference.projectId}
               threadRef={threadRef}
               label={`${capitalizeTerm(terminology.singular)} description`}
               placeholder={`Describe this ${terminology.singular}`}

@@ -5,6 +5,7 @@ import type {
   PullRequestAction,
   PullRequestStackHead,
   PullRequestActor,
+  PullRequestReferenceCandidate,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -549,6 +550,17 @@ export interface PullRequestProviderApi {
   readonly searchRepositoryAuthors?: (
     input: ProviderRepositoryRef & { readonly query?: string | undefined },
   ) => Effect.Effect<ProviderFilterOptionPage<PullRequestActor>, PullRequestProviderError>;
+
+  /**
+   * Issues and change requests a composer can reference, recently updated first. A numeric
+   * `query` also finds that number exactly; other text matches titles as far as the host can.
+   */
+  readonly searchRepositoryReferences?: (
+    input: ProviderRepositoryRef & { readonly query?: string | undefined },
+  ) => Effect.Effect<
+    ProviderFilterOptionPage<PullRequestReferenceCandidate>,
+    PullRequestProviderError
+  >;
 
   readonly setLabels?: (
     input: ProviderRepositoryRef & {

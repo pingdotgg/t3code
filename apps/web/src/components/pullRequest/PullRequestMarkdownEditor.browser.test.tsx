@@ -37,6 +37,13 @@ vi.mock(import("~/state/pullRequests"), async (original) => ({
             { login: "julius", name: "Julius", avatarUrl: null },
             { login: "theo", name: "Theo", avatarUrl: null },
           ],
+    references:
+      targets.length === 0
+        ? []
+        : [
+            { reference: "#12", kind: "issue", number: 12, title: "Crash", state: "open" },
+            { reference: "!12", kind: "change-request", number: 12, title: "Fix", state: "open" },
+          ],
     error: null,
     isPending: false,
   }),
@@ -61,7 +68,7 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       value={options?.value ?? "Original description"}
       cwd="/repo"
       environmentId={secondary}
-      mentionProjectId={ProjectId.make("project")}
+      completionProjectId={ProjectId.make("project")}
       label="Pull request description"
       saving={false}
       allowEmpty={options?.allowEmpty ?? false}
@@ -106,7 +113,7 @@ it("keeps an edited draft through revocation and saves it after access returns w
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
 });
 
-it("completes an @mention on Enter and closes the list on Escape without leaving the editor", async () => {
+it("completes @mentions and !references on Enter, and Escape closes the list without leaving the editor", async () => {
   setup();
   permissions.allowed.add(secondary);
   await using screen = await openEditor({ value: "" });
@@ -122,6 +129,11 @@ it("completes an @mention on Enter and closes the list on Escape without leaving
   await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+
+  await userEvent.type(textarea, " fixes !1");
+  await expect.element(page.getByRole("option", { name: /Fix/ })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  expect(textarea.value).toBe("Thanks @julius and @ fixes !12 ");
   expect(onCancel).not.toHaveBeenCalled();
   expect(onSave).not.toHaveBeenCalled();
 });

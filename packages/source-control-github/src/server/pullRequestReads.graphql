@@ -488,6 +488,43 @@ query RepositoryLabels($owner: String!, $name: String!, $query: String) {
 
 # Mentionable rather than assignable users: a pull request from a fork is opened by someone with
 # no access to the repository, and a listing is still narrowed by them.
+fragment ReferenceCandidate on IssueOrPullRequest {
+  __typename
+  ... on Issue {
+    number
+    title
+    issueState: state
+  }
+  ... on PullRequest {
+    number
+    title
+    pullRequestState: state
+  }
+}
+
+# `search` cannot match a number, so a numeric query also looks the number up directly.
+query RepositoryReferences(
+  $owner: String!
+  $name: String!
+  $q: String!
+  $number: Int!
+  $exact: Boolean!
+) {
+  search(query: $q, type: ISSUE, first: 20) {
+    pageInfo {
+      hasNextPage
+    }
+    nodes {
+      ...ReferenceCandidate
+    }
+  }
+  repository(owner: $owner, name: $name) @include(if: $exact) {
+    issueOrPullRequest(number: $number) {
+      ...ReferenceCandidate
+    }
+  }
+}
+
 query RepositoryAuthors($owner: String!, $name: String!, $query: String) {
   repository(owner: $owner, name: $name) {
     mentionableUsers(first: 50, query: $query) {

@@ -4,12 +4,14 @@ import {
   ProjectId,
   type PullRequestActor,
   type PullRequestFilterOptionsInput,
+  type PullRequestReferenceCandidate,
 } from "@t3tools/contracts";
 import {
-  detectPullRequestMention,
-  insertPullRequestMention,
+  detectPullRequestComposerTrigger,
+  insertPullRequestCompletion,
   narrowPullRequestMentions,
-  pullRequestMentionSearch,
+  narrowPullRequestReferences,
+  pullRequestCompletionSearch,
 } from "@t3tools/shared/pullRequestComposerTrigger";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -19,29 +21,36 @@ import type { TextInputSelectionChangeEvent } from "react-native";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useDebouncedValue } from "../../state/queries";
 
-const MENTION_SUGGESTION_LIMIT = 6;
+const COMPLETION_SUGGESTION_LIMIT = 6;
 
-const mentionOptionsFamily = Atom.family((key: string) => {
+export type PullRequestCompletion =
+  | { readonly kind: "mention"; readonly token: string; readonly actor: PullRequestActor }
+  | {
+      readonly kind: "reference";
+      readonly token: string;
+      readonly candidate: PullRequestReferenceCandidate;
+    };
+
+const completionOptionsFamily = Atom.family((key: string) => {
   const target: {
     readonly environmentId: EnvironmentId;
     readonly input: PullRequestFilterOptionsInput;
   } | null = JSON.parse(key);
   return Atom.make((get) => {
-    if (target === null) return { authors: [], waiting: false, failed: false };
+    if (target === null) return { authors: [], references: [], waiting: false, failed: false };
     const result = get(composerPullRequests.filterOptions(target));
+    const options = Option.getOrNull(AsyncResult.value(result));
     return {
-      authors: Option.match(AsyncResult.value(result), {
-        onNone: () => [] as ReadonlyArray<PullRequestActor>,
-        onSome: (options) => options.authors,
-      }),
+      authors: options?.authors ?? ([] as ReadonlyArray<PullRequestActor>),
+      references: options?.references ?? ([] as ReadonlyArray<PullRequestReferenceCandidate>),
       waiting: result.waiting,
       failed: AsyncResult.isFailure(result),
     };
   });
 });
 
-/** Completes `@login` in a pull request text input from the repository's users. */
-export function usePullRequestMentions(input: {
+/** Completes `@login`, `#123` and GitLab `!123` in a pull request text input. */
+export function usePullRequestCompletions(input: {
   readonly environmentId: string;
   readonly projectId: string;
   readonly value: string;
@@ -54,19 +63,24 @@ export function usePullRequestMentions(input: {
   const trigger =
     input.enabled === false || selection === null || selection.start !== selection.end
       ? null
-      : detectPullRequestMention(input.value, selection.start);
-  const typed = trigger?.query ?? "";
-  const search = pullRequestMentionSearch(typed);
-  const sent = useDebouncedValue(search, 250);
+      : detectPullRequestComposerTrigger(input.value, selection.start);
+  const search = trigger === null ? undefined : pullRequestCompletionSearch(trigger);
+  const wanted = trigger === null ? null : `${trigger.kind}:${search ?? ""}`;
+  const sentKey = useDebouncedValue(wanted, 250);
+  // A switch between `@` and `#` asks at once; only a changing search waits for the debounce.
+  const sent =
+    trigger !== null && sentKey?.startsWith(`${trigger.kind}:`)
+      ? sentKey.slice(trigger.kind.length + 1)
+      : search;
   const hosted = useAtomValue(
-    mentionOptionsFamily(
+    completionOptionsFamily(
       JSON.stringify(
         trigger === null
           ? null
           : {
               environmentId: EnvironmentId.make(input.environmentId),
               input: {
-                kind: "authors",
+                kind: trigger.kind === "mention" ? "authors" : "references",
                 projectId: ProjectId.make(input.projectId),
                 ...(sent ? { query: sent } : {}),
               },
@@ -75,10 +89,19 @@ export function usePullRequestMentions(input: {
     ),
   );
   // Older answers stay useful while the debounced search catches up, narrowed to what is typed now.
-  const candidates = narrowPullRequestMentions(hosted.authors, typed, MENTION_SUGGESTION_LIMIT);
+  const candidates: ReadonlyArray<PullRequestCompletion> =
+    trigger === null
+      ? []
+      : trigger.kind === "mention"
+        ? narrowPullRequestMentions(hosted.authors, trigger.query, COMPLETION_SUGGESTION_LIMIT).map(
+            (actor) => ({ kind: "mention", token: `@${actor.login}`, actor }),
+          )
+        : narrowPullRequestReferences(hosted.references, trigger, COMPLETION_SUGGESTION_LIMIT).map(
+            (candidate) => ({ kind: "reference", token: candidate.reference, candidate }),
+          );
 
   return {
-    open: trigger !== null,
+    kind: trigger?.kind ?? null,
     candidates,
     isLoading: hosted.waiting || sent !== search,
     failed: hosted.failed,
@@ -88,9 +111,9 @@ export function usePullRequestMentions(input: {
       setPlaced(null);
     },
     onBlur: () => setSelection(null),
-    select: (actor: PullRequestActor) => {
+    select: (completion: PullRequestCompletion) => {
       if (trigger === null) return;
-      const next = insertPullRequestMention(input.value, trigger, actor.login);
+      const next = insertPullRequestCompletion(input.value, trigger, completion.token);
       input.onChangeValue(next.text);
       setSelection({ start: next.cursor, end: next.cursor });
       setPlaced({ start: next.cursor, end: next.cursor });

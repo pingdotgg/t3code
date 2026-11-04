@@ -24,6 +24,7 @@ import {
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
+  type PullRequestReferenceCandidate,
   type PullRequestComment,
   type PullRequestCommit,
   type PullRequestFileViewed,
@@ -71,6 +72,9 @@ import {
   pullRequestLookup,
   toLabelCandidates,
   toRepositoryAuthors,
+  toRepositoryReferences,
+  referenceSearchQuery,
+  searchPhrase,
   toRepositoryLabels,
   toPullRequestActivityPage,
   toPullRequestCommitStats,
@@ -638,6 +642,19 @@ export class GitHubPullRequestApi extends Context.Service<
       GitHubPullRequestApiError
     >;
 
+    readonly searchRepositoryReferences: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<
+      {
+        readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+        readonly truncated: boolean;
+      },
+      GitHubPullRequestApiError
+    >;
+
     readonly setLabels: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -740,10 +757,6 @@ function diffCursorPage(cursor: string): number | null {
 }
 
 /** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
-function searchPhrase(query: string): string {
-  return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
 const REVIEW_QUALIFIERS = {
   approved: "approved",
   "changes-requested": "changes_requested",
@@ -2336,6 +2349,25 @@ export const make = Effect.gen(function* () {
             graphql({ ...input, operation, allowReserve: true }),
             Effect.map(toRepositoryAuthors),
             Effect.flatMap(found({ ...input, operation })),
+          );
+      },
+    ),
+
+    searchRepositoryReferences: Effect.fn("GitHubPullRequestApi.searchRepositoryReferences")(
+      function (input) {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        const number = /^\d+$/.test(input.query ?? "") ? Number(input.query) : 0;
+        return client
+          .RepositoryReferences({
+            owner,
+            name,
+            q: referenceSearchQuery(input.repository, input.query),
+            number,
+            exact: number > 0 && number <= 2_147_483_647,
+          })
+          .pipe(
+            graphql({ ...input, operation: "searchRepositoryReferences", allowReserve: true }),
+            Effect.map(toRepositoryReferences),
           );
       },
     ),

@@ -87,7 +87,7 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={{ environmentId, projectId: reference.projectId }}
+        completionScope={{ environmentId, projectId: reference.projectId }}
         // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
         value={body}

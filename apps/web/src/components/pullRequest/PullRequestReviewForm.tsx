@@ -133,7 +133,7 @@ export function PullRequestReviewForm({
     <>
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={{ environmentId, projectId: reference.projectId }}
+        completionScope={{ environmentId, projectId: reference.projectId }}
         rows={3}
         value={body}
         placeholder={placeholder}

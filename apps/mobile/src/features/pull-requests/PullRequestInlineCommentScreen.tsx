@@ -15,8 +15,8 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
-import { PullRequestMentionSuggestions } from "./PullRequestMentionSuggestions";
-import { usePullRequestMentions } from "./usePullRequestMentions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -33,7 +33,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const saved = store.draft.comments.find((draft) => draft.id === params.draftId);
   const [editedBody, setBody] = useState<string | null>(null);
   const body = editedBody ?? saved?.body ?? "";
-  const mentions = usePullRequestMentions({
+  const completions = usePullRequestCompletions({
     environmentId: params.environmentId,
     projectId: params.projectId,
     value: body,
@@ -109,12 +109,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           {params.code}
         </Text>
       </View>
-      <PullRequestMentionSuggestions mentions={mentions} />
+      <PullRequestCompletionSuggestions completions={completions} />
       <TextInput
         multiline
-        selection={mentions.selection}
-        onSelectionChange={mentions.onSelectionChange}
-        onBlur={mentions.onBlur}
+        selection={completions.selection}
+        onSelectionChange={completions.onSelectionChange}
+        onBlur={completions.onBlur}
         editable={store.ready && !busy}
         autoFocus
         accessibilityLabel="Inline review comment"

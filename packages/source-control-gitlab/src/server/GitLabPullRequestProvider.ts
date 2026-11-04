@@ -419,6 +419,16 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchProjectReferences({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
+
     setReviewerRequest: writing((input) =>
       cli
         .setReviewerRequest({

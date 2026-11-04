@@ -28,8 +28,8 @@ import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
-import { PullRequestMentionSuggestions } from "./PullRequestMentionSuggestions";
-import { usePullRequestMentions } from "./usePullRequestMentions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export function PullRequestDiscussionScreen({
   route,
@@ -59,7 +59,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
   const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
   const [body, setBody] = useState("");
-  const mentions = usePullRequestMentions({
+  const completions = usePullRequestCompletions({
     environmentId: params.environmentId,
     projectId: params.projectId,
     value: body,
@@ -251,7 +251,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             className="absolute inset-x-4 bottom-0 gap-2"
             style={{ paddingBottom: bottomInset }}
           >
-            <PullRequestMentionSuggestions mentions={mentions} />
+            <PullRequestCompletionSuggestions completions={completions} />
             <GlassSurface
               chrome="none"
               onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
@@ -259,9 +259,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             >
               <TextInput
                 accessibilityLabel="Discussion reply"
-                selection={mentions.selection}
-                onSelectionChange={mentions.onSelectionChange}
-                onBlur={mentions.onBlur}
+                selection={completions.selection}
+                onSelectionChange={completions.onSelectionChange}
+                onBlur={completions.onBlur}
                 multiline
                 maxLength={65536}
                 placeholder="Reply…"

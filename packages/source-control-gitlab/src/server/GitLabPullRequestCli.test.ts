@@ -1441,3 +1441,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 });
+
+it("asks for a numeric reference's iid besides the recent issues and merge requests", () => {
+  const recent = [
+    ["order_by", "updated_at"],
+    ["sort", "desc"],
+  ];
+  expect(GitLabPullRequestCli.referenceSearches("12")).toEqual([
+    { kind: "issue", params: [["iids[]", "12"]] },
+    { kind: "change-request", params: [["iids[]", "12"]] },
+    { kind: "issue", params: recent },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("crash")).toEqual([
+    { kind: "issue", params: [...recent, ["search", "crash"]] },
+    { kind: "change-request", params: [...recent, ["search", "crash"]] },
+  ]);
+});

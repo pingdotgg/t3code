@@ -515,7 +515,7 @@ export const PullRequestListStatsResult = Schema.Struct({
 });
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
-export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors"]);
+export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors", "references"]);
 export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Type;
 
 /** Scoped like `PullRequestListInput`, so the options come from the repositories it lists. */
@@ -528,9 +528,20 @@ export const PullRequestFilterOptionsInput = Schema.Struct({
 });
 export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
 
+/** An issue or change request a composer can reference, with the text the host links. */
+export const PullRequestReferenceCandidate = Schema.Struct({
+  reference: TrimmedNonEmptyString,
+  kind: Schema.Literals(["issue", "change-request"]),
+  number: PositiveInt,
+  title: Schema.String,
+  state: Schema.Literals(["open", "closed", "merged"]),
+});
+export type PullRequestReferenceCandidate = typeof PullRequestReferenceCandidate.Type;
+
 export const PullRequestFilterOptions = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   authors: Schema.Array(PullRequestActor),
+  references: Schema.Array(PullRequestReferenceCandidate),
   truncated: Schema.Boolean,
 });
 export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;

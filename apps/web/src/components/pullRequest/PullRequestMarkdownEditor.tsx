@@ -18,7 +18,7 @@ export function PullRequestMarkdownEditor({
   value,
   cwd,
   environmentId,
-  mentionProjectId,
+  completionProjectId,
   threadRef = null,
   placeholder,
   label,
@@ -31,7 +31,7 @@ export function PullRequestMarkdownEditor({
   readonly value: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  readonly mentionProjectId: ProjectId | null;
+  readonly completionProjectId: ProjectId | null;
   readonly threadRef?: ScopedThreadRef | null;
   readonly placeholder?: string | undefined;
   readonly label: string;
@@ -108,8 +108,8 @@ export function PullRequestMarkdownEditor({
         <PullRequestMarkdownTextarea
           autoFocus
           disabled={saving}
-          mentionScope={
-            mentionProjectId === null ? null : { environmentId, projectId: mentionProjectId }
+          completionScope={
+            completionProjectId === null ? null : { environmentId, projectId: completionProjectId }
           }
           value={draft}
           rows={6}
