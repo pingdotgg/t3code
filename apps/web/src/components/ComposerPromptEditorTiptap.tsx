@@ -83,6 +83,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   splitOrLiftListItem,
@@ -1563,7 +1564,10 @@ function ComposerPromptEditorTiptapInner(
       );
     }
     const map = serializeEditorDoc(editor.state.doc);
-    const flat = markdownToFlat(map, normalizedExpandedCursor);
+    const flat = markdownToFlat(
+      map,
+      serializedMarkdownOffset(value, map.value, normalizedExpandedCursor),
+    );
     editor.commands.setTextSelection(flatToPm(map, flat));
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
@@ -1634,7 +1638,12 @@ function ComposerPromptEditorTiptapInner(
     const expandedCursor =
       exactExpandedCursor ?? expandEditorCursor(snapshotRef.current.value, boundedCursor);
     const map = serializeEditorDoc(editor.state.doc);
-    editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, expandedCursor)));
+    const markdownCursor = serializedMarkdownOffset(
+      snapshotRef.current.value,
+      map.value,
+      expandedCursor,
+    );
+    editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, markdownCursor)));
     scrollTiptapCaretIntoView(editor);
     if (boundedCursor === snapshotRef.current.cursor) return;
     snapshotRef.current = {
