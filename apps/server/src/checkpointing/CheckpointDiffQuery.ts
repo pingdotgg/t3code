@@ -175,9 +175,19 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
+      // A thread that moved worktrees has a root scope per worktree; only the first holds the thread start.
+      const rootScopes = projection.checkpointScopes.filter((scope) => scope.kind === "root_run");
       const firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? (rootScopes.find((scope) =>
+              projection.checkpoints.some(
+                (checkpoint) =>
+                  checkpoint.status === "ready" &&
+                  checkpoint.scopeId === scope.id &&
+                  checkpoint.ordinalWithinScope === 0 &&
+                  checkpoint.appRunOrdinal === null,
+              ),
+            ) ?? rootScopes[0])
           : undefined;
       const fromCheckpointRef =
         input.fromTurnCount === 0

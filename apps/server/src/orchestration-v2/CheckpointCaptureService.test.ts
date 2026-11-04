@@ -905,4 +905,195 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       assert.equal(checkpoint?.status, "missing");
     }),
   );
+
+  it.effect("records no thread start for a root scope opened mid-thread in another worktree", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const movedThreadId = ThreadId.make("thread:checkpoint-capture-moved-worktree");
+      const movedRunId = RunId.make("run:checkpoint-capture-moved-worktree");
+      const movedScopeId = CheckpointScopeId.make("scope:checkpoint-capture-moved-worktree");
+      const movedRootNodeId = NodeId.make("node:checkpoint-capture-moved-worktree-root");
+      const movedProviderThreadId = ProviderThreadId.make(
+        "provider-thread:checkpoint-capture-moved-worktree",
+      );
+      const event = { threadId: movedThreadId, occurredAt: now };
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-moved-worktree:thread"),
+          type: "thread.created",
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: movedThreadId,
+            projectId,
+            title: "Moved worktree",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/repo-b",
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: movedThreadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-moved-worktree:provider-thread"),
+          type: "provider-thread.updated",
+          driver,
+          providerInstanceId,
+          payload: {
+            id: movedProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: movedThreadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-moved-worktree:run"),
+          type: "run.updated",
+          runId: movedRunId,
+          payload: {
+            id: movedRunId,
+            threadId: movedThreadId,
+            ordinal: 2,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: movedProviderThreadId,
+            userMessageId: MessageId.make("message:checkpoint-capture-moved-worktree"),
+            rootNodeId: movedRootNodeId,
+            activeAttemptId: null,
+            status: "waiting",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-moved-worktree:node"),
+          type: "node.updated",
+          runId: movedRunId,
+          nodeId: movedRootNodeId,
+          payload: {
+            id: movedRootNodeId,
+            threadId: movedThreadId,
+            runId: movedRunId,
+            parentNodeId: null,
+            rootNodeId: movedRootNodeId,
+            kind: "root_turn",
+            status: "waiting",
+            countsForRun: true,
+            providerThreadId: movedProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: movedScopeId,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-moved-worktree:scope"),
+          type: "checkpoint-scope.created",
+          runId: movedRunId,
+          nodeId: movedRootNodeId,
+          payload: {
+            id: movedScopeId,
+            threadId: movedThreadId,
+            runId: movedRunId,
+            nodeId: movedRootNodeId,
+            parentScopeId: null,
+            providerThreadId: movedProviderThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo-b",
+            createdAt: now,
+          },
+        },
+      ];
+      yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            CheckpointService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  IdAllocator.layer,
+                  NodeCrypto.layer,
+                  // Only the previous turn's baseline exists in this worktree's scope.
+                  Layer.mock(CheckpointStore.CheckpointStore)({
+                    isGitRepository: () => Effect.succeed(true),
+                    captureCheckpoint: () => Effect.void,
+                    hasCheckpointRef: (input) =>
+                      Effect.succeed(!input.checkpointRef.endsWith("/ordinal/0")),
+                    diffCheckpoints: () => Effect.succeed(""),
+                    listAuthoredPaths: () => Effect.succeed(null),
+                  }),
+                ),
+              ),
+            ),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (committed) => projectionStore.apply(committed)).pipe(
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+        service.execute({
+          threadId: movedThreadId,
+          runId: movedRunId,
+          scopeId: movedScopeId,
+        }),
+      ).pipe(Effect.provide(layerCapture));
+
+      const { checkpoints } = yield* projectionStore.getThreadRecords(movedThreadId, [
+        "checkpoints",
+      ]);
+      assert.deepEqual(
+        checkpoints.map((checkpoint) => [checkpoint.ordinalWithinScope, checkpoint.status]),
+        [
+          [1, "ready"],
+          [2, "ready"],
+        ],
+      );
+    }),
+  );
 });

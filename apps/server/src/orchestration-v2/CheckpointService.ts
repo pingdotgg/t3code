@@ -180,9 +180,10 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
   readonly cwd: string;
   readonly createdAt: DateTime.Utc;
 }) {
+  // Worktrees of one repository share checkpoint refs, so a thread gets a root scope per workspace.
   const scopeId = yield* input.idAllocator.allocate.checkpointScope({
     threadId: input.threadId,
-    name: ROOT_CHECKPOINT_SCOPE_NAME,
+    name: `${ROOT_CHECKPOINT_SCOPE_NAME}:${input.cwd}`,
   });
   return {
     id: scopeId,

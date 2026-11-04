@@ -106,6 +106,40 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("diffs from the thread start after the thread moved to another worktree", () => {
+  const projection = makeProjection();
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(""),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed({
+      ...projection,
+      // The worktree the thread moved to sorts first and has no thread start.
+      checkpointScopes: projection.checkpointScopes.toReversed(),
+      checkpoints: [
+        {
+          scopeId: firstScopeId,
+          runId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          status: "ready",
+          ref: CheckpointRef.make("refs/t3/test/thread-start"),
+        },
+        ...projection.checkpoints,
+      ],
+    }),
+    diffCheckpoints,
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.strictEqual(
+      diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+      yield* checkpointRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 0 }),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
   const thirdRunId = RunId.make("run:checkpoint-diff-v2:3");
   const checkpoint = (

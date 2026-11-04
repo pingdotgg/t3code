@@ -103,14 +103,20 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
+      // A root scope opened mid-thread in another worktree has no thread start to record, and a
+      // missing record there would shadow the first scope's ready one in revert lookups.
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
-          : yield* checkpoints.materializeBaselineCheckpoint({
-              scope,
-              ordinalWithinScope: 0,
-              forceMissing: sideChat,
-            });
+          : yield* checkpoints
+              .materializeBaselineCheckpoint({
+                scope,
+                ordinalWithinScope: 0,
+                forceMissing: sideChat,
+              })
+              .pipe(
+                Effect.map((checkpoint) => (checkpoint.status === "ready" ? checkpoint : null)),
+              );
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
         : yield* checkpoints.materializeBaselineCheckpoint({
