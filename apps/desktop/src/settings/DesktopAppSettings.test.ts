@@ -236,6 +236,7 @@ describe("DesktopSettings", () => {
           serverExposureMode: "network-accessible",
           autoUpdate: true,
         } satisfies typeof DesktopSettingsPatch.Type);
+        assert.isTrue((yield* settings.load).autoUpdate);
       }),
     ),
   );
