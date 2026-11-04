@@ -2,7 +2,12 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PluginInstallationId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -161,6 +166,32 @@ it.effect("does not keep credentials of other threads alive", () =>
   }),
 );
 
+it.effect("keeps a credential's plugin tool grants and replaces them without rotating it", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const grant = (generation: number) => ({
+      installationId: PluginInstallationId.make("installation-1"),
+      generation,
+    });
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-plugin-tools"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      pluginToolGrants: [grant(1)],
+    });
+    const other = yield* registry.issue({
+      threadId: ThreadId.make("thread-other"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const tokenOf = (credential: typeof issued) =>
+      credential.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    expect((yield* registry.resolve(tokenOf(issued)))?.pluginToolGrants).toEqual([grant(1)]);
+    expect((yield* registry.resolve(tokenOf(other)))?.pluginToolGrants).toBeUndefined();
+
+    yield* registry.setPluginToolGrants(issued.config.providerSessionId, [grant(2)]);
+    expect((yield* registry.resolve(tokenOf(issued)))?.pluginToolGrants).toEqual([grant(2)]);
+    expect((yield* registry.resolve(tokenOf(other)))?.pluginToolGrants).toBeUndefined();
+  }),
+);
 it.effect("only a trusted touch restores an expired token with its original scope", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

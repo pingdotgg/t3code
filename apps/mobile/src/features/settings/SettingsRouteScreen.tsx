@@ -34,6 +34,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { supportsPlugins } from "./SettingsPluginsRouteScreen";
 import { filterSettingsSections } from "./settings-search";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 
@@ -253,6 +254,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
+        ...(selectedTargets.some(supportsPlugins)
+          ? [page("SettingsPlugins", "cube", "Plugins")]
+          : []),
       ],
     },
     {

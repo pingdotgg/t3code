@@ -58,10 +58,16 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 
+  const hasPluginEnvironment =
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.plugins === true,
+    ) === true;
+
   return filterAvailableSettingsSearchItems({
     localEnvironmentDisabled,
     hasCloudPublicConfig: cloudPublicConfig,
     hasEnvironment,
+    hasPluginEnvironment,
     hasProviderSettingsEnvironment,
     hasMacProviderSettingsEnvironment,
     canManageLocalBackend,
