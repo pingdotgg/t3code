@@ -938,13 +938,16 @@ function unattachableReviewRemarks(
   const attached = new Set(
     reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
-  return comments.filter(
-    (comment) =>
-      (comment.kind === "review" || comment.kind === "review-comment") &&
-      pullRequestReviewOutcome(comment.reviewState) !== "approved" &&
+  return comments.filter((comment) => {
+    if (comment.kind !== "review" && comment.kind !== "review-comment") return false;
+    const outcome = pullRequestReviewOutcome(comment.reviewState);
+    return (
+      outcome !== "approved" &&
+      outcome !== "dismissed" &&
       !attached.has(comment.id) &&
-      visibleBody(comment.body) !== null,
-  );
+      visibleBody(comment.body) !== null
+    );
+  });
 }
 
 function findingThreadContext(

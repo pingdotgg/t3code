@@ -1387,22 +1387,27 @@ describe("the compact row's single action slot", () => {
     ).toContain("review feedback");
   });
 
-  it("keeps Merge when the only review text is an approval or hidden bookkeeping", () => {
+  it("keeps Merge when the only review text is an approval, dismissal, or hidden bookkeeping", () => {
+    const settledRemark = (id: string, reviewState: string, body: string) => ({
+      id,
+      kind: "review" as const,
+      author: { login: "reviewer", name: null, avatarUrl: null },
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: null,
+      path: null,
+      reviewState,
+    });
     expect(
       hasActionablePullRequestFeedback({
         reviewThreads: [],
-        comments: [
-          {
-            id: "r-approve",
-            kind: "review",
-            author: { login: "reviewer", name: null, avatarUrl: null },
-            body: "LGTM",
-            createdAt: "2026-07-03T00:00:00Z",
-            url: null,
-            path: null,
-            reviewState: "APPROVED",
-          },
-        ],
+        comments: [settledRemark("r-approve", "APPROVED", "LGTM")],
+      }),
+    ).toBe(false);
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [],
+        comments: [settledRemark("r-dismissed", "DISMISSED", "Please revert this")],
       }),
     ).toBe(false);
     expect(
@@ -1433,18 +1438,13 @@ describe("the compact row's single action slot", () => {
     expect(
       resolveThreadPanelPullRequestAction(openDetail(), {
         reviewThreads: [],
-        comments: [
-          {
-            id: "r-approve",
-            kind: "review",
-            author: { login: "reviewer", name: null, avatarUrl: null },
-            body: "LGTM",
-            createdAt: "2026-07-03T00:00:00Z",
-            url: null,
-            path: null,
-            reviewState: "APPROVED",
-          },
-        ],
+        comments: [settledRemark("r-approve", "APPROVED", "LGTM")],
+      }),
+    ).toBe("merge");
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail(), {
+        reviewThreads: [],
+        comments: [settledRemark("r-dismissed", "DISMISSED", "Please revert this")],
       }),
     ).toBe("merge");
   });

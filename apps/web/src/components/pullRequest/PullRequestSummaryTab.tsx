@@ -572,7 +572,8 @@ export function PullRequestSummaryTab({
     const finding: PullRequestFinding | null =
       reply ||
       (comment.kind !== "review" && comment.kind !== "review-comment") ||
-      outcome === "approved"
+      outcome === "approved" ||
+      outcome === "dismissed"
         ? null
         : thread === undefined
           ? body === null
