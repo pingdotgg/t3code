@@ -117,7 +117,7 @@ const IGNORED_FILES_LIMIT = 200;
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
 const IGNORE_CHECK_CHUNK_SIZE = 1000;
 
-/** Children classified at once when listing a folder; each costs a stat and each symlink a realpath. */
+/** Children classified at once when listing a folder; each symlink costs a realpath and a stat, and each child a stat when mtimes are requested. */
 const SYMLINK_RESOLVE_BATCH_SIZE = 64;
 
 interface ListedChild {
@@ -384,7 +384,12 @@ export const make = Effect.gen(function* () {
                           ? "file"
                           : undefined;
                       if (kind === undefined) return undefined;
-                      return { kind, mtimeMs: await statMtime(child.name) };
+                      return {
+                        kind,
+                        mtimeMs: input.includeModifiedTimes
+                          ? await statMtime(child.name)
+                          : undefined,
+                      };
                     }),
                 )),
               );
@@ -407,7 +412,9 @@ export const make = Effect.gen(function* () {
                   {
                     path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
                     kind: item.kind,
-                    ...(item.mtimeMs === undefined ? {} : { mtimeMs: item.mtimeMs }),
+                    ...(input.includeModifiedTimes && item.mtimeMs !== undefined
+                      ? { mtimeMs: item.mtimeMs }
+                      : {}),
                   },
                 ];
               }),

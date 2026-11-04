@@ -36,7 +36,9 @@ const pathSearch = {
   refresh: () => {},
 };
 
-vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries: () => directory }));
+const { useDirectoryEntries } = vi.hoisted(() => ({ useDirectoryEntries: vi.fn() }));
+useDirectoryEntries.mockImplementation(() => directory);
+vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries }));
 vi.mock("~/state/queries", () => ({ useProjectPathSearch: () => pathSearch }));
 vi.mock("~/fileContextMenu", () => ({
   useFileContextMenu: () => ({ buildItems: () => [], activate: () => Promise.resolve() }),
@@ -304,6 +306,22 @@ describe("FileBrowserPanel sorting", () => {
       ".env",
       "b.txt",
     ]);
+  });
+
+  it("asks for modified times only while sorting by date modified", async () => {
+    using _sort = setupSort();
+    const requested = () => useDirectoryEntries.mock.lastCall?.[2];
+    await using _screen = await renderPanel();
+    await expectRows(NAME_ASC);
+    expect(requested()).toBe(false);
+
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await expectRows(MODIFIED_ASC);
+    expect(requested()).toBe(true);
+
+    await userEvent.click(sortKeyButton("Sort by name"));
+    await expectRows(NAME_ASC);
+    expect(requested()).toBe(false);
   });
 
   it("re-sorts by date modified when a refresh adds or drops timestamps", async () => {

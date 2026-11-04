@@ -216,6 +216,12 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const [sortOrder, setSortOrder] = useLocalStorage(
+    FILE_BROWSER_SORT_STORAGE_KEY,
+    DEFAULT_FILE_TREE_SORT_ORDER,
+    FileTreeSortOrder,
+  );
+  const { key: sortKey, direction: sortDirection } = sortOrder;
   const {
     entries: directoryEntries,
     load,
@@ -224,7 +230,7 @@ export default function FileBrowserPanel({
     error,
     isPending,
     loadingDirectories,
-  } = useDirectoryEntries(environmentId, cwd);
+  } = useDirectoryEntries(environmentId, cwd, sortKey === "modified");
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
   const pathSearch = useProjectPathSearch(
@@ -233,12 +239,6 @@ export default function FileBrowserPanel({
   );
   const { entries, entryKinds, mtimes, treePaths, directoryPaths, expandableDirectoryPaths } =
     buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
-  const [sortOrder, setSortOrder] = useLocalStorage(
-    FILE_BROWSER_SORT_STORAGE_KEY,
-    DEFAULT_FILE_TREE_SORT_ORDER,
-    FileTreeSortOrder,
-  );
-  const { key: sortKey, direction: sortDirection } = sortOrder;
   const entryKindsRef = useRef(entryKinds);
   // The tree model is built once, so its comparator reads the latest order and mtimes from here.
   const sortComparatorRef = useRef(createFileTreeSortComparator(sortOrder, () => undefined));
