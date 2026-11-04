@@ -49,6 +49,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "unexpected-failure",
       "shared-workspace",
       "legacy-checkpoint",
+      "other-workspace",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
@@ -66,6 +67,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
       case "shared-workspace":
       case "legacy-checkpoint":
+      case "other-workspace":
         return checkpointRestoreRefusalMessage(this.reason);
       case "unexpected-failure":
         return ROLLBACK_FAILED_MESSAGE;
@@ -295,11 +297,17 @@ export const layer: Layer.Layer<
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       const staleByScope = Map.groupBy(staleCheckpoints, (stale) => stale.scopeId);
+      const currentWorkspace =
+        context.thread.worktreePath ??
+        Option.match(yield* projects.get(context.thread.projectId), {
+          onNone: () => scope.cwd,
+          onSome: (project) => project.workspaceRoot,
+        });
       for (const staleScope of context.staleCheckpointScopes) {
         yield* checkpoints.deleteStaleRefs({
           scope: staleScope,
           checkpoints: staleByScope.get(staleScope.id) ?? [],
-          fallbackCwd: context.thread.worktreePath ?? scope.cwd,
+          fallbackCwd: currentWorkspace,
         });
       }
 

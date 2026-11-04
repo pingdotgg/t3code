@@ -14,12 +14,19 @@ const SHARED_WORKSPACE_RESTORE_MESSAGE =
 export const LEGACY_CHECKPOINT_RESTORE_MESSAGE =
   "This turn was recorded before T3 Code tracked which worktree each turn ran in, so its files can't be restored. Rewind the conversation without restoring files instead.";
 
-export type CheckpointRestoreRefusal = "shared-workspace" | "legacy-checkpoint";
+const OTHER_WORKSPACE_RESTORE_MESSAGE =
+  "This turn ran in a different worktree, so its files can't be restored into this one. Rewind the conversation without restoring files instead.";
+
+export type CheckpointRestoreRefusal = "shared-workspace" | "legacy-checkpoint" | "other-workspace";
+
+const REFUSAL_MESSAGES: Record<CheckpointRestoreRefusal, string> = {
+  "shared-workspace": SHARED_WORKSPACE_RESTORE_MESSAGE,
+  "legacy-checkpoint": LEGACY_CHECKPOINT_RESTORE_MESSAGE,
+  "other-workspace": OTHER_WORKSPACE_RESTORE_MESSAGE,
+};
 
 export const checkpointRestoreRefusalMessage = (refusal: CheckpointRestoreRefusal) =>
-  refusal === "legacy-checkpoint"
-    ? LEGACY_CHECKPOINT_RESTORE_MESSAGE
-    : SHARED_WORKSPACE_RESTORE_MESSAGE;
+  REFUSAL_MESSAGES[refusal];
 
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
 export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRestoreRefusal")(
@@ -58,8 +65,7 @@ export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRes
           ),
         );
       const cwd = yield* resolve(scope.cwd);
-      const worktreeCwd = yield* resolve(worktreePath);
-      shared = cwd !== worktreeCwd;
+      if (cwd !== (yield* resolve(worktreePath))) return "other-workspace" as const;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();

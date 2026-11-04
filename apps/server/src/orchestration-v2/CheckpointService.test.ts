@@ -252,6 +252,6 @@ it.live.each(["per-workspace", "legacy"] as const)(
         (yield* fileSystem.readDirectory(worktreeB)).filter((entry) => entry !== ".git").toSorted(),
         ["b-only.txt", "shared.txt", "turn-2.txt"],
       );
-      assert.isNotNull(refusal);
+      assert.strictEqual(refusal, scopes === "legacy" ? "legacy-checkpoint" : "other-workspace");
     }).pipe(Effect.provide(layerGitCheckpoints)),
 );
