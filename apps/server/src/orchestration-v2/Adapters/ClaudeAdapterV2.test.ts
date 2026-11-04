@@ -34,11 +34,13 @@ import {
   ChatImageAttachment,
   CheckpointId,
   ClaudeSettings,
+  CommandId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
   NodeId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   ProjectId,
@@ -101,7 +103,11 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
-import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
+import { layerProviderReplay, layerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as EffectWorker from "../EffectWorker.ts";
+import * as Orchestrator from "../Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
@@ -3304,6 +3310,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "turn.terminal",
         );
       return {
+        adapter,
         attachmentsDir,
         runtime,
         providerThread,
@@ -9764,6 +9771,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerThreadRosterEvents(harness.events).at(-1)?.providerThread
             .pendingBackgroundTasks?.[0]?.taskId,
           WAKE_TASK_ID,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a settled Stop that timed out settles once its query confirms closure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closeRequested = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Deferred.succeed(closeRequested, undefined).pipe(Effect.asVoid),
+        });
+        const cwd = yield* checkpointWorkspace("claude-settled-stop-late-close");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = ThreadId.make("thread:claude-settled-stop-late-close");
+          const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+            orchestrator.streamDomainEvents.pipe(
+              Stream.filter(predicate),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+          const stopItems = Effect.map(
+            orchestrator.getThreadProjection(threadId),
+            (projection) => ({
+              request: projection.turnItems.find((item) => item.type === "run_interrupt_request"),
+              result: projection.turnItems.find((item) => item.type === "run_interrupt_result"),
+            }),
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
+            threadId,
+            projectId: ProjectId.make("project:claude-settled-stop-late-close"),
+            title: "Settled Stop late close",
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const running = yield* watch(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start"),
+            threadId,
+            messageId: MessageId.make("message:start"),
+            text: "Run the build in the background.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(running);
+          const settled = yield* watch(
+            (event) => event.type === "run.updated" && event.payload.status === "waiting",
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop"),
+            threadId,
+          });
+          const stopped = yield* worker.drain().pipe(Effect.forkChild);
+          yield* Deferred.await(closeRequested);
+          yield* TestClock.adjust("11 seconds");
+          yield* Fiber.join(stopped);
+          const timedOut = yield* stopItems;
+          assert.isDefined(
+            timedOut.request?.type === "run_interrupt_request"
+              ? timedOut.request.unresponsiveAt
+              : undefined,
+          );
+          assert.isUndefined(timedOut.result);
+
+          const answered = yield* watch(
+            (event) =>
+              event.type === "turn-item.updated" && event.payload.type === "run_interrupt_result",
+          );
+          yield* Queue.shutdown(harness.sdkMessages);
+          yield* Fiber.join(answered);
+          const confirmed = yield* stopItems;
+          assert.equal(confirmed.result?.runId, timedOut.request?.runId);
+        }).pipe(
+          Effect.provide(
+            layerWithRegistry(
+              { name: "claude-settled-stop-late-close" },
+              ProviderAdapterRegistry.layerSingle(harness.adapter),
+              { runEffectWorker: false },
+            ),
+          ),
         );
       }).pipe(
         Effect.provide(

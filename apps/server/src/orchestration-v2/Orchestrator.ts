@@ -11147,6 +11147,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effects,
           now,
         });
+      } else if (!["preparing", "starting", "running"].includes(stoppedRun.status)) {
+        // There is no run left to end; a Stop flagged unresponsive still needs its result.
+        const { turnItems } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+            turnItemRunIds: [stoppedRun.id],
+          })
+          .pipe(mapDispatchError(command));
+        const request = turnItems.find((item) => item.type === "run_interrupt_request");
+        const rootNode = projection.nodes.find((node) => node.id === stoppedRun.rootNodeId);
+        const providerThread = projection.providerThreads.find(
+          (candidate) => candidate.id === command.providerThreadId,
+        );
+        if (
+          request?.type === "run_interrupt_request" &&
+          request.unresponsiveAt !== undefined &&
+          !turnItems.some((item) => item.type === "run_interrupt_result") &&
+          rootNode !== undefined &&
+          providerThread !== undefined
+        ) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            runId: stoppedRun.id,
+            nodeId: rootNode.id,
+            providerInstanceId: stoppedRun.providerInstanceId,
+            occurredAt: now,
+            payload: RunExecutionService.makeInterruptResultTurnItem({
+              idAllocator,
+              run: stoppedRun,
+              rootNode,
+              providerThread,
+              reason: command.reason ?? request.message,
+              completedAt: now,
+            }),
+          });
+        }
       }
       // A new turn may have started since Stop; its work is not this Stop's.
       if (
@@ -13880,6 +13920,75 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleRunUpdate),
+      Effect.forkScoped,
+    );
+
+  // A timed-out Stop of a settled run's background work is confirmed once its provider lists
+  // no work, so it settles as a confirmed Stop would and Force stop is withdrawn.
+  const settleConfirmedBackgroundStop = Effect.fn("Orchestrator.settleConfirmedBackgroundStop")(
+    function* (threadId: ThreadId, providerThread: OrchestrationV2ProviderThread) {
+      const { runs, providerTurns } = yield* projectionStore.getThreadRecords(threadId, [
+        "runs",
+        "providerTurns",
+      ]);
+      // A newer run owns the provider thread now; the earlier Stop is no longer shown.
+      const run = latestExecutedRun(runs);
+      if (
+        run === null ||
+        run.providerThreadId !== providerThread.id ||
+        ["preparing", "starting", "running"].includes(run.status)
+      )
+        return;
+      const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+        turnItemRunIds: [run.id],
+      });
+      const request = turnItems.find((item) => item.type === "run_interrupt_request");
+      if (
+        request?.type !== "run_interrupt_request" ||
+        request.unresponsiveAt === undefined ||
+        turnItems.some((item) => item.type === "run_interrupt_result")
+      )
+        return;
+      const providerTurn = providerTurns.findLast(
+        (turn) => turn.runAttemptId === run.activeAttemptId,
+      );
+      if (providerTurn === undefined) return;
+      yield* dispatchWithReceipt({
+        type: "thread.background-work.settle",
+        commandId: CommandId.make(`command:system:background-stop-confirmed:${run.id}`),
+        threadId,
+        providerThreadId: providerThread.id,
+        providerTurnId: providerTurn.id,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to settle a background Stop confirmed late", {
+            threadId,
+            cause,
+          }),
+        ),
+      ),
+  );
+
+  // Unlike the roster tracking below, commands that do not hold completion count here too.
+  const providerThreadsWithListedWork = new Set<string>();
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-thread.updated" })
+    .pipe(
+      Stream.runForEach((stored) => {
+        if (stored.event.type !== "provider-thread.updated") return Effect.void;
+        const providerThread = stored.event.payload;
+        if ((providerThread.pendingBackgroundTasks?.length ?? 0) > 0) {
+          providerThreadsWithListedWork.add(providerThread.id);
+          return Effect.void;
+        }
+        return providerThreadsWithListedWork.delete(providerThread.id)
+          ? settleConfirmedBackgroundStop(stored.event.threadId, providerThread)
+          : Effect.void;
+      }),
       Effect.forkScoped,
     );
 
