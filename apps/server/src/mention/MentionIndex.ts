@@ -314,12 +314,13 @@ export const make = Effect.gen(function* () {
 
     markError: Effect.fn("MentionIndex.markError")(function* (scopeKey, detail) {
       const previous = yield* loadScope(scopeKey);
+      const bounded = detail.trim().slice(0, 500) || "Mention index sync failed";
       yield* setScope(scopeKey, {
         rows: previous.rows,
         meta: {
           syncedAt: previous.meta.syncedAt,
           status: previous.rows.length > 0 ? "ready" : "error",
-          detail,
+          detail: bounded,
         },
       });
     }),

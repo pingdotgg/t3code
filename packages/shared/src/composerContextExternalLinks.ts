@@ -33,10 +33,22 @@ export function parseFigmaDesignUrl(value: string): {
     );
   if (!match) return null;
   const fileKey = match[2]!;
-  const slug = decodeURIComponent((match[3] ?? "").replace(/-/g, " ")).trim();
+  let slug: string;
+  try {
+    slug = decodeURIComponent((match[3] ?? "").replace(/-/g, " ")).trim();
+  } catch {
+    return null;
+  }
   const query = match[4] ?? "";
   const nodeFromQuery = /(?:^|&)node-id=([^&]+)/iu.exec(query)?.[1];
-  const nodeId = nodeFromQuery ? decodeURIComponent(nodeFromQuery.replace(/-/g, ":")) : undefined;
+  let nodeId: string | undefined;
+  if (nodeFromQuery) {
+    try {
+      nodeId = decodeURIComponent(nodeFromQuery.replace(/-/g, ":"));
+    } catch {
+      return null;
+    }
+  }
   const url = `https://www.figma.com/design/${fileKey}${nodeId ? `?node-id=${encodeURIComponent(nodeId)}` : ""}`;
   return {
     fileKey,

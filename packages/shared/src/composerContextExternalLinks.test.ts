@@ -25,6 +25,16 @@ describe("composerContextExternalLinks", () => {
     });
   });
 
+  it("rejects Figma URLs with malformed percent escapes", () => {
+    expect(parseFigmaDesignUrl("https://www.figma.com/design/AbCdEf123/%")).toBeNull();
+    expect(
+      parseFigmaDesignUrl("https://www.figma.com/design/AbCdEf123/Checkout?node-id=%"),
+    ).toBeNull();
+    expect(
+      externalLinkContextReferences("see https://www.figma.com/design/AbCdEf123/% here").text,
+    ).toBe("see https://www.figma.com/design/AbCdEf123/% here");
+  });
+
   it("rewrites pasted URLs into context references", () => {
     const rewritten = externalLinkContextReferences(
       "See https://acme.atlassian.net/browse/T3-42 and https://www.figma.com/design/AbCdEf123/Flow",

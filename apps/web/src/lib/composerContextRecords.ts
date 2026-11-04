@@ -81,7 +81,7 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
 }
 
 export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
-  if (comment.pullRequest !== undefined) return true;
+  // File-specific comments may carry pullRequest metadata; require the summary shape.
   return (
     comment.sectionId.startsWith("pull-request:") &&
     comment.diff.trim().length === 0 &&
@@ -478,9 +478,25 @@ export function resolveUserMessageContext(message: {
   const resolved = message.context
     ? { text: message.text, records: message.context.records }
     : upgradeLegacyContextMessage(message.text);
-  const records = resolved.records.map(upgradePullRequestSummaryRecord);
+  const upgradedIds = new Set<string>();
+  const records = resolved.records.map((record) => {
+    const upgraded = upgradePullRequestSummaryRecord(record);
+    if (upgraded !== record && upgraded.kind === "pull-request") {
+      upgradedIds.add(record.contextId);
+    }
+    return upgraded;
+  });
+  // Legacy PR summaries keep review-comment hrefs; rewrite kind so chips resolve.
+  const text =
+    upgradedIds.size === 0
+      ? resolved.text
+      : resolved.text.replace(
+          /\]\(t3-context:\/\/v1\/review-comment\/([^)\s]+)\)/g,
+          (match, contextId: string) =>
+            upgradedIds.has(contextId) ? `](t3-context://v1/pull-request/${contextId})` : match,
+        );
   return {
-    text: resolved.text,
+    text,
     records,
     recordsById: new Map(records.map((record) => [record.contextId, record])),
   };

@@ -3,7 +3,7 @@ import {
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
@@ -404,14 +404,40 @@ export function useComposerMenuItems({
     }
     return [];
   })();
+  const mentionIndexSyncingEmpty =
+    mentionIndexLookup.data?.status === "syncing" && mentionIndexLookup.data.hits.length === 0;
+  const threadMentionIndexSyncingEmpty =
+    threadMentionIndexLookup.data?.status === "syncing" &&
+    threadMentionIndexLookup.data.hits.length === 0;
+  // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
+  useEffect(() => {
+    const refreshers: Array<() => void> = [];
+    if (mentionIndexSyncingEmpty) refreshers.push(mentionIndexLookup.refresh);
+    if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (refreshers.length === 0) return;
+    const interval = window.setInterval(() => {
+      for (const refresh of refreshers) refresh();
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [
+    mentionIndexSyncingEmpty,
+    threadMentionIndexSyncingEmpty,
+    mentionIndexLookup.refresh,
+    threadMentionIndexLookup.refresh,
+  ]);
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+        threadMentionIndexSyncingEmpty ||
+        threadMentionIndexLookup.isPending)) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
       (mentionIndexLookup.isPending ||
+        mentionIndexSyncingEmpty ||
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));

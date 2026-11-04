@@ -6,6 +6,7 @@ import * as NodeReadline from "node:readline";
 import type { MentionIndexFigmaSettings, MentionIndexJiraSettings } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as ServerSettings from "../serverSettings.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
+const MCP_REQUEST_TIMEOUT = Duration.seconds(30);
 
 export class MentionIndexMcpError extends Error {
   readonly _tag = "MentionIndexMcpError";
@@ -483,6 +485,9 @@ const make = Effect.gen(function* () {
           waiter.resolve(envelope.result);
         };
         lines.on("line", onLine);
+        stdin.on("error", (cause) => {
+          rejectPending(cause instanceof Error ? cause : new Error(String(cause)));
+        });
         child.on("close", () => {
           rejectPending(new Error(`MCP server ${config.name} closed.`));
         });
@@ -490,15 +495,15 @@ const make = Effect.gen(function* () {
           rejectPending(new Error(`MCP server ${config.name} closed.`));
         });
 
-        const request = (method: string, params: unknown) =>
-          Effect.tryPromise({
+        const request = (method: string, params: unknown) => {
+          const id = nextId++;
+          return Effect.tryPromise({
             try: () =>
               new Promise<unknown>((resolve, reject) => {
                 if (resource.closed) {
                   reject(new Error(`MCP server ${config.name} closed.`));
                   return;
                 }
-                const id = nextId++;
                 pending.set(id, { resolve, reject });
                 stdin.write(
                   `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
@@ -511,7 +516,16 @@ const make = Effect.gen(function* () {
                 );
               }),
             catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-          });
+          }).pipe(
+            Effect.timeoutOrElse({
+              duration: MCP_REQUEST_TIMEOUT,
+              orElse: () => {
+                pending.delete(id);
+                return Effect.fail(new Error(`MCP request timed out talking to ${config.name}`));
+              },
+            }),
+          );
+        };
 
         const session: MentionMcpToolSession = {
           listTools: () =>
@@ -605,7 +619,12 @@ const make = Effect.gen(function* () {
       params: unknown,
     ) {
       const id = nextId++;
-      const response = yield* post({ jsonrpc: "2.0", id, method, params }, id);
+      const response = yield* post({ jsonrpc: "2.0", id, method, params }, id).pipe(
+        Effect.timeoutOrElse({
+          duration: MCP_REQUEST_TIMEOUT,
+          orElse: () => Effect.fail(new Error(`MCP request timed out talking to ${config.name}`)),
+        }),
+      );
       const envelope = asRecord(response);
       if (envelope === null) {
         return yield* Effect.fail(new Error(`Empty MCP response from ${config.name}`));
