@@ -53,6 +53,7 @@ import {
   isPrimarySidebarPinned,
   isWorkspaceListPath,
   nativeInspectorColumnWidth,
+  sidebarNarrowsAndroidReading,
 } from "../../lib/layout";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -301,21 +302,10 @@ function AdaptiveWorkspaceLayoutContent(
   );
   const sidebarWithoutKeyboard =
     !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
-  const showPrimarySidebar =
-    sidebarWithoutKeyboard && (primarySidebarPinned || !composerKeyboardActive);
   // Medium windows float the sidebar over a page; beside a list it keeps its room.
   const sidebarFloats =
     baseLayout.variant === "medium" &&
     (nativeWorkspace || (!primarySidebarPinned && !workspacePage));
-  // While the composer edits, the sidebar's width follows the keyboard's own progress, so it
-  // leaves and returns in step with the keyboard instead of on a timer of its own.
-  const keyboardHoldsSidebar =
-    Platform.OS === "android" &&
-    baseLayout.usesSplitView &&
-    !workspacePage &&
-    !primarySidebarPinned &&
-    !sidebarFloats &&
-    (composerEditing || composerKeyboardActive);
   const keyboardProgress = useKeyboardContext().reanimated.progress;
   // From the moment the keyboard starts showing until it has fully hidden. The detail pane keeps
   // the sidebar's room for that whole span, so on the way back the sidebar pushes the wide pane
@@ -363,6 +353,58 @@ function AdaptiveWorkspaceLayoutContent(
   const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
+  const [workspaceInspector, setWorkspaceInspector] = useState<{
+    readonly content: InspectorContent;
+    readonly active: boolean;
+    readonly routeKey: string | undefined;
+  } | null>(null);
+  const inspectorActive = workspaceInspector?.active ?? false;
+  // Android's split content is a rounded card: keep it off the screen edge like the list card.
+  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
+  const sidebarOpenPanes = useMemo(
+    () =>
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: width,
+        nativeWorkspace,
+        primarySidebarFloats: sidebarFloats,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible:
+          !workspacePage && inspectorActive && fileInspectorPreferredVisible,
+        auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
+        nativeInspectorWidth,
+      }),
+    [
+      nativeInspectorWidth,
+      fileInspectorPreferredVisible,
+      fileInspectorPreferredWidth,
+      inspectorActive,
+      layout,
+      nativeWorkspace,
+      sidebarFloats,
+      width,
+      workspacePage,
+    ],
+  );
+  // Whether the sidebar is open once the keyboard is gone; the keyboard's progress scales it.
+  const sidebarRestsOpen = sidebarWithoutKeyboard && sidebarOpenPanes.primarySidebarVisible;
+  // The composer's keyboard sets the sidebar aside only when that widens the chat, or when the
+  // sidebar floats over it. Beside a chat already at its reading width it stays.
+  const keyboardSetsSidebarAside =
+    sidebarFloats || sidebarNarrowsAndroidReading(sidebarOpenPanes, contentEndGap);
+  const showPrimarySidebar =
+    sidebarWithoutKeyboard &&
+    (primarySidebarPinned || !(composerKeyboardActive && keyboardSetsSidebarAside));
+  // While the composer edits, the sidebar's width follows the keyboard's own progress, so it
+  // leaves and returns in step with the keyboard instead of on a timer of its own.
+  const keyboardHoldsSidebar =
+    Platform.OS === "android" &&
+    baseLayout.usesSplitView &&
+    !workspacePage &&
+    !primarySidebarPinned &&
+    !sidebarFloats &&
+    keyboardSetsSidebarAside &&
+    (composerEditing || composerKeyboardActive);
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
@@ -383,11 +425,6 @@ function AdaptiveWorkspaceLayoutContent(
       width,
     ],
   );
-  const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly content: InspectorContent;
-    readonly active: boolean;
-    readonly routeKey: string | undefined;
-  } | null>(null);
   // Without a column the inspector is a sheet, opened only on request for the route on top, and
   // shown again when that route returns to the top.
   const [inspectorSheetRoute, setInspectorSheetRoute] = useState<string | null>(null);
@@ -397,7 +434,6 @@ function AdaptiveWorkspaceLayoutContent(
     inspectorSheetRoute !== null &&
     workspaceInspector?.active === true &&
     workspaceInspector.routeKey === inspectorSheetRoute;
-  const inspectorActive = workspaceInspector?.active ?? false;
   const panes = useMemo(
     () =>
       deriveWorkspacePaneLayout({
@@ -421,37 +457,6 @@ function AdaptiveWorkspaceLayoutContent(
       nativeWorkspace,
       showPrimarySidebar,
       sidebarFloats,
-      width,
-      workspacePage,
-    ],
-  );
-  // Whether the sidebar is open once the keyboard is gone; the keyboard's progress scales it.
-  const sidebarRestsOpen = useMemo(
-    () =>
-      showPrimarySidebar === sidebarWithoutKeyboard
-        ? panes.primarySidebarVisible
-        : deriveWorkspacePaneLayout({
-            layout,
-            viewportWidth: width,
-            nativeWorkspace,
-            primarySidebarFloats: sidebarFloats,
-            primarySidebarPreferredVisible: sidebarWithoutKeyboard,
-            auxiliaryPanePreferredVisible:
-              !workspacePage && inspectorActive && fileInspectorPreferredVisible,
-            auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
-            nativeInspectorWidth,
-          }).primarySidebarVisible,
-    [
-      nativeInspectorWidth,
-      fileInspectorPreferredVisible,
-      fileInspectorPreferredWidth,
-      inspectorActive,
-      layout,
-      nativeWorkspace,
-      panes.primarySidebarVisible,
-      showPrimarySidebar,
-      sidebarFloats,
-      sidebarWithoutKeyboard,
       width,
       workspacePage,
     ],
@@ -506,7 +511,7 @@ function AdaptiveWorkspaceLayoutContent(
     }
     // A sidebar the keyboard set aside returns with the keyboard; the user's preference stays
     // intact. One the user had hidden still opens.
-    if (composerKeyboardActive) {
+    if (composerKeyboardActive && keyboardSetsSidebarAside) {
       void KeyboardController.dismiss();
       if (preferredSidebarVisible) return;
     }
@@ -518,7 +523,7 @@ function AdaptiveWorkspaceLayoutContent(
     setPrimarySidebarVisible(!preferredSidebarVisible);
   };
   const revealPrimarySidebar = () => {
-    if (composerKeyboardActive) void KeyboardController.dismiss();
+    if (composerKeyboardActive && keyboardSetsSidebarAside) void KeyboardController.dismiss();
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
@@ -660,8 +665,6 @@ function AdaptiveWorkspaceLayoutContent(
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
-  // Android's split content is a rounded card: keep it off the screen edge like the list card.
-  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
   // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
   // sidebar never resizes; both slide by one offset, so together they always fill the width.
   // The pane spans the sidebar's room too unless the sidebar has finished arriving: a sidebar on

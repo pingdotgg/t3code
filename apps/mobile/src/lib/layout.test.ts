@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ANDROID_READING_MAX_WIDTH,
   alignListPaneToHinge,
   deriveLayout,
   deriveThreadFeedInitialContentInset,
@@ -9,6 +10,7 @@ import {
   deriveWorkspacePaneLayout,
   nativeInspectorColumnWidth,
   isPrimarySidebarPinned,
+  sidebarNarrowsAndroidReading,
 } from "./layout";
 
 describe("thread arrangement text sizing", () => {
@@ -195,6 +197,44 @@ describe("deriveWorkspacePaneLayout", () => {
       primarySidebarSuppressedByAuxiliary: false,
       auxiliaryPaneVisible: true,
     });
+  });
+});
+
+describe("sidebarNarrowsAndroidReading", () => {
+  const RAIL = 72;
+  const END_GAP = 4;
+  const panesWithSidebar = (
+    width: number,
+    height: number,
+    viewportWidth = width - RAIL,
+    inspector = false,
+  ) =>
+    deriveWorkspacePaneLayout({
+      layout: deriveLayout({ width, height }),
+      viewportWidth,
+      primarySidebarFloats: false,
+      primarySidebarPreferredVisible: true,
+      auxiliaryPanePreferredVisible: inspector,
+    });
+
+  it("keeps the sidebar beside a chat that already has its reading width", () => {
+    expect(sidebarNarrowsAndroidReading(panesWithSidebar(1_280, 800), END_GAP)).toBe(false);
+  });
+
+  it("sets the sidebar aside when it keeps the chat narrower than its reading width", () => {
+    expect(sidebarNarrowsAndroidReading(panesWithSidebar(900, 1_200), END_GAP)).toBe(true);
+    expect(
+      sidebarNarrowsAndroidReading(panesWithSidebar(1_280, 800, 1_280 - RAIL, true), END_GAP),
+    ).toBe(true);
+  });
+
+  it("keeps the sidebar once the chat beside it reaches exactly the reading width", () => {
+    // A 1280-wide window's sidebar is 380 wide.
+    const exact = 380 + ANDROID_READING_MAX_WIDTH + END_GAP;
+    expect(sidebarNarrowsAndroidReading(panesWithSidebar(1_280, 800, exact), END_GAP)).toBe(false);
+    expect(sidebarNarrowsAndroidReading(panesWithSidebar(1_280, 800, exact - 1), END_GAP)).toBe(
+      true,
+    );
   });
 });
 

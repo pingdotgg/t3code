@@ -49,8 +49,8 @@ interface AdaptiveWorkspaceContextValue {
   readonly nativeInspectorWidth: number;
   readonly setNativeInspectorWidth: (width: number) => void;
   /**
-   * Android split view while the thread composer has the soft keyboard: the
-   * sidebar and rail step aside and the thread header drops to one line.
+   * Android split view while the thread composer has the soft keyboard: the thread header drops
+   * to one line, and the sidebar steps aside when it keeps the chat below its reading width.
    */
   readonly composerKeyboardActive: boolean;
   /**

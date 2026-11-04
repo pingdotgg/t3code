@@ -268,6 +268,24 @@ export function deriveWorkspacePaneLayout(input: {
   };
 }
 
+/**
+ * Android split: whether the sidebar keeps the chat below its reading width, given the panes with
+ * the sidebar open. Only then does the composer's keyboard gain anything by setting it aside.
+ */
+export function sidebarNarrowsAndroidReading(
+  panesWithSidebar: WorkspacePaneLayout,
+  contentEndGap: number,
+): boolean {
+  // A sidebar that can't fit beside the inspector leaves no width to compare.
+  if (!panesWithSidebar.primarySidebarVisible) return true;
+  const inspectorWidth = panesWithSidebar.auxiliaryPaneVisible
+    ? (panesWithSidebar.auxiliaryPaneWidth ?? 0)
+    : 0;
+  return (
+    panesWithSidebar.contentPaneWidth - inspectorWidth - contentEndGap < ANDROID_READING_MAX_WIDTH
+  );
+}
+
 export function nativeInspectorColumnWidth(viewportWidth: number, fraction: number) {
   return Math.max(260, Math.min(viewportWidth * 0.6, viewportWidth * fraction));
 }
