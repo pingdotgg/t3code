@@ -2,7 +2,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import { ChatMarkdownAssetImage, WorkspaceMutationIdContext } from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
@@ -13,7 +13,9 @@ vi.mock(import("~/state/assets"), async (original) => {
     Atom.make(() => {
       assetQuery.mints += 1;
       return AsyncResult.success({
-        relativeUrl: `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#${assetQuery.mints}`,
+        relativeUrl: _key.includes(".mp4")
+          ? `/asset/clip.mp4#${assetQuery.mints}`
+          : `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7#${assetQuery.mints}`,
         expiresAt: Number.MAX_SAFE_INTEGER,
         fileRevision: String(assetQuery.mints),
       });
@@ -65,6 +67,13 @@ describe("ChatMarkdownAssetImage", () => {
     "refreshes repeated local %s embeds together after a new chat revision",
     async (kind) => {
       setup();
+      using _observer = stubGlobal(
+        "IntersectionObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
       const images = (revision: string) => (
         <WorkspaceMutationIdContext value={revision}>
           {["first", "second"].map((alt) => (
@@ -94,9 +103,11 @@ describe("ChatMarkdownAssetImage", () => {
         .getAttribute("src");
 
       if (kind === "video") {
-        for (const video of document.querySelectorAll("video")) {
-          video.dispatchEvent(new Event("loadedmetadata"));
-        }
+        await act(() => {
+          for (const video of document.querySelectorAll("video")) {
+            video.dispatchEvent(new Event("loadedmetadata"));
+          }
+        });
       }
 
       await screen.rerender(images("message-2"));
