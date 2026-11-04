@@ -171,11 +171,13 @@ export const makeDeviceHubOperations = (options: {
             physical: true,
           });
         }
-      } else if (connected.code !== 127) {
+      } else {
         physicalAndroidDiscoveryIncomplete = true;
-        details.push(
-          `Could not list connected Android devices (adb devices -l, exit code ${connected.code}).`,
-        );
+        if (connected.code !== 127) {
+          details.push(
+            `Could not list connected Android devices (adb devices -l, exit code ${connected.code}).`,
+          );
+        }
       }
     }
     let androidDiscoveryIncomplete =

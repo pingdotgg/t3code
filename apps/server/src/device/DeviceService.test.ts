@@ -121,9 +121,13 @@ it.effect.each([false, true])(
     }),
 );
 
-it.effect.each(["devices", "getprop"])(
-  "reports failed ADB %s fallback without failing discovery",
-  (operation) =>
+it.effect.each([
+  { operation: "devices", code: 1 },
+  { operation: "getprop", code: 1 },
+  { operation: "devices", code: 127 },
+])(
+  "reports failed ADB $operation fallback with code $code without failing discovery",
+  ({ operation, code }) =>
     Effect.gen(function* () {
       const operations = makeDeviceHubOperations({
         hostId: LOCAL_DEVICE_HOST_ID,
@@ -138,15 +142,19 @@ it.effect.each(["devices", "getprop"])(
           Effect.succeed(
             args[0] === "devices" && operation === "getprop"
               ? { stdout: "List of devices attached\nphone device\n", stderr: "", code: 0 }
-              : { stdout: "", stderr: "private command output", code: 1 },
+              : { stdout: "", stderr: "private command output", code },
           ),
       });
       const result = yield* operations.list;
       expect(result.devices).toEqual([]);
       expect(result.androidDiscoveryIncomplete).toBe(true);
-      expect(result.detail).toContain(operation);
-      expect(result.detail).toContain("exit code 1");
-      expect(result.detail).not.toContain("private command output");
+      if (code === 127) {
+        expect(result.detail).toBeUndefined();
+      } else {
+        expect(result.detail).toContain(operation);
+        expect(result.detail).toContain("exit code 1");
+        expect(result.detail).not.toContain("private command output");
+      }
     }),
 );
 
@@ -1319,9 +1327,13 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       }
 
       omitPhysical = true;
-      const failedAdb = yield* service.list;
-      expect(failedAdb.devices).toContainEqual({ ...hubDevices[1], hostId });
-      expect(failedAdb.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
+      for (const code of [1, 127]) {
+        enumeration.code = code;
+        const failedAdb = yield* service.list;
+        expect(failedAdb.devices).toContainEqual({ ...hubDevices[1], hostId });
+        expect(failedAdb.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
+      }
+      enumeration.code = 1;
       adbDevices = "List of devices attached\nphone device\n";
       const failedProperties = yield* service.list;
       expect(failedProperties.devices).toContainEqual({ ...hubDevices[1], hostId });
