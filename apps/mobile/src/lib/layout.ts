@@ -274,6 +274,15 @@ export function deriveWorkspacePaneLayout(input: {
   };
 }
 
+/** Whether the chat keeps its reading width beside the sidebar. Lay `panes` out with it open. */
+export function chatFitsBesideSidebar(panes: WorkspacePaneLayout, trailingGap: number): boolean {
+  const inspectorWidth = panes.auxiliaryPaneVisible ? (panes.auxiliaryPaneWidth ?? 0) : 0;
+  return (
+    panes.primarySidebarVisible &&
+    panes.contentPaneWidth - inspectorWidth - trailingGap >= ANDROID_READING_MAX_WIDTH
+  );
+}
+
 /**
  * UIKit drops the inspector column, and refuses to show it again, once the page beside it would
  * fall under its minimum inside the safe area (the Duo's system bar takes width from the window).

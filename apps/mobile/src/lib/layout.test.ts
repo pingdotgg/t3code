@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   alignListPaneToHinge,
+  chatFitsBesideSidebar,
   deriveLayout,
   deriveThreadFeedInitialContentInset,
   deriveThreadArrangementSizing,
@@ -213,6 +214,26 @@ describe("deriveWorkspacePaneLayout", () => {
       primarySidebarSuppressedByAuxiliary: false,
       auxiliaryPaneVisible: true,
     });
+  });
+});
+
+describe("chatFitsBesideSidebar", () => {
+  const ANDROID_RAIL = 72;
+  const ANDROID_CONTENT_END_GAP = 4;
+
+  // regression: #31112 wide Android tablets kept hiding the sidebar while typing
+  it.each([
+    { width: 1_280, fits: true },
+    { width: 900, fits: false },
+  ])("a $width-wide split fits the chat beside the sidebar: $fits", ({ width, fits }) => {
+    const panes = deriveWorkspacePaneLayout({
+      layout: deriveLayout({ width, height: 800 }),
+      viewportWidth: width - ANDROID_RAIL,
+      primarySidebarFloats: false,
+      primarySidebarPreferredVisible: true,
+      auxiliaryPanePreferredVisible: false,
+    });
+    expect(chatFitsBesideSidebar(panes, ANDROID_CONTENT_END_GAP)).toBe(fits);
   });
 });
 
