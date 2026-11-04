@@ -197,6 +197,7 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
 const readerWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
+const sqlite = require("node:sqlite");
 let db;
 try {
   // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
@@ -205,11 +206,33 @@ try {
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");
+  // Temporary tables are writable through a read-only open; query_only closes that too, and the
+  // authorizer refuses what the open does not: temporary-database writes and query_only itself.
+  // Main-database writes still fail as SQLite's read-only open makes them fail. Nothing on a
+  // reader can write, so no ending can fail on a constraint. Without an authorizer, query_only.
+  next.exec("PRAGMA query_only = ON;");
+  if (typeof next.setAuthorizer === "function") {
+    const c = sqlite.constants;
+    next.setAuthorizer((actionCode, action, _argument, database) =>
+      actionCode === c.SQLITE_ATTACH ||
+      actionCode === c.SQLITE_DETACH ||
+      (actionCode === c.SQLITE_PRAGMA && String(action).toLowerCase() === "query_only") ||
+      (database != null &&
+        database !== "main" &&
+        actionCode !== c.SQLITE_READ &&
+        actionCode !== c.SQLITE_SELECT &&
+        // Pragmas off the main schema (metadata reads, mostly) cannot make an ending fail.
+        actionCode !== c.SQLITE_PRAGMA)
+        ? c.SQLITE_DENY
+        : c.SQLITE_OK,
+    );
+  }
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
   db = next;
-  parentPort.postMessage({ type: "ready" });
+  // Guarded: nothing on this reader can write, so an ending cannot fail and need not be awaited.
+  parentPort.postMessage({ type: "ready", guarded: typeof next.setAuthorizer === "function" });
 } catch (error) {
   parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error) });
 }
@@ -226,23 +249,36 @@ const prepare = (sql, cached) => {
   statements.set(sql, statement);
   return statement;
 };
-parentPort.on("message", ({ id, sql, params, cached, values, raw, safeIntegers }) => {
+const execute = ({ id, sql, params, cached, raw, values, safeIntegers, begin }) => {
   let operation = "open";
   try {
     if (db === undefined) throw new Error("database reader is unavailable");
+    if (begin) {
+      operation = "begin";
+      db.exec("BEGIN");
+    }
     operation = "prepare";
     const statement = prepare(sql, cached);
     operation = "execute";
-    statement.setReadBigInts(safeIntegers);
+    statement.setReadBigInts(Boolean(safeIntegers));
     if (statement.columns().length > 0) {
-      statement.setReturnArrays(values);
-      parentPort.postMessage({ id, rows: statement.all(...params) });
-    } else {
-      const result = statement.run(...params);
-      parentPort.postMessage({ id, rows: raw ? result : [] });
+      // Arrays clone faster than objects; unless arrays were asked for, the parent restores the
+      // objects from the names, read after the statement ran, since SQLite may have reprepared it
+      // for a changed schema.
+      statement.setReturnArrays(true);
+      const rows = statement.all(...params);
+      return {
+        id,
+        columns: values ? undefined : statement.columns().map((column) => column.name),
+        rows,
+        inTransaction: db.isTransaction,
+      };
     }
+    const result = statement.run(...params);
+    return { id, rows: raw ? result : [], inTransaction: db.isTransaction };
   } catch (error) {
-    parentPort.postMessage({
+    // The parent keeps its transaction bookkeeping in step with the connection from this flag.
+    return {
       id,
       error: {
         operation,
@@ -251,9 +287,11 @@ parentPort.on("message", ({ id, sql, params, cached, values, raw, safeIntegers }
         errcode: error && error.errcode,
         errstr: error && error.errstr,
       },
-    });
+      ...(db === undefined ? {} : { inTransaction: db.isTransaction }),
+    };
   }
-});
+};
+parentPort.on("message", (message) => parentPort.postMessage(execute(message)));
 `;
 
 interface ReaderRequest {
@@ -265,15 +303,21 @@ interface ReaderRequest {
 }
 
 type ReaderStartup =
-  | { readonly type: "ready" }
+  | { readonly type: "ready"; readonly guarded?: boolean }
   | { readonly type: "unavailable"; readonly message: string };
 
 type ReaderReply =
-  | { readonly id: number; readonly rows: ReadonlyArray<any> }
   | {
       readonly id: number;
+      readonly columns?: ReadonlyArray<string>;
+      readonly rows: ReadonlyArray<any>;
+      readonly inTransaction?: boolean;
+    }
+  | {
+      readonly id: number;
+      readonly inTransaction?: boolean;
       readonly error: {
-        readonly operation: "open" | "prepare" | "execute";
+        readonly operation: "open" | "begin" | "prepare" | "execute";
         readonly message: string;
         readonly code?: unknown;
         readonly errcode?: unknown;
@@ -283,6 +327,7 @@ type ReaderReply =
 
 const readerFailureMessages = {
   open: "Failed to open database",
+  begin: "Failed to begin transaction",
   prepare: "Failed to prepare statement",
   execute: "Failed to execute statement",
 } as const;
@@ -290,8 +335,39 @@ const readerFailureMessages = {
 const failed = (cause: unknown, message: string, operation: string) =>
   new SqlError({ reason: classifyError(cause, message, operation) });
 
+const objectRows = (columns: ReadonlyArray<string>, rows: ReadonlyArray<ReadonlyArray<unknown>>) =>
+  rows.map((row) => {
+    const object: Record<string, unknown> = {};
+    for (let index = 0; index < columns.length; index++) {
+      const name = columns[index]!;
+      // Assignment would call the inherited setter for a column named __proto__.
+      if (name === "__proto__") {
+        Object.defineProperty(object, name, {
+          value: row[index],
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else object[name] = row[index];
+    }
+    return object;
+  });
+
+const withoutComments = (sql: string) => sql.replace(/\/\*[\s\S]*?\*\/|--[^\n]*/g, " ");
+// Only SQLite's exact plain transaction statements, comments removed, with SQLite's whitespace (not
+// JavaScript's \s, which takes a no-break space or vertical tab SQLite rejects). Anything else
+// (BEGIN IMMEDIATE, BEGIN2, ROLLBACK TO a savepoint) is an ordinary statement for the worker, which
+// answers as SQLite does, and leaves the bookkeeping alone.
+const beginsTransaction = (sql: string) =>
+  /^[ \t\n\f\r]*BEGIN(?:[ \t\n\f\r]+DEFERRED)?(?:[ \t\n\f\r]+TRANSACTION)?[ \t\n\f\r]*;?[ \t\n\f\r]*$/i.test(
+    withoutComments(sql),
+  );
+const endsReadTransaction = (sql: string) =>
+  /^[ \t\n\f\r]*(?:COMMIT|END|ROLLBACK)(?:[ \t\n\f\r]+TRANSACTION)?[ \t\n\f\r]*;?[ \t\n\f\r]*$/i.test(
+    withoutComments(sql),
+  );
 // Read-transaction cleanup succeeds after worker exit because it can no longer change anything.
-const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
+const cleansUpTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 // WAL readers run concurrently; one worker serialized every read behind the slowest transaction.
 const READER_POOL_SIZE = 4;
@@ -323,75 +399,204 @@ const makeReader = Effect.fnUntraced(function* (
     const started = new Promise<ReaderStartup>((resolve) => {
       announce = resolve;
     });
+    // Whether the worker's authorizer rules out every write, so that an ending cannot fail.
+    let guarded = false;
     let stoppedMessage: string | undefined;
-    const pending = new Map<
-      number,
-      { readonly endsTransaction: boolean; readonly resume: (reply: ReaderReply) => void }
-    >();
+    const pending = new Map<number, (reply: ReaderReply) => void>();
+    // A read transaction's BEGIN waits for its first statement and travels with it; once it has
+    // left, the reader is in a transaction until its ending statement leaves. A BEGIN or an ending
+    // statement that does not fit that state goes to the worker as an ordinary statement and brings
+    // back SQLite's error, as it always did, without touching this bookkeeping.
+    let pendingBegin = false;
+    let inTransaction = false;
+    // The id of the newest message that reached the worker: it answers in order and each reply
+    // carries the connection's state after that message, so only a reply at or after this id is
+    // current (one late to a fiber that gave up on it is not).
+    let latestId = 0;
+    // A message the worker cannot receive, such as one with an uncloneable binding, fails its
+    // own statement; an ending statement with nothing waiting on it is dropped.
+    const send = (message: Record<string, unknown>) => {
+      try {
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+        worker.postMessage(message);
+        return true;
+      } catch (cause) {
+        // A BEGIN travelling with the message goes with the next statement instead.
+        if (message.begin === true) pendingBegin = true;
+        const id = message.id as number;
+        const resume = pending.get(id);
+        if (resume === undefined) return false;
+        pending.delete(id);
+        if (pending.size === 0) worker.unref();
+        resume({
+          id,
+          error: {
+            operation: "execute",
+            message: `Statement could not be sent to the reader: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+          },
+        });
+        return false;
+      }
+    };
+    // Every message goes to the worker at once, in order; the worker answers each in that order.
+    const post = (message: Record<string, unknown>) =>
+      stoppedMessage === undefined && send(message);
     const stop = (message: string) => {
       stoppedMessage = message;
       announce({ type: "unavailable", message });
       if (current?.worker === worker) current = undefined;
-      for (const [id, request] of pending) {
-        request.resume(
-          request.endsTransaction
-            ? { id, rows: [] }
-            : { id, error: { operation: "execute", message } },
-        );
-      }
+      for (const [id, resume] of pending) resume({ id, error: { operation: "execute", message } });
       pending.clear();
     };
     worker.on("message", (reply: ReaderReply | ReaderStartup) => {
       if ("type" in reply) {
+        guarded = reply.type === "ready" && reply.guarded === true;
         announce(reply);
         if (pending.size === 0) worker.unref();
         return;
       }
-      const request = pending.get(reply.id);
-      if (request === undefined) return;
+      const resume = pending.get(reply.id);
+      if (resume === undefined) {
+        // An unattended ending's reply still tells the connection's state.
+        if (reply.inTransaction !== undefined && reply.id >= latestId)
+          inTransaction = reply.inTransaction;
+        return;
+      }
       pending.delete(reply.id);
+      // The fiber runs on inside resume and may start cleanup that references the worker again.
       if (pending.size === 0) worker.unref();
-      request.resume(reply);
+      resume(reply);
     });
     worker.on("error", (cause) => stop(`Database reader failed: ${cause.message}`));
     worker.on("exit", (code) => stop(`Database reader exited with code ${code}`));
 
     const request = (input: ReaderRequest) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        const endsTransaction = endsReadTransaction(input.sql);
-        if (stoppedMessage !== undefined) {
-          return endsTransaction
-            ? Effect.succeed([])
-            : Effect.fail(
-                failed(new Error(stoppedMessage), readerFailureMessages.execute, "execute"),
-              );
+        // Only a plain control (no bindings, not raw) is answered here; with bindings SQLite has an
+        // error to return, and a raw control has a run() result.
+        const control = input.params.length === 0 && !input.raw;
+        const begins = control && beginsTransaction(input.sql);
+        // Folding is a guess about the connection's state: only with nothing outstanding on it
+        // (an earlier statement could still open or end a transaction when it runs).
+        if (begins && !pendingBegin && !inTransaction && pending.size === 0) {
+          pendingBegin = true;
+          return Effect.succeed([]);
+        }
+        if (
+          control &&
+          !begins &&
+          endsReadTransaction(input.sql) &&
+          (pendingBegin || (inTransaction && guarded))
+        ) {
+          // Ending a read transaction only drops a shared lock: it cannot fail or lose anything, so
+          // nothing waits for it, unless statements a fiber gave up on are still running: then the
+          // reader stays claimed until the worker has answered them and this ending, as before.
+          // (An unguarded reader's ending is an ordinary awaited statement below.)
+          pendingBegin = false;
+          if (!inTransaction) return Effect.succeed([]);
+          inTransaction = false;
+          if (stoppedMessage !== undefined) return Effect.succeed([]);
+          if (pending.size === 0) {
+            const id = nextRequestId++;
+            if (post({ id, safeIntegers: false, ...input })) latestId = id;
+            return Effect.succeed([]);
+          }
+          return Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
+            // The fiber can yield before this runs: a reply landing in that gap may have restored
+            // the flag (cleared again here, with the post) or the worker may have stopped (nothing
+            // is left to end). Otherwise the ending stays awaited, so SQLite's answer comes back.
+            inTransaction = false;
+            if (stoppedMessage !== undefined) {
+              resume(Effect.succeed([]));
+              return;
+            }
+            // Taken with the post: a sibling that posted in that gap has the older id.
+            const id = nextRequestId++;
+            // SQLite's answer counts (a control it waited behind may have ended the transaction
+            // first); a worker that stopped meanwhile has nothing left to end, as before.
+            pending.set(id, (reply) =>
+              resume(
+                "error" in reply && stoppedMessage === undefined
+                  ? Effect.fail(
+                      failed(
+                        Object.assign(new Error(reply.error.message), {
+                          code: reply.error.code,
+                          errcode: reply.error.errcode,
+                          errstr: reply.error.errstr,
+                        }),
+                        readerFailureMessages[reply.error.operation],
+                        reply.error.operation,
+                      ),
+                    )
+                  : Effect.succeed([]),
+              ),
+            );
+            if (pending.size === 1) worker.ref();
+            if (post({ id, safeIntegers: false, ...input })) latestId = id;
+            else {
+              pending.delete(id);
+              if (pending.size === 0) worker.unref();
+              resume(Effect.succeed([]));
+            }
+          });
         }
         const safeIntegers = Boolean(Context.get(fiber.context, Client.SafeIntegers));
+        const cleanup = cleansUpTransaction(input.sql);
         return Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
-          const id = nextRequestId++;
-          pending.set(id, {
-            endsTransaction,
-            resume: (reply) => {
-              if ("rows" in reply) {
-                resume(Effect.succeed(reply.rows));
-                return;
-              }
-              const { operation, message, ...codes } = reply.error;
-              resume(
-                Effect.fail(
-                  failed(
-                    Object.assign(new Error(message), codes),
-                    readerFailureMessages[operation],
-                    operation,
+          // The fiber can yield between building this effect and running it, so the worker's
+          // state and the transaction's BEGIN are read here, in the same synchronous step as the
+          // post: a sibling posting in that gap, or an interruption in it, must not lose the BEGIN,
+          // and a worker that stopped in it must fail the statement rather than never answer.
+          if (stoppedMessage !== undefined) {
+            resume(
+              cleanup
+                ? Effect.succeed([])
+                : Effect.fail(
+                    failed(new Error(stoppedMessage), readerFailureMessages.execute, "execute"),
                   ),
+            );
+            return;
+          }
+          const begin = pendingBegin;
+          pendingBegin = false;
+          const id = nextRequestId++;
+          pending.set(id, (reply) => {
+            // A control the worker ran itself (raw, bound, duplicate, stray, a savepoint) may have
+            // changed the connection's transaction state: the worker's word replaces the guess,
+            // unless a newer message has reached the worker since.
+            if (reply.inTransaction !== undefined && id >= latestId)
+              inTransaction = reply.inTransaction;
+            if ("rows" in reply) {
+              resume(
+                Effect.succeed(
+                  reply.columns !== undefined && !input.values
+                    ? objectRows(reply.columns, reply.rows)
+                    : reply.rows,
                 ),
               );
-            },
+              return;
+            }
+            if (cleanup && stoppedMessage !== undefined) {
+              resume(Effect.succeed([]));
+              return;
+            }
+            const { operation, message, ...codes } = reply.error;
+            resume(
+              Effect.fail(
+                failed(
+                  Object.assign(new Error(message), codes),
+                  readerFailureMessages[operation],
+                  operation,
+                ),
+              ),
+            );
           });
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
-          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
+          if (post({ id, safeIntegers, ...input, cached, ...(begin ? { begin } : {}) }))
+            latestId = id;
         });
       });
 
