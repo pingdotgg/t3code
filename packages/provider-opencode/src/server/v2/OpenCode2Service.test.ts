@@ -46,7 +46,12 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
       yield* run("opencode v1.18.32");
       expect(service.discover).not.toHaveBeenCalled();
 
-      for (const elsewhere of ["http://192.168.1.5:49374", "http://127.0.0.1:49999"]) {
+      for (const elsewhere of [
+        "http://192.168.1.5:49374",
+        "http://127.0.0.1:49999",
+        "http://[::1]:49374",
+        "http://localhost:49374",
+      ]) {
         yield* run("opencode v2.2.5", elsewhere);
       }
       expect(service.discover).toHaveBeenCalledWith({ file });

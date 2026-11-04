@@ -448,13 +448,13 @@ export const OpenCodeDriver: ProviderDriver<
             serverUrl,
             environment: processEnv,
           }).pipe(
+            // Startup errors carry the service's stderr, which the registry would log.
             Effect.mapError(
-              (cause) =>
+              () =>
                 new ProviderDriverError({
                   driver: DRIVER_KIND,
                   instanceId,
                   detail: "Failed to replace the OpenCode service after an update.",
-                  cause,
                 }),
             ),
             Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),

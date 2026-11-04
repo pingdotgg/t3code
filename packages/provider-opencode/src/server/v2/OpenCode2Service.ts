@@ -15,19 +15,17 @@ const decodeServiceConfig = Schema.decodeUnknownOption(
   ),
 );
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const WILDCARD_HOSTS = new Set(["0.0.0.0", "[::]"]);
-
 function isRegisteredService(registeredUrl: string, serverUrl: string): boolean {
   const registered = URL.parse(registeredUrl);
   const configured = URL.parse(serverUrl);
   if (registered === null || configured === null || registered.port !== configured.port) {
     return false;
   }
+  // A wildcard listener covers only its own address family's loopback; `localhost` could be either.
   return (
     registered.hostname === configured.hostname ||
-    (LOOPBACK_HOSTS.has(configured.hostname) &&
-      (LOOPBACK_HOSTS.has(registered.hostname) || WILDCARD_HOSTS.has(registered.hostname)))
+    (registered.hostname === "0.0.0.0" && configured.hostname === "127.0.0.1") ||
+    (registered.hostname === "[::]" && configured.hostname === "[::1]")
   );
 }
 
