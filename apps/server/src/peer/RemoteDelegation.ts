@@ -73,7 +73,8 @@ export class RemoteDelegation extends Context.Service<
   {
     /**
      * `scope` is the caller's: the thread whose run executes the task, or a native subagent of
-     * its session, which lists the task while `executionThreadId`'s run executes it.
+     * its session, which lists the task while `executionThreadId`'s run executes it. The launch
+     * there stays within the calling agent's `limits`.
      */
     readonly delegate: (
       scope: ThreadScope,
@@ -82,7 +83,8 @@ export class RemoteDelegation extends Context.Service<
           readonly environmentId: EnvironmentId;
         };
       },
-      executionThreadId?: ThreadId,
+      executionThreadId: ThreadId,
+      limits: CallerLimits,
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
      * Stops the task's thread there within the calling agent's `limits`, then completes it
@@ -193,7 +195,7 @@ const make = Effect.gen(function* () {
   });
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
-    function* (scope, input, executionThreadId = scope.thread.threadId) {
+    function* (scope, input, executionThreadId, limits) {
       const parent = yield* threads.getThreadRecords(executionThreadId, ["runs"]).pipe(
         Effect.mapError(
           () =>
@@ -244,17 +246,17 @@ const make = Effect.gen(function* () {
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
           : undefined);
-      // Modes asked for are checked against this thread. Omitted ones are left
-      // to the other side, which inherits this thread's modes capped by the
-      // link's access, so a narrower link still takes the task.
+      // Modes asked for are checked against the caller's limits. Omitted ones are left
+      // to the other side, which inherits those limits capped by the link's access,
+      // so a narrower link still takes the task.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
-          : yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
+          : yield* resolveRuntimeMode(limits.runtimeMode, input.runtimeMode);
       const interactionMode =
         input.interactionMode === undefined || input.interactionMode === "inherit"
           ? undefined
-          : yield* resolveInteractionMode(parent.thread.interactionMode, input.interactionMode);
+          : yield* resolveInteractionMode(limits.interactionMode, input.interactionMode);
       const projectId = yield* resolveRemoteProject(
         scope,
         target.environmentId,
@@ -285,6 +287,7 @@ const make = Effect.gen(function* () {
             title: parent.thread.title,
           },
         },
+        limits,
       );
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),

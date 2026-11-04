@@ -1062,6 +1062,10 @@ const nativeRemoteStops = [
   "root cancel after the root's runtime is lowered",
   "root cancel after the root's interaction is lowered",
   "root Stop after the root's runtime is lowered",
+  "launch with nothing lowered",
+  "launch once the root's runtime is lowered",
+  "launch once the root's interaction is lowered",
+  "launch once the caller's runtime is lowered",
 ] as const;
 
 it.effect.each(nativeRemoteStops)(
@@ -1088,6 +1092,82 @@ it.effect.each(nativeRemoteStops)(
           browserToolsAvailable: false,
         });
         const [caller, sibling] = yield* seedNativeSubagents(a, ["caller", "sibling"]);
+
+        const launch = stop.match(
+          /^launch (?:once the (root|caller)'s (runtime|interaction)|with nothing) /,
+        );
+        if (launch !== null) {
+          const [, lowerer, mode] = launch;
+          if (lowerer !== undefined) {
+            const threadId = lowerer === "root" ? parentThreadId : caller!.threadId;
+            const commandId = CommandId.make(`command:lower:native-remote-launch-${lowerer}`);
+            yield* a.orchestrator.dispatch(
+              mode === "runtime"
+                ? {
+                    type: "thread.runtime-mode.set",
+                    commandId,
+                    threadId,
+                    runtimeMode: "approval-required",
+                  }
+                : {
+                    type: "thread.interaction-mode.set",
+                    commandId,
+                    threadId,
+                    interactionMode: "plan",
+                  },
+            );
+          }
+          const expected = {
+            runtimeMode: mode === "runtime" ? "approval-required" : "full-access",
+            interactionMode: mode === "interaction" ? "plan" : "default",
+          } as const;
+          if (lowerer !== undefined) {
+            // Asking for what was lowered launches nothing there and records nothing here.
+            const broader = yield* a.call(
+              "delegate_task",
+              {
+                task: "Run the full suite on the box.",
+                target: {
+                  environmentId: box.environmentId,
+                  providerInstanceId: instanceId,
+                  model: "gpt-5.4",
+                },
+                ...(mode === "runtime"
+                  ? { runtimeMode: "full-access" }
+                  : { interactionMode: "default" }),
+                clientRequestId: "broader-on-box",
+              },
+              caller!.scope,
+            );
+            expect(failureOf(broader)).toMatchObject({ code: `${mode}_mode_escalation_denied` });
+            expect(yield* Ref.get(thread.launched)).toBeNull();
+            expect(
+              (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"])).subagents,
+            ).toEqual([]);
+          }
+          // Inherited modes go there within the root's and the caller's, whichever is narrower.
+          const launched = yield* delegateToBox(a, caller!.scope);
+          expect(yield* Ref.get(thread.launchedWith)).toEqual({ modelSelection, ...expected });
+          if (lowerer === undefined) {
+            // An accepted launch retried after the root is lowered finds the same thread and task.
+            yield* a.orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:lower:native-remote-launch-retry"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            expect(yield* delegateToBox(a, caller!.scope)).toMatchObject({
+              taskId: launched.taskId,
+              remoteChild: { threadId: launched.remoteChild.threadId },
+            });
+          }
+          expect(
+            (yield* a.projections.getThreadRecords(caller!.threadId, ["subagents"])).subagents.map(
+              (task) => task.id,
+            ),
+          ).toEqual([launched.taskId]);
+          return;
+        }
 
         const delegated = yield* delegateToBox(a, caller!.scope);
         // The caller's thread lists it; the parent's run executes it, as for a task here.
