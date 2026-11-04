@@ -5,7 +5,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { deviceEnvironment, renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
@@ -15,7 +16,12 @@ import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import type { DeviceAxElement } from "./deviceHubApi";
-import { androidFoldViewAtom, deviceAxElementsAtom } from "./deviceHubAtoms";
+import {
+  androidFoldViewAtom,
+  deviceAxElementsAtom,
+  deviceForegroundAtom,
+  NO_FOREGROUND_ATOM,
+} from "./deviceHubAtoms";
 import {
   deviceScreenKey,
   deviceStreamSessionAtom,
@@ -126,6 +132,33 @@ export function DeviceStreamView(props: {
       : NO_SESSION_ATOM,
   );
   const client = session?.stream ?? null;
+  const runAction = useAtomCommand(deviceEnvironment.action, { reportFailure: false });
+  const foregroundApp = useAtomValue(
+    access && props.visible && props.platform === "ios"
+      ? deviceForegroundAtom({ access, platform: props.platform, deviceId: props.deviceId })
+      : NO_FOREGROUND_ATOM,
+  );
+  const pasteAllowedApp = useRef<string | null>(null);
+  const paste = async (text: string) => {
+    if (!client || text === "") return;
+    const appId = foregroundApp?.id;
+    if (appId && appId !== pasteAllowedApp.current) {
+      // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
+      const result = await runAction({
+        environmentId: props.environmentId,
+        input: {
+          hostId: props.hostId,
+          deviceId: props.deviceId,
+          type: "setPermission",
+          appId,
+          permission: "pasteboard",
+          decision: "grant",
+        },
+      });
+      if (result._tag === "Success") pasteAllowedApp.current = appId;
+    }
+    client.sendText(text);
+  };
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -173,7 +206,20 @@ export function DeviceStreamView(props: {
       );
     };
     update();
-    return observeResize(element, update);
+    const stopResize = observeResize(element, update);
+    // A menu Paste targets the element that holds the selection, which a right-click can put
+    // anywhere around the screen. The focus stays on the screen.
+    const document = element.ownerDocument;
+    const onPaste = (event: ClipboardEvent) => {
+      if (document.activeElement !== element || !event.clipboardData) return;
+      event.preventDefault();
+      void paste(event.clipboardData.getData("text/plain"));
+    };
+    document.addEventListener("paste", onPaste);
+    return () => {
+      stopResize();
+      document.removeEventListener("paste", onPaste);
+    };
   };
   const frame = fitDeviceFrame(aspect, host.width, host.height, controlsInset);
 
@@ -335,11 +381,6 @@ export function DeviceStreamView(props: {
           }
           event.preventDefault();
           client?.sendKey(event.nativeEvent, "down");
-        }}
-        onPaste={(event) => {
-          if (event.target !== event.currentTarget) return;
-          event.preventDefault();
-          client?.sendText(event.clipboardData.getData("text/plain"));
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;

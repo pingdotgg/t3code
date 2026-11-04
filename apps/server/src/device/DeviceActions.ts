@@ -131,6 +131,7 @@ const IOS_TCC_SERVICES: Record<string, string> = {
   motion: "motion",
   "media-library": "media-library",
   faceid: "faceid",
+  pasteboard: "pasteboard",
 };
 
 const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
