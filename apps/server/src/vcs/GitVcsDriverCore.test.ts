@@ -2373,6 +2373,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ["working-tree"],
         );
         assert.include(dirty.sources[0]!.diff, "+dirty");
+        const file = { path: "README.md", previousPath: null, sourceKind: "working-tree" as const };
+        const scoped = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+          file,
+        });
+        assert.include(scoped.sources[0]!.diff, "+dirty");
+        for (const [requestedKind, fileKind] of [
+          ["working-tree", "branch-range"],
+          ["branch-range", "working-tree"],
+        ] as const) {
+          const conflict = yield* driver
+            .getReviewDiffPreview({
+              cwd,
+              sourceKind: requestedKind,
+              file: { ...file, sourceKind: fileKind },
+            })
+            .pipe(Effect.flip);
+          assert.equal(conflict.operation, "GitVcsDriver.getReviewDiffPreview");
+          assert.equal(conflict.detail, "Review source selectors must agree.");
+        }
 
         const branch = yield* driver
           .getReviewDiffPreview({ cwd, sourceKind: "branch-range" })
