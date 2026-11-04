@@ -261,6 +261,7 @@ export function mapRemoteEnvironmentError(
  */
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
+  connectionMethod: ClientConnectionMethod = "relay",
 ): ConnectionAttemptError {
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
@@ -268,9 +269,12 @@ export function mapRemoteDpopEnvironmentError(
       detail: dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
       traceId: error.traceId,
       hop: "server",
-      via: "relay",
+      via: connectionMethod === "relay" ? "relay" : "direct",
+      ...(error.dpopFailureReason === undefined
+        ? {}
+        : { dpopFailureReason: error.dpopFailureReason }),
       ...(error.dpopFailureReason === "time_window" ? { failureCause: "clock_skew" } : {}),
     });
   }
-  return mapRemoteEnvironmentError(error, "relay");
+  return mapRemoteEnvironmentError(error, connectionMethod);
 }

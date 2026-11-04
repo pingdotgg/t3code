@@ -63,6 +63,10 @@ export class ConnectionDriver extends Context.Service<
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
     ) => Effect.Effect<RoutePreflight>;
+    readonly mintLanCredential: (input: {
+      readonly httpBaseUrl: string;
+      readonly bearerToken: string;
+    }) => Effect.Effect<string, ConnectionAttemptError>;
     /** Asks the host behind a live session to answer a fresh request on the session's own origin. */
     readonly checkHost: (prepared: PreparedConnection) => Effect.Effect<RouteCheck>;
   }
@@ -241,7 +245,12 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ConnectionDriver.preflight"),
     );
 
-  return ConnectionDriver.of({ connect, preflight, checkHost });
+  return ConnectionDriver.of({
+    connect,
+    preflight,
+    checkHost,
+    mintLanCredential: remote.mintLanCredential,
+  });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

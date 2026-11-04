@@ -25,6 +25,11 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
     learned: Schema.optionalKey(Schema.Literal(true)),
     authorization: Schema.optionalKey(Schema.Literal("t3-connect")),
     /**
+     * Connects with a key-bound LAN credential instead of the paired token. A
+     * separate key, because older clients must ignore it, not fail to decode it.
+     */
+    lanDpop: Schema.optionalKey(Schema.Literal(true)),
+    /**
      * "tailscale" on a learned route the server found on its Tailscale
      * interface. A bare 100.64.0.0/10 address could belong to any VPN.
      */

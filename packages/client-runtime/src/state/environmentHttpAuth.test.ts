@@ -131,6 +131,8 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
   const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeLanDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    mintLanCredential: () => Effect.die("HTTP requests must not mint a LAN credential."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {
         authorizations.push(input);
@@ -357,6 +359,28 @@ describe("authenticated environment HTTP requests", () => {
         expect(new URL(sent).pathname).toContain("/mcp%3A3534bc83-");
         expect(harness.proofs.map((proof) => proof.url)).toEqual([sent]);
       }),
+  );
+
+  it.effect("signs a LAN credential request without going through T3 Connect", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => credentialRejectedResponse());
+      const exit = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "http://192.168.1.22:3773",
+          httpAuthorization: { _tag: "LanDpop", accessToken: "lan-token" },
+        },
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(harness.authorizations).toEqual([]);
+      expect(harness.calls).toHaveLength(1);
+      const headers = new Headers(harness.calls[0]!.init.headers);
+      expect(headers.get("authorization")).toBe("DPoP lan-token");
+      expect(headers.get("dpop")).toBe("proof-1");
+    }),
   );
 
   it.effect("retries a rejected diff once with a new token, endpoint, and proof", () =>

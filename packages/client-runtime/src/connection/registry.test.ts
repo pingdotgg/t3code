@@ -20,6 +20,7 @@ import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -42,7 +43,7 @@ import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
 import type { RouteCheck } from "./driver.ts";
-import { connectionRouteId, connectionRouteKind } from "./routes.ts";
+import { connectionRouteId, connectionRouteKind, connectionRoutes } from "./routes.ts";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -168,6 +169,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly mintLanCredential?: ConnectionDriver.ConnectionDriver["Service"]["mintLanCredential"];
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -451,6 +453,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ),
       ),
     checkHost: () => Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
+    mintLanCredential:
+      options?.mintLanCredential ?? (() => Effect.die("Unexpected LAN credential mint.")),
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
@@ -476,6 +480,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   );
 
   return {
+    credentialStore,
     layer,
     storedTargets,
     shellCache,
@@ -2343,6 +2348,281 @@ describe("EnvironmentRegistry routes", () => {
           [],
         );
         expect(yield* Ref.get(harness.connectedRoutes)).toEqual(connectedBefore);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("mints one LAN credential for a tailnet pairing and saves the route below it", () =>
+    Effect.gen(function* () {
+      const tailnet = new BearerConnectionProfile({
+        ...BEARER_PROFILE,
+        httpBaseUrl: "https://desk.tail1234.ts.net/",
+        wsBaseUrl: "wss://desk.tail1234.ts.net/",
+      });
+      const mints = yield* Ref.make<ReadonlyArray<string>>([]);
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [tailnet],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          directEndpoints: [{ kind: "lan", httpBaseUrl: "http://192.168.1.22:3773/" }],
+          mintLanCredential: (input) =>
+            Ref.update(mints, (values) => [...values, input.httpBaseUrl]).pipe(
+              Effect.as("lan-token"),
+            ),
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const credentials = harness.credentialStore;
+        yield* registry.start;
+        const learnedId = `learned:${BEARER_TARGET.environmentId}:http://192.168.1.22:3773@${BEARER_TARGET.connectionId}`;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) =>
+            (entries.get(BEARER_TARGET.environmentId)?.alternateRoutes ?? []).some(
+              (route) => connectionRouteId(route.target) === learnedId,
+            ),
+          ),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(mints)).toEqual(["https://desk.tail1234.ts.net/"]);
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId).map(
+            connectionRouteId,
+          ),
+        ).toEqual([BEARER_TARGET.connectionId, learnedId]);
+        const stored = yield* credentials.get(`lan-credential:${BEARER_TARGET.connectionId}`);
+        expect(Option.map(stored, (credential) => credential.token)).toEqual(
+          Option.some("lan-token"),
+        );
+
+        yield* registry.remove(BEARER_TARGET.environmentId);
+        expect(
+          Option.isNone(yield* credentials.get(`lan-credential:${BEARER_TARGET.connectionId}`)),
+        ).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("saves the LAN route a discovery connection authenticated", () =>
+    Effect.gen(function* () {
+      const environmentId = BEARER_TARGET.environmentId;
+      const oldUrl = "http://192.168.1.10:3773/";
+      const newUrl = "http://192.168.1.22:3773/";
+      const oldId = `learned:${environmentId}:http://192.168.1.10:3773@${BEARER_TARGET.connectionId}`;
+      const newId = `learned:${environmentId}:http://192.168.1.22:3773@${BEARER_TARGET.connectionId}`;
+      const tailnet = new BearerConnectionProfile({
+        ...BEARER_PROFILE,
+        httpBaseUrl: "https://desk.tail1234.ts.net/",
+        wsBaseUrl: "wss://desk.tail1234.ts.net/",
+      });
+      const oldTarget = new BearerConnectionTarget({ ...BEARER_TARGET, connectionId: oldId });
+      const oldProfile = new BearerConnectionProfile({
+        connectionId: oldId,
+        environmentId,
+        label: BEARER_TARGET.label,
+        httpBaseUrl: oldUrl,
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+        lanDpop: true,
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, oldTarget],
+        [tailnet, oldProfile],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [
+            `lan-credential:${BEARER_TARGET.connectionId}`,
+            new BearerConnectionCredential({ token: "lan-token" }),
+          ],
+        ],
+        {
+          directEndpoints: [{ kind: "lan", httpBaseUrl: newUrl }],
+          checkRoute: (route) => {
+            const profile = Option.getOrNull(route.profile);
+            const http = profile?._tag === "BearerConnectionProfile" ? profile.httpBaseUrl : "";
+            return http.startsWith("http://192.168.1.22") ? "answered" : "silent";
+          },
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setDiscoveredCandidates(new Map([[environmentId, [newUrl]]]));
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) => {
+            const entry = entries.get(environmentId);
+            if (entry === undefined) return false;
+            const ids = connectionRoutes(entry).map((route) => connectionRouteId(route.target));
+            return ids.includes(newId) && !ids.includes(oldId);
+          }),
+          Stream.runHead,
+        );
+        yield* registry.reorderRoutes(environmentId, [BEARER_TARGET.connectionId, newId]);
+        expect(yield* Ref.get(harness.connectedRoutes)).toContain(newId);
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), environmentId).map(connectionRouteId),
+        ).toEqual([BEARER_TARGET.connectionId, newId]);
+        const controls = yield* Ref.get(harness.sessions);
+        const active = controls.at(-1);
+        expect(active).toBeDefined();
+        yield* Deferred.fail(
+          active!.closed,
+          new ConnectionTransientError({ reason: "transport", detail: "Disconnected." }),
+        );
+        yield* TestClock.adjust("10 seconds");
+        const connected = (yield* Ref.get(harness.connectedRoutes)).filter((id) => id === newId);
+        expect(connected.length).toBeGreaterThan(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("replaces the LAN credential when the paired token changes", () =>
+    Effect.gen(function* () {
+      const environmentId = BEARER_TARGET.environmentId;
+      const learnedId = `learned:${environmentId}:http://192.168.1.10:3773@${BEARER_TARGET.connectionId}`;
+      const tailnet = new BearerConnectionProfile({
+        ...BEARER_PROFILE,
+        httpBaseUrl: "https://desk.tail1234.ts.net/",
+        wsBaseUrl: "wss://desk.tail1234.ts.net/",
+      });
+      const learnedTarget = new BearerConnectionTarget({
+        ...BEARER_TARGET,
+        connectionId: learnedId,
+      });
+      const learnedProfile = new BearerConnectionProfile({
+        connectionId: learnedId,
+        environmentId,
+        label: BEARER_TARGET.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+        lanDpop: true,
+      });
+      const arrived = yield* Ref.make(0);
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, learnedTarget],
+        [tailnet, learnedProfile],
+        [
+          [BEARER_TARGET.connectionId, new BearerConnectionCredential({ token: "old-token" })],
+          [
+            `lan-credential:${BEARER_TARGET.connectionId}`,
+            new BearerConnectionCredential({ token: "lan:old-token" }),
+          ],
+        ],
+        {
+          prepareRoute: () =>
+            new ConnectionBlockedError({ reason: "configuration", detail: "offline" }),
+          mintLanCredential: (input) =>
+            Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(arrived, (value) => value + 1);
+              if (count >= 2) yield* Deferred.succeed(release, undefined);
+              yield* Deferred.await(release);
+              return `lan:${input.bearerToken}`;
+            }),
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: tailnet,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        yield* Effect.all(
+          [registry.register(registration("token-a")), registry.register(registration("token-b"))],
+          { concurrency: "unbounded" },
+        );
+        const parent = Option.getOrThrow(
+          yield* harness.credentialStore.get(BEARER_TARGET.connectionId),
+        );
+        const lan = Option.getOrThrow(
+          yield* harness.credentialStore.get(`lan-credential:${BEARER_TARGET.connectionId}`),
+        );
+        expect(parent.token === "token-a" || parent.token === "token-b").toBe(true);
+        expect(lan.token).toBe(`lan:${parent.token}`);
+        expect(lan.token).not.toBe("lan:old-token");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("drops a LAN credential that no saved route still uses", () =>
+    Effect.gen(function* () {
+      const environmentId = BEARER_TARGET.environmentId;
+      const learnedId = `learned:${environmentId}:http://192.168.1.10:3773@${BEARER_TARGET.connectionId}`;
+      const tailnet = new BearerConnectionProfile({
+        ...BEARER_PROFILE,
+        httpBaseUrl: "https://desk.tail1234.ts.net/",
+        wsBaseUrl: "wss://desk.tail1234.ts.net/",
+      });
+      const learnedTarget = new BearerConnectionTarget({
+        ...BEARER_TARGET,
+        connectionId: learnedId,
+      });
+      const learnedProfile = new BearerConnectionProfile({
+        connectionId: learnedId,
+        environmentId,
+        label: BEARER_TARGET.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+        lanDpop: true,
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET, learnedTarget],
+        [tailnet, learnedProfile],
+        [
+          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
+          [
+            `lan-credential:${BEARER_TARGET.connectionId}`,
+            new BearerConnectionCredential({ token: "lan-token" }),
+          ],
+        ],
+        {
+          directEndpoints: [],
+          checkRoute: (route) => {
+            const profile = Option.getOrNull(route.profile);
+            return profile?._tag === "BearerConnectionProfile" &&
+              profile.httpBaseUrl.startsWith("https:")
+              ? "answered"
+              : "silent";
+          },
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) => {
+            const entry = entries.get(environmentId);
+            const routeIds = [
+              entry?.target,
+              ...(entry?.alternateRoutes ?? []).map((route) => route.target),
+            ]
+              .filter((target) => target !== undefined)
+              .map(connectionRouteId);
+            return routeIds.length > 0 && !routeIds.includes(learnedId);
+          }),
+          Stream.runHead,
+        );
+        expect(
+          Option.isNone(
+            yield* harness.credentialStore.get(`lan-credential:${BEARER_TARGET.connectionId}`),
+          ),
+        ).toBe(true);
+
+        yield* harness.credentialStore.put(
+          `lan-credential:${BEARER_TARGET.connectionId}`,
+          new BearerConnectionCredential({ token: "orphan" }),
+        );
+        yield* registry.remove(environmentId);
+        expect(
+          Option.isNone(
+            yield* harness.credentialStore.get(`lan-credential:${BEARER_TARGET.connectionId}`),
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

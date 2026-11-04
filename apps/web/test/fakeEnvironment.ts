@@ -424,6 +424,7 @@ export const fakeDriver = {
     }),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),
+  mintLanCredential: () => Effect.die("Fake environments report no LAN routes."),
 };
 export type FakeDriver = typeof fakeDriver;
 

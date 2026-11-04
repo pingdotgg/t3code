@@ -131,10 +131,20 @@ machine must allow network access: **Network access** in the desktop app, or the
 You can reorder a learned route, but not remove it. It goes away with the route
 it was learned through, or when the machine stops reporting that address.
 
+A device paired over HTTPS or Tailscale also learns the machine's LAN address.
+Its paired token is never sent there. T3 Code uses a separate local network
+credential tied to that device, which appears under connected clients as
+"(local network)" and is removed when you revoke the device. Its credential cannot call access-management APIs directly; terminal and agent
+access still allow commands on the machine. Because LAN traffic is unencrypted,
+this route is placed after your Tailscale,
+HTTPS, SSH, and T3 Connect routes, so it is used only when they do not answer.
+A LAN address learned through T3 Connect is placed the same way. Drag it higher
+to prefer it at home.
+
 On desktop and mobile, a machine paired over an HTTP IPv4 LAN address can be
 found again on the same network if its address changes. Allow local network
-access when prompted. HTTPS and Tailscale pairings keep their existing secure
-routes. Browsers and devices on another network still need a reachable route,
+access when prompted. A device paired over HTTPS or Tailscale does the same once
+it has a local network credential. Browsers and devices on another network still need a reachable route,
 as do networks that block Bonjour or isolate guests.
 
 T3 Code connects over the first route that answers. Away from home, a LAN

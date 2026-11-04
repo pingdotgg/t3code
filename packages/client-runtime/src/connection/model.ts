@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { DpopFailureReason, EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
@@ -99,6 +99,7 @@ const ConnectionFailureFields = {
   hop: Schema.optionalKey(ConnectionHop),
   via: Schema.optionalKey(Schema.Literals(["relay", "direct"])),
   failureCause: Schema.optionalKey(ConnectionFailureCause),
+  dpopFailureReason: Schema.optionalKey(DpopFailureReason),
   httpStatus: Schema.optionalKey(Schema.Number),
 };
 
@@ -145,6 +146,10 @@ export type PreparedHttpAuthorization =
       readonly _tag: "Dpop";
       readonly accessToken: string;
       readonly expiresAtEpochMs: number;
+    }
+  | {
+      readonly _tag: "LanDpop";
+      readonly accessToken: string;
     };
 
 export interface PreparedConnection {
