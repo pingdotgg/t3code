@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
 
+import catalog from "./catalog.json" with { type: "json" };
 import {
   DEFAULT_SPEECH_MODEL_ID,
   effectiveSpeechLanguage,
@@ -8,8 +9,9 @@ import {
 } from "./model.ts";
 
 it("offers the full eligible catalog through one canonical registry", () => {
-  expect(SPEECH_MODELS).toHaveLength(71);
-  expect(new Set(SPEECH_MODELS.map((model) => model.id)).size).toBe(SPEECH_MODELS.length);
+  const ids = new Set(SPEECH_MODELS.map((model) => model.id));
+  expect(ids).toEqual(new Set(catalog.models.map((model) => model.id)));
+  expect(ids.size).toBe(SPEECH_MODELS.length);
   expect(new Set(SPEECH_MODELS.map((model) => model.filename)).size).toBe(SPEECH_MODELS.length);
   expect(getSpeechModel(DEFAULT_SPEECH_MODEL_ID)).toBeDefined();
   for (const id of ["parakeet-ultra", "orukeet", "granite-speech-5.0-470m-turboctc"]) {
