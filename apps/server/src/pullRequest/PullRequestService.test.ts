@@ -3075,7 +3075,11 @@ it.effect.each(["github", "azure-devops"])(
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make(provider), {
-            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+            getChangeRequest: () =>
+              Effect.succeed({
+                ...hostedChangeRequest("Description"),
+                checks: [{ name: "build", status: "success", description: null, url: null }],
+              }),
             getChangeRequestChecks: () =>
               Effect.sync(() => {
                 reads += 1;
@@ -3103,6 +3107,37 @@ it.effect.each(["github", "azure-devops"])(
       expect((yield* service.checks(reference))?.state).toBe("closed");
       expect(reads).toBe(1);
     }),
+);
+
+it.effect("asks Azure for checks when its detail came back with none", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "web",
+          provider: "azure-devops",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("azure-devops"), {
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          getChangeRequestChecks: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { state: "open" as const, checks: [] };
+            }),
+        }),
+      ],
+    });
+    yield* service.detail(reference);
+    yield* service.checks(reference);
+    expect(reads).toBe(1);
+  }),
 );
 
 it.effect("preserves check observation time on cache hits and advances it on refresh", () =>
