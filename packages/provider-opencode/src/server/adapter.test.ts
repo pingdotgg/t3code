@@ -6,6 +6,7 @@ import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   CheckpointId,
   NodeId,
@@ -1273,6 +1274,13 @@ describe("OpenCodeAdapterV2", () => {
                   title: "Edit remote document",
                   metadata: {},
                   output,
+                  attachments: [
+                    {
+                      type: "file",
+                      mime: "image/png",
+                      url: "data:image/png;base64,iVBORw0KGgo=",
+                    },
+                  ],
                   error: "failed",
                   time: { start: 1, end: 2 },
                 },
@@ -1365,7 +1373,9 @@ describe("OpenCodeAdapterV2", () => {
         });
         assert.deepEqual(item.input, { document: "remote-doc" });
       }
-      assert.equal(items[1]?.output, output);
+      assert.deepEqual(toolOutputImages(items[1]?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
       assert.isUndefined(items[3]?.toolSource);
       assert.equal(statusReads, 1);

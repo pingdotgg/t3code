@@ -2,7 +2,26 @@ import { describe, expect, it } from "vite-plus/test";
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
+import { isJsonToolText, turnItemOutputImages, turnItemOutputText } from "./itemDetail.ts";
+
+describe("isJsonToolText", () => {
+  it.each([
+    ['{"screenshot":{"mimeType":"image/png"}}', true],
+    ['[{"threadId":"thread-1"}]', true],
+    ['{\n\n  "status": "completed"\n}', true],
+    ['{\n  "count": 1\n}\n\n{\n  "count": 2\n}', true],
+    ["false", true],
+    ["null", true],
+    ["42", true],
+    ['"completed"', true],
+    ['{"partial":', false],
+    ['{"count":1}\n\nFinished.', false],
+    ["No output.", false],
+    ["", false],
+  ] as const)("classifies %j as JSON: %s", (text, expected) => {
+    expect(isJsonToolText(text)).toBe(expected);
+  });
+});
 
 function toolItem(output: unknown): OrchestrationV2TurnItem {
   return {
@@ -28,15 +47,54 @@ function toolItem(output: unknown): OrchestrationV2TurnItem {
 }
 
 describe("tool image output parsing", () => {
-  it.each(["array", "content"] as const)(
+  it.each(["image-only", "summary", "json"] as const)(
+    "keeps structured fields beside %s content",
+    (shape) => {
+      const content = [
+        { type: "image", mimeType: "image/png" },
+        ...(shape === "image-only"
+          ? []
+          : [{ type: "text", text: shape === "summary" ? "Sunny" : '{"temp":21}' }]),
+      ];
+      for (const structuredContent of [
+        { temp: 21 },
+        { type: "text", text: "Sunny", temp: 21 },
+        { content: [{ type: "text", text: "Sunny" }], temp: 21 },
+      ]) {
+        const item = toolItem({ structuredContent, content });
+        expect(turnItemOutputText(item)).toBe(JSON.stringify(structuredContent, null, 2));
+        expect(turnItemOutputImages(item)).toHaveLength(1);
+      }
+      for (const structuredContent of [null, {}, [], ""]) {
+        const item = toolItem({ structuredContent, content: [{ type: "text", text: "Sunny" }] });
+        expect(turnItemOutputText(item)).toBe("Sunny");
+      }
+      expect(
+        turnItemOutputText(
+          toolItem({
+            content: [{ type: "text", text: "File contents" }],
+            structuredContent: { path: "read.ts", ready: true },
+          }),
+        ),
+      ).toBe("File contents");
+    },
+  );
+  it.each(["array", "content", "structured"] as const)(
     "keeps markers for images beyond the served positions in %s output",
     (shape) => {
       // Detail responses retain image metadata after the server strips image bytes.
       const image = { type: "image", mimeType: "image/png" };
       const blocks = Array.from({ length: 8 }, () => ({ ...image }));
-      const wrap = (content: unknown[]) => (shape === "array" ? content : { content });
+      const wrap = (content: unknown[]) =>
+        shape === "array"
+          ? content
+          : shape === "structured"
+            ? { content, structuredContent: { temp: 21 } }
+            : { content };
       const withinLimit = toolItem(wrap(blocks));
-      expect(turnItemOutputText(withinLimit)).toBeNull();
+      expect(turnItemOutputText(withinLimit)).toBe(
+        shape === "structured" ? '{\n  "temp": 21\n}' : null,
+      );
       expect(turnItemOutputImages(withinLimit)).toHaveLength(8);
 
       const overflow = toolItem(
@@ -48,7 +106,10 @@ describe("tool image output parsing", () => {
         ]),
       );
       expect(turnItemOutputImages(overflow)).toHaveLength(8);
-      expect(turnItemOutputText(overflow)).toBe("Two additional screenshots:\n[image]\n[image]");
+      expect(turnItemOutputText(overflow)).toBe(
+        (shape === "structured" ? '{\n  "temp": 21\n}' : "Two additional screenshots:") +
+          "\n[image]\n[image]",
+      );
     },
   );
 });

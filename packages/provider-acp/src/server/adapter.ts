@@ -39,7 +39,11 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
-import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  htmlRenderFromToolItem,
+  mcpToolResultOutput,
+} from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -923,8 +927,7 @@ function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   if (record === undefined) return rawOutput;
   if (!("result" in record) && !("error" in record)) return rawOutput;
   const result = unknownRecord(record.result);
-  const resultOutput =
-    result === undefined ? undefined : (result.structuredContent ?? result.content ?? undefined);
+  const resultOutput = result === undefined ? undefined : mcpToolResultOutput(result);
   const errorMessage = unknownRecord(record.error)?.message;
   if (typeof errorMessage !== "string") {
     return resultOutput ?? rawOutput;
