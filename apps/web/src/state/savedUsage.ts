@@ -174,8 +174,8 @@ function overlapOf(saved: UsageSummaryInput, input: UsageSummaryInput): number |
 
 /**
  * The saved read that best covers a window, cut to it. Only a read at the
- * window's own resolution answers it, and an hourly read only on the same
- * hour grid.
+ * window's own resolution and model filter answers it, and an hourly read
+ * only on the same hour grid.
  */
 export function pickSavedUsage(
   saved: readonly SavedUsage[],
@@ -185,6 +185,8 @@ export function pickSavedUsage(
   for (const entry of saved) {
     if (entry.input.timeZone !== input.timeZone) continue;
     if ((entry.input.resolution ?? "day") !== (input.resolution ?? "day")) continue;
+    // A read under another model filter counts models this one excludes, or misses some.
+    if (JSON.stringify(entry.input.modelFilter) !== JSON.stringify(input.modelFilter)) continue;
     const overlap = overlapOf(entry.input, input);
     if (overlap === null || !(overlap > 0)) continue;
     if (best === null || overlap > best.amount) best = { entry, amount: overlap };

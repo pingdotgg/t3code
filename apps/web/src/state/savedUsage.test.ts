@@ -106,11 +106,18 @@ describe("pickSavedUsage", () => {
     expect(pickSavedUsage([week], shifted)).toBeNull();
   });
 
-  it("finds nothing outside the saved days or in another time zone", () => {
+  it("finds nothing outside the saved days, in another time zone, or under another model filter", () => {
     expect(pickSavedUsage([month], days("2026-10-01", "2026-10-07"))).toBeNull();
     expect(
       pickSavedUsage([month], { ...days("2026-09-01", "2026-09-30"), timeZone: "Asia/Tokyo" }),
     ).toBeNull();
+    const filter = { exclude: [{ model: "claude-opus-5-5" }] };
+    const filtered = { ...days("2026-09-01", "2026-09-30"), modelFilter: filter };
+    expect(pickSavedUsage([month], filtered)).toBeNull();
+    expect(
+      pickSavedUsage([{ ...month, input: filtered }], days("2026-09-01", "2026-09-30")),
+    ).toBeNull();
+    expect(pickSavedUsage([{ ...month, input: filtered }], filtered)).not.toBeNull();
   });
 });
 

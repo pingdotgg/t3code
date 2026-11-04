@@ -57,7 +57,7 @@ export interface EnvironmentUsageStatus {
   readonly offline: boolean;
   /** When the shown summary was read, if it is not a live read. */
   readonly savedAt: string | null;
-  /** The window `summary` answers, for saving it. */
+  /** The window and model filter `summary` answers, for saving it. */
   readonly window: UsageSummaryInput;
 }
 
@@ -184,22 +184,15 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         continue;
       }
       const modelFilter = get(serverEnvironment.usageModelFilterAtom(environmentId));
-      let window = input;
-      let result = get(
-        serverEnvironment.usageSummary({
-          environmentId,
-          input: usageSummaryInput(input, modelFilter),
-        }),
-      );
+      const requested = usageSummaryInput(input, modelFilter);
+      const fallbackRequested =
+        fallbackInput === null ? null : usageSummaryInput(fallbackInput, modelFilter);
+      let window = requested;
+      let result = get(serverEnvironment.usageSummary({ environmentId, input: requested }));
       let readByDay = false;
-      if (fallbackInput !== null && isRejectedWindow(result)) {
-        window = fallbackInput;
-        result = get(
-          serverEnvironment.usageSummary({
-            environmentId,
-            input: usageSummaryInput(fallbackInput, modelFilter),
-          }),
-        );
+      if (fallbackRequested !== null && isRejectedWindow(result)) {
+        window = fallbackRequested;
+        result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackRequested }));
         readByDay = true;
       }
       let summary = AsyncResult.getOrElse(result, () => null);
@@ -210,13 +203,13 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           AsyncResult.value(get(savedUsageAtom(environmentId))),
           () => [],
         );
-        summary = pickSavedUsage(saved, input);
+        summary = pickSavedUsage(saved, requested);
         // A server that answered this span only by day saved it by day.
-        if (summary === null && fallbackInput !== null) {
-          summary = pickSavedUsage(saved, fallbackInput);
+        if (summary === null && fallbackRequested !== null) {
+          summary = pickSavedUsage(saved, fallbackRequested);
           if (summary !== null) {
             readByDay = true;
-            window = fallbackInput;
+            window = fallbackRequested;
           }
         }
       }
