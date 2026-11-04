@@ -8514,7 +8514,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }) {
               if (threadInput.providerThread.status === "error") {
                 // A broken turn left this native history unusable; the caller recovers in a fresh session.
-                return yield* Effect.fail("The native session history is unusable.");
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver,
+                  detail: "The native session history is unusable.",
+                });
               }
               return yield* runtimeTransitionPermit.withPermit(
                 Effect.gen(function* () {
