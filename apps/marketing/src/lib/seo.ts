@@ -70,6 +70,7 @@ export const jsonLdGraph = (nodes: ReadonlyArray<JsonLd>): string =>
   JSON.stringify({ "@context": "https://schema.org", "@graph": nodes }).replace(/</g, "\\u003c");
 
 // Indexable static pages. The 404 (noindex) and the /95 easter egg stay out of the sitemap.
+// Library pages under /learn come from the content collection.
 export const STATIC_PAGES = [
   { path: "/", priority: "1.0" },
   { path: "/download", priority: "0.9" },

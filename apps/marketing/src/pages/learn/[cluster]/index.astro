@@ -1,0 +1,21 @@
+---
+import { getCollection, render } from "astro:content";
+import LibraryPage from "../../../components/library/LibraryPage.astro";
+import { CLUSTERS, type ClusterId } from "../../../lib/library";
+
+export async function getStaticPaths() {
+  const all = await getCollection("library");
+  return CLUSTERS.map((cluster) => {
+    const entry = all.find((item) => item.id === cluster.id || item.id === `${cluster.id}/index`);
+    if (!entry) throw new Error(`Missing pillar page src/content/library/${cluster.id}/index.md`);
+    return { params: { cluster: cluster.id }, props: { entry } };
+  });
+}
+
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+---
+
+<LibraryPage cluster={Astro.params.cluster as ClusterId} data={entry.data} headings={headings}>
+  <Content />
+</LibraryPage>
