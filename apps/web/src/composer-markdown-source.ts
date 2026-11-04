@@ -161,8 +161,10 @@ function withAdjacentDelimiters(doc: ProseMirrorNode, region: TextRange): TextRa
     const text = before.text!;
     let count = 0;
     while (count < text.length && DELIMITER.test(text[text.length - 1 - count]!)) count += 1;
-    // A backslash escapes the delimiter after it.
-    if (count > 0 && text[text.length - 1 - count] === "\\") count -= 1;
+    // Only an odd backslash run escapes the first adjacent delimiter.
+    let backslashes = 0;
+    while (text[text.length - 1 - count - backslashes] === "\\") backslashes += 1;
+    if (count > 0 && backslashes % 2 === 1) count -= 1;
     from -= count;
   }
   if (after?.isText && after.marks.length === 0) {

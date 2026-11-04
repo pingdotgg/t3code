@@ -155,6 +155,8 @@ it.each([
   { word: "path\\", prefix: "", source: [] },
   { word: "2*3", prefix: "", source: [] },
   { word: "b", prefix: "*", source: [] },
+  { word: "word", prefix: "\\\\*", source: [] },
+  { word: "word", prefix: "\\\\**", source: [] },
   { word: "word", prefix: "\\", source: [] },
   { word: "word", prefix: "\\\\", source: ["**word**"] },
   { word: "word", prefix: "\\\\\\", source: [] },
