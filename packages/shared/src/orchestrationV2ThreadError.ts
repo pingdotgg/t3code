@@ -12,7 +12,7 @@ type FailureScanTurnItem =
   | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "error"> };
 
 export function latestRootProviderFailure(
-  run: OrchestrationV2Run | null,
+  run: Pick<OrchestrationV2Run, "id" | "status" | "rootNodeId"> | null,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
 ): OrchestrationV2ProviderFailure | null {
   if (run?.status !== "failed") return null;

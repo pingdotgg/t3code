@@ -37,6 +37,7 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2ProviderFailureClass,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -201,6 +202,20 @@ export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
   "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
 const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
 
+/** A failed run's provider failure; the message stays in the result text. */
+export const OrchestratorMcpRunFailure = Schema.Struct({
+  runId: RunId,
+  providerInstanceId: ProviderInstanceId,
+  class: OrchestrationV2ProviderFailureClass,
+  code: Schema.NullOr(Schema.String),
+  retryable: Schema.NullOr(Schema.Boolean),
+  resetAt: Schema.NullOr(IsoDateTime),
+  autoResumeAt: Schema.NullOr(IsoDateTime).annotate({
+    description: "When T3 resumes this run on the same instance. Null: not scheduled.",
+  }),
+});
+export type OrchestratorMcpRunFailure = typeof OrchestratorMcpRunFailure.Type;
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
@@ -223,6 +238,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   summary: Schema.NullOr(Schema.String),
+  failure: Schema.optional(OrchestratorMcpRunFailure),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
@@ -434,6 +450,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   activeRunId: Schema.NullOr(RunId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
+  /** The latest executed run's failure. */
+  failure: Schema.optional(OrchestratorMcpRunFailure),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),

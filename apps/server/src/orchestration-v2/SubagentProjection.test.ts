@@ -359,23 +359,43 @@ it("exposes the provider failure rather than a progress message from the failed 
     now: childCreatedAt,
   });
   if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
-  const failure = {
-    class: "unknown" as const,
-    message: "You've hit your usage limit. Try again Sep 14 at 7:20 PM.",
-    code: null,
-    retryable: false,
-  };
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [{ ...artifacts.message, runId: run.id }],
-      turnItems: [{ ...artifacts.turnItem, type: "error", runId: run.id, failure }],
-    },
-    failedRun,
-  );
-  assert.equal(result.text, failure.message);
-  assert.equal(result.turnItemId, artifacts.turnItem.id);
-  assert.isNull(result.messageId);
+  const message = "Claude API rate limit reached. Try again later.";
+  const limit = { class: "usage_limit" as const, message, code: null, retryable: true };
+  const resetAt = "2026-11-04T15:20:00.000Z";
+  const moveHint =
+    "To continue sooner with its history: t3_thread_configure this child to another instance, then t3_thread_send.";
+  for (const [failure, nodeId, expected] of [
+    [{ ...limit, class: "unknown" as const }, "root", message],
+    [
+      { ...limit, resetAt },
+      "root",
+      `${message}\nUsage limit on provider instance codex, resets ${resetAt}. ${moveHint}`,
+    ],
+    [limit, "root", `${message}\nUsage limit on provider instance codex. ${moveHint}`],
+    // A native descendant's limit is not this run's provider failure.
+    [{ ...limit, resetAt }, "native-descendant", message],
+  ] as const) {
+    const result = subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...artifacts.message, runId: run.id }],
+        turnItems: [
+          {
+            ...artifacts.turnItem,
+            type: "error",
+            status: "failed",
+            runId: run.id,
+            nodeId: NodeId.make(nodeId),
+            failure,
+          },
+        ],
+      },
+      failedRun,
+    );
+    assert.equal(result.text, expected);
+    assert.equal(result.turnItemId, artifacts.turnItem.id);
+    assert.isNull(result.messageId);
+  }
 });
 
 it("orders a task's assistant messages by turn item, not by timestamps", () => {

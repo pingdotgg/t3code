@@ -240,6 +240,38 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "linked ~/pull/124",
     "linkedNumbers",
   ]);
+
+  const recovery = {
+    order: [
+      {
+        tool: "t3_thread_configure",
+        args: { threadId: "child", "modelSelection.instanceId": "work-b" },
+      },
+      { tool: "t3_thread_send", args: { threadId: "child" } },
+    ],
+    notCalls: ["delegate_task", "Agent"],
+  };
+  const configure = {
+    step: 0,
+    tool: "t3_thread_configure",
+    input: { threadId: "child", modelSelection: { instanceId: "work-b" } },
+  };
+  const send = { step: 1, tool: "t3_thread_send", input: { threadId: "child" } };
+  assert.deepEqual(failed(recovery, { ...good, calls: [configure, send] }), []);
+  for (const calls of [
+    [{ ...configure, input: { threadId: "child" } }, send, configure],
+    [{ ...configure, failed: true }, send],
+    [
+      {
+        ...configure,
+        input: { threadId: "another-child", modelSelection: { instanceId: "work-b" } },
+      },
+      send,
+    ],
+    [configure, send, { step: 2, tool: "Agent", input: { task: "Restart lane P8" } }],
+  ]) {
+    assert.isNotEmpty(failed(recovery, { ...good, calls }));
+  }
 });
 
 it("bounds numbers and reads target.options in either schema form", () => {

@@ -47,17 +47,32 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
+const alternateInstanceId = ProviderInstanceId.make("claudeAgent-alternate");
 const modelSelection = { instanceId, model: "claude-test" };
 
 // A delegated child that fails on a usage limit is armed to continue at the reset.
-// Once its parent cancels the task, nothing is waiting for that continuation.
+// Once its parent cancels the task, or moves the child to another instance, nothing is waiting for that continuation.
 it.effect.each([
-  { cancel: "after its limit", cancelStatus: "failed", resumed: false },
-  { cancel: "as its limit lands", cancelStatus: "cancel_requested", resumed: false },
-  { cancel: "never", cancelStatus: null, resumed: true },
+  {
+    cancel: "after its limit",
+    cancelStatus: "failed",
+    moved: false,
+    snoozed: false,
+    resumed: false,
+  },
+  {
+    cancel: "as its limit lands",
+    cancelStatus: "cancel_requested",
+    moved: false,
+    snoozed: false,
+    resumed: false,
+  },
+  { cancel: "never", cancelStatus: null, moved: false, snoozed: false, resumed: true },
+  { cancel: "never", cancelStatus: null, moved: true, snoozed: false, resumed: false },
+  { cancel: "never", cancelStatus: null, moved: false, snoozed: true, resumed: false },
 ] as const)(
-  "a delegated child whose task is cancelled $cancel resumes at the reset: $resumed",
-  ({ cancel, cancelStatus, resumed }) =>
+  "a delegated child whose task is cancelled $cancel (moved: $moved, snoozed: $snoozed) resumes at the reset: $resumed",
+  ({ cancel, cancelStatus, moved, snoozed, resumed }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("task-cancel-usage-limit");
@@ -67,7 +82,9 @@ it.effect.each([
           readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
           readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
         }> = [];
-        const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+        const makeAdapter = (
+          instanceId: ProviderInstanceId,
+        ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
           instanceId,
           driver,
           getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
@@ -139,8 +156,11 @@ it.effect.each([
                 forkThread: () => Effect.die("unused"),
               };
             }),
-        };
-        const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
+        });
+        const layerAdapters = ProviderAdapterRegistry.layerFromAdapters([
+          makeAdapter(instanceId),
+          makeAdapter(alternateInstanceId),
+        ]);
         const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
           { name: "task-cancel-usage-limit" },
           layerAdapters,
@@ -150,7 +170,11 @@ it.effect.each([
           layerOrchestrator,
           ThreadManagementService.layer.pipe(
             Layer.provide(layerOrchestrator),
-            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              ServerSettings.layerTest({
+                providerInstances: { [alternateInstanceId]: { driver, enabled: true } },
+              }),
+            ),
             Layer.provide(
               CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
             ),
@@ -291,6 +315,7 @@ it.effect.each([
           });
 
           const now = yield* DateTime.now;
+          const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
           const childFailed = yield* watch(
             (event) =>
               event.type === "run.updated" &&
@@ -317,7 +342,7 @@ it.effect.each([
                   message: "Claude usage limit reached.",
                   code: null,
                   retryable: null,
-                  resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+                  resetAt,
                 },
                 threadDisposition: "reusable",
               },
@@ -335,10 +360,86 @@ it.effect.each([
           yield* Fiber.join(childFailed);
           yield* worker.drain();
 
+          const limitFailure = (autoResumeAt: string | null) => ({
+            runId: child.turn.runId,
+            providerInstanceId: instanceId,
+            class: "usage_limit" as const,
+            code: null,
+            retryable: null,
+            resetAt,
+            autoResumeAt,
+          });
+          if (cancel === "never") {
+            const status = yield* service.taskStatus(scope, task.id);
+            assert.equal(
+              status.summary,
+              `Claude usage limit reached.\nUsage limit on provider instance ${instanceId}, resets ${resetAt}. To continue sooner with its history: t3_thread_configure this child to another instance, then t3_thread_send.`,
+            );
+            // Recovery arms in a later sweep, so nothing is promised yet.
+            assert.deepEqual(status.failure, limitFailure(null));
+          }
+
           // The sweep runs every few seconds, so it arms the child before a parent reacts.
           yield* sweep;
           if (cancel === "after its limit") cancelled = yield* cancelTask;
           assert.equal(cancelled, cancelStatus);
+          if (cancel === "never") {
+            assert.deepEqual(
+              (yield* service.taskStatus(scope, task.id)).failure,
+              limitFailure(resetAt),
+            );
+            assert.deepEqual(
+              (yield* service.readThread(scope, { threadId: childThreadId, limit: 1 })).thread
+                .failure,
+              limitFailure(resetAt),
+            );
+          }
+
+          if (snoozed) {
+            const snoozedUntil = DateTime.formatIso(DateTime.add(now, { minutes: 2 }));
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make("snooze-limited-child"),
+              threadId: childThreadId,
+              snoozedUntil,
+            });
+            assert.deepEqual(
+              (yield* service.taskStatus(scope, task.id)).failure,
+              limitFailure(snoozedUntil),
+            );
+            assert.deepEqual(
+              (yield* service.readThread(scope, { threadId: childThreadId, limit: 1 })).thread
+                .failure,
+              limitFailure(snoozedUntil),
+            );
+          }
+
+          if (moved) {
+            yield* orchestrator.dispatch({
+              type: "provider.switch",
+              commandId: CommandId.make("move-child"),
+              threadId: childThreadId,
+              modelSelection: { instanceId: alternateInstanceId, model: "claude-test" },
+            });
+            yield* worker.drain();
+            // The armed recovery would continue on the limited instance, so it is not current.
+            assert.deepEqual(
+              (yield* service.taskStatus(scope, task.id)).failure,
+              limitFailure(null),
+            );
+            const resent = yield* turnRunning();
+            yield* service.sendToThread(scope, {
+              threadId: childThreadId,
+              message: "Resume the review",
+              clientRequestId: "resume-child",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(resent);
+            const resumedTurn = turns.at(-1)!.turn;
+            assert.equal(resumedTurn.threadId, childThreadId);
+            assert.equal(resumedTurn.providerThread.providerInstanceId, alternateInstanceId);
+            assert.include(resumedTurn.message.text, "Review the change");
+          }
 
           yield* TestClock.adjust("1 minute");
           yield* sweep;
@@ -347,8 +448,23 @@ it.effect.each([
             childAfter.messages.flatMap((message) =>
               message.role === "user" ? [message.text] : [],
             ),
-            resumed ? ["Review the change", "Continue where you left off."] : ["Review the change"],
+            resumed
+              ? ["Review the change", "Continue where you left off."]
+              : moved
+                ? ["Review the change", "Resume the review"]
+                : ["Review the change"],
           );
+          if (snoozed) {
+            yield* TestClock.adjust("1 minute");
+            yield* sweep;
+            const awakened = yield* orchestrator.getThreadProjection(childThreadId);
+            assert.deepEqual(
+              awakened.messages
+                .filter((message) => message.role === "user")
+                .map((message) => message.text),
+              ["Review the change", "Continue where you left off."],
+            );
+          }
         }).pipe(Effect.provide(layerTest));
       }),
     ),

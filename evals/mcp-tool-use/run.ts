@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -44,6 +45,10 @@ import {
   PullRequestState,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  delegatedCompletionWakeDetail,
+  subagentResultForRun,
+} from "@t3tools/provider-core/server/subagentProjection";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -157,6 +162,16 @@ const PriorToolCall = Schema.Struct({
   resultFile: Schema.optional(Schema.String),
 });
 
+/** A delegated task that failed on `providerInstanceId`, as T3 reports it to the parent. */
+const DelegatedResult = Schema.Struct({
+  taskId: Schema.String,
+  title: Schema.String,
+  childThreadId: Schema.String,
+  providerInstanceId: Schema.String,
+  failure: Contracts.OrchestrationV2ProviderFailure,
+});
+type DelegatedResult = typeof DelegatedResult.Type;
+
 /**
  * One expected call. `args` match partially: `~text` is a case-insensitive substring,
  * `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
@@ -174,8 +189,8 @@ const McpToolUseExpect = Schema.Struct({
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
-  /** First calls of these tools happen in this order. */
-  order: Schema.optional(Schema.Array(Schema.String)),
+  /** First matching calls happen in this order; argument-matched entries must succeed. */
+  order: Schema.optional(Schema.Array(Schema.Union([Schema.String, McpToolUseCall]))),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   /**
@@ -284,6 +299,8 @@ export const McpToolUseCase = Schema.Struct({
           role: Schema.Literals(["user", "assistant"]),
           text: Schema.optional(Schema.String),
           toolCalls: Schema.optional(Schema.Array(PriorToolCall)),
+          /** On a user turn: T3's completion message for these tasks, built by this checkout. */
+          delegatedResults: Schema.optional(Schema.Array(DelegatedResult)),
         }),
       ),
     ),
@@ -996,6 +1013,11 @@ export const buildMessages = (sample: Sample) => {
           : (sample.priorResults.get(prior) ?? result);
       push("user", toolResult(id, replayed));
     }
+    if (turn.delegatedResults !== undefined) {
+      if (turn.role !== "user")
+        throw new Error(`${testCase.id}: delegatedResults need a user turn.`);
+      push("user", text(delegatedWake(turn.delegatedResults)));
+    }
     if (turn.text) push(turn.role, text(turn.text));
   }
   const userText =
@@ -1077,6 +1099,52 @@ const linkedEntry = (sample: Sample, url: string) => {
   return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
 };
 
+/** The result text T3 records for a failed delegated task. */
+const delegatedResultText = (result: DelegatedResult) => {
+  const now = DateTime.makeUnsafe("2026-11-04T14:21:41.000Z");
+  const run = {
+    id: Contracts.RunId.make(`run:${result.childThreadId}:1`),
+    status: "failed" as const,
+    rootNodeId: Contracts.NodeId.make(`node:${result.childThreadId}:root`),
+    providerInstanceId: Contracts.ProviderInstanceId.make(result.providerInstanceId),
+  };
+  const error = {
+    type: "error" as const,
+    id: Contracts.TurnItemId.make(`turn-item:${result.childThreadId}:error`),
+    threadId: ThreadId.make(result.childThreadId),
+    runId: run.id,
+    nodeId: run.rootNodeId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "failed" as const,
+    title: null,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    failure: result.failure,
+  };
+  return subagentResultForRun({ messages: [], turnItems: [error] }, run).text;
+};
+
+const delegatedWake = (results: ReadonlyArray<DelegatedResult>) =>
+  delegatedCompletionWakeDetail(
+    results.map(({ taskId }) => taskId),
+    results.map((result) => ({
+      id: Contracts.NodeId.make(result.taskId),
+      title: result.title,
+      status: "failed" as const,
+      result: delegatedResultText(result),
+    })),
+  );
+
+const delegatedResultFor = (sample: Sample, taskId: unknown) =>
+  (sample.testCase.setup.priorTurns ?? [])
+    .flatMap((turn) => turn.delegatedResults ?? [])
+    .find((result) => result.taskId === taskId);
+
 /** A believable T3 result for a tool the case does not mock. */
 export const t3Default = (
   sample: Sample,
@@ -1137,14 +1205,26 @@ export const t3Default = (
         pendingApproval: null,
       };
     }
-    case "task_status":
-      return {
-        taskId: input.taskId,
-        status: "running",
-        workState: "working",
-        hasPendingChildRuns: false,
-        summary: null,
-      };
+    case "task_status": {
+      const failed = delegatedResultFor(sample, input.taskId);
+      return failed === undefined
+        ? {
+            taskId: input.taskId,
+            status: "running",
+            workState: "working",
+            hasPendingChildRuns: false,
+            summary: null,
+          }
+        : {
+            taskId: input.taskId,
+            childThreadId: failed.childThreadId,
+            status: "failed",
+            workState: "result_available",
+            hasPendingChildRuns: false,
+            providerInstanceId: failed.providerInstanceId,
+            summary: delegatedResultText(failed),
+          };
+    }
     case "task_cancel":
       return { taskId: input.taskId, status: "cancel_requested" };
     case "link_pull_request": {
@@ -1694,9 +1774,20 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {
-    const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
+    const firsts = expect.order.map((expected) =>
+      calls.findIndex((call) =>
+        typeof expected === "string"
+          ? call.tool === expected
+          : call.failed !== true &&
+            expected.tool.split("|").includes(call.tool) &&
+            matches(expected.args ?? {}, call.input),
+      ),
+    );
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
-    add(`order ${expect.order.join(" > ")}`, inOrder);
+    add(
+      `order ${expect.order.map((entry) => (typeof entry === "string" ? entry : label(entry))).join(" > ")}`,
+      inOrder,
+    );
   }
   for (const [t, n] of Object.entries(expect.minCalls ?? {}))
     add(`minCalls ${t} >= ${n}`, count(t) >= n);
