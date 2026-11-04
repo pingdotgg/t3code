@@ -89,14 +89,21 @@ describe("scheduleFromDraft", () => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [] })).toBeNull();
   });
 
-  it("round-trips run once if missed and sends an explicit skip when it is off", () => {
+  it("preserves untouched missed-run choices and sends explicit edits", () => {
     const draft = scheduleDraftForTask({
       schedule: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1], missedRun: "run_once" },
     });
-    expect(scheduleFromDraft(draft)).toMatchObject({ missedRun: "run_once" });
-    // The server keeps a stored value when the field is omitted.
+    expect(scheduleFromDraft(draft)).not.toHaveProperty("missedRun");
     expect(scheduleFromDraft({ ...draft, runMissedOnce: false })).toMatchObject({
       missedRun: "skip",
+    });
+    expect(scheduleFromDraft({ ...draft, savedRunMissedOnce: false })).toMatchObject({
+      missedRun: "run_once",
+    });
+    const off = { ...draft, runMissedOnce: false, savedRunMissedOnce: false };
+    expect(scheduleFromDraft(off)).not.toHaveProperty("missedRun");
+    expect(scheduleFromDraft({ ...off, runMissedOnce: true })).toMatchObject({
+      missedRun: "run_once",
     });
   });
 

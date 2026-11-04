@@ -57,6 +57,7 @@ export type ScheduleDraft = {
   readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly runMissedOnce: boolean;
+  readonly savedRunMissedOnce?: boolean;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
@@ -94,6 +95,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
         runMissedOnce: task.schedule.missedRun === "run_once",
+        savedRunMissedOnce: task.schedule.missedRun === "run_once",
       };
     case "once":
       return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
@@ -195,7 +197,9 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
     ...(weekdays.length === 7 ? {} : { weekdays }),
-    missedRun: draft.runMissedOnce ? "run_once" : "skip",
+    ...(draft.runMissedOnce === draft.savedRunMissedOnce
+      ? {}
+      : { missedRun: draft.runMissedOnce ? ("run_once" as const) : ("skip" as const) }),
   };
 }
 

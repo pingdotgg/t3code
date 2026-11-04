@@ -8,6 +8,7 @@ import {
   AuthFilesystemReadScope,
   AuthStandardClientScopes,
   AuthTerminalReadScope,
+  managedCapabilityDenial,
   type AuthEnvironmentScope,
   type AuthGrantScope,
   type AuthPairingCredentialResult,
@@ -53,6 +54,8 @@ import {
 } from "~/environments/primary";
 import { readEnvironmentScope } from "~/state/session";
 import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { ManagedControl } from "../ManagedPolicy";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
@@ -120,6 +123,7 @@ function endpointRowClassName(isAvailable: boolean) {
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   credential: string | undefined;
+  defaultShareOpen: boolean;
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
@@ -131,6 +135,7 @@ type PairingLinkListRowProps = {
 const PairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
   credential,
+  defaultShareOpen,
   endpointUrl,
   endpoints,
   defaultEndpointKey,
@@ -141,7 +146,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const nowMs = useNowSecond();
   const expiresAtMs = new Date(pairingLink.expiresAt).getTime();
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
-  const [isQrPanelOpen, setIsQrPanelOpen] = useState(false);
+  const [isQrPanelOpen, setIsQrPanelOpen] = useState(defaultShareOpen);
   const [qrEndpointId, setQrEndpointId] = useState<string | null>(null);
   const qrPanelId = useId();
 
@@ -577,6 +582,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   delegatableScopes,
 }: AuthorizedClientsHeaderActionProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pairingDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "remoteClients");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
   const [pairingScopes, setPairingScopes] = useState<ReadonlyArray<AuthGrantScope>>([
@@ -634,8 +640,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
       </Button>
+      {pairingDenial !== undefined ? (
+        <ManagedControl reason={pairingDenial}>
+          <Button size="xs" variant="default" disabled>
+            <PlusIcon className="size-3" />
+            Create link
+          </Button>
+        </ManagedControl>
+      ) : null}
       <Dialog
-        open={dialogOpen}
+        open={dialogOpen && pairingDenial === undefined}
         onOpenChange={(open) => {
           setDialogOpen(open);
           if (!open) {
@@ -646,14 +660,16 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           }
         }}
       >
-        <DialogTrigger
-          render={
-            <Button size="xs" variant="default">
-              <PlusIcon className="size-3" />
-              Create link
-            </Button>
-          }
-        />
+        {pairingDenial === undefined ? (
+          <DialogTrigger
+            render={
+              <Button size="xs" variant="default">
+                <PlusIcon className="size-3" />
+                Create link
+              </Button>
+            }
+          />
+        ) : null}
         <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
@@ -777,6 +793,7 @@ type PairingClientsListProps = {
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
   createdPairingCredentials: ReadonlyMap<string, string>;
+  sharedPairingLinkId: string | null;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -792,6 +809,7 @@ export const PairingClientsList = memo(function PairingClientsList({
   isLoading,
   pairingLinks,
   createdPairingCredentials,
+  sharedPairingLinkId,
   clientSessions,
   revokingPairingLinkId,
   revokingClientSessionId,
@@ -806,6 +824,7 @@ export const PairingClientsList = memo(function PairingClientsList({
           key={pairingLink.id}
           pairingLink={pairingLink}
           credential={createdPairingCredentials.get(pairingLink.id)}
+          defaultShareOpen={pairingLink.id === sharedPairingLinkId}
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
@@ -856,13 +875,14 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
   const canDisableTailscaleServe =
     isTailscaleHttpsEndpoint(endpoint) && endpoint.status === "available";
   const shouldShowEndpointUrl = !needsTailscaleSetup;
+  const remoteDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "remoteClients");
   return (
     <div className={endpointRowClassName(isAvailable)}>
       {isDefault ? (
         <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" aria-hidden />
       ) : null}
-      <div className="flex min-h-6 min-w-0 flex-col gap-2 sm:-my-0.5 sm:flex-row sm:items-center">
-        <div className="flex min-w-0 items-baseline gap-3">
+      <div className="flex min-h-7 min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex min-h-7 min-w-0 flex-1 items-center gap-3">
           <h3 className="shrink-0 text-sm leading-5 font-medium text-foreground">
             {endpoint.label}
           </h3>
@@ -879,26 +899,28 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             </Tooltip>
           ) : null}
           {!isAvailable ? (
-            <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-3xs text-muted-foreground">
+            <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-border/70 px-1.5 text-3xs text-muted-foreground">
               Setup required
             </span>
           ) : null}
         </div>
-        <div className="ml-auto flex min-h-6 shrink-0 items-center justify-end gap-2">
+        <div className="ml-auto flex min-h-7 shrink-0 items-center justify-end gap-2">
           {isDefault ? (
-            <span className="rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 text-3xs text-primary">
+            <span className="inline-flex h-6 items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 text-3xs text-primary">
               Default
             </span>
           ) : null}
           {needsTailscaleSetup ? (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => onSetupTailscaleServe(endpoint)}
-              disabled={isUpdatingTailscaleServe}
-            >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
-            </Button>
+            <ManagedControl reason={remoteDenial}>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => onSetupTailscaleServe(endpoint)}
+                disabled={isUpdatingTailscaleServe || remoteDenial !== undefined}
+              >
+                {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
+              </Button>
+            </ManagedControl>
           ) : null}
           {canDisableTailscaleServe ? (
             <Button

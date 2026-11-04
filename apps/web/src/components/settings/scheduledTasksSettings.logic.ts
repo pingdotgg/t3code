@@ -69,6 +69,7 @@ export interface DraftState {
   readonly savedRunAt: string;
   readonly weekdays: ReadonlySet<number>;
   readonly runMissedOnce: boolean;
+  readonly savedRunMissedOnce?: boolean;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -231,7 +232,9 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-    missedRun: draft.runMissedOnce ? "run_once" : "skip",
+    ...(draft.runMissedOnce === draft.savedRunMissedOnce
+      ? {}
+      : { missedRun: draft.runMissedOnce ? ("run_once" as const) : ("skip" as const) }),
   };
 }
 
@@ -255,6 +258,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",
     weekdays,
     runMissedOnce: schedule.type === "fixed_time" && schedule.missedRun === "run_once",
+    savedRunMissedOnce:
+      schedule.type === "fixed_time" ? schedule.missedRun === "run_once" : undefined,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     workspaceMode: task.workspaceStrategy.type,
