@@ -1,5 +1,5 @@
 diff --git a/ios/MenuViewManager.mm b/ios/MenuViewManager.mm
-index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64b3e5b04f 100644
+index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..73b9e8bbe30e6647b03cc1890806e8d48a1cbd8c 100644
 --- a/ios/MenuViewManager.mm
 +++ b/ios/MenuViewManager.mm
 @@ -1,6 +1,6 @@
@@ -10,7 +10,7 @@ index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64
  
  #ifdef RCT_NEW_ARCH_ENABLED
  // NEW ARCH
-@@ -65,6 +65,10 @@ - (UIView *)view
+@@ -65,6 +65,10 @@ RCT_EXPORT_VIEW_PROPERTY(onCloseMenu, RCTDirectEventBlock);
   * onOpenMenu: callback to be called when the menu is opened
   */
  RCT_EXPORT_VIEW_PROPERTY(onOpenMenu, RCTDirectEventBlock);
@@ -70,7 +70,7 @@ diff --git a/ios/NewArch/MenuView.mm b/ios/NewArch/MenuView.mm
 index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f3935e445 100644
 --- a/ios/NewArch/MenuView.mm
 +++ b/ios/NewArch/MenuView.mm
-@@ -46,6 +46,10 @@ - (instancetype)initWithFrame:(CGRect)frame
+@@ -46,6 +46,10 @@ using namespace facebook::react;
              [self onOpenMenu];
          };
  
@@ -81,7 +81,7 @@ index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f
          _view.onCloseMenu = ^{
              [self onCloseMenu];
          };
-@@ -92,6 +96,14 @@ - (void)onOpenMenu {
+@@ -92,6 +96,14 @@ using namespace facebook::react;
      }
  }
  
@@ -96,7 +96,7 @@ index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f
  /**
   Responsible for iterating through the C++ vector<struct> and convert each struct element to NSDictionary, then return it all in an NSArray
   */
-@@ -105,6 +117,27 @@ - (void)onOpenMenu {
+@@ -105,6 +117,27 @@ using namespace facebook::react;
          NSMutableArray<NSDictionary *> *subactionsArray = [NSMutableArray arrayWithCapacity:actions.size()];
          if (action.subactions.size() > 0) {
              for (const MenuViewActionsSubactionsStruct &subaction : action.subactions) {
@@ -124,7 +124,7 @@ index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f
                  NSDictionary *subactionDict = @{
                      @"id": [NSString stringWithUTF8String:subaction.id.c_str()],
                      @"title": [NSString stringWithUTF8String:subaction.title.c_str()],
-@@ -118,7 +151,9 @@ - (void)onOpenMenu {
+@@ -118,7 +151,9 @@ using namespace facebook::react;
                          @"destructive": @(subaction.attributes.destructive),
                          @"disabled": @(subaction.attributes.disabled),
                          @"hidden": @(subaction.attributes.hidden),
@@ -134,7 +134,7 @@ index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f
                  };
                  [subactionsArray addObject:subactionDict];
              }
-@@ -138,6 +173,7 @@ - (void)onOpenMenu {
+@@ -138,6 +173,7 @@ using namespace facebook::react;
                  @"destructive": @(action.attributes.destructive),
                  @"disabled": @(action.attributes.disabled),
                  @"hidden": @(action.attributes.hidden),
@@ -178,10 +178,10 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14c34aa70c 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..fef63e48a43034299951d9f40259b1b5990cf179 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,15 +60,82 @@ public class MenuViewImplementation: UIButton {
+@@ -60,15 +60,149 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -203,13 +203,67 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14
      }
 -    
 +
++    // EXPERIMENT (#31086): the menu title selects a mode: [A] preview of the content, [B] preview in window,
++    // [C] hide until UIKit restores the button, [D] hide then fade in with dismissal, [E] hide until completion.
++    private var expMode: String {
++        for mode in ["A", "B", "C", "D", "E"] where _title.contains("[\(mode)]") {
++            return mode
++        }
++        return ""
++    }
++
++    private func expContentView() -> UIView? {
++        return self.superview?.subviews.first(where: { $0 !== self })
++    }
++
++    private func expPreview() -> UITargetedPreview? {
++        let mode = expMode
++        guard !shouldOpenOnLongPress, mode == "A" || mode == "B", let content = expContentView(), let window = content.window else {
++            return nil
++        }
++        let bounds = content.bounds
++        let parameters = UIPreviewParameters()
++        parameters.backgroundColor = .clear
++        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: min(bounds.height / 2, 22))
++        if mode == "A" {
++            return UITargetedPreview(view: content, parameters: parameters)
++        }
++        let center = content.convert(CGPoint(x: bounds.midX, y: bounds.midY), to: window)
++        return UITargetedPreview(view: content, parameters: parameters, target: UIPreviewTarget(container: window, center: center))
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return expPreview() ?? super.contextMenuInteraction(interaction, previewForHighlightingMenuWithConfiguration: configuration)
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return expPreview() ?? super.contextMenuInteraction(interaction, previewForDismissingMenuWithConfiguration: configuration)
++    }
++
++    public override var alpha: CGFloat {
++        didSet {
++            if expMode == "C", !isMenuPresented, alpha > 0.99 {
++                restoreTriggerContent()
++            }
++        }
++    }
++
++    public override var isHidden: Bool {
++        didSet {
++            if expMode == "C", !isMenuPresented, !isHidden {
++                restoreTriggerContent()
++            }
++        }
++    }
++
 +    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
 +        // UIKit can request a configuration for a press that never opens a
 +        // menu. Notify React only once presentation actually begins, and
 +        // preserve UIButton's presentation behavior by calling super.
 +        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
 +        sendMenuOpen()
-+        if #available(iOS 26.0, *) {
++        let mode = expMode
++        if mode == "C" || mode == "D" || mode == "E" {
 +            hideTriggerContent()
 +        }
 +    }
@@ -218,7 +272,21 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14
 +        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
          sendMenuClose()
 +        isMenuPresented = false
-+        if let animator = animator {
++        let mode = expMode
++        if mode == "D", let animator = animator {
++            let entries = hiddenTriggerContent
++            hiddenTriggerContent.removeAll()
++            for entry in entries {
++                guard let view = entry.view else { continue }
++                view.alpha = 0
++                view.isHidden = entry.wasHidden
++            }
++            animator.addAnimations {
++                for entry in entries {
++                    entry.view?.alpha = 1
++                }
++            }
++        } else if let animator = animator {
 +            let hideCount = triggerContentHideCount
 +            animator.addCompletion { [weak self] in
 +                guard let self = self, self.triggerContentHideCount == hideCount else { return }
@@ -247,7 +315,6 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14
 +    private var hiddenTriggerContent: [HiddenTriggerView] = []
 +    private var triggerContentHideCount = 0
 +
-+    // UIKit hides only this transparent button during the morph; hide the React content too, via isHidden since Fabric rewrites opacity on layout.
 +    private func hideTriggerContent() {
 +        guard !shouldOpenOnLongPress, let host = self.superview else { return }
 +        triggerContentHideCount += 1
@@ -266,7 +333,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14
      }
  
      func setup () {
-@@ -86,8 +153,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +220,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -369,7 +436,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..53a006cd543c3041c08a2d8c858e6d14
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +285,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +352,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
