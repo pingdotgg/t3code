@@ -146,7 +146,11 @@ function matchesExpected(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
-function stopWithFailure(detail: string, actual?: unknown): void {
+function stopWithFailure(
+  detail: string,
+  actual?: unknown,
+  failedRequestId?: JsonRpcMessage["id"],
+): void {
   if (stopped) return;
   stopped = true;
   const entry = transcript.entries[cursor];
@@ -162,7 +166,9 @@ function stopWithFailure(detail: string, actual?: unknown): void {
   const message = `ACP replay mismatch at ${entry?.label ?? "end of transcript"}: ${detail}${
     actual === undefined ? "" : ` ${JSON.stringify(actual)}`
   }`;
-  for (const id of pendingClientRequestIds.values()) {
+  const ids = [...pendingClientRequestIds.values()];
+  if (failedRequestId !== undefined && failedRequestId !== null) ids.push(failedRequestId);
+  for (const id of ids) {
     send({ jsonrpc: "2.0", id, error: { code: -32603, message } });
   }
   pendingClientRequestIds.clear();
@@ -292,10 +298,11 @@ function handleMessage(message: JsonRpcMessage): void {
   }
   const entry = transcript.entries[cursor];
   if (entry?.type !== "expect_outbound" || !matchesExpected(entry.frame, actual)) {
-    if (actual.kind === "request" && message.id !== undefined && message.id !== null) {
-      pendingClientRequestIds.set(actual.method, message.id);
-    }
-    stopWithFailure("Unexpected outbound ACP frame", actual);
+    stopWithFailure(
+      "Unexpected outbound ACP frame",
+      actual,
+      actual.kind === "request" ? message.id : undefined,
+    );
     return;
   }
   if (actual.kind === "request" && message.id !== undefined && message.id !== null) {
