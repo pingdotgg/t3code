@@ -29,7 +29,7 @@ export function ProjectRowLeading(props: {
       >
         {props.icon}
         {selection?.checked ? (
-          <span className="pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
+          <span className="pointer-events-none absolute -bottom-1 -left-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
             <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
           </span>
         ) : null}
