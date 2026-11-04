@@ -31,8 +31,7 @@ const Renamed = (input: { from: string; to: string }) => {
     // The other methods are defensive to prevent undefined behavior.
     // You'll only end up calling these if you're using a `Build` resource manually;
     // if you're using a `StaticSite` resource, the Alchemy engine migrates the old resource automatically.
-    diff: ({ id }) =>
-      Effect.logWarning(message(id)).pipe(Effect.as({ action: "noop" })),
+    diff: ({ id }) => Effect.logWarning(message(id)).pipe(Effect.as({ action: "noop" })),
     precreate: ({ id }) => Effect.die(message(id)),
     reconcile: ({ id }) => Effect.die(message(id)),
     delete: () => Effect.void,

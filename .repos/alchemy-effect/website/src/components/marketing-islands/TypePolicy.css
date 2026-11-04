@@ -1,0 +1,208 @@
+/* The type-check section: binding, generated IAM policy, type error (TypePolicy.tsx). */
+
+.tp {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .tp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.tp-editor,
+.tp-type {
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  background: var(--alc-bg-code);
+  color: var(--alc-fg-invert);
+  box-shadow: var(--alc-shadow-sm);
+  overflow: hidden;
+}
+.tp-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+}
+.tp-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.tp-bar__file {
+  margin-left: 8px;
+  color: var(--alc-code-comment);
+}
+.tp-check {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-weight: 600;
+  transition: color 200ms ease;
+}
+.tp-check.is-ok {
+  color: var(--alc-success);
+}
+.tp-check.is-checking {
+  color: var(--alc-code-comment);
+}
+.tp-check.is-error {
+  color: var(--alc-danger);
+}
+
+.tp-code {
+  margin: 0;
+  padding: 14px 16px 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+.tp-line {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: calc(100% + 32px);
+  margin: 0 -16px;
+  padding: 0 16px 0 14px;
+  border-left: 2px solid transparent;
+  transition: background 300ms ease;
+}
+.tp-line.is-lit {
+  border-left-color: #7ee787;
+  background: rgba(126, 231, 135, 0.07);
+}
+.tp-line.is-error {
+  border-left-color: var(--alc-danger);
+  background: color-mix(in srgb, var(--alc-danger) 9%, transparent);
+}
+.tp-squiggle {
+  text-decoration: underline wavy var(--alc-danger);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  text-decoration-skip-ink: none;
+}
+/* Always in the layout, so the editor keeps one height. */
+.tp-diag {
+  display: block;
+  margin: 2px 0 4px 3ch;
+  padding: 4px 10px;
+  border-left: 2px solid var(--alc-danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--alc-danger) 12%, transparent);
+  white-space: normal;
+  line-height: 1.5;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+.tp-diag.is-shown {
+  opacity: 1;
+  transform: none;
+}
+.tp-diag__x {
+  color: var(--alc-danger);
+}
+
+/* A value that rolls (Roll.tsx in the talk deck). */
+.tp-slot {
+  display: inline-block;
+  vertical-align: top;
+  height: 1.7em;
+  overflow: hidden;
+  border-radius: 3px;
+  box-shadow: inset 0 -2px 0 #7ee787;
+}
+.tp-slot__strip {
+  display: block;
+  transform: translateY(-1.7em);
+}
+.tp-slot__strip > span {
+  display: block;
+  height: 1.7em;
+  white-space: pre;
+}
+.tp-slot.is-rolling {
+  animation: tp-width 450ms cubic-bezier(0.3, 0, 0.1, 1) both;
+}
+.tp-slot.is-rolling .tp-slot__strip {
+  animation: tp-roll 450ms cubic-bezier(0.3, 0, 0.1, 1) both;
+}
+@keyframes tp-roll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1.7em);
+  }
+}
+@keyframes tp-width {
+  from {
+    width: var(--from);
+  }
+  to {
+    width: var(--to);
+  }
+}
+
+/* The IAM policy the binding generates. */
+.tp-type {
+  padding: 14px 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.tp-type__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+  white-space: nowrap;
+}
+.tp-yaml {
+  margin: 0 -16px;
+  padding: 0 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+.tp-yaml .tp-line {
+  margin: 0 -16px;
+  padding: 0 16px 0 14px;
+}
+.tp-y-c {
+  color: var(--alc-code-comment);
+  font-style: italic;
+}
+.tp-y-k {
+  color: var(--alc-code-type);
+}
+.tp-y-v {
+  color: var(--alc-code-string);
+}
+.tp-muted {
+  color: var(--alc-code-comment);
+}
+.alc-motion-paused .tp * {
+  animation-play-state: paused !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
