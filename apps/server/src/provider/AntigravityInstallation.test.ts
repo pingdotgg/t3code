@@ -18,6 +18,8 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
@@ -309,6 +311,55 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(state.phase).toBe("succeeded");
       expect(validations).toHaveLength(1);
     }),
+  );
+
+  it.effect.each([
+    {
+      name: "a SIGKILL exit",
+      stderr: "",
+      exit: "process.kill(process.pid, 'SIGKILL')",
+      message:
+        "The downloaded Antigravity runtime could not start in this environment: it exited after signal SIGKILL.",
+    },
+    {
+      name: "a non-zero exit code",
+      stderr: "Private startup diagnostics: internal runtime failure",
+      exit: "process.exit(3)",
+      message:
+        "The downloaded Antigravity runtime could not start in this environment: it exited with code 3.",
+    },
+  ])(
+    "reports $name without private stderr and keeps the previous release",
+    (testCase) =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { installation, stagingReleased } = yield* makeHarness({
+          previous: true,
+          useDefaultValidation: true,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              spawner.spawn(
+                command._tag === "StandardCommand" && command.command.endsWith(executableName)
+                  ? ChildProcess.make(process.execPath, [
+                      "-e",
+                      `process.stderr.write(${encodeJsonString(testCase.stderr)}, () => ${testCase.exit});`,
+                    ])
+                  : command,
+              ),
+            ),
+          ),
+        );
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message: testCase.message,
+        });
+        yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+      }),
+    { skip: hostPlatform === "win32" },
   );
 
   it.effect.each([
