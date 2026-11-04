@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -29,7 +30,10 @@ describe("makeKiroSecretStorage", () => {
       const secretsPath = path.join(root, "missing", "kiro", "secrets.json");
       const stored = JSON.parse(yield* fileSystem.readFileString(secretsPath));
       assert.deepStrictEqual(Object.keys(stored).toSorted(), keys.toSorted());
-      assert.strictEqual((yield* fileSystem.stat(secretsPath)).mode & 0o777, 0o600);
+      // Windows reports every writable file as 0666.
+      if ((yield* HostProcess.Platform) !== "win32") {
+        assert.strictEqual((yield* fileSystem.stat(secretsPath)).mode & 0o777, 0o600);
+      }
       assert.deepStrictEqual(yield* sessions[1]!.get(keys[3]!), { value: '{"n":3}' });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
