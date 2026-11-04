@@ -1187,24 +1187,19 @@ const RawGraphqlListNodeSchema = Schema.Struct({
   ),
 });
 
+// GitLab answers `project: null` for a project the reader cannot see, which REST reports as an error.
 const RawGraphqlListSchema = Schema.Struct({
   data: Schema.Struct({
     metadata: RawMetadataSchema,
-    project: Schema.NullOr(
-      Schema.Struct({
-        mergeRequests: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({
-              pageInfo: Schema.Struct({
-                hasNextPage: Schema.Boolean,
-                endCursor: Schema.optional(Schema.NullOr(Schema.String)),
-              }),
-              nodes: Schema.Array(Schema.Unknown),
-            }),
-          ),
-        ),
+    project: Schema.Struct({
+      mergeRequests: Schema.Struct({
+        pageInfo: Schema.Struct({
+          hasNextPage: Schema.Boolean,
+          endCursor: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+        nodes: Schema.Array(Schema.Unknown),
       }),
-    ),
+    }),
   }),
 });
 
@@ -1227,11 +1222,11 @@ export function decodeMergeRequestGraphqlListJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const page = decoded.success.data.project?.mergeRequests;
+  const page = decoded.success.data.project.mergeRequests;
   const enterprise = decoded.success.data.metadata?.enterprise;
   const items: GitLabMergeRequestListItem[] = [];
   const states = new Map<number, GitLabMergeRequestListState>();
-  for (const entry of page?.nodes ?? []) {
+  for (const entry of page.nodes) {
     const exit = decodeGraphqlListNode(entry);
     if (!Exit.isSuccess(exit)) continue;
     const node = exit.value;
@@ -1273,9 +1268,9 @@ export function decodeMergeRequestGraphqlListJson(
   return Result.succeed({
     items,
     states,
-    rawCount: page?.nodes.length ?? 0,
-    hasNextPage: page?.pageInfo.hasNextPage ?? false,
-    endCursor: trimmed(page?.pageInfo.endCursor),
+    rawCount: page.nodes.length,
+    hasNextPage: page.pageInfo.hasNextPage,
+    endCursor: trimmed(page.pageInfo.endCursor),
   });
 }
 

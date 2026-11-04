@@ -921,6 +921,15 @@ describe("decodeMergeRequestGraphqlListJson", () => {
     ]);
     expect(page).toMatchObject({ rawCount: 2, hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" });
   });
+  it("fails on a project the reader cannot see, rather than reading it as empty", () => {
+    expect(
+      Result.isFailure(
+        decodeMergeRequestGraphqlListJson(
+          JSON.stringify({ data: { metadata: { enterprise: true }, project: null } }),
+        ),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("decodeGraphqlListSupportJson", () => {
