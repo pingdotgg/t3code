@@ -376,7 +376,7 @@ export function AppearanceSettingsPanel() {
                   if (value !== null) updateSettings({ pdfAppearance: value });
                 }}
               >
-                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="PDF colors">
+                <SelectTrigger size="sm" aria-label="PDF colors">
                   <SelectValue>{PDF_APPEARANCE_LABELS[settings.pdfAppearance]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
