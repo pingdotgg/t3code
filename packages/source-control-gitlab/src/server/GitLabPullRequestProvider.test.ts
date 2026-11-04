@@ -112,7 +112,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       yield* provider.searchRepositoryAuthors(reference);
       yield* provider.runAction({ ...reference, action });
 
-      expect(readHosts).toEqual(Array(action === "merge" ? 11 : 10).fill(selectedHost));
+      expect(readHosts).toEqual(Array(action === "merge" ? 12 : 11).fill(selectedHost));
       expect({ url: detail.url, mutatedHosts: mergedHosts }).toEqual({
         url: `https://${selectedHost}/acme/web/-/merge_requests/7`,
         mutatedHosts: [selectedHost],
@@ -187,6 +187,8 @@ describe("getChangeRequest base freshness", () => {
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
               getMergeRequestDetail: () => Effect.succeed(detail),
+              getReviewDecisions: () => Effect.succeed(new Map()),
+
               listMergeRequestStats: () => Effect.succeed([]),
             }),
           ),
@@ -286,6 +288,7 @@ describe("getChangeRequest base freshness", () => {
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
             getMergeRequestDetail: () => Effect.succeed(detail),
             getProjectMergeCapabilities: () => Effect.die("linked threads skip merge settings"),
+            getReviewDecisions: () => Effect.succeed(new Map()),
             listMergeRequestStats: () =>
               Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
           }),
@@ -333,6 +336,7 @@ describe("merge request reads", () => {
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
           listMergeRequestStats: () => Effect.succeed([]),
+          getReviewDecisions: () => Effect.succeed(new Map()),
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
@@ -555,6 +559,122 @@ describe("optional activity reads", () => {
         reactions: [],
         commits: [commit],
       });
+    }),
+  );
+});
+
+describe("review decisions", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const item = {
+    number: 7,
+    title: "Merge request 7",
+    url: "https://gitlab.com/acme/web/-/merge_requests/7",
+    author: null,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    labels: [],
+  };
+  const detail = {
+    ...item,
+    body: "",
+    changedFiles: 1,
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    checks: [],
+    viewerCanMerge: true,
+    reviewerIds: [],
+  };
+  const providerWith = (
+    getReviewDecisions: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getReviewDecisions"],
+  ) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          listMergeRequests: () =>
+            Effect.succeed({
+              items: [item, { ...item, number: 8 }],
+              truncated: false,
+              cursorAdvance: 2,
+            }),
+          getMergeRequestDetail: () => Effect.succeed(detail),
+          getReviewDecisions,
+          listMergeRequestStats: () =>
+            Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+        }),
+      ),
+    );
+  const listing = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "gitlab.com",
+    state: "open" as const,
+    involvement: "all" as const,
+    viewer: "julius",
+    limit: 2,
+  };
+
+  it.effect("puts GitLab's approval state on listed and summarized merge requests", () =>
+    Effect.gen(function* () {
+      const provider = yield* providerWith((input) => {
+        expect(input.host).toBe(reference.host);
+        return Effect.succeed(
+          new Map([
+            [7, "approved" as const],
+            [8, null],
+          ]),
+        );
+      });
+      const listed = yield* provider.listChangeRequests(listing);
+      assert.isDefined(provider.getChangeRequestSummary);
+      const summary = yield* provider.getChangeRequestSummary(reference);
+
+      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual(["approved", null]);
+      expect(summary.reviewDecision).toBe("approved");
+      expect(summary.additions).toBe(40);
+      expect(summary.deletions).toBe(2);
+    }),
+  );
+
+  it.effect.each([
+    {
+      failure: "a failed read",
+      error: new GitLabPullRequestCli.GitLabMergeRequestReadError({
+        command: "glab",
+        cwd: "/w",
+        operation: "getReviewDecisions",
+        cause: null,
+      }),
+    },
+    {
+      failure: "a rate limit",
+      error: new GitLabCli.GitLabCliRateLimitError({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      }),
+    },
+  ])("keeps rows and summaries with an unknown decision after $failure", ({ error }) =>
+    Effect.gen(function* () {
+      const provider = yield* providerWith(() => Effect.fail(error));
+      const listed = yield* provider.listChangeRequests(listing);
+      assert.isDefined(provider.getChangeRequestSummary);
+      const summary = yield* provider.getChangeRequestSummary(reference);
+
+      expect(listed.items.map(({ reviewDecision }) => reviewDecision)).toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(summary.reviewDecision).toBeUndefined();
     }),
   );
 });

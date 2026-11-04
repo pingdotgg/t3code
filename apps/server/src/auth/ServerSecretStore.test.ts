@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The child fixture proves writer liveness and crash cleanup across processes.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -39,7 +40,7 @@ const layerPermissionDeniedFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerPermissionDeniedSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -66,7 +67,7 @@ const layerRenameFailureFileSystem = Layer.effect(
         ),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerRenameFailureSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -112,7 +113,7 @@ const layerConcurrentReadMissFileSystem = Layer.effect(
           : fileSystem.readFile(path),
     } satisfies FileSystem.FileSystem;
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const layerConcurrentCreateSecretStore = () =>
   ServerSecretStore.layer.pipe(
@@ -120,7 +121,7 @@ const layerConcurrentCreateSecretStore = () =>
     Layer.provideMerge(layerConcurrentReadMissFileSystem),
   );
 
-it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStore.layer", (it) => {
   it.effect("reuses an existing secret instead of regenerating it", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
