@@ -1,9 +1,12 @@
 import { StrictMode, type ReactNode } from "react";
 import { RegistryContext } from "@effect/atom-react";
+import type { useThreadCheckpointSummaries } from "~/state/entities";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  CheckpointRef,
+  RunId,
   ProjectId,
   ThreadId,
   type ClientSettings,
@@ -28,6 +31,8 @@ type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
 const state = vi.hoisted(() => ({
   thread: null as ReturnType<typeof makeThreadFixture> | null,
   threadRef: null as ScopedThreadRef | null,
+  checkpointSummaries: [] as ReturnType<typeof useThreadCheckpointSummaries>,
+  checkpointPatch: null as string | null,
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
@@ -60,7 +65,7 @@ vi.mock("~/state/vcs", () => ({
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
   useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
-  useThreadCheckpointSummaries: () => [],
+  useThreadCheckpointSummaries: () => state.checkpointSummaries,
   useQuietThreadVisibleTurnItems: () => [],
 }));
 vi.mock("~/state/filesystem", () => ({
@@ -78,7 +83,11 @@ vi.mock("~/hooks/useTheme", () => ({
   subscribeRenderedAppearance: () => () => {},
 }));
 vi.mock("~/state/queries", () => ({
-  useCheckpointDiff: () => ({ data: null, error: null, isPending: false }),
+  useCheckpointDiff: () => ({
+    data: state.checkpointPatch === null ? null : { diff: state.checkpointPatch },
+    error: null,
+    isPending: false,
+  }),
   useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
@@ -139,6 +148,8 @@ function setup(failedBaseRef: string | null) {
     AsyncResult.initial(),
   );
   state.patch = patch;
+  state.checkpointSummaries = [];
+  state.checkpointPatch = null;
   state.threadRef = {
     environmentId: EnvironmentId.make("environment"),
     threadId: ThreadId.make("thread"),
@@ -276,54 +287,81 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
-it("resumes a long diff after the panel unmounts", async () => {
-  using context = setup("origin/orphan");
-  const result = preview();
-  const patch = [
-    "diff --git a/long.ts b/long.ts",
-    "new file mode 100644",
-    "--- /dev/null",
-    "+++ b/long.ts",
-    "@@ -0,0 +1,600 @@",
-    ...Array.from({ length: 600 }, (_, index) => `+const line${index + 1} = ${index + 1};`),
-    "",
-  ].join("\n");
-  state.previews.set(
-    null,
-    Atom.make(
-      AsyncResult.success({
-        ...result,
-        sources: result.sources.map((source) => ({ ...source, diff: patch, diffHash: "long" })),
-      }),
-    ),
-  );
-  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, null);
-  const panel = () => (
-    <StrictMode>
-      <RegistryContext.Provider value={context.registry}>
-        <div style={{ height: 500 }}>
-          <DiffPanel
-            mode="embedded"
-            composerDraftTarget={context.threadRef}
-            workspaceMutationId={null}
-            visible
-          />
-        </div>
-      </RegistryContext.Provider>
-    </StrictMode>
-  );
-  await using screen = await render(panel());
-  await expect
-    .element(screen.getByRole("button", { name: "Collapse long.ts", exact: true }))
-    .toBeVisible();
-  const viewport = () => screen.container.querySelector<HTMLElement>(".diff-render-surface")!;
-  await vi.waitFor(() => expect(viewport()?.scrollHeight).toBeGreaterThan(4000));
-  const scrolled = new Promise<void>((resolve) => {
-    viewport().addEventListener("scroll", () => resolve(), { once: true });
-  });
-  viewport().scrollTop = 3200;
-  await scrolled;
-  await screen.rerender(<div>Files</div>);
-  await screen.rerender(panel());
-  await vi.waitFor(() => expect(viewport()?.scrollTop).toBe(3200));
-});
+it.each(["branch", "turn"] as const)(
+  "resumes a long diff after the panel unmounts (%s)",
+  async (scope) => {
+    using context = setup("origin/orphan");
+    const result = preview();
+    const patch = [
+      "diff --git a/long.ts b/long.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/long.ts",
+      "@@ -0,0 +1,600 @@",
+      ...Array.from({ length: 600 }, (_, index) => `+const line${index + 1} = ${index + 1};`),
+      "",
+    ].join("\n");
+    state.previews.set(
+      null,
+      Atom.make(
+        AsyncResult.success({
+          ...result,
+          sources: result.sources.map((source) => ({ ...source, diff: patch, diffHash: "long" })),
+        }),
+      ),
+    );
+    const turnId = RunId.make("run");
+    if (scope === "turn") {
+      state.checkpointPatch = patch;
+      state.checkpointSummaries = [
+        {
+          runId: turnId,
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("checkpoint"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-10-30T00:00:00Z",
+        },
+      ];
+      useDiffPanelStore.getState().selectTurn(context.threadRef, turnId, "long.ts");
+    } else {
+      useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, null);
+    }
+    const panel = () => (
+      <StrictMode>
+        <RegistryContext.Provider value={context.registry}>
+          <div style={{ height: 500 }}>
+            <DiffPanel
+              mode="embedded"
+              composerDraftTarget={context.threadRef}
+              workspaceMutationId={null}
+              visible
+            />
+          </div>
+        </RegistryContext.Provider>
+      </StrictMode>
+    );
+    await using screen = await render(panel());
+    await expect
+      .element(screen.getByRole("button", { name: "Collapse long.ts", exact: true }))
+      .toBeVisible();
+    const viewport = () => screen.container.querySelector<HTMLElement>(".diff-render-surface")!;
+    await vi.waitFor(() => expect(viewport()?.scrollHeight).toBeGreaterThan(4000));
+    const scrolled = new Promise<void>((resolve) => {
+      viewport().addEventListener("scroll", () => resolve(), { once: true });
+    });
+    viewport().scrollTop = 3200;
+    await scrolled;
+    await screen.rerender(<div>Files</div>);
+    await screen.rerender(panel());
+    await vi.waitFor(() => expect(viewport()?.scrollTop).toBe(3200));
+    if (scope === "turn") {
+      await screen.rerender(<div>Closed panel</div>);
+      useDiffPanelStore.getState().selectGitScope(context.threadRef, "branch");
+      useDiffPanelStore.getState().selectTurn(context.threadRef, turnId, "long.ts");
+      await screen.rerender(panel());
+      await vi.waitFor(() => expect(viewport()?.scrollTop).toBe(0));
+    }
+  },
+);

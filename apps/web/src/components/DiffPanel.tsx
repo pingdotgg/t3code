@@ -32,6 +32,7 @@ import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  type DiffPanelSelection,
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -130,8 +131,10 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   return entry;
 }
 
-function readDiffScrollPosition(scopeKey: string) {
-  return useDiffPanelSessionStore.getState().scrollPositionByScopeKey[scopeKey];
+function readDiffScrollPosition(scopeKey: string, selection: DiffPanelSelection) {
+  const position = useDiffPanelSessionStore.getState().scrollPositionByScopeKey[scopeKey];
+  // Turn reveal counters can repeat after another scope was selected.
+  return selection.kind === "turn" && position?.selection !== selection ? undefined : position;
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -356,7 +359,7 @@ export default function DiffPanel({
     selectedBaseRef,
     selectedFileRevealRequestId,
   ]);
-  const savedScrollPosition = readDiffScrollPosition(scrollScopeKey);
+  const savedScrollPosition = readDiffScrollPosition(scrollScopeKey, diffSelection);
   const [scrollRestore, setScrollRestore] = useState(() => ({
     scopeKey: scrollScopeKey,
     position: savedScrollPosition,
@@ -1471,6 +1474,7 @@ export default function DiffPanel({
                         const top = viewer.getTopForItem(file.fileKey);
                         if (top === undefined || top > scrollTop) continue;
                         useDiffPanelSessionStore.getState().saveScrollPosition(scrollScopeKey, {
+                          selection: diffSelection,
                           fileKey: file.fileKey,
                           filePath: file.filePath,
                           offset: top - scrollTop,
