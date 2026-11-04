@@ -127,13 +127,12 @@ export function PullRequestMarkdownTextarea({
         role={mentionScope === null ? undefined : "combobox"}
         aria-autocomplete={mentionScope === null ? undefined : "list"}
         aria-expanded={mentionScope === null ? undefined : open}
-        aria-controls={open ? listId : undefined}
+        aria-controls={open && candidates.length > 0 ? listId : undefined}
         aria-activedescendant={active ? optionId(active.login) : undefined}
         onChange={(event) => {
           onValueChange(event.target.value);
           syncCaret(event.target);
-          if (detectPullRequestMention(event.target.value, event.target.selectionStart) === null)
-            setDismissedAt(null);
+          setDismissedAt(null);
         }}
         onSelect={(event) => {
           syncCaret(event.currentTarget);

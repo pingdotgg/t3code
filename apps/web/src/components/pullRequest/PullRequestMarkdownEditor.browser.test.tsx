@@ -106,7 +106,7 @@ it("keeps an edited draft through revocation and saves it after access returns w
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
 });
 
-it("completes an @mention on Enter and closes the list on Escape without leaving the editor", async () => {
+it("completes an @mention on Enter and closes the list on Escape until the next keystroke", async () => {
   setup();
   permissions.allowed.add(secondary);
   await using screen = await openEditor({ value: "" });
@@ -123,5 +123,8 @@ it("completes an @mention on Enter and closes the list on Escape without leaving
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
   expect(onCancel).not.toHaveBeenCalled();
+
+  await userEvent.type(textarea, "t");
+  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
   expect(onSave).not.toHaveBeenCalled();
 });
