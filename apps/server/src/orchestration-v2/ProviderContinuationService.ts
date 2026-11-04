@@ -6,7 +6,7 @@ import * as Ref from "effect/Ref";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { pendingDelegatedCompletionWake } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -24,21 +24,12 @@ function currentDelegatedCompletionDelivery(
   >,
 ) {
   const sourceRun = projection.runs.find((candidate) => candidate.id === completion.parentRunId);
-  const delivery = sourceRun?.delegatedCompletion?.delivery;
-  const alreadyDispatched = projection.messages.some(
-    (message) => message.id === completion.messageId,
-  );
-  if (
-    sourceRun?.delegatedCompletion?.disposition !== "open" ||
-    delivery === null ||
-    delivery === undefined ||
-    delivery.generation !== completion.generation ||
-    delivery.messageId !== completion.messageId ||
-    (alreadyDispatched && !isUndeliveredMailboxSteer(projection, completion.messageId))
-  ) {
-    return undefined;
-  }
-  return delivery;
+  const delivery =
+    sourceRun === undefined ? undefined : pendingDelegatedCompletionWake(projection, sourceRun);
+  return delivery?.generation === completion.generation &&
+    delivery.messageId === completion.messageId
+    ? delivery
+    : undefined;
 }
 
 function delegatedCompletionRetryKey(

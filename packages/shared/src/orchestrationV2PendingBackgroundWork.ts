@@ -234,6 +234,8 @@ export function derivePendingBackgroundWork(input: {
   /** Excludes rolled-back runs; optional only when the caller already filtered them, as SQL shell reads do. */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
+  /** Finished delegated task items whose completion wake has not started; they hold like running ones. */
+  readonly awaitingWakeTurnItems?: ReadonlyArray<PendingBackgroundWorkTurnItem>;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -275,7 +277,10 @@ export function derivePendingBackgroundWork(input: {
     }
   }
 
-  for (const item of pendingBackgroundTurnItems(input)) {
+  for (const item of [
+    ...pendingBackgroundTurnItems(input),
+    ...(input.awaitingWakeTurnItems ?? []),
+  ]) {
     const taskId = nativeTaskIdFromTurnItem(item);
     if (byTaskId.has(taskId)) {
       continue;
