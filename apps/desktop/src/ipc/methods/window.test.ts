@@ -464,7 +464,13 @@ describe("probeRemoteEditors PATH scan", () => {
         }),
         Effect.provideService(HostProcess.Platform, platform),
       );
-      assert.deepStrictEqual(reference, ["cursor", "vscode", "zed", "webstorm"]);
+      // The host can add editors from app folders the fixture can't redirect (e.g. /Applications on macOS),
+      // so pin only the fixture's editors; the parity check below still compares everything.
+      const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
+      assert.deepStrictEqual(
+        reference.filter((id) => fixtureEditors.includes(id)),
+        fixtureEditors,
+      );
       assert.deepStrictEqual(probed, reference);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
