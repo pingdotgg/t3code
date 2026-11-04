@@ -85,6 +85,8 @@ const MERGE_REQUEST_DETAIL_TTL = Duration.minutes(1);
 /** A project's merge methods change in its settings, which nobody does between page views. */
 const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
 const READ_CACHE_CAPACITY = 256;
+/** A host's GitLab version only changes on upgrade. */
+const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 
 function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
@@ -109,6 +111,16 @@ export const make = Effect.gen(function* () {
     {
       capacity: READ_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGE_REQUEST_DETAIL_TTL : Duration.zero),
+    },
+  );
+  const graphqlListSupport = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, host] = JSON.parse(key) as [string, string | undefined];
+      return cli.supportsGraphqlList({ cwd, host });
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? GRAPHQL_LIST_SUPPORT_TTL : Duration.zero),
     },
   );
   const projectMergeCapabilities = yield* Cache.makeWith(
@@ -226,36 +238,43 @@ export const make = Effect.gen(function* () {
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
-      cli
-        .listMergeRequests({
-          cwd: input.cwd,
-          host: input.host,
-          repository: input.repository,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          filters: input.filters,
-        })
-        .pipe(
-          Effect.flatMap((batch) =>
-            listStates({
-              cwd: input.cwd,
-              host: input.host,
-              repository: input.repository,
-              numbers: batch.items.map((item) => item.number),
-            }).pipe(
-              Effect.map((states) => ({
-                ...batch,
-                items: batch.items.map((item) => withListState(item, states)),
-                continues: true,
-              })),
-            ),
-          ),
-          Effect.mapError(fail("listChangeRequests")),
+      Cache.get(graphqlListSupport, JSON.stringify([input.cwd, input.host])).pipe(
+        // Without a known version the REST list still answers, only with fewer filters.
+        Effect.orElseSucceed(() => false),
+        Effect.flatMap((graphql) =>
+          cli.listMergeRequests({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            filters: input.filters,
+            graphql,
+          }),
         ),
+        Effect.flatMap(({ listStates: carried, ...batch }) =>
+          (carried === undefined
+            ? listStates({
+                cwd: input.cwd,
+                host: input.host,
+                repository: input.repository,
+                numbers: batch.items.map((item) => item.number),
+              })
+            : Effect.succeed(carried)
+          ).pipe(
+            Effect.map((states) => ({
+              ...batch,
+              items: batch.items.map((item) => withListState(item, states)),
+              continues: true,
+            })),
+          ),
+        ),
+        Effect.mapError(fail("listChangeRequests")),
+      ),
 
     getFileStats: (input) =>
       cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),

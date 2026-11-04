@@ -595,16 +595,19 @@ describe("review decisions", () => {
   };
   const providerWith = (
     getListStates: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["getListStates"],
+    overrides: Partial<GitLabPullRequestCli.GitLabPullRequestCli["Service"]> = {},
   ) =>
     make.pipe(
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          supportsGraphqlList: () => Effect.succeed(false),
           listMergeRequests: () =>
             Effect.succeed({
               items: [item, { ...item, number: 8 }],
               truncated: false,
               cursorAdvance: 2,
             }),
+          ...overrides,
           getMergeRequestDetail: () => Effect.succeed(detail),
           getListStates,
           listMergeRequestStats: () =>
@@ -648,6 +651,53 @@ describe("review decisions", () => {
         expect(summary.checksState).toBe("failing");
         expect(summary.additions).toBe(40);
         expect(summary.deletions).toBe(2);
+      }),
+  );
+
+  it.effect(
+    "lists through GraphQL where the host takes it, using the states that read carried",
+    () =>
+      Effect.gen(function* () {
+        const graphqlFlags: Array<boolean | undefined> = [];
+        const listedWith = (
+          supportsGraphqlList: Effect.Effect<
+            boolean,
+            GitLabPullRequestCli.GitLabPullRequestCliError
+          >,
+        ) =>
+          providerWith(() => Effect.die("a GraphQL page carries its own states"), {
+            supportsGraphqlList: () => supportsGraphqlList,
+            listMergeRequests: (input) => {
+              graphqlFlags.push(input.graphql);
+              return Effect.succeed({
+                items: [item],
+                truncated: true,
+                cursorAdvance: 1,
+                resumeAfter: "eyJpZCI6IjcifQ",
+                listStates: new Map([
+                  [7, { reviewDecision: "changes-requested" as const, checksState: null }],
+                ]),
+              });
+            },
+          }).pipe(Effect.flatMap((provider) => provider.listChangeRequests(listing)));
+
+        const listed = yield* listedWith(Effect.succeed(true));
+        expect(listed).toMatchObject({ resumeAfter: "eyJpZCI6IjcifQ", truncated: true });
+        expect(listed).not.toHaveProperty("listStates");
+        expect(listed.items[0]?.reviewDecision).toBe("changes-requested");
+
+        // An unreadable version leaves the list on REST rather than failing it.
+        yield* listedWith(
+          Effect.fail(
+            new GitLabPullRequestCli.GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: "/w",
+              operation: "supportsGraphqlList",
+              cause: null,
+            }),
+          ),
+        );
+        expect(graphqlFlags).toEqual([true, false]);
       }),
   );
 

@@ -5,6 +5,8 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeGraphqlListSupportJson,
+  decodeMergeRequestGraphqlListJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
@@ -676,6 +678,9 @@ describe("decodeListStatesJson", () => {
   const approvedBy = (...usernames: ReadonlyArray<string>) => ({
     nodes: usernames.map((username) => ({ username })),
   });
+  const reviewers = (...reviewStates: ReadonlyArray<string>) => ({
+    nodes: reviewStates.map((reviewState) => ({ mergeRequestInteraction: { reviewState } })),
+  });
 
   it.each([
     {
@@ -713,6 +718,36 @@ describe("decodeListStatesJson", () => {
       enterprise: false,
       approval: { approved: false, approvedBy: approvedBy() },
       decision: null,
+    },
+    {
+      reading: "a reviewer requesting changes after another approved",
+      enterprise: true,
+      approval: {
+        approved: true,
+        approvedBy: approvedBy("julius"),
+        reviewers: reviewers("APPROVED", "REQUESTED_CHANGES"),
+      },
+      decision: "changes-requested",
+    },
+    {
+      reading: "a Community Edition reviewer requesting changes",
+      enterprise: false,
+      approval: {
+        approved: false,
+        approvedBy: approvedBy(),
+        reviewers: reviewers("REQUESTED_CHANGES"),
+      },
+      decision: "changes-requested",
+    },
+    {
+      reading: "reviewers who have not asked for changes",
+      enterprise: false,
+      approval: {
+        approved: true,
+        approvedBy: approvedBy("julius"),
+        reviewers: reviewers("UNREVIEWED", "REVIEWED"),
+      },
+      decision: "approved",
     },
   ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
     expect([...statesOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([
@@ -822,5 +857,83 @@ describe("decodeMergeRequestStatsJson", () => {
       truncated: false,
     });
     expect(read(2).truncated).toBe(true);
+  });
+});
+
+describe("decodeMergeRequestGraphqlListJson", () => {
+  it("reads a row and its review state in one page, counting rows it cannot read", () => {
+    const page = expectSuccess(
+      decodeMergeRequestGraphqlListJson(
+        JSON.stringify({
+          data: {
+            metadata: { enterprise: false },
+            project: {
+              mergeRequests: {
+                pageInfo: { hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" },
+                nodes: [
+                  {
+                    iid: "7",
+                    title: "Add the merge requests page",
+                    webUrl: "https://gitlab.com/acme/web/-/merge_requests/7",
+                    state: "opened",
+                    draft: true,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    updatedAt: "2026-07-02T00:00:00Z",
+                    sourceBranch: "feat/page",
+                    targetBranch: "main",
+                    conflicts: true,
+                    mergeStatusEnum: "CHECKING",
+                    author: { username: "bilal", name: "Bilal", avatarUrl: null },
+                    labels: { nodes: [{ title: "bug" }] },
+                    approved: false,
+                    approvedBy: { nodes: [] },
+                    reviewers: {
+                      nodes: [
+                        {
+                          username: "julius",
+                          mergeRequestInteraction: { reviewState: "REQUESTED_CHANGES" },
+                        },
+                      ],
+                    },
+                    headPipeline: { status: "FAILED" },
+                  },
+                  { iid: "8" },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        number: 7,
+        state: "open",
+        isDraft: true,
+        mergeability: "conflicting",
+        reviewRequestLogins: ["julius"],
+        labels: [expect.objectContaining({ name: "bug" })],
+      }),
+    ]);
+    expect([...page.states]).toEqual([
+      [7, { reviewDecision: "changes-requested", checksState: "failing" }],
+    ]);
+    expect(page).toMatchObject({ rawCount: 2, hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" });
+  });
+});
+
+describe("decodeGraphqlListSupportJson", () => {
+  it.each([
+    { version: "17.8.4", supported: false },
+    { version: "17.9.0", supported: true },
+    { version: "19.6.0-pre", supported: true },
+    { version: null, supported: false },
+  ])("reads GitLab $version as supported: $supported", ({ version, supported }) => {
+    expect(
+      expectSuccess(
+        decodeGraphqlListSupportJson(JSON.stringify({ data: { metadata: { version } } })),
+      ),
+    ).toBe(supported);
   });
 });
