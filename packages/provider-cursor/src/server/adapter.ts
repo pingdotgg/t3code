@@ -377,6 +377,17 @@ function cursorToolOutput(toolCall: ToolCall): unknown {
   if (result === undefined) {
     return undefined;
   }
+  if (toolCall.type === "mcp" && toolCall.result?.status === "success") {
+    return {
+      ...toolCall.result.value,
+      content: toolCall.result.value.content.flatMap((part) => [
+        ...(part.text === undefined ? [] : [{ type: "text", text: part.text.text }]),
+        ...(part.image === undefined
+          ? []
+          : [{ type: "image", mimeType: part.image.mimeType, data: part.image.data }]),
+      ]),
+    };
+  }
   return result.status === "success" ? result.value : result.error;
 }
 

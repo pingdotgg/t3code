@@ -1,22 +1,18 @@
-import type { RuntimeContext } from "alchemy";
 import {
   connectionSourceDigest,
   resolveConnectionSource,
   staticConnectionSource,
   type ConnectionSource,
   type StaticConnectionSource,
-} from "alchemy/SQL/ConnectionSource";
-import { openPostgresPool } from "alchemy/SQL/PostgresDriver";
+} from "@alchemy.run/sql/ConnectionSource";
+import { openPostgresPool } from "@alchemy.run/sql/PostgresDriver";
+import type { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import type { PoolConfig } from "pg";
-import {
-  Database,
-  type DatabaseService,
-  type DirectDatabase,
-} from "./Database.ts";
+import { Database, type DatabaseService, type DirectDatabase } from "./Database.ts";
 import { BetterAuthMigrationError } from "./Errors.ts";
 
 export type { ConnectionSource };
@@ -53,10 +49,7 @@ export const makeMigrateSupport = (
   ) => Effect.Effect<DirectDatabase, never, Scope.Scope>,
   failure: string,
 ): NonNullable<DatabaseService["migrate"]> => ({
-  identity: { urlDigest: connectionSourceDigest(migrateSource) } as Record<
-    string,
-    unknown
-  >,
+  identity: { urlDigest: connectionSourceDigest(migrateSource) } as Record<string, unknown>,
   connect: Effect.gen(function* () {
     // Init half — capture the connection-string Output.
     const urlAccessor = yield* resolveConnectionSource(migrateSource);
@@ -86,11 +79,7 @@ export const makePostgresService = (
     const urlEffect = yield* resolveConnectionSource(source);
     const migrateSource = staticConnectionSource(source, options?.migrate);
     const open = (url: Effect.Effect<Redacted.Redacted<string>>) =>
-      openPostgresPool(url, options?.pool) as Effect.Effect<
-        DirectDatabase,
-        never,
-        Scope.Scope
-      >;
+      openPostgresPool(url, options?.pool) as Effect.Effect<DirectDatabase, never, Scope.Scope>;
 
     return {
       provider: "postgres",
@@ -153,11 +142,5 @@ export const makePostgresService = (
  * @peer pg
  * @product Postgres
  */
-export const Postgres = (
-  url: ConnectionSource,
-  options?: PostgresOptions,
-): Layer.Layer<Database> =>
-  Layer.effect(
-    Database,
-    makePostgresService(url, options),
-  ) as Layer.Layer<Database>;
+export const Postgres = (url: ConnectionSource, options?: PostgresOptions): Layer.Layer<Database> =>
+  Layer.effect(Database, makePostgresService(url, options)) as Layer.Layer<Database>;

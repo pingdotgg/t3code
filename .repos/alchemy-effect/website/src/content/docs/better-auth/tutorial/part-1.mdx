@@ -21,7 +21,7 @@ Use matching Alchemy and Better Auth integration releases. D1 uses Kysely intern
 
 ```typescript
 // src/database.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const AuthDb = Cloudflare.D1.Database("AuthDb");
 ```
@@ -70,7 +70,7 @@ Handlers and middleware can now request the same typed service with `yield* Auth
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -113,7 +113,7 @@ The host supplies the database; the Auth service stays independent of Cloudflare
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthApi from "./src/worker.ts";
 
