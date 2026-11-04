@@ -178,6 +178,7 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
     const options = {
       ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
       speechCustomWords: [
+        { term: "AI", aliases: ["ay eye"] },
         { term: "Bob", aliases: ["Robert"] },
         { term: "Roberts", aliases: [] },
         { term: "O'Reilly", aliases: ['"the publisher"'] },
@@ -187,10 +188,10 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
       ],
     };
     const spoken =
-      'Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
+      'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
       "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross.";
     const expected =
-      "Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
+      "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
       "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross.";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
