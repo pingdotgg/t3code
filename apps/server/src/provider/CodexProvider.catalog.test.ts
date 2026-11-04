@@ -95,6 +95,10 @@ const bundledModel = {
   hidden: false, isDefault: true, defaultReasoningEffort: "high",
   supportedReasoningEfforts: [{ reasoningEffort: "high", description: "" }], serviceTiers: [],
 };
+let releaseConfigRead;
+const configReadReleased = new Promise((resolve) => {
+  releaseConfigRead = resolve;
+});
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const { id, method } = JSON.parse(line);
   if (id === undefined) return;
@@ -103,13 +107,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (method === "account/read") {
     write({ id, result: { account: null, requiresOpenaiAuth: false } });
   } else if (method === "config/read") {
-    setTimeout(() => {
+    configReadReleased.then(() => {
       log("config/read");
       write({ id, result: { config: { model_provider: "openrouter" }, origins: {} } });
-    }, 1500);
+    });
   } else if (method === "model/list") {
     log("model/list");
     write({ id, result: { data: [bundledModel], nextCursor: null } });
+    releaseConfigRead();
   } else if (method === "skills/list") {
     write({ id, result: { data: [] } });
   } else if (method === "account/rateLimits/read") {
