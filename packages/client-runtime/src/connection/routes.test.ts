@@ -202,7 +202,10 @@ describe("learned routes", () => {
       { target: TAILNET.target, profile: TAILNET.profile, enabled: true },
       [TAILNET, RELAY],
     );
-    const reported = [{ httpBaseUrl: "http://192.168.1.10:3773/", kind: "lan" }];
+    const reported = [
+      { httpBaseUrl: "http://192.168.1.10:3773/", kind: "lan" },
+      { httpBaseUrl: "http://desk.local:3773/", kind: "lan" },
+    ];
     expect(
       mergeLearnedRoutes({ entry, activeRoute: TAILNET, reported, allowInsecure: true }),
     ).toBeNull();
@@ -220,6 +223,33 @@ describe("learned routes", () => {
     ]);
     expect(profileOf(routes![2]!)).toMatchObject({ learned: true, lanDpop: true });
     expect(sendsTokenInClear(routes!, routes![2]!)).toBe(false);
+  });
+
+  it("keeps a name learned through T3 Connect when a LAN credential is available", () => {
+    const entry = entryWithRoutes(
+      { target: TAILNET.target, profile: TAILNET.profile, enabled: true },
+      [TAILNET, RELAY],
+    );
+    const reported = [{ httpBaseUrl: "http://desk.local:3773/", kind: "lan" }];
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: RELAY,
+      reported,
+      allowInsecure: true,
+    })!;
+    expect(profileOf(routes.at(-1)!)).toMatchObject({
+      httpBaseUrl: "http://desk.local:3773/",
+      authorization: "t3-connect",
+    });
+    expect(
+      mergeLearnedRoutes({
+        entry: entryWithRoutes(entry, routes),
+        activeRoute: TAILNET,
+        reported,
+        allowInsecure: true,
+        lanCredential: true,
+      }),
+    ).toBeNull();
   });
 
   it.each([

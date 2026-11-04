@@ -26,6 +26,7 @@ import {
   isWildcardHost,
   VIRTUAL_INTERFACE,
 } from "../startupAccess.ts";
+import { makeCachedMdnsHost } from "./mdnsHost.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -40,7 +41,7 @@ export class DirectEndpoints extends Context.Service<
   }
 >()("t3/environment/DirectEndpoints") {}
 
-// Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
+// Credentials travel over HTTP; public IPs leak them and a configured host name can resolve differently per client.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
@@ -62,6 +63,7 @@ export function resolveBoundEndpoints(input: {
   readonly interfaces: NetworkInterfacesMap;
   /** A cloud VM's private network is its provider's, which no client shares. */
   readonly onCloudVm?: boolean;
+  readonly mdnsHost?: string | null;
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
@@ -81,12 +83,15 @@ export function resolveBoundEndpoints(input: {
         )
         .map((entry) => entry.address)
     : [input.host!].filter(isAdvertisableAddress);
-  return [...new Set(addresses)]
+  const endpoints = [...new Set(addresses)]
     .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
-    .map((address) => ({
+    .map((address): ServerDirectEndpoint => ({
       kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
       httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
     }));
+  return input.mdnsHost && endpoints.some((endpoint) => endpoint.kind === "lan")
+    ? [...endpoints, { kind: "lan", httpBaseUrl: `http://${input.mdnsHost}:${input.port}/` }]
+    : endpoints;
 }
 
 /**
@@ -129,6 +134,7 @@ export const make = Effect.gen(function* () {
     ? yield* Effect.cached(probeCloudMetadata)
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
+  const mdnsHost = yield* makeCachedMdnsHost;
 
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
@@ -139,6 +145,7 @@ export const make = Effect.gen(function* () {
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
         onCloudVm: yield* onCloudVm,
+        mdnsHost: isLoopbackHost(config.host) ? null : yield* mdnsHost,
       }),
     ];
     const servedUrl = yield* Ref.get(servedEndpoint);

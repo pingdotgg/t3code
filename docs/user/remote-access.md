@@ -141,6 +141,12 @@ HTTPS, SSH, and T3 Connect routes, so it is used only when they do not answer.
 A LAN address learned through T3 Connect is placed the same way. Drag it higher
 to prefer it at home.
 
+T3 Code also learns the machine's local network name, such as `my-mac.local`,
+once it has connected over a plain HTTP address or T3 Connect. The name stays
+the same when addresses change, so the machine is reachable again after you
+replace your router or switch Wi-Fi networks, including from a browser opened
+over HTTP. It needs a network that allows Bonjour.
+
 On desktop and mobile, a machine paired over an HTTP IPv4 LAN address can be
 found again on the same network if its address changes. Allow local network
 access when prompted. A device paired over HTTPS or Tailscale does the same once

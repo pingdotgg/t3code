@@ -8,9 +8,11 @@ import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -182,12 +184,42 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("never reports a host name, which can resolve to another machine per client", () => {
+  it("never reports a configured host name, which can resolve to another machine per client", () => {
     for (const host of ["server.local", "devbox", "devbox.home.arpa"]) {
       expect(
-        resolveBoundEndpoints({ platform: "linux", host, port: 3773, interfaces: INTERFACES }),
+        resolveBoundEndpoints({
+          platform: "linux",
+          host,
+          port: 3773,
+          interfaces: INTERFACES,
+          mdnsHost: "bb-1.local",
+        }),
       ).toEqual([]);
     }
+  });
+
+  it("appends the Bonjour name after the addresses only when a LAN address exists", () => {
+    const input = {
+      platform: "linux" as const,
+      host: "0.0.0.0",
+      port: 3773,
+      interfaces: INTERFACES,
+      mdnsHost: "bb-1.local",
+    };
+    const lan = { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" };
+    const tailnet = { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" };
+
+    expect(resolveBoundEndpoints(input)).toEqual([
+      lan,
+      tailnet,
+      { kind: "lan", httpBaseUrl: "http://bb-1.local:3773/" },
+    ]);
+    expect(resolveBoundEndpoints({ ...input, mdnsHost: null })).toEqual([lan, tailnet]);
+    expect(resolveBoundEndpoints({ ...input, host: "127.0.0.1" })).toEqual([]);
+    expect(resolveBoundEndpoints({ ...input, onCloudVm: true })).toEqual([tailnet]);
+    expect(resolveBoundEndpoints({ ...input, interfaces: { utun4: INTERFACES.utun4 } })).toEqual([
+      tailnet,
+    ]);
   });
 
   it("never reports a public address, which would carry the credential over plain HTTP", () => {
@@ -229,26 +261,31 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-const layerTailscaleUp = Layer.succeed(
-  ChildProcessSpawner.ChildProcessSpawner,
-  ChildProcessSpawner.make(() =>
-    Effect.succeed(
-      ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-        isRunning: Effect.succeed(false),
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        stdin: Sink.drain,
-        stdout: Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)),
-        stderr: Stream.empty,
-        all: Stream.empty,
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
-      }),
+const layerSpawnerStdout = (stdout: string, onSpawn: Effect.Effect<void> = Effect.void) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() =>
+      onSpawn.pipe(
+        Effect.as(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(new TextEncoder().encode(stdout)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      ),
     ),
-  ),
-);
+  );
+
+const layerTailscaleUp = layerSpawnerStdout(TAILSCALE_STATUS_JSON);
 
 const layerServeProbe = (status: number) =>
   Layer.succeed(
@@ -331,12 +368,15 @@ describe("DirectEndpoints Tailscale Serve", () => {
         );
         const resolving = yield* Effect.forkScoped(service.resolve());
         yield* Deferred.await(probeStarted);
-        const bound = { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" };
-        expect(yield* service.resolveAvailable()).toEqual([bound]);
+        const bound = [
+          { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+          { kind: "lan", httpBaseUrl: "http://bb-1.local:3773/" },
+        ];
+        expect(yield* service.resolveAvailable()).toEqual(bound);
         yield* Deferred.succeed(finishProbe, undefined);
         const validated = yield* Fiber.join(resolving);
         expect(validated).toEqual([
-          bound,
+          ...bound,
           { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
         ]);
         expect(yield* service.resolveAvailable()).toEqual(validated);
@@ -345,14 +385,100 @@ describe("DirectEndpoints Tailscale Serve", () => {
         yield* Deferred.await(revalidationStarted);
         expect(yield* service.resolveAvailable()).toEqual(validated);
         yield* Deferred.succeed(finishRevalidation, undefined);
-        expect(yield* Fiber.join(revalidating)).toEqual([bound]);
-        expect(yield* service.resolveAvailable()).toEqual([bound]);
-      }).pipe(Effect.scoped),
+        expect(yield* Fiber.join(revalidating)).toEqual(bound);
+        expect(yield* service.resolveAvailable()).toEqual(bound);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Hostname, "bb-1"),
+      ),
   );
 
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(502)).toEqual([]);
     }),
+  );
+});
+
+describe("DirectEndpoints Bonjour name", () => {
+  effectIt.effect("asks scutil once across descriptor requests on macOS", () =>
+    Effect.gen(function* () {
+      const spawns = yield* Ref.make(0);
+      const service = yield* DirectEndpoints.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerServeConfig("192.168.1.10"),
+            layerServeProbe(200),
+            layerSpawnerStdout(
+              "Studio\n",
+              Ref.update(spawns, (count) => count + 1),
+            ),
+          ),
+        ),
+      );
+      const expected = [
+        { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "lan", httpBaseUrl: "http://Studio.local:3773/" },
+      ];
+      expect(yield* service.resolveAvailable()).toEqual(expected);
+      expect(yield* service.resolveAvailable()).toEqual(expected);
+      expect(yield* Ref.get(spawns)).toBe(1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Hostname, "dhcp-12.corp.example"),
+    ),
+  );
+
+  effectIt.effect("reports the correct name again after a failed scutil lookup expires", () =>
+    Effect.gen(function* () {
+      const spawns = yield* Ref.make(0);
+      const service = yield* DirectEndpoints.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerServeConfig("192.168.1.10"),
+            layerServeProbe(200),
+            layerSpawnerStdout(
+              "Studio\n",
+              Ref.getAndUpdate(spawns, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 0 ? Effect.die("scutil failed") : Effect.void,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      const addresses = yield* service.resolveAvailable();
+      expect(addresses.at(-1)?.httpBaseUrl).toBe("http://dhcp-12.local:3773/");
+      yield* TestClock.adjust("5 minutes");
+      const recovered = yield* service.resolveAvailable();
+      expect(recovered.at(-1)?.httpBaseUrl).toBe("http://Studio.local:3773/");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Hostname, "dhcp-12.corp.example"),
+    ),
+  );
+
+  effectIt.effect("does not run scutil on a loopback-only server", () =>
+    Effect.gen(function* () {
+      const spawns = yield* Ref.make(0);
+      const service = yield* DirectEndpoints.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerServeConfig("127.0.0.1"),
+            layerServeProbe(200),
+            layerSpawnerStdout(
+              "Studio\n",
+              Ref.update(spawns, (count) => count + 1),
+            ),
+          ),
+        ),
+      );
+      expect(yield* service.resolveAvailable()).toEqual([]);
+      expect(yield* Ref.get(spawns)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "darwin")),
   );
 });

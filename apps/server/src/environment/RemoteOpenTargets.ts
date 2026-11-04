@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeCachedMdnsHost } from "./mdnsHost.ts";
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
 
 const SSH_PORT = 22;
@@ -23,6 +24,7 @@ export class RemoteOpenTargets extends Context.Service<
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
+  const mdnsHost = yield* makeCachedMdnsHost;
 
   const discoverTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
@@ -67,15 +69,9 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    // hostname() may be an FQDN; mDNS always uses <first-label>.local.
-    const hostname = yield* HostProcess.Hostname;
-    const shortHostname = hostname.split(".")[0]?.trim();
-    if (shortHostname !== undefined && shortHostname.length > 0) {
-      targets.push({
-        kind: "mdns",
-        host: `${shortHostname}.local`,
-        ...(username === null ? {} : { username }),
-      });
+    const host = yield* mdnsHost;
+    if (host !== null) {
+      targets.push({ kind: "mdns", host, ...(username === null ? {} : { username }) });
     }
 
     return targets;
