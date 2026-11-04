@@ -134,6 +134,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
           : new WorktreeRecreateError({ worktreePath, branch, cause }),
       ),
     );
+    return { project, worktreePath };
   });
 });
 
@@ -165,6 +166,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
     }
     const recover = (error: TerminalCwdNotFoundError) =>
       restoreMissingWorktree(thread).pipe(
+        Effect.asVoid,
         Effect.catch((cause) =>
           Effect.logWarning("failed to recreate missing worktree", {
             threadId: thread.id,
