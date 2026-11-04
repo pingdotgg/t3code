@@ -166,17 +166,25 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect.each([
-    { action: "download", offer: "update-available" },
-    { action: "install", offer: "update-downloaded" },
+    { action: "download", offer: "update-available", found: null, accepted: true },
+    { action: "install", offer: "update-downloaded", found: null, accepted: true },
+    { action: "download", offer: "update-available", found: "1.2.5", accepted: true },
+    { action: "install", offer: "update-downloaded", found: "1.2.5", accepted: false },
   ] as const)(
-    "waits out a running refresh check instead of refusing $action",
-    ({ action, offer }) =>
+    "a $action waiting out a refresh check acts on what it found ($found)",
+    ({ action, offer, found, accepted }) =>
       Effect.gen(function* () {
         const checkStarted = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const harness = makeHarness({
           checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseCheck)),
+            // electron-updater emits the check's outcome before its promise resolves.
+            Effect.andThen(
+              Effect.sync(() => {
+                if (found !== null) harness.emit("update-available", { version: found });
+              }),
+            ),
           ),
         });
 
@@ -194,7 +202,10 @@ describe("DesktopUpdates", () => {
 
             yield* Deferred.succeed(releaseCheck, undefined);
             assert.isTrue((yield* Fiber.join(checkFiber)).checked);
-            assert.isTrue((yield* Fiber.join(actionFiber)).accepted);
+            assert.equal((yield* Fiber.join(actionFiber)).accepted, accepted);
+            const state = yield* updates.getState;
+            assert.equal(state.availableVersion, found ?? "1.2.4");
+            if (action === "download") assert.equal(state.status, "downloading");
           }),
         ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
       }),
