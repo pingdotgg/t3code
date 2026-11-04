@@ -25,7 +25,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -41,6 +41,12 @@ export interface ThreadDetailsUsageInput {
 }
 
 type UsageTone = "error" | "warning" | null;
+
+function limitTone(left: number): UsageTone {
+  if (left <= 10) return "error";
+  if (left <= 20) return "warning";
+  return null;
+}
 
 /**
  * The selected provider's limit windows, or its hub accounts' pooled windows when it reads none.
@@ -168,7 +174,7 @@ function LimitRow({
     <UsageRow
       label={window.label}
       fill={left}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      tone={limitTone(left)}
       value={`${left}%`}
       ariaValue={`${left}% left`}
       tooltip={
@@ -198,17 +204,13 @@ function PoolRow({
   readonly hubLabels: readonly string[];
   readonly now: number;
 }) {
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = window.remainingPercent;
   const accounts = window.members.length;
-  const next = window.resets.find((reset) => reset.at > now);
-  const nextResetsAt = next?.member.window.resetsAt;
-  const resetsIn = next ? formatResetsIn(next.member.window, now) : null;
   return (
     <UsageRow
       label={window.label}
       fill={left}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      tone={limitTone(left)}
       value={`${left}%`}
       ariaValue={`${left}% left`}
       tooltip={
@@ -217,12 +219,7 @@ function PoolRow({
             {window.label}: {left}% left
             {accounts > 1 ? ` across ${accounts} accounts` : ""}
           </span>
-          {next && nextResetsAt && resetsIn ? (
-            <span className="text-muted-foreground">
-              {poolResetLabel(resetsIn, accounts > 1 ? next.restoresPercent : null)} ·{" "}
-              {formatUpcomingTimestamp(nextResetsAt, timestampFormat, now)}
-            </span>
-          ) : null}
+          <PoolResetLine window={window} now={now} />
           {window.pace ? (
             <span className="text-muted-foreground">{PACE_LABEL[window.pace]}</span>
           ) : null}
@@ -230,6 +227,28 @@ function PoolRow({
         </>
       }
     />
+  );
+}
+
+function PoolResetLine({
+  window,
+  now,
+}: {
+  readonly window: LimitPoolWindow;
+  readonly now: number;
+}) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const next = nextPoolReset(window, now);
+  if (!next) return null;
+  const resetsAt = next.member.window.resetsAt;
+  const resetsIn = formatResetsIn(next.member.window, now);
+  if (!resetsAt || !resetsIn) return null;
+  const restores = window.members.length > 1 ? next.restoresPercent : null;
+  return (
+    <span className="text-muted-foreground">
+      {poolResetLabel(resetsIn, restores)} ·{" "}
+      {formatUpcomingTimestamp(resetsAt, timestampFormat, now)}
+    </span>
   );
 }
 

@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { nextPoolReset, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const now = Date.parse("2026-10-30T12:00:00.000Z");
 const checkedAt = "2026-10-30T11:59:00.000Z";
@@ -30,6 +30,11 @@ function limitsAt(usedPercent: number, at = checkedAt): ServerProviderUsageLimit
       },
     ],
   };
+}
+
+function limitsResettingAt(usedPercent: number, resetsAt: string): ServerProviderUsageLimits {
+  const [window] = limitsAt(usedPercent).windows;
+  return { checkedAt, windows: [{ ...window!, resetsAt }] };
 }
 
 const unsupported: ServerProviderUsageLimits = {
@@ -173,6 +178,29 @@ describe("resolveThreadDetailsLimits", () => {
     },
   ])("pools $name when the instance reads no limits", ({ sources, hubs, rows }) => {
     expect(shown(unsupported, sources)).toEqual({ kind: "hub", hubs, rows });
+  });
+
+  it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {
+    const soon = "2026-10-30T12:10:00.000Z";
+    const later = "2026-10-30T14:00:00.000Z";
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [
+        hub("Hub", [
+          { id: "a.json", email: "a@example.com", limits: limitsResettingAt(0, soon) },
+          { id: "b.json", email: "b@example.com", limits: limitsResettingAt(80, later) },
+        ]),
+      ],
+      now,
+    );
+    if (resolved?.kind !== "hub") throw new Error("expected a hub pool");
+    const [window] = resolved.windows;
+    expect(window!.resets.map((reset) => reset.restoresPercent)).toEqual([0, 40]);
+    expect(nextPoolReset(window!, now)).toMatchObject({
+      at: Date.parse(later),
+      restoresPercent: 40,
+    });
   });
 
   it("keeps the instance's notice when no hub has a readable account for its driver", () => {
