@@ -178,6 +178,21 @@ describe("thread links", () => {
 });
 
 describe("hosted thread links", () => {
+  it("does not consume a code span's opening backtick as an ordinary link label", () => {
+    const markdown = "[before `](https://example.com) https://app.t3.codes/threads/one/same`";
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+    expect(threadLinkRefs(markdown, local)).toEqual([]);
+  });
+
+  it.each(['"title"', "'title'", "(title)"])(
+    "leaves a link with Markdown title %s intact",
+    (title) => {
+      const markdown = `[label](https://app.t3.codes/threads/one/same ${title})`;
+      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
+      expect(threadLinkRefs(markdown, local)).toEqual([]);
+    },
+  );
+
   it("escapes every id character a sentence or path could claim, and reads it back", () => {
     const thread = ref("env.1", "thread:delegated/mcp%3A1.");
     const link = hostedThreadLink(thread);
