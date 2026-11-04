@@ -1108,13 +1108,13 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
   ),
 );
 
-it.effect(
-  "queues a steer and puts a promoted message first while the turn waits on the person",
-  () =>
+it.effect.each(["ordinary", "goal-steer", "goal-promotion", "goal-restart"] as const)(
+  "queues a steer and puts a promoted message first while the turn waits on the person: %s",
+  (route) =>
     Effect.scoped(
       Effect.gen(function* () {
         const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          "steering-pending-request",
+          `steering-pending-request-${route}`,
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1122,18 +1122,27 @@ it.effect(
           const sink = yield* EventSink.EventSinkV2;
           const threadId = yield* startFirstTurn;
           const first = started[0]!;
+          const messageText = (id: string) =>
+            ((route === "goal-steer" || route === "goal-restart") && id === "steered") ||
+            (route === "goal-promotion" && id === "promoted")
+              ? "/goal ship it"
+              : id;
           const send = (id: string, delivery: "queue" | "steer") =>
             orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make(id),
               threadId,
               messageId: MessageId.make(`message:${id}`),
-              text: id,
+              text: messageText(id),
               attachments: [],
               modelSelection: runSelection,
               ...(delivery === "queue"
                 ? { dispatchMode: { type: "queue_after_active" } }
-                : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "steer" }),
+                : {
+                    dispatchMode: { type: "start_immediately" },
+                    deliveryIntent:
+                      route === "goal-restart" && id === "steered" ? "restart" : "steer",
+                  }),
               createdBy: "user",
               creationSource: "web",
             });
@@ -1178,6 +1187,23 @@ it.effect(
           yield* worker.drain();
 
           const projection = yield* orchestrator.getThreadProjection(threadId);
+          if (route === "goal-restart") {
+            assert.isTrue(
+              projection.turnItems.some((item) => item.type === "run_interrupt_request"),
+            );
+            assert.deepEqual(
+              started.map((turn) => turn.message.text),
+              ["first", "/goal ship it"],
+            );
+            assert.deepEqual(
+              projection.runtimeRequests.map((request) => request.status),
+              ["cancelled"],
+            );
+            return;
+          }
+          assert.isFalse(
+            projection.turnItems.some((item) => item.type === "run_interrupt_request"),
+          );
           assert.deepEqual(steered, []);
           assert.equal(started.length, 1);
           assert.deepEqual(
@@ -1188,7 +1214,7 @@ it.effect(
                 (run) =>
                   projection.messages.find((message) => message.id === run.userMessageId)?.text,
               ),
-            ["promoted", "queued", "steered"],
+            ["promoted", "queued", "steered"].map(messageText),
           );
           assert.deepEqual(
             projection.runtimeRequests.map((request) => request.status),

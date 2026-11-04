@@ -5241,6 +5241,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (message) => message.id === target.userMessageId,
         );
         if (
+          (resolvedMode.type === "restart_active" || !waitsOnPendingRequest(projection)) &&
           isLiveRun(target) &&
           goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
           (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
@@ -8995,6 +8996,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...queuedRun, queuePosition: 1 },
       });
       const stops =
+        !waitsOnPendingRequest(projection) &&
         target !== undefined &&
         isLiveRun(target) &&
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
