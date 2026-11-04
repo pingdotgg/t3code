@@ -518,7 +518,6 @@ function ThreadNavigationSidebarPane(
                 ) === props.selectedThreadKey)
             }
             project={projectByKey.get(pendingScopeKey) ?? null}
-            projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
               Object.keys(savedConnectionsById).length > 1
                 ? (savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null)
