@@ -2,7 +2,10 @@ import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
-import type { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsageAccountIdentity,
+  type makeUsageHttpClient,
+} from "@t3tools/provider-core/server/usageLimits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -158,15 +161,20 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
+  function* (configDir: string, version: string, accountConfigPath?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
-        urlParams: { cedar_ember: "1", skip_spend: "1" },
-      }).pipe(withClaudeHeaders(token, version)),
+    const identity = yield* readClaudeUsageAccountIdentity(
+      accountConfigPath ?? (yield* claudeAccountConfigPath(configDir)),
     );
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client
+      .execute(
+        HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
+          urlParams: { cedar_ember: "1", skip_spend: "1" },
+        }).pipe(withClaudeHeaders(token, version)),
+      )
+      .pipe(Effect.provideService(UsageAccountIdentity, identity));
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
@@ -186,6 +194,19 @@ export const readClaudeAccountCacheKey = Effect.fn("claudeResetCredits.readAccou
       Effect.map(encodeAccountCacheKey),
       Effect.orElseSucceed(() => "unreadable"),
     ),
+);
+
+export const readClaudeUsageAccountIdentity = Effect.fn(
+  "claudeResetCredits.readUsageAccountIdentity",
+)((accountConfigPath: string) =>
+  readJson(Config, accountConfigPath).pipe(
+    Effect.map((config) =>
+      config.oauthAccount && Object.values(config.oauthAccount).some((value) => value?.trim())
+        ? `claude:${encodeAccountCacheKey(config)}`
+        : undefined,
+    ),
+    Effect.orElseSucceed(() => undefined),
+  ),
 );
 
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
@@ -234,7 +255,14 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   }
   if (
     input.usageHttpClient &&
-    (yield* input.usageHttpClient.isCoolingDown(API_BASE, `Bearer ${token}`))
+    (yield* input.usageHttpClient
+      .isCoolingDown(API_BASE, `Bearer ${token}`)
+      .pipe(
+        Effect.provideService(
+          UsageAccountIdentity,
+          yield* readClaudeUsageAccountIdentity(input.accountConfigPath),
+        ),
+      ))
   ) {
     return yield* new ClaudeResetCreditError({ reason: "usageCoolingDown" });
   }

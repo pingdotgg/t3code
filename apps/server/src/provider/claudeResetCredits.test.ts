@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse, UrlParams } from "effect/http";
+import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ClaudeResetCredits from "./claudeResetCredits.ts";
@@ -233,10 +233,15 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         _tag: "Failure",
         failure: { reason: "requestFailed" },
       });
-      yield* usageHttpClient.execute(
-        HttpClientRequest.get("https://api.anthropic.com/api/oauth/usage").pipe(
-          HttpClientRequest.bearerToken("oauth-token"),
-        ),
+      yield* ClaudeResetCredits.readClaudeResetCredits(login.configDir, "2.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HttpClient.HttpClient, usageHttpClient),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(login.configDir, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"renewed-token"}}',
       );
       for (const elapsed of ["0 minutes", "9 minutes"] as const) {
         yield* TestClock.adjust(elapsed);

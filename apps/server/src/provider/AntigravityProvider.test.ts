@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -171,7 +172,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     Effect.andThen(
       Effect.flatMap(UsagePolling, (visible) =>
         visible && options.probeUsage
-          ? (provider.snapshot.refreshUsage ?? Effect.void)
+          ? (provider.snapshot.refreshUsage ?? Effect.void).pipe(Effect.forkScoped)
           : Effect.void,
       ),
     ),
@@ -828,6 +829,13 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(ready).toMatchObject({ status: "ready", auth: { status: "authenticated" } });
         expect(ready.usageLimits?.unavailable?.reason).toBe("probeFailed");
         expect(yield* Ref.get(reads)).toBe(1);
+        const demandFinished = yield* Deferred.make<void>();
+        const demand = yield* harness.provider.snapshot.refreshUsage!.pipe(
+          Effect.andThen(Deferred.succeed(demandFinished, undefined)),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Deferred.isDone(demandFinished)).toBe(false);
         const limits = {
           checkedAt: "2026-10-09T12:00:00.000Z",
           windows: [
@@ -835,6 +843,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ],
         } satisfies ServerProviderUsageLimits;
         yield* Deferred.succeed(readResult, limits);
+        yield* Fiber.join(demand);
         expect((yield* published)?.usageLimits).toEqual(limits);
       }),
     ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),

@@ -10,6 +10,9 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 
 const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+const accountCacheKey = (origin: string, authorization: string, identity: string | undefined) =>
+  encodeKey([origin, identity === undefined ? authorization : ["account", identity]]);
+
 const sampleTimes = new WeakMap<HttpClientResponse.HttpClientResponse, string>();
 
 export function usageResponseCheckedAt(
@@ -76,10 +79,11 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
       if (!isUsageUrl(request.url)) return read;
       return Effect.gen(function* () {
         const identity = yield* UsageAccountIdentity;
-        const accountKey = encodeKey([
+        const accountKey = accountCacheKey(
           new URL(request.url).origin,
-          identity === undefined ? (request.headers.authorization ?? "") : ["account", identity],
-        ]);
+          request.headers.authorization ?? "",
+          identity,
+        );
         let account = accounts.get(accountKey);
         if (!account) {
           account = { lock: Semaphore.makeUnsafe(1), retryAt: 0, generation: 0 };
@@ -166,25 +170,33 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
       });
     });
     return Object.assign(cachedClient, {
-      invalidateSuccessfulReads: (origin: string, authorization: string) =>
-        Effect.sync(() => {
-          const accountKey = encodeKey([origin, authorization]);
-          const account = accounts.get(accountKey);
-          if (account) account.generation++;
-          for (const [key, saved] of cached) {
-            if (
-              saved.accountKey === accountKey &&
-              Exit.isSuccess(saved.result) &&
-              saved.result.value.status < 400
-            )
-              cached.delete(key);
-          }
-        }),
-      isCoolingDown: (origin: string, authorization: string) =>
-        Effect.map(
-          Clock.currentTimeMillis,
-          (now) => now < (accounts.get(encodeKey([origin, authorization]))?.retryAt ?? 0),
-        ),
+      invalidateSuccessfulReads: Effect.fn("UsageHttpClient.invalidateSuccessfulReads")(function* (
+        origin: string,
+        authorization: string,
+      ) {
+        const accountKey = accountCacheKey(origin, authorization, yield* UsageAccountIdentity);
+        const account = accounts.get(accountKey);
+        if (account) account.generation++;
+        for (const [key, saved] of cached) {
+          if (
+            saved.accountKey === accountKey &&
+            Exit.isSuccess(saved.result) &&
+            saved.result.value.status < 400
+          )
+            cached.delete(key);
+        }
+      }),
+      isCoolingDown: Effect.fn("UsageHttpClient.isCoolingDown")(function* (
+        origin: string,
+        authorization: string,
+      ) {
+        const now = yield* Clock.currentTimeMillis;
+        return (
+          now <
+          (accounts.get(accountCacheKey(origin, authorization, yield* UsageAccountIdentity))
+            ?.retryAt ?? 0)
+        );
+      }),
     });
   });
 });

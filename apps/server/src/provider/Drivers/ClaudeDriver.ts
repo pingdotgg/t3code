@@ -1,4 +1,8 @@
-import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
+import {
+  UsagePolling,
+  UsageAfterReset,
+  UsageAccountIdentity,
+} from "@t3tools/provider-core/server/usageLimits";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -237,7 +241,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         );
         if (
           token &&
-          (yield* usageHttpClient.isCoolingDown("https://api.anthropic.com", `Bearer ${token}`))
+          (yield* usageHttpClient
+            .isCoolingDown("https://api.anthropic.com", `Bearer ${token}`)
+            .pipe(
+              Effect.provideService(
+                UsageAccountIdentity,
+                yield* ClaudeResetCredits.readClaudeUsageAccountIdentity(accountConfigPath),
+              ),
+            ))
         )
           includeUsage = false;
       }
@@ -270,7 +281,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                ClaudeResetCredits.readClaudeResetCredits(
+                  configDir,
+                  version,
+                  accountConfigPath,
+                ).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -376,10 +391,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               Effect.orElseSucceed(() => undefined),
             );
             if (token)
-              yield* usageHttpClient.invalidateSuccessfulReads(
-                "https://api.anthropic.com",
-                `Bearer ${token}`,
-              );
+              yield* usageHttpClient
+                .invalidateSuccessfulReads("https://api.anthropic.com", `Bearer ${token}`)
+                .pipe(
+                  Effect.provideService(
+                    UsageAccountIdentity,
+                    yield* ClaudeResetCredits.readClaudeUsageAccountIdentity(
+                      accountConfigPath,
+                    ).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                    ),
+                  ),
+                );
           }
           const refreshed = yield* snapshot.refresh.pipe(
             Effect.provideService(UsagePolling, true),
