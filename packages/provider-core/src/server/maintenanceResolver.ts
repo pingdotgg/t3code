@@ -475,15 +475,6 @@ function parseBunOutdatedLatestVersion(output: string, packageName: string): str
   return null;
 }
 
-function parseBunListedVersion(output: string, packageName: string): string | null {
-  const prefix = `── ${packageName}@`;
-  for (const line of output.split("\n")) {
-    const index = line.indexOf(prefix);
-    if (index >= 0) return nonEmptyString(line.slice(index + prefix.length));
-  }
-  return null;
-}
-
 // bun rejects an exact pin to a release inside minimumReleaseAge, so the update stays `@latest`.
 const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")(function* (
   packageName: string,
@@ -495,14 +486,12 @@ const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")
   });
   if (!bunPath) return null;
   // FORCE_COLOR=1 draws the table with box characters and splits versions with ANSI codes.
-  const probeEnv = { ...env, FORCE_COLOR: "0" };
-  const outdated = yield* runProbe(bunPath, ["outdated", "-g", packageName], probeEnv);
-  if (outdated === null) return null;
-  const latest = parseBunOutdatedLatestVersion(outdated, packageName);
-  if (latest) return latest;
-  // No row means the installed version is still the eligible release.
-  const listed = yield* runProbe(bunPath, ["pm", "ls", "-g"], probeEnv);
-  return listed ? parseBunListedVersion(listed, packageName) : null;
+  const outdated = yield* runProbe(bunPath, ["outdated", "-g", packageName], {
+    ...env,
+    FORCE_COLOR: "0",
+  });
+  // A missing row reads the same whether bun is current or its registry failed, so npm decides.
+  return outdated ? parseBunOutdatedLatestVersion(outdated, packageName) : null;
 });
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(

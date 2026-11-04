@@ -66,6 +66,14 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
 });
+const bunOutdatedTable = (row: string) => [
+  "|-------------------------------------------------------|",
+  "| Package               | Current | Update | Latest   |",
+  "|-----------------------|---------|--------|----------|",
+  row,
+  "|-------------------------------------------------------|",
+  "Note: The * indicates that version isn't true latest due to minimum release age",
+];
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
   driver: driver("packageTool"),
@@ -1050,9 +1058,10 @@ it.layer(
       expected: "1.0.0",
     },
     {
-      case: "the installed version when only a similarly named package is outdated",
-      row: "| @example/package-tool-plugin | 1.0.0 | 1.0.0 | 1.3.0 |",
-      expected: "1.0.0",
+      // bun prints only its banner both when nothing is outdated and when the registry fails.
+      case: "the npm fallback when bun reports no row",
+      row: null,
+      expected: "1.2.0",
     },
   ])(
     "advertises $case for bun-global installs",
@@ -1064,12 +1073,7 @@ it.layer(
         writeExecutable(NodePath.join(bunBinDir, "package-tool"));
         const outdated = [
           "bun outdated v1.3.3 (274e01c7)",
-          "|-------------------------------------------------------|",
-          "| Package               | Current | Update | Latest   |",
-          "|-----------------------|---------|--------|----------|",
-          fixture.row,
-          "|-------------------------------------------------------|",
-          "Note: The * indicates that version isn't true latest due to minimum release age",
+          ...(fixture.row === null ? [] : bunOutdatedTable(fixture.row)),
           "",
         ].join("\n");
 
@@ -1078,6 +1082,7 @@ it.layer(
           { binaryPath: "package-tool", env: { PATH: bunBinDir } },
         ).pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner((_command, args) =>
