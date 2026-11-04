@@ -1,5 +1,6 @@
 import { ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
 import type { VibeSettings } from "../settings.ts";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +18,13 @@ export const VIBE_DRIVER_KIND = ProviderDriverKind.make("vibe");
 /** T3's slug for "Default": the session keeps Vibe's own active model. */
 export const VIBE_DEFAULT_MODEL_SLUG = "default";
 export const VIBE_MODE_CONFIG_ID = "mode";
+
+/** Custom model slugs to send to Vibe; `default` stays T3's keep-the-session-model choice. */
+export function vibeCustomModelSlugs(settings: Pick<VibeSettings, "customModels">) {
+  return readCustomModelEntries(settings.customModels)
+    .map((entry) => entry.slug)
+    .filter((slug) => slug !== VIBE_DEFAULT_MODEL_SLUG);
+}
 
 /**
  * Vibe's agents are permission profiles. Smart Approve, the match for Auto,

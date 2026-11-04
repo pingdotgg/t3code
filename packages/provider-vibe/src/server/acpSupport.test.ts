@@ -5,6 +5,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 
 import {
+  vibeCustomModelSlugs,
   vibePromptFailure,
   vibeRuntimeModeForSessionMode,
   vibeSessionModeForPolicy,
@@ -65,5 +66,17 @@ describe("vibePromptFailure", () => {
       "provider_error",
     );
     assert.equal(vibePromptFailure(new Error("private defect")).message, "Provider turn failed.");
+  });
+});
+
+describe("vibeCustomModelSlugs", () => {
+  // `default` is T3's keep-the-session-model choice, never a model id Vibe knows.
+  it("sends custom models to Vibe except the reserved default", () => {
+    assert.deepEqual(
+      vibeCustomModelSlugs({
+        customModels: ["devstral-medium", "default", { slug: "codestral", name: "Codestral" }],
+      }),
+      ["devstral-medium", "codestral"],
+    );
   });
 });

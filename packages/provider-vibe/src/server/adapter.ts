@@ -1,6 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
-import { readCustomModelEntries } from "@t3tools/shared/model";
 import { VibeSettings } from "../settings.ts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -29,6 +28,7 @@ import {
   makeVibeAcpRuntime,
   registerVibeAcpExtensions,
   VIBE_DRIVER_KIND,
+  vibeCustomModelSlugs,
   vibePromptFailure,
   vibeRuntimeModeForSessionMode,
   vibeSessionModeForPolicy,
@@ -45,6 +45,7 @@ interface VibeAdapterV2Options {
 }
 
 const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (options: VibeAdapterV2Options) {
+  const customModels = vibeCustomModelSlugs(options.settings);
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     selfInvocation: options.selfInvocation,
@@ -52,9 +53,7 @@ const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (options: Vib
       driver: VIBE_DRIVER_KIND,
       runtimeHarness: "vibe",
       capabilities: AcpProviderCapabilitiesV2,
-      customModels: readCustomModelEntries(options.settings.customModels).map(
-        (entry) => entry.slug,
-      ),
+      customModels,
       makeRuntime: ({
         runtimePolicy: _runtimePolicy,
         processEnvironment,
@@ -63,6 +62,7 @@ const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (options: Vib
         makeVibeAcpRuntime({
           ...input,
           settings: options.settings,
+          customModels,
           environment: { ...options.environment, ...processEnvironment },
         }),
       sessionModeForPolicy: vibeSessionModeForPolicy,
