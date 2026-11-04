@@ -52,6 +52,7 @@ import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -514,6 +515,53 @@ function makeMockRuntime(input: {
       return input.wrapRuntime?.(wrapped, runtimeOrdinal) ?? wrapped;
     });
 }
+
+it.live("does not detach an owned Windows ACP process and retains PID tree cleanup", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const terminated: number[] = [];
+    let spawnedPid = 0;
+    const runtime = yield* AcpSessionRuntime.make({
+      spawn: {
+        command: process.execPath,
+        args: [
+          yield* path.fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url)),
+        ],
+      },
+      cwd: process.cwd(),
+      clientInfo: { name: "test", version: "1" },
+      ownDetachedProcessGroup: true,
+      processGroupPlatform: "win32",
+      windowsProcessTreeTerminator: (pid) =>
+        Effect.sync(() => {
+          terminated.push(pid);
+        }),
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command))
+            return Effect.die("Expected standard command");
+          assert.isFalse(command.options.detached);
+          return spawner.spawn(command).pipe(
+            Effect.tap((child) =>
+              Effect.sync(() => {
+                spawnedPid = Number(child.pid);
+              }),
+            ),
+          );
+        }),
+      ),
+    );
+    if (runtime.terminateProcessGroup === undefined)
+      return yield* Effect.die("Missing tree cleanup");
+    yield* runtime.terminateProcessGroup;
+    assert.deepEqual(terminated, [spawnedPid]);
+    assert.isAbove(spawnedPid, 0);
+  }).pipe(Effect.provide(layerTest), Effect.scoped),
+);
 
 function rawProtocolMethod(event: EffectAcpProtocol.AcpProtocolLogEvent): string | undefined {
   if (event.stage !== "raw" || typeof event.payload !== "string") return undefined;
