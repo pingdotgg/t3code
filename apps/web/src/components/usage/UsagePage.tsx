@@ -641,9 +641,9 @@ export function UsagePage() {
 
 // Breakdown tables: a 28px head over a hairline, 34px rows on a fainter one.
 const TABLE_HEAD_ROW =
-  "h-7 border-b border-border text-left text-xs text-muted-foreground [&>th]:py-0";
+  "h-7 border-b border-border text-left text-xs text-muted-foreground [&>th]:py-0 [&>th:first-child]:pl-2 [&>th:last-child]:pr-2";
 const TABLE_ROW =
-  "h-[34px] border-b border-border/60 transition-colors hover:bg-muted/50 [&>td]:py-0";
+  "h-[34px] border-b border-border/60 transition-colors hover:bg-muted/50 [&>td]:py-0 [&>td:first-child]:pl-2 [&>td:last-child]:pr-2";
 
 function UsageOverview({
   merged,
