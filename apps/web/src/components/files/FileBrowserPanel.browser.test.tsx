@@ -305,4 +305,46 @@ describe("FileBrowserPanel sorting", () => {
       "b.txt",
     ]);
   });
+
+  it("re-sorts by date modified when a refresh adds or drops timestamps", async () => {
+    using _sort = setupSort();
+    using _entries = {
+      [Symbol.dispose]: () => {
+        directory.entries = entries;
+      },
+    };
+    const rerenderPanel = (screen: Awaited<ReturnType<typeof renderPanel>>) =>
+      screen.rerender(
+        <FileBrowserPanel
+          environmentId={EnvironmentId.make("env-files")}
+          cwd="/repo"
+          projectName="repo"
+          selectedPath={null}
+          selectedPathRevealId={0}
+          onOpenFile={() => {}}
+          workspaceMutationId={null}
+        />,
+      );
+    directory.entries = [
+      { path: "a.txt", kind: "file" },
+      { path: "z.txt", kind: "file" },
+    ];
+    await using screen = await renderPanel();
+    await userEvent.click(sortKeyButton("Sort by date modified"));
+    await expectRows(["a.txt", "z.txt"]);
+
+    directory.entries = [
+      { path: "a.txt", kind: "file", mtimeMs: 20 },
+      { path: "z.txt", kind: "file", mtimeMs: 10 },
+    ];
+    await rerenderPanel(screen);
+    await expectRows(["z.txt", "a.txt"]);
+
+    directory.entries = [
+      { path: "a.txt", kind: "file", mtimeMs: 5 },
+      { path: "z.txt", kind: "file" },
+    ];
+    await rerenderPanel(screen);
+    await expectRows(["a.txt", "z.txt"]);
+  });
 });

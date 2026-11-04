@@ -62,9 +62,9 @@ function treePath(entry: ProjectEntry): string {
 const FILE_BROWSER_SORT_STORAGE_KEY = "t3code:file-browser-sort";
 
 function hasMtimeChanged(previous: ReadonlyMap<string, number>, next: ReadonlyMap<string, number>) {
+  if (previous.size !== next.size) return true;
   for (const [path, mtimeMs] of previous) {
-    const nextMtimeMs = next.get(path);
-    if (nextMtimeMs !== undefined && nextMtimeMs !== mtimeMs) return true;
+    if (next.get(path) !== mtimeMs) return true;
   }
   return false;
 }
