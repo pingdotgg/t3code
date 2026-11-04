@@ -1,11 +1,47 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   resolvePullRequestTabLink,
+  rightPanelSurfaceActions,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
 } from "./RightPanelTabs";
+
+describe("right panel surface actions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const inputs = () => ({
+    panels: {
+      preview: { available: true, onOpen: () => undefined },
+      diff: { available: true, onOpen: () => undefined },
+      terminal: { available: true, onOpen: () => undefined },
+      device: { available: true, onOpen: () => undefined },
+      "pull-request": { available: true, onOpen: () => undefined },
+      "pull-requests": { available: true, onOpen: () => undefined },
+      files: { available: true, onOpen: () => undefined },
+    },
+  });
+
+  it("keeps launcher order, letters and copy for registered and local surfaces", () => {
+    const actions = rightPanelSurfaceActions(inputs());
+    expect(actions.map((action) => [action.shortcut, action.label])).toEqual([
+      ["B", "Browser"],
+      ["T", "Terminal"],
+      ["F", "Files"],
+      ["D", "Diff"],
+      ["P", "Pull request"],
+      ["L", "Linked pull requests"],
+      ["M", "Device"],
+    ]);
+    expect(actions.find((action) => action.id === "diff")).toMatchObject({
+      unavailableHint: "Available for Git repositories.",
+      unavailableReason: "Diff is only available for server threads in Git repositories.",
+    });
+  });
+});
 
 function shortcutEvent(
   key: string,
