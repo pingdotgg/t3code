@@ -922,6 +922,20 @@ describe("ProviderInstanceRegistry secret environment", () => {
     }).pipe(Effect.scoped);
   });
 
+  it.effect("starts an unreadable instance once a refresh can read its secret", () => {
+    const fixture = setup({});
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+      yield* mutator.reconcile({ ...fixture.configMap });
+
+      fixture.vault.set(secret.reference, "sk-live");
+      yield* mutator.reloadSecrets();
+
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      expect(yield* registry.listUnavailable).toEqual([]);
+    }).pipe(Effect.scoped);
+  });
+
   it.effect("does not read the secrets of an instance its config decodes as disabled", () => {
     const fixture = setup({ [secret.reference]: "sk-live" }, DisabledByDefaultConfig);
     return Effect.gen(function* () {
