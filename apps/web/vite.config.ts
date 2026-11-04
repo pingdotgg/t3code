@@ -116,7 +116,6 @@ const browserTestProject = {
       "fast-xml-parser",
       "entities",
       "dompurify",
-      "heic-to/next",
       "jszip",
       "pdfjs-dist",
       "sql.js",
