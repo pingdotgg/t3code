@@ -1,0 +1,5 @@
+Contact: mailto:security@ping.gg
+Policy: https://t3.codes/security-policy
+Canonical: https://t3.codes/.well-known/security.txt
+Preferred-Languages: en
+Expires: 2027-11-01T00:00:00.000Z

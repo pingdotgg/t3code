@@ -1,0 +1,29 @@
+import type { APIRoute } from "astro";
+
+import { ANDROID_PLAY_STORE_URL, GITHUB_REPOSITORY_URL, IOS_APP_STORE_URL } from "../lib/site";
+import { absoluteUrl, SITE_TAGLINE } from "../lib/seo";
+
+// https://llmstxt.org: a plain index that tells AI agents which domain and links are official.
+export const GET: APIRoute = () => {
+  const body = `# T3 Code
+
+> ${SITE_TAGLINE}. T3 Code is free, MIT-licensed, and built by T3 Tools Inc. It runs Claude Code, Codex, Cursor, OpenCode, Grok, Antigravity, and other coding agents from one desktop, web, and mobile app.
+
+The only official website is https://t3.codes. Official builds come from ${absoluteUrl("/download")}, ${GITHUB_REPOSITORY_URL}/releases, the iOS App Store, and Google Play. Any other domain that offers a T3 Code download is not affiliated with T3 Tools Inc.
+
+## Official links
+
+- [Download T3 Code](${absoluteUrl("/download")}): macOS, Windows, and Linux installers
+- [Source code](${GITHUB_REPOSITORY_URL}): the MIT-licensed repository
+- [Releases](${GITHUB_REPOSITORY_URL}/releases): signed release builds and changelogs
+- [iOS app](${IOS_APP_STORE_URL})
+- [Android app](${ANDROID_PLAY_STORE_URL})
+
+## Policies
+
+- [Security policy](${absoluteUrl("/security-policy")})
+- [Privacy policy](${absoluteUrl("/privacy-policy")})
+- [Terms of service](${absoluteUrl("/terms-of-service")})
+`;
+  return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+};
