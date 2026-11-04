@@ -61,7 +61,7 @@ provider turns. Same-provider Cursor forks use the orchestrator's portable full-
 handoff into a fresh Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter
 intentionally uses the authenticated, thread-scoped MCP server instead.
 
-Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read
+Portable handoffs select intact historical messages within a budget and can omit messages that do not fit. Read
 [Context in portable handoffs](./portable-handoffs.md) before using a fork for work whose exact
 instructions must carry forward.
 
