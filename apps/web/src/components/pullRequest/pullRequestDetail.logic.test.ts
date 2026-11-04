@@ -760,9 +760,12 @@ describe("findings that cannot be attached", () => {
   it("carries a review submitted with words but no line, which has nothing to attach to", () => {
     const handoff = buildFixFindingsHandoff({ ...base, comments: [review] });
 
-    expect(handoff.reviewComments).toHaveLength(1);
-    expect(handoff.reviewComments[0]?.text).toContain("revert the middleware change");
-    expect(handoff.reviewComments[0]?.text).not.toContain("No unresolved review findings");
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    const remark = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-finding:"));
+    expect(summary?.text).toContain("1 review remark is attached as a chip");
+    expect(summary?.text).not.toContain("revert the middleware change");
+    expect(remark?.text).toContain("revert the middleware change");
+    expect(remark?.rangeLabel).toBe("remark");
   });
 
   it("does not repeat a remark that was already attached as a thread", () => {
@@ -794,7 +797,32 @@ describe("findings that cannot be attached", () => {
     expect(
       handoff.reviewComments.filter((comment) => comment.id.startsWith("pr-finding:")),
     ).toHaveLength(1);
-    expect(handoff.reviewComments[0]?.text).not.toContain("rename the helper");
+    expect(
+      handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"))?.text,
+    ).not.toContain("rename the helper");
+  });
+
+  it("attaches each unlined remark as its own chip so a long body cannot truncate siblings", () => {
+    const remarks = Array.from({ length: 3 }, (_, index) => ({
+      ...review,
+      id: `r${index}`,
+      body: `finding ${index}: ${"x".repeat(6_000)}`,
+    }));
+    const handoff = buildFixFeedbackHandoff({ ...base, comments: remarks });
+    const remarkChips = handoff.reviewComments.filter((comment) =>
+      comment.id.startsWith("pr-finding:"),
+    );
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    expect(remarkChips).toHaveLength(3);
+    expect(remarkChips.map((comment) => comment.text)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("finding 0:"),
+        expect.stringContaining("finding 1:"),
+        expect.stringContaining("finding 2:"),
+      ]),
+    );
+    expect(summary?.text).toContain("3 review remarks are attached as chips");
+    expect(summary?.text).not.toContain("finding 0:");
   });
 });
 
@@ -1357,6 +1385,68 @@ describe("the compact row's single action slot", () => {
         inThisThread: false,
       }).tooltip,
     ).toContain("review feedback");
+  });
+
+  it("keeps Merge when the only review text is an approval or hidden bookkeeping", () => {
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [],
+        comments: [
+          {
+            id: "r-approve",
+            kind: "review",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            body: "LGTM",
+            createdAt: "2026-07-03T00:00:00Z",
+            url: null,
+            path: null,
+            reviewState: "APPROVED",
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [
+          {
+            id: "t-hidden",
+            path: "a.ts",
+            line: 1,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "c-hidden",
+                author: { login: "bot", name: null, avatarUrl: null },
+                body: "<!-- bookkeeping -->",
+                createdAt: "2026-07-03T00:00:00Z",
+                url: null,
+              },
+            ],
+          },
+        ],
+        comments: [],
+      }),
+    ).toBe(false);
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail(), {
+        reviewThreads: [],
+        comments: [
+          {
+            id: "r-approve",
+            kind: "review",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            body: "LGTM",
+            createdAt: "2026-07-03T00:00:00Z",
+            url: null,
+            path: null,
+            reviewState: "APPROVED",
+          },
+        ],
+      }),
+    ).toBe("merge");
   });
 
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {

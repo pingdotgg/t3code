@@ -364,22 +364,9 @@ export function hasActionablePullRequestFeedback(input: {
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   readonly comments: ReadonlyArray<PullRequestComment>;
 }): boolean {
-  if (
-    input.reviewThreads.some(
-      (thread) =>
-        !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
-    )
-  ) {
-    return true;
-  }
-  const attached = new Set(
-    input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
-  );
-  return input.comments.some(
-    (comment) =>
-      (comment.kind === "review" || comment.kind === "review-comment") &&
-      !attached.has(comment.id) &&
-      visibleBody(comment.body) !== null,
+  return (
+    actionableReviewThreads(input.reviewThreads).length > 0 ||
+    unattachableReviewRemarks(input.reviewThreads, input.comments).length > 0
   );
 }
 
@@ -940,7 +927,7 @@ function actionableReviewThreads(
 ): ReadonlyArray<PullRequestReviewThread> {
   return reviewThreads.filter(
     (thread) =>
-      !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
+      !thread.isResolved && thread.comments.some((comment) => visibleBody(comment.body) !== null),
   );
 }
 
@@ -954,6 +941,7 @@ function unattachableReviewRemarks(
   return comments.filter(
     (comment) =>
       (comment.kind === "review" || comment.kind === "review-comment") &&
+      pullRequestReviewOutcome(comment.reviewState) !== "approved" &&
       !attached.has(comment.id) &&
       visibleBody(comment.body) !== null,
   );
@@ -976,7 +964,7 @@ function findingThreadContext(
 function remarkContextComment(
   pullRequest: { readonly number: number; readonly url: string },
   comment: PullRequestComment,
-  instruction: ReadonlyArray<string>,
+  instruction: ReadonlyArray<string> = [],
 ): ReviewCommentContext {
   const body = visibleBody(comment.body) ?? "";
   const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
@@ -984,6 +972,7 @@ function remarkContextComment(
     comment.path === null
       ? boundedField(comment.author?.login ?? "Review remark")
       : boundedField(comment.path);
+  const text = `${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`;
   return {
     id: `pr-finding:${pullRequest.url}:${comment.id}`,
     sectionId: `pull-request:${pullRequest.number}`,
@@ -992,11 +981,7 @@ function remarkContextComment(
     startIndex: 0,
     endIndex: 0,
     rangeLabel: "remark",
-    text: [
-      `${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`,
-      "",
-      ...instruction,
-    ].join("\n"),
+    text: instruction.length === 0 ? text : [text, "", ...instruction].join("\n"),
     diff: "",
   };
 }
@@ -1038,12 +1023,7 @@ export function buildFixFeedbackHandoff(input: {
         : []),
       ...(includedRemarks.length > 0
         ? [
-            "Review remarks with no line to attach them to:",
-            ...includedRemarks.map((comment) => {
-              const body = visibleBody(comment.body) ?? "";
-              const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
-              return `- ${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`;
-            }),
+            `${includedRemarks.length} review ${includedRemarks.length === 1 ? "remark is" : "remarks are"} attached as ${includedRemarks.length === 1 ? "a chip" : "chips"} with no line to pin ${includedRemarks.length === 1 ? "it" : "them"} to; find what ${includedRemarks.length === 1 ? "it refers" : "each refers"} to before changing code.`,
           ]
         : []),
       ...(input.commentsTruncated
@@ -1063,6 +1043,7 @@ export function buildFixFeedbackHandoff(input: {
     reviewComments: [
       summary,
       ...includedThreads.map((thread) => findingThreadContext(thread, input)),
+      ...includedRemarks.map((comment) => remarkContextComment(input, comment)),
     ],
     additive: true,
   };
