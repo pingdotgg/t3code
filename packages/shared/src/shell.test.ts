@@ -4,6 +4,8 @@ import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -57,6 +59,13 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawn: nativeProbe.spawn.mockImplementation(original.spawn),
   };
 });
+
+const exitOf = (child: NodeChildProcess.ChildProcess) =>
+  child.exitCode !== null || child.signalCode !== null
+    ? Promise.resolve({ code: child.exitCode, signal: child.signalCode })
+    : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -866,10 +875,12 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         Effect.provideService(SpawnExecutableResolution, (command) =>
           command === "git" ? options.gitOnPath : files.has(command) ? command : undefined,
         ),
-        Effect.provideService(XcodeGitLocation, async () => {
-          host.xcrunCalls += 1;
-          return host.xcrunGit;
-        }),
+        Effect.provideService(XcodeGitLocation, () =>
+          Effect.sync(() => {
+            host.xcrunCalls += 1;
+            return host.xcrunGit;
+          }),
+        ),
       );
       return { files, host, resolve };
     };
@@ -885,40 +896,55 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("waits for xcrun without blocking, sharing one lookup between callers", () =>
-      Effect.gen(function* () {
-        let finishLookup: (located: string | undefined) => void = () => {};
-        const lookup = new Promise<string | undefined>((resolve) => {
-          finishLookup = resolve;
-        });
-        let xcrunCalls = 0;
-        const resolve = resolveSpawnCommand("git", ["status"], { env: { PATH: "/fake/bin" } }).pipe(
-          Effect.map((resolved) => resolved.command),
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(SpawnExecutableResolution, (command) =>
-            command === "git" ? "/usr/bin/git" : command === XCODE_GIT ? command : undefined,
-          ),
-          Effect.provideService(XcodeGitLocation, () => {
-            xcrunCalls += 1;
-            return lookup;
-          }),
-        );
-        const first = yield* Effect.forkChild(resolve, { startImmediately: true });
-        const second = yield* Effect.forkChild(resolve, { startImmediately: true });
-        finishLookup(XCODE_GIT);
+    // A small yield budget lets the scheduler switch callers between any two operations.
+    it.effect.each([undefined, 3, 4, 5, 6] as const)(
+      "waits for xcrun without blocking, sharing one lookup between callers (yield budget %s)",
+      (budget) =>
+        Effect.gen(function* () {
+          let lookup = yield* Deferred.make<string | undefined>();
+          let xcrunCalls = 0;
+          const resolve = resolveSpawnCommand("git", ["status"], {
+            env: { PATH: "/fake/bin" },
+          }).pipe(
+            Effect.map((resolved) => resolved.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(SpawnExecutableResolution, (command) =>
+              command === "git" ? "/usr/bin/git" : command === XCODE_GIT ? command : undefined,
+            ),
+            Effect.provideService(XcodeGitLocation, () => {
+              xcrunCalls += 1;
+              return Deferred.await(lookup);
+            }),
+            budget === undefined
+              ? (effect) => effect
+              : Effect.provideService(Scheduler.MaxOpsBeforeYield, budget),
+          );
+          const callers = Effect.forEach([1, 2, 3], () =>
+            Effect.forkChild(resolve, { startImmediately: true }),
+          );
+          const first = yield* callers;
+          yield* Deferred.succeed(lookup, XCODE_GIT);
+          expect(yield* Fiber.joinAll(first)).toEqual([XCODE_GIT, XCODE_GIT, XCODE_GIT]);
+          expect(xcrunCalls).toBe(1);
 
-        expect(yield* Fiber.joinAll([first, second])).toEqual([XCODE_GIT, XCODE_GIT]);
-        expect(xcrunCalls).toBe(1);
-      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+          // Once the answer expires, the next callers share one new lookup.
+          lookup = yield* Deferred.make<string | undefined>();
+          yield* TestClock.adjust("31 seconds");
+          const second = yield* callers;
+          yield* Deferred.succeed(lookup, XCODE_GIT);
+          expect(yield* Fiber.joinAll(second)).toEqual([XCODE_GIT, XCODE_GIT, XCODE_GIT]);
+          expect(xcrunCalls).toBe(2);
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
     it.effect("the xcrun lookup resolves nothing when xcrun is missing or fails", () =>
       Effect.gen(function* () {
         const env = { PATH: "/usr/bin:/bin", DEVELOPER_DIR: "/nonexistent/t3-developer-dir" };
         const locate = yield* XcodeGitLocation;
-        expect(yield* Effect.promise(() => locate(env))).toBeUndefined();
-        const missing = locateXcodeGitWithXcrun(env, { xcrun: "/nonexistent/t3-xcrun" });
-        expect(yield* Effect.promise(() => missing)).toBeUndefined();
+        expect(yield* locate(env)).toBeUndefined();
+        expect(
+          yield* locateXcodeGitWithXcrun(env, { xcrun: "/nonexistent/t3-xcrun" }),
+        ).toBeUndefined();
       }),
     );
 
@@ -940,10 +966,18 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
             Effect.flatMap((pid) => Effect.sync(() => process.kill(Number(pid.trim())))),
             Effect.ignore,
           );
-          const located = yield* Effect.promise(() =>
-            locateXcodeGitWithXcrun({ PATH: "/usr/bin:/bin" }, { xcrun, timeoutMs: 200 }),
-          ).pipe(Effect.ensuring(stopDescendant));
-          expect(located).toBeUndefined();
+          yield* Effect.addFinalizer(() => stopDescendant);
+          const lookup = yield* locateXcodeGitWithXcrun({ PATH: "/usr/bin:/bin" }, { xcrun }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          const child = nativeProbe.spawn.mock.results.at(-1)
+            ?.value as NodeChildProcess.ChildProcess;
+          yield* Effect.promise(() => exitOf(child));
+
+          // xcrun has exited and printed a path, but its descendant still holds stdout open.
+          expect(lookup.pollUnsafe()).toBeUndefined();
+          yield* TestClock.adjust("5 seconds");
+          expect(yield* Fiber.join(lookup)).toBeUndefined();
         }).pipe(Effect.scoped),
     );
 
@@ -957,21 +991,20 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
           const xcrun = path.join(directory, "xcrun");
           yield* fs.writeFileString(xcrun, "#!/bin/sh\ntrap '' TERM\nexec sleep 600\n");
           yield* fs.chmod(xcrun, 0o755);
-          const lookup = locateXcodeGitWithXcrun(
-            { PATH: "/usr/bin:/bin" },
-            { xcrun, timeoutMs: 200 },
+          const lookup = yield* locateXcodeGitWithXcrun({ PATH: "/usr/bin:/bin" }, { xcrun }).pipe(
+            Effect.forkChild({ startImmediately: true }),
           );
           const child = nativeProbe.spawn.mock.results.at(-1)
             ?.value as NodeChildProcess.ChildProcess;
           const kill = vi.spyOn(child, "kill");
-          const exited = new Promise<NodeJS.Signals | null>((resolve) =>
-            child.once("exit", (_code, signal) => resolve(signal)),
-          );
+          const exited = exitOf(child);
           yield* Effect.addFinalizer(() => Effect.sync(() => child.kill("SIGKILL")));
 
-          expect(yield* Effect.promise(() => lookup)).toBeUndefined();
+          expect(lookup.pollUnsafe()).toBeUndefined();
+          yield* TestClock.adjust("5 seconds");
+          expect(yield* Fiber.join(lookup)).toBeUndefined();
           expect(kill).toHaveBeenCalledWith("SIGKILL");
-          expect(yield* Effect.promise(() => exited)).toBe("SIGKILL");
+          expect(yield* Effect.promise(() => exited)).toEqual({ code: null, signal: "SIGKILL" });
         }).pipe(Effect.scoped),
     );
 
@@ -997,18 +1030,27 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("looks again when the resolved git disappears", () =>
-      Effect.gen(function* () {
-        const betaGit = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/git";
-        const { files, host, resolve } = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* resolve).toBe(XCODE_GIT);
+    it.effect.each([undefined, 3] as const)(
+      "looks again when the resolved git disappears (yield budget %s)",
+      (budget) =>
+        Effect.gen(function* () {
+          const betaGit = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/git";
+          const { files, host, resolve } = setup({
+            gitOnPath: "/usr/bin/git",
+            xcrunGit: XCODE_GIT,
+          });
+          const budgeted =
+            budget === undefined
+              ? resolve
+              : resolve.pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, budget));
+          expect(yield* budgeted).toBe(XCODE_GIT);
 
-        files.delete(XCODE_GIT);
-        files.add(betaGit);
-        host.xcrunGit = betaGit;
-        expect(yield* resolve).toBe(betaGit);
-        expect(host.xcrunCalls).toBe(2);
-      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+          files.delete(XCODE_GIT);
+          files.add(betaGit);
+          host.xcrunGit = betaGit;
+          expect(yield* budgeted).toBe(betaGit);
+          expect(host.xcrunCalls).toBe(2);
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
   });
 
