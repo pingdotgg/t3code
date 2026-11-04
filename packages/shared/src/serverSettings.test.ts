@@ -304,6 +304,7 @@ describe("serverSettings helpers", () => {
       otlpLogsUrl: undefined,
       telemetryEnabled: false,
     });
+    expect(parsePersistedServerObservabilitySettings("  \n").telemetryEnabled).toBe(false);
   });
 
   it("still deep merges text generation selection when only options are provided", () => {

@@ -64,23 +64,25 @@ export const resolveCliServerPaths = Effect.fn(function* (explicitBaseDir: Optio
   });
 });
 
+const NO_SETTINGS: SparseSettings = {};
+
 /** Propagate read errors to avoid overwriting unread settings with a sparse file. */
 export const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs
     .exists(settingsPath)
     .pipe(Effect.mapError((cause) => new SettingsUnreadableError({ settingsPath, cause })));
-  if (!exists) return { raw: "", settings: {} };
+  if (!exists) return { exists, raw: "", settings: NO_SETTINGS };
 
   const raw = yield* fs
     .readFileString(settingsPath)
     .pipe(Effect.mapError((cause) => new SettingsUnreadableError({ settingsPath, cause })));
-  if (raw.trim().length === 0) return { raw, settings: {} };
+  if (raw.trim().length === 0) return { exists, raw, settings: NO_SETTINGS };
 
   const settings = yield* decodeSettingsJson(raw).pipe(
     Effect.mapError((cause) => new SettingsMalformedError({ settingsPath, cause })),
   );
-  return { raw, settings };
+  return { exists, raw, settings };
 });
 
 /** The server's in-process semaphore cannot serialize writes from this process. */
