@@ -173,6 +173,12 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const egressProxy = resolvePreviewEgressProxy();
+  if (egressProxy === "invalid") {
+    return yield* new HtmlRenderBrowserError({
+      reason: "T3CODE_PREVIEW_EGRESS_PROXY must be an http://host:port URL",
+    });
+  }
   const proxyPort = yield* publicProxy.pipe(
     Effect.mapError(
       (cause) => new HtmlRenderBrowserError({ reason: "the preview proxy could not start", cause }),
@@ -197,7 +203,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--proxy-bypass-list=<-loopback>",
           // WebRTC would otherwise send UDP, which no proxy carries.
           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-          ...(resolvePreviewEgressProxy() !== undefined
+          ...(egressProxy !== undefined
             ? ["--disable-quic", "--webrtc-ip-handling-policy=disable_non_proxied_udp"]
             : []),
           ...(input.noSandbox ? ["--no-sandbox"] : []),

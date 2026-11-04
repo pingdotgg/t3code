@@ -317,6 +317,34 @@ describe("HtmlRender", () => {
     },
   );
 
+  it.live("refuses to start the browser when the preview egress proxy setting is unusable", () =>
+    Effect.gen(function* () {
+      const previous = process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+      const outcome = yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          process.env.T3CODE_PREVIEW_EGRESS_PROXY = "socks5://127.0.0.1:1080";
+        }),
+        () =>
+          HtmlRender.HtmlRender.use((htmlRender) =>
+            htmlRender.preview({ html: "<p>x</p>" }).pipe(Effect.flip),
+          ).pipe(
+            Effect.provide(layerHtmlRender("/nonexistent/chrome-headless-shell")),
+            Effect.exit,
+          ),
+        () =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.T3CODE_PREVIEW_EGRESS_PROXY;
+            else process.env.T3CODE_PREVIEW_EGRESS_PROXY = previous;
+          }),
+      );
+      assert(Exit.isSuccess(outcome), "Expected a typed preview error.");
+      expect(outcome.value).toBeInstanceOf(HtmlRenderBrowserError);
+      expect(outcome.value.message).toBe(
+        "Headless Chrome could not render the page: T3CODE_PREVIEW_EGRESS_PROXY must be an http://host:port URL.",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   // The fake browser is a shebang script, which Windows cannot execute.
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "when the browser cannot be signalled",
