@@ -188,15 +188,12 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
   return [...links.values()];
 }
 
-function accountKey(
-  driver: ServerProvider["driver"],
-  email: string | undefined,
-  limits?: ServerProviderUsageLimits,
-): string | null {
+function accountKey({ driver, email, credentialScope, usageLimits }: AccountReport): string | null {
+  if (credentialScope) return `${driver}:scope:${credentialScope}`;
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
-  return limits?.credentialFingerprint
-    ? `${driver}:credential:${limits.credentialFingerprint}`
+  return usageLimits?.credentialFingerprint
+    ? `${driver}:credential:${usageLimits.credentialFingerprint}`
     : null;
 }
 
@@ -204,13 +201,17 @@ interface AccountReport {
   readonly driver: ServerProvider["driver"];
   readonly email?: string | undefined;
   readonly workspaceId?: string | undefined;
+  readonly credentialScope?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
 }
 
-const nativeReport = (provider: ServerProvider): AccountReport => ({
+const nativeReport = (provider: ServerProvider, environmentId?: EnvironmentId): AccountReport => ({
   driver: provider.driver,
   email: provider.auth.email,
   workspaceId: provider.auth.workspaceId,
+  credentialScope: provider.auth.credentialScope
+    ? JSON.stringify([environmentId ?? null, provider.auth.credentialScope])
+    : undefined,
   usageLimits: provider.usageLimits,
 });
 
@@ -218,14 +219,14 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) return null;
+    const key = accountKey(report);
+    if (!key || report.credentialScope) return key;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
@@ -328,10 +329,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     });
   };
   const resolveKey = accountKeyResolver(
-    [...presentations.values()].flatMap((presentation) => [
+    [...presentations].flatMap(([environmentId, presentation]) => [
       ...(presentation.serverConfig?.providers ?? [])
         .filter((provider) => provider.enabled)
-        .map(nativeReport),
+        .map((provider) => nativeReport(provider, environmentId)),
       ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
   );
@@ -339,7 +340,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
+      const key = resolveKey(nativeReport(provider, environmentId));
+      merge(key ?? `${environmentId}:${provider.instanceId}`, {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
@@ -759,7 +761,7 @@ export function collectProviderUsageLimits(
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
   const resolveKey = accountKeyResolver([
-    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...providers.filter((provider) => provider.enabled).map((provider) => nativeReport(provider)),
     ...sources.flatMap((source) => source.accounts),
   ]);
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };

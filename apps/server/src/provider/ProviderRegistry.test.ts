@@ -172,6 +172,7 @@ function booleanDescriptor(id: string, label: string) {
 
 type TestClaudeCapabilities = {
   readonly email: string | undefined;
+  readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly apiKeySource: string | undefined;
@@ -3041,6 +3042,41 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect(
+      "scopes separate Claude credential folders without trusting shared profile identity",
+      () =>
+        Effect.gen(function* () {
+          const probe = claudeCapabilities({
+            email: "shared-profile@example.com",
+            workspaceId: "shared-org",
+          });
+          const check = (directory?: string) =>
+            checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              probe,
+              {
+                CLAUDE_SECURESTORAGE_CONFIG_DIR: directory,
+              },
+              "/tmp",
+            );
+          const standard = yield* check();
+          const first = yield* check("/tmp/claude-b");
+          const preset = yield* check("/tmp/other/../claude-b");
+          const other = yield* check("/tmp/claude-c");
+          expect(standard.auth).toMatchObject({
+            email: "shared-profile@example.com",
+            workspaceId: "shared-org",
+          });
+          expect(first.auth.credentialScope).toMatch(/^[a-f0-9]{64}$/);
+          expect(first.auth.email).toBeUndefined();
+          expect(first.auth.workspaceId).toBeUndefined();
+          expect(preset.auth.credentialScope).toBe(first.auth.credentialScope);
+          expect(other.auth.credentialScope).not.toBe(first.auth.credentialScope);
+        }).pipe(
+          Effect.provide(layerMockSpawner(() => ({ stdout: "2.1.316\n", stderr: "", code: 0 }))),
+        ),
+    );
+
     it.effect("adds models Claude Code reports that the catalog does not know", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

@@ -181,6 +181,52 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it("separates Claude login folders while merging presets of the same login", () => {
+    const login = (instanceId: string, credentialScope: string | undefined, usedPercent: number) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        driver: claude,
+        auth: {
+          status: "authenticated",
+          email: "shared-profile@example.com",
+          workspaceId: "shared-org",
+          ...(credentialScope ? { credentialScope } : {}),
+        },
+        usageLimits: { checkedAt, windows: [{ ...window, usedPercent }] },
+      });
+    const providers = [
+      login("default", undefined, 10),
+      login("claude-b", "login-b", 60),
+      {
+        ...login("claude-b-preset", "login-b", 65),
+        usageLimits: {
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          windows: [{ ...window, usedPercent: 65 }],
+        },
+      },
+      login("claude-c", "login-c", 30),
+    ];
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers } }],
+    ]);
+    expect(
+      collectLimitAccounts(input).map((account) => account.limits.windows[0]?.usedPercent),
+    ).toEqual([10, 65, 30]);
+    expect(
+      collectProviderUsageLimits(providers[0]!.instanceId, providers, [], now)?.accounts.map(
+        (account) => account.limits.windows[0]?.usedPercent,
+      ),
+    ).toEqual([10, 65, 30]);
+
+    input.set(EnvironmentId.make("env-b"), {
+      ...laptop,
+      serverConfig: { providers: [login("remote-b", "login-b", 80)] },
+    });
+    expect(
+      collectLimitAccounts(input).map((account) => account.limits.windows[0]?.usedPercent),
+    ).toEqual([10, 65, 30, 80]);
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

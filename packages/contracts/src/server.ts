@@ -70,6 +70,8 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** Opaque, environment-local login scope when profile metadata is shared across credentials. */
+  credentialScope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

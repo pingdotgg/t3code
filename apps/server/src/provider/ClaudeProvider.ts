@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -492,7 +494,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Digest.Digest
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -688,6 +690,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     parsedVersion
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
+  const secureStorageDir = resolvedEnvironment.CLAUDE_SECURESTORAGE_CONFIG_DIR?.trim();
+  const credentialScope = secureStorageDir
+    ? yield* (yield* Digest.Digest)
+        .digest(
+          Digest.sha256,
+          new TextEncoder().encode((yield* Path.Path).resolve(cwd ?? ".", secureStorageDir)),
+        )
+        .pipe(Effect.map(Hex.encode), Effect.orDie)
+    : undefined;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -702,8 +713,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
-        ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
+        // Secure storage can hold another login while Claude's profile file stays shared.
+        ...(credentialScope
+          ? { credentialScope }
+          : {
+              ...(capabilities.email ? { email: capabilities.email } : {}),
+              ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
+            }),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
