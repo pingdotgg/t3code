@@ -49,6 +49,7 @@ function parseOpenCodeMessage(
   const cache = object(usage.cache);
   const modelReference = object(message.model);
   const model = text(modelReference.id) || text(modelReference.modelID) || text(message.modelID);
+  const providerID = text(modelReference.providerID) || text(message.providerID);
   const timestampMs = object(message.time).created ?? fallback.timestampMs;
   if (!model || typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) return null;
   const reasoningTokens = tokens(usage.reasoning);
@@ -66,10 +67,18 @@ function parseOpenCodeMessage(
     provider: "opencode",
     timestampMs,
     model,
+    ...(providerID === "opencode-go" && !model.includes("/")
+      ? { rateModel: `opencode_go/${model}` }
+      : {}),
     sessionId: fallback.sessionId || text(message.sessionID),
     totals,
-    // OpenCode uses zero for unknown rates, including paid subscriptions; let shared pricing estimate.
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    // Zero means unknown for paid subscriptions, but is authoritative for explicit free models.
+    reportedCostUsd:
+      typeof cost === "number" &&
+      Number.isFinite(cost) &&
+      (cost > 0 || (cost === 0 && model.endsWith("-free")))
+        ? cost
+        : null,
     speed: "standard",
     dedupeKey: id ? `opencode:${id}` : null,
   };

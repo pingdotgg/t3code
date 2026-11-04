@@ -19,6 +19,90 @@ const openDatabase = (filename: string) =>
   );
 
 describe("readOpenCodeUsage", () => {
+  it.effect("preserves OpenCode Go pricing identity and recognizes free models", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-pricing-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)");
+      const model = "deepseek-v4.1-flash";
+      const rateModel = `opencode_go/${model}`;
+      const cases = [
+        {
+          metadata: { modelID: model, providerID: "opencode-go" },
+          rateModel,
+          cost: 0,
+          reportedCostUsd: null,
+        },
+        {
+          metadata: { model: { id: model, providerID: "opencode-go" } },
+          rateModel,
+          cost: 0.25,
+          reportedCostUsd: 0.25,
+        },
+        {
+          metadata: { model: { modelID: model, providerID: "opencode-go" } },
+          rateModel,
+          cost: 0,
+          reportedCostUsd: null,
+        },
+        {
+          metadata: { modelID: model, providerID: "other" },
+          rateModel: undefined,
+          cost: 0,
+          reportedCostUsd: null,
+        },
+        { metadata: { modelID: model }, rateModel: undefined, cost: 0, reportedCostUsd: null },
+        {
+          metadata: { modelID: rateModel, providerID: "opencode-go" },
+          rateModel: undefined,
+          cost: 0,
+          reportedCostUsd: null,
+        },
+        {
+          metadata: { modelID: `${model}-free`, providerID: "opencode" },
+          rateModel: undefined,
+          cost: 0,
+          reportedCostUsd: 0,
+        },
+      ];
+      for (const [index, test] of cases.entries()) {
+        const source = JSON.stringify({
+          role: "assistant",
+          ...test.metadata,
+          time: { created: 1780000000000 },
+          cost: test.cost,
+          tokens: { input: 100, output: 20, cache: { read: 30 } },
+        });
+        if (index === 2) {
+          const legacy = path.join(dir, "storage", "message", "session-1");
+          yield* fileSystem.makeDirectory(legacy, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(legacy, `msg-${index}.json`), source);
+        } else {
+          yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?)", [
+            `msg-${index}`,
+            "session-1",
+            source,
+          ]);
+        }
+      }
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      const records = result.files.flatMap((file) => file.records);
+      assert.strictEqual(records.length, cases.length);
+      for (const [index, test] of cases.entries()) {
+        const record = records.find((record) => record.dedupeKey === `opencode:msg-${index}`);
+        assert.strictEqual(
+          record?.model,
+          test.metadata.modelID ?? test.metadata.model?.id ?? test.metadata.model?.modelID,
+        );
+        assert.strictEqual(record?.rateModel, test.rateModel);
+        assert.strictEqual(record?.reportedCostUsd, test.reportedCostUsd);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("bounds raw history allocations while counting every eligible message once", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
