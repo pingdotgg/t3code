@@ -768,6 +768,9 @@ function ThreadTerminal(props: {
       return;
     }
 
+    // Toolbar input bypasses the native field, so a syllable it holds must not be recomposed.
+    surfaceRef.current?.resetInput();
+
     if (action.kind === "clear") {
       handleClearTerminal();
       return;

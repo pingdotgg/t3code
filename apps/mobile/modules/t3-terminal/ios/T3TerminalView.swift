@@ -353,6 +353,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.spellCheckingType = .no
     inputField.smartDashesType = .no
     inputField.smartQuotesType = .no
+    inputField.smartInsertDeleteType = .no
     inputField.returnKeyType = .send
     inputField.keyboardType = .default
     inputField.enablesReturnKeyAutomatically = false
@@ -493,9 +494,13 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
     emitInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
     sentInput = text
-    // A Hangul syllable never spans whitespace; the cap bounds the field without one.
-    if text.last?.isWhitespace == true || text.count > 64 {
+    // A Hangul syllable never spans whitespace; past the cap, keep the last character to compose onto.
+    if text.last?.isWhitespace == true {
       resetInputField()
+    } else if text.count > 64 {
+      let last = String(text.suffix(1))
+      inputField.text = last
+      sentInput = last
     }
   }
 
@@ -506,7 +511,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     textInputModeDidChange()
   }
 
-  private func resetInputField() {
+  func resetInputField() {
     inputField.text = ""
     sentInput = ""
   }
