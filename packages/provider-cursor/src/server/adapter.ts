@@ -2527,7 +2527,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                                       : "provider_error",
                                   })
                                 : makeProviderFailure({
-                                    cause: transportFailure,
+                                    message: transportFailure,
                                     class: "transport_error",
                                   }),
                           }
