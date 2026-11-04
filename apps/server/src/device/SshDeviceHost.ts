@@ -8,7 +8,7 @@ import {
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
 import * as NetService from "@t3tools/shared/Net";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,6 +26,8 @@ import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+
+const UNHEALTHY_PROBE_LIMIT = 3;
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
@@ -82,9 +84,12 @@ const ownerFor = Effect.fn("SshDeviceHost.ownerFor")(function* (hostId: string) 
   const environmentId = yield* fs
     .readFileString(server.environmentIdPath)
     .pipe(Effect.orElseSucceed(() => server.stateDir));
-  const crypto = yield* Crypto.Crypto;
-  const owner = yield* crypto
-    .digest("SHA-256", new TextEncoder().encode(`${environmentId}\0${server.stateDir}\0${hostId}`))
+  const digest = yield* Digest.Digest;
+  const owner = yield* digest
+    .digest(
+      Digest.sha256,
+      new TextEncoder().encode(`${environmentId}\0${server.stateDir}\0${hostId}`),
+    )
     .pipe(Effect.map(Hex.encode), Effect.orDie);
   return owner.slice(0, 24);
 });
@@ -129,7 +134,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const net = yield* NetService.NetService;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
   const owner = yield* ownerFor(config.id);
@@ -140,7 +145,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       | FileSystem.FileSystem
       | Path.Path
       | ChildProcessSpawner.ChildProcessSpawner
-      | Crypto.Crypto
+      | Digest.Digest
       | ServerConfig.ServerConfig
     >,
   ) =>
@@ -149,7 +154,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig.ServerConfig, server),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
     );
   const lock = yield* Semaphore.make(1);
   let stopped = false;
@@ -362,7 +367,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       : next;
     yield* onStatus("ready");
     // Reconnect also repairs helpers that died while SSH itself stayed connected.
+    // A loaded host can miss a probe or two while still working, and reconnecting
+    // then drops the forward in use, so only consecutive misses count.
     const unhealthy = Effect.gen(function* () {
+      let misses = 0;
       while (true) {
         yield* Effect.sleep("10 seconds");
         const alive = yield* http.get(`${next.hub.origin}/readyz`).pipe(
@@ -377,7 +385,8 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               Effect.orElseSucceed(() => false),
             )
           : true;
-        if (!alive || !daemonAlive) return;
+        misses = alive && daemonAlive ? 0 : misses + 1;
+        if (misses >= UNHEALTHY_PROBE_LIMIT) return;
       }
     });
     yield* Effect.gen(function* () {

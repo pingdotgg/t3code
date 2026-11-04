@@ -106,6 +106,25 @@ export function defaultHostCloneUrl(repository: string): string | null {
     : `git@${definition.publicHost}:${path}`;
 }
 
+/** Owner present, repository name missing: `owner/` or `owner//`. */
+const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
+
+const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/repository name.";
+
+/**
+ * Message to show when a GitHub add-project field is only `owner/`.
+ * Lookup would send that to GitHub and come back as a generic failure.
+ * Returns null for complete names, bare repo names, URLs, and other sources.
+ */
+export function githubIncompleteOwnerRepositoryMessage(
+  source: AddProjectRemoteSource,
+  input: string,
+): string | null {
+  if (source !== "github") return null;
+  if (!INCOMPLETE_GITHUB_OWNER_PATH.test(input.trim())) return null;
+  return INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE;
+}
+
 export function normalizePastedCloneUrl(input: string): string {
   const trimmed = input.trim();
   return REPOSITORY_SHORTHAND.test(trimmed) ? (defaultHostCloneUrl(trimmed) ?? trimmed) : trimmed;

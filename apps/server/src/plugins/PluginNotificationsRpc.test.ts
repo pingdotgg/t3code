@@ -7,6 +7,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -62,52 +63,55 @@ const serve = Effect.fn("serve")(function* (scopes: ReadonlyArray<AuthEnvironmen
   return { client, show, connect, subscriptions: () => subscriptions };
 });
 
-it.layer(NodeServices.layer)("plugins.notifications.subscribe", (it) => {
-  it.effect("gives a reconnecting client the retained set, without what was withdrawn", () =>
-    Effect.gen(function* () {
-      const { show, connect } = yield* serve(AuthStandardClientScopes);
-      const lifetime = yield* Scope.make();
-      const stopped = yield* Scope.make();
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "plugins.notifications.subscribe",
+  (it) => {
+    it.effect("gives a reconnecting client the retained set, without what was withdrawn", () =>
+      Effect.gen(function* () {
+        const { show, connect } = yield* serve(AuthStandardClientScopes);
+        const lifetime = yield* Scope.make();
+        const stopped = yield* Scope.make();
 
-      const first = yield* Scope.make();
-      const next = yield* connect(first);
-      assert.deepStrictEqual(yield* next, []);
-      yield* show("acme.a", lifetime, "before");
-      assert.deepStrictEqual(yield* next, ["before"]);
+        const first = yield* Scope.make();
+        const next = yield* connect(first);
+        assert.deepStrictEqual(yield* next, []);
+        yield* show("acme.a", lifetime, "before");
+        assert.deepStrictEqual(yield* next, ["before"]);
 
-      // Offline: the connection's subscription ends while the plugins keep going.
-      yield* Scope.close(first, Exit.void);
-      yield* show("acme.b", lifetime, "while away");
-      yield* show("acme.c", stopped, "withdrawn while away");
-      yield* Scope.close(stopped, Exit.void);
+        // Offline: the connection's subscription ends while the plugins keep going.
+        yield* Scope.close(first, Exit.void);
+        yield* show("acme.b", lifetime, "while away");
+        yield* show("acme.c", stopped, "withdrawn while away");
+        yield* Scope.close(stopped, Exit.void);
 
-      // The reconnect's first frame is the whole retained set; the client
-      // toasts only what is above its mark and closes what left the set.
-      const again = yield* connect(yield* Scope.make());
-      assert.deepStrictEqual(yield* again, ["before", "while away"]);
-      yield* show("acme.d", lifetime, "after");
-      assert.deepStrictEqual(yield* again, ["before", "while away", "after"]);
-    }).pipe(Effect.scoped),
-  );
+        // The reconnect's first frame is the whole retained set; the client
+        // toasts only what is above its mark and closes what left the set.
+        const again = yield* connect(yield* Scope.make());
+        assert.deepStrictEqual(yield* again, ["before", "while away"]);
+        yield* show("acme.d", lifetime, "after");
+        assert.deepStrictEqual(yield* again, ["before", "while away", "after"]);
+      }).pipe(Effect.scoped),
+    );
 
-  it.effect("refuses a client without the orchestration read scope", () =>
-    Effect.gen(function* () {
-      const { client, subscriptions } = yield* serve([AuthRelayReadScope]);
-      const error = yield* client[TAG]({}).pipe(Stream.take(1), Stream.runCollect, Effect.flip);
-      assert.deepInclude(error, {
-        _tag: "EnvironmentAuthorizationError",
-        requiredScope: AuthOrchestrationReadScope,
-      });
-      assert.strictEqual(subscriptions(), 0);
-    }).pipe(Effect.scoped),
-  );
+    it.effect("refuses a client without the orchestration read scope", () =>
+      Effect.gen(function* () {
+        const { client, subscriptions } = yield* serve([AuthRelayReadScope]);
+        const error = yield* client[TAG]({}).pipe(Stream.take(1), Stream.runCollect, Effect.flip);
+        assert.deepInclude(error, {
+          _tag: "EnvironmentAuthorizationError",
+          requiredScope: AuthOrchestrationReadScope,
+        });
+        assert.strictEqual(subscriptions(), 0);
+      }).pipe(Effect.scoped),
+    );
 
-  it.effect("lets a read-only session follow notifications", () =>
-    Effect.gen(function* () {
-      const { connect, subscriptions } = yield* serve([AuthOrchestrationReadScope]);
-      const next = yield* connect(yield* Scope.make());
-      assert.deepStrictEqual(yield* next, []);
-      assert.strictEqual(subscriptions(), 1);
-    }).pipe(Effect.scoped),
-  );
-});
+    it.effect("lets a read-only session follow notifications", () =>
+      Effect.gen(function* () {
+        const { connect, subscriptions } = yield* serve([AuthOrchestrationReadScope]);
+        const next = yield* connect(yield* Scope.make());
+        assert.deepStrictEqual(yield* next, []);
+        assert.strictEqual(subscriptions(), 1);
+      }).pipe(Effect.scoped),
+    );
+  },
+);

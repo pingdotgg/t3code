@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -64,7 +66,7 @@ const titles = (frame: PluginNotificationFrame) =>
 const encodeNotification = Schema.encodeSync(Schema.fromJsonString(PluginNotification));
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(PluginNotificationFrame));
 
-it.layer(NodeServices.layer)("PluginNotifications", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginNotifications", (it) => {
   describe("retained set", () => {
     it.effect("sends the retained set first, then the whole set after each change", () =>
       Effect.gen(function* () {
