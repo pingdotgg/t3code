@@ -147,7 +147,8 @@ export function PullRequestMarkdownTextarea({
           onBlur?.(event);
         }}
         onKeyDown={(event) => {
-          if (open && !event.nativeEvent.isComposing) {
+          // Some IMEs confirm a composition with an Enter that reports keyCode 229 but not isComposing.
+          if (open && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
             const handled = (() => {
               if (event.key === "Escape") {
                 setDismissedAt(trigger.rangeStart);
