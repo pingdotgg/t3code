@@ -18,6 +18,10 @@ describe("readModelViewerPageParams", () => {
     });
   });
 
+  it("accepts Blender files, whose link serves their exported geometry", () => {
+    expect(read({ src: `${origin}/a`, name: "scene.blend" })?.format).toBe("blend");
+  });
+
   it("rejects other origins, unknown names and bad appearances", () => {
     expect(read({ src: "https://example.com/part.stl", name: "part.stl" })).toBeNull();
     expect(read({ src: `${origin}/a`, name: "notes.txt" })).toBeNull();

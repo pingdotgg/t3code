@@ -393,20 +393,26 @@ If nothing on the device can show a format, save or share it to open it elsewher
 50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
 save, or add it to chat.
 
-3D files (`.stl`, `.obj`, `.ply`, `.3mf`, `.glb` and `.gltf`) show a rendered picture of their
-shape instead of their raw bytes. Materials and textures are ignored, so every mesh is drawn in one
-color. A `.gltf` file that keeps its data in separate `.bin` files, or uses Draco or meshopt
-compression, cannot be drawn; export it as `.glb` instead.
+3D files show a picture instead of their raw bytes. Mesh files (`.stl`, `.obj`, `.ply`, `.3mf`,
+`.glb` and `.gltf`) show a rendered picture of their shape. Materials and textures are ignored, so
+every mesh is drawn in one color. A `.gltf` file that keeps its data in separate `.bin` files, or
+uses Draco or meshopt compression, cannot be drawn; export it as `.glb` instead.
 
 On web and desktop, 3D files open in a 3D view. Drag or middle-drag to orbit, hold Shift to pan,
 and scroll or hold Ctrl to zoom. On a trackpad, two fingers orbit and pinching zooms. As in
 Blender, numpad 1, 3 and 7 show the front, right and top (with Ctrl for the opposite side), 5
 switches between perspective and orthographic, and Home or numpad `.` frames the model. Use
-**Show preview image** for a still picture. Files over 64 MB show only the picture.
+**Show preview image** for a still picture. Mesh files over 64 MB show only the picture.
+
+Blender files (`.blend`) open in the 3D view when Blender is installed on the machine running
+T3 Code; the file is never changed. Use **Show thumbnail** for the thumbnail saved with the file.
+Without Blender, or for scenes over 2 million triangles, they show only that thumbnail. If the
+thumbnail is blank and Blender is not installed, open and save the file in Blender to refresh it.
 
 On mobile, workspace 3D files open in the same 3D view: drag with one finger to orbit, pinch to
-zoom, drag with two fingers to pan, and double-tap to reset the view. Use **Picture** for the
-still image. Attached 3D files open like other unsupported formats.
+zoom, drag with two fingers to pan, and double-tap to reset the view. Use **Picture**, or
+**Thumbnail** for Blender files, for the still image. Attached 3D files open like other
+unsupported formats.
 
 ## Images and videos in messages
 

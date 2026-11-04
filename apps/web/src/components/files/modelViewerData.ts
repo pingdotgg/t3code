@@ -1,12 +1,17 @@
 /** Mesh files above this size show the preview image; the 3D view downloads files whole. */
 export const MODEL_VIEWER_MAX_BYTES = 64 * 1024 * 1024;
 
-/** Reads a response body, failing once it passes `limit` bytes. */
+/**
+ * Reads a response body, failing once it passes `limit` bytes. `notFound` explains a 404, which
+ * for `.blend` geometry means the server has no Blender to export it.
+ */
 export async function readModelBytes(
-  response: Pick<Response, "ok" | "body">,
+  response: Pick<Response, "ok" | "status" | "body">,
   limit: number,
   signal: AbortSignal,
+  notFound = "The file could not be loaded.",
 ) {
+  if (response.status === 404) throw new Error(notFound);
   if (!response.ok || !response.body) throw new Error("The file could not be loaded.");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

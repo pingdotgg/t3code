@@ -125,7 +125,7 @@ const layerTest = Layer.mergeAll(
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(layerConfig))),
   ),
-  ModelPreviews.layer,
+  ModelPreviews.layerWith({ blender: "off" }).pipe(Layer.provide(layerConfig)),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {
@@ -220,17 +220,20 @@ describe("AssetAccess", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-model-root-" });
-      const stl = new Uint8Array(84 + 50);
-      new DataView(stl.buffer).setUint32(80, 1, true);
-      [0, 0, 0, 10, 0, 0, 0, 0, 10].forEach((value, index) =>
-        new DataView(stl.buffer).setFloat32(96 + index * 4, value, true),
-      );
-      const stlPath = path.join(root, "part.stl");
-      yield* fs.writeFile(stlPath, stl);
-      const emptyPath = path.join(root, "empty.stl");
-      yield* fs.writeFile(emptyPath, new Uint8Array(84));
-      const canonicalStl = yield* fs.realPath(stlPath);
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-blend-root-" });
+      // A legacy 64-bit header followed by a 2x1 thumbnail block.
+      const blend = new Uint8Array(12 + 24 + 16);
+      blend.set(new TextEncoder().encode("BLENDER-v300TEST"));
+      const view = new DataView(blend.buffer);
+      view.setInt32(16, 16, true);
+      view.setInt32(36, 2, true);
+      view.setInt32(40, 1, true);
+      blend.set([255, 0, 0, 255, 0, 0, 0, 255], 44);
+      const blendPath = path.join(root, "scene.blend");
+      yield* fs.writeFile(blendPath, blend);
+      const emptyPath = path.join(root, "empty.blend");
+      yield* fs.writeFile(emptyPath, new TextEncoder().encode("BLENDER-v300ENDB"));
+      const canonicalBlend = yield* fs.realPath(blendPath);
       const resolveUrl = (relativeUrl: string) => {
         const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
         const separator = suffix.indexOf("/");
@@ -239,9 +242,9 @@ describe("AssetAccess", () => {
       const threadId = ThreadId.make("thread-1");
 
       for (const resource of [
-        { _tag: "media-file" as const, threadId, path: stlPath },
-        { _tag: "workspace-file" as const, threadId, path: "part.stl" },
-        { _tag: "draft-workspace-file" as const, cwd: root, path: "part.stl" },
+        { _tag: "media-file" as const, threadId, path: blendPath },
+        { _tag: "workspace-file" as const, threadId, path: "scene.blend" },
+        { _tag: "draft-workspace-file" as const, cwd: root, path: "scene.blend" },
       ]) {
         const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
         const asset = yield* resolveUrl(issued.relativeUrl);
@@ -251,13 +254,29 @@ describe("AssetAccess", () => {
         ]);
       }
 
+      const stlPath = path.join(root, "part.stl");
+      const stl = new Uint8Array(84 + 50);
+      new DataView(stl.buffer).setUint32(80, 1, true);
+      [0, 0, 0, 10, 0, 0, 0, 0, 10].forEach((value, index) =>
+        new DataView(stl.buffer).setFloat32(96 + index * 4, value, true),
+      );
+      yield* fs.writeFile(stlPath, stl);
+      const stlPreview = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId, path: "part.stl" },
+        workspaceRoot: root,
+      });
+      expect(yield* resolveUrl(stlPreview.relativeUrl)).toMatchObject({
+        kind: "bytes",
+        mimeType: "image/png",
+      });
+
       const download = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId, path: stlPath, disposition: "attachment" },
+        resource: { _tag: "media-file", threadId, path: blendPath, disposition: "attachment" },
         workspaceRoot: root,
       });
       expect(yield* resolveUrl(download.relativeUrl)).toMatchObject({
         kind: "file",
-        path: canonicalStl,
+        path: canonicalBlend,
         download: true,
       });
 
@@ -271,16 +290,30 @@ describe("AssetAccess", () => {
       });
       expect(yield* resolveUrl(draftDownload.relativeUrl)).toMatchObject({
         kind: "file",
-        path: canonicalStl,
+        path: yield* fs.realPath(stlPath),
         download: true,
       });
+
+      // Geometry is only for .blend files, and needs Blender, which this server has turned off.
+      const geometry = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId, path: blendPath, disposition: "geometry" },
+        workspaceRoot: root,
+      });
+      expect(yield* resolveUrl(geometry.relativeUrl)).toBeNull();
+      const meshGeometry = yield* Effect.exit(
+        issueAssetUrl({
+          resource: { _tag: "media-file", threadId, path: stlPath, disposition: "geometry" },
+          workspaceRoot: root,
+        }),
+      );
+      expect(meshGeometry._tag).toBe("Failure");
 
       const empty = yield* issueAssetUrl({
         resource: { _tag: "media-file", threadId, path: emptyPath },
         workspaceRoot: root,
       });
       expect(yield* resolveUrl(empty.relativeUrl)).toBeNull();
-      expect(new Uint8Array(yield* fs.readFile(stlPath))).toEqual(stl);
+      expect(new Uint8Array(yield* fs.readFile(blendPath))).toEqual(blend);
     }).pipe(Effect.provide(layerTest)),
   );
 

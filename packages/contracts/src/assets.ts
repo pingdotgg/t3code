@@ -17,6 +17,13 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
+/**
+ * How a workspace file is served when its inline form is a derived preview, like 3D files:
+ * `attachment` asks for the original bytes, and `geometry` for a `.blend` file's visible geometry
+ * as binary PLY, exported by the server's Blender for the 3D view.
+ */
+const WorkspaceFileDisposition = Schema.Literals(["attachment", "geometry"]);
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -25,20 +32,19 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    disposition: Schema.optionalKey(Schema.Literal("attachment")),
+    disposition: Schema.optionalKey(WorkspaceFileDisposition),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    /** Asks for the original bytes of files whose inline form is a derived preview, like 3D files. */
-    disposition: Schema.optionalKey(Schema.Literal("attachment")),
+    disposition: Schema.optionalKey(WorkspaceFileDisposition),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
     /** Defaults to download; viewers may request inline after checking the type is safe. */
-    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment", "geometry"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
   Schema.TaggedStruct("tool-output-image", {

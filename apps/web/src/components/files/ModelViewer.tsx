@@ -1,4 +1,4 @@
-import type { ModelPreviewFormat } from "@t3tools/shared/filePreview";
+import { isMeshFormat, type ModelPreviewFormat } from "@t3tools/shared/filePreview";
 import {
   MODEL_VIEWER_MAX_TRIANGLES,
   parseMesh,
@@ -52,9 +52,17 @@ void main() {
   color = vec4(baseColor * (0.32 + 0.68 * abs(dot(normal, light))), 1.0);
 }`;
 
-/** Decodes a model into indexed geometry, or `null` when it has none. */
+/**
+ * Decodes a model into indexed geometry, or `null` when it has none. A `.blend` file arrives as
+ * the binary PLY the server's Blender exports from it.
+ */
 function decodeGeometry(format: ModelPreviewFormat, bytes: Uint8Array, signal: AbortSignal) {
-  return parseMesh(format, bytes, { maxTriangles: MODEL_VIEWER_MAX_TRIANGLES }, signal);
+  return parseMesh(
+    isMeshFormat(format) ? format : "ply",
+    bytes,
+    { maxTriangles: MODEL_VIEWER_MAX_TRIANGLES },
+    signal,
+  );
 }
 
 function compileProgram(gl: WebGL2RenderingContext) {
@@ -97,12 +105,14 @@ type LoadState =
  * Interactive view of a 3D file with Blender's controls: middle or left drag orbits, Shift pans,
  * Ctrl zooms, the wheel zooms, and the numpad picks views. It draws only when the view changes.
  * `onUnavailable` reports files it cannot show so the caller can fall back to the preview image.
+ * For `.blend` files, `loadBytes` supplies the geometry the server exported from them.
  */
 export default function ModelViewer(props: {
   readonly name: string;
   readonly format: ModelPreviewFormat;
   readonly loadBytes: (signal: AbortSignal) => Promise<Uint8Array>;
   readonly onUnavailable: (reason: string) => void;
+  readonly loadingLabel?: string | null | undefined;
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const loadMesh = useEffectEvent(async (signal: AbortSignal): Promise<Mesh> => {
@@ -134,7 +144,7 @@ export default function ModelViewer(props: {
     return () => controller.abort();
   }, []);
 
-  if (state.status === "loading") return <FileSurfaceLoading />;
+  if (state.status === "loading") return <FileSurfaceLoading label={props.loadingLabel} />;
   if (state.status === "failed") return null;
   return <ModelCanvas name={props.name} mesh={state.mesh} onUnavailable={props.onUnavailable} />;
 }

@@ -8,6 +8,7 @@ import * as Cause from "effect/Cause";
 import {
   filePreviewKind,
   modelPreviewFormatOf,
+  isMeshFormat,
   officePreviewKind,
   FILE_TEXT_PREVIEW_MAX_BYTES,
 } from "@t3tools/shared/filePreview";
@@ -145,11 +146,17 @@ export function AttachmentFilePreview(props: {
           }
         : null;
   const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
+  // `.blend` files open in 3D from the geometry the server's Blender exports from them.
+  const geometryResource =
+    resource && kind === "model" && modelPreviewFormatOf(props) === "blend"
+      ? { ...resource, disposition: "geometry" as const }
+      : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
   );
   const prepareDownload = useAssetUrlRefresh(props.asset?.environmentId ?? null, downloadResource);
+  const prepareGeometry = useAssetUrlRefresh(props.asset?.environmentId ?? null, geometryResource);
   const [saving, setSaving] = useState(false);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
@@ -198,10 +205,12 @@ export function AttachmentFilePreview(props: {
   // The notice describes the preview image, so it waits until the image has loaded.
   const [loadedModelPreviewUrl, setLoadedModelPreviewUrl] = useState<string | null>(null);
   // 3D files open in the 3D view; the preview image stays one click away and is the fallback
-  // when the file is too large or the device cannot draw it.
+  // when the file is too large or the device cannot draw it. Local `.blend` drafts have no
+  // server to export their geometry.
   const [modelImageChosen, setModelImageChosen] = useState(false);
   const [modelViewerProblem, setModelViewerProblem] = useState<string | null>(null);
-  const offersModelViewer = modelFormat !== null;
+  const offersModelViewer =
+    modelFormat !== null && (isMeshFormat(modelFormat) || (!props.file && resource !== null));
   const showsModelViewer = offersModelViewer && !modelImageChosen && modelViewerProblem === null;
   // Servers without 3D previews refuse the URL; local drafts have no server to ask.
   const modelPreviewUnavailable =
@@ -215,9 +224,14 @@ export function AttachmentFilePreview(props: {
       }
       return new Uint8Array(await props.file.arrayBuffer());
     }
-    const target = await prepareDownload();
+    const target = await (geometryResource ? prepareGeometry() : prepareDownload());
     if (!target) throw new Error("Reconnect to the environment and try again.");
-    return readModelBytes(await fetch(target, { signal }), MODEL_VIEWER_MAX_BYTES, signal);
+    return readModelBytes(
+      await fetch(target, { signal }),
+      MODEL_VIEWER_MAX_BYTES,
+      signal,
+      modelCopy?.viewerMissing,
+    );
   };
   const modelSourceKey = props.file
     ? blobKey(props.file)
@@ -316,6 +330,7 @@ export function AttachmentFilePreview(props: {
           format={modelFormat}
           loadBytes={loadModelBytes}
           onUnavailable={setModelViewerProblem}
+          loadingLabel={modelCopy?.loading}
         />
       </Suspense>
     ) : modelPreviewUnavailable ? (
@@ -454,7 +469,9 @@ export function AttachmentFilePreview(props: {
         </div>
         {offersModelViewer && !modelViewerProblem ? (
           <FileSurfaceAction
-            label={showsModelViewer ? "Show preview image" : "Show 3D view"}
+            label={
+              showsModelViewer ? (modelCopy?.imageLabel ?? "Show preview image") : "Show 3D view"
+            }
             pressed={showsModelViewer}
             onPress={() => setModelImageChosen((value) => !value)}
           >

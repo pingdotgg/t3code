@@ -1,3 +1,4 @@
+import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
 import { useState } from "react";
 
 import { readModelViewerPageParams } from "../../modelViewerPage";
@@ -48,6 +49,7 @@ export default function ModelViewerPage() {
       </main>
     );
   }
+  const copy = modelPreviewCopy(params.format);
   return (
     <main className="fixed inset-0 flex flex-col overflow-hidden bg-background">
       <ModelViewer
@@ -58,9 +60,11 @@ export default function ModelViewerPage() {
             await fetch(params.src, { signal, credentials: "omit" }),
             MODEL_VIEWER_MAX_BYTES,
             signal,
+            copy.viewerMissing,
           )
         }
         onUnavailable={onUnavailable}
+        loadingLabel={copy.loading}
       />
     </main>
   );

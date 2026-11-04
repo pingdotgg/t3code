@@ -1,6 +1,6 @@
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
-import type { ModelPreviewFormat } from "@t3tools/shared/filePreview";
+import { isMeshFormat, type ModelPreviewFormat } from "@t3tools/shared/filePreview";
 import { useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -110,8 +110,9 @@ function ModeBar(props: {
 }
 
 /**
- * A workspace 3D file opens in a touch 3D view, with the server's picture one tap away; anything
- * the 3D view cannot draw shows the picture instead.
+ * A workspace 3D file opens in a touch 3D view, with the server's picture one tap away. `.blend`
+ * files load the geometry the server's Blender exports; without it, or for anything the 3D view
+ * cannot draw, the picture shows instead.
  */
 export function WorkspaceModelPreview(props: {
   readonly environmentId: EnvironmentId | null;
@@ -124,7 +125,9 @@ export function WorkspaceModelPreview(props: {
 }) {
   const copy = modelPreviewCopy(props.format);
   const { environmentId, threadId, cwd, relativePath } = props;
-  // The 3D view downloads the raw file; the picture is the inline preview URL.
+  // The 3D view downloads the raw mesh, or a `.blend` file's exported geometry; the picture is the
+  // inline preview URL.
+  const disposition = isMeshFormat(props.format) ? "attachment" : "geometry";
   const download = useMemo<AssetResource | null>(() => {
     if (cwd === null) return null;
     return threadId !== null
@@ -132,24 +135,22 @@ export function WorkspaceModelPreview(props: {
           _tag: "media-file",
           threadId,
           path: resolveWorkspaceFilePath(cwd, relativePath),
-          disposition: "attachment",
+          disposition,
         }
-      : { _tag: "draft-workspace-file", cwd, path: relativePath, disposition: "attachment" };
-  }, [cwd, relativePath, threadId]);
+      : { _tag: "draft-workspace-file", cwd, path: relativePath, disposition };
+  }, [cwd, disposition, relativePath, threadId]);
   const canShow3d = environmentId !== null && download !== null;
   const downloadUrl = useAssetUrlState(environmentId, canShow3d ? download : null);
   const [mode, setMode] = useState<"3d" | "picture">("3d");
   const [reported, setReported] = useState<string | null>(null);
-  const problem =
-    reported ??
-    (downloadUrl._tag === "Failure" ? "The file could not be loaded for the 3D view." : null);
+  const problem = reported ?? (downloadUrl._tag === "Failure" ? copy.viewerMissing : null);
 
   if (canShow3d && mode === "3d" && problem === null) {
     return (
       <View className="flex-1 bg-card">
         <ModeBar
           hint="Drag to orbit · pinch to zoom · two fingers pan · double-tap resets"
-          action="Picture"
+          action={props.format === "blend" ? "Thumbnail" : "Picture"}
           onPress={() => setMode("picture")}
         />
         <ModelWebView

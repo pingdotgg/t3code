@@ -113,17 +113,22 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
   );
 }
 
-export function FileSurfaceLoading(props: { readonly className?: string }) {
+export function FileSurfaceLoading(props: {
+  readonly className?: string;
+  /** Shown under the spinner for loads that take a while. */
+  readonly label?: string | null | undefined;
+}) {
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label={props.label ?? "Loading file"}
       className={cn(
-        "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
+        "flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-muted-foreground",
         props.className,
       )}
     >
       <Spinner size="lg" />
+      {props.label ? <p className="text-xs">{props.label}</p> : null}
     </div>
   );
 }

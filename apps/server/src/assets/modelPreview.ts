@@ -2,9 +2,10 @@
 // validated, so the file cannot be swapped between the identity check and the read.
 import type * as NodeFSP from "node:fs/promises";
 
-import type { ModelPreviewFormat } from "@t3tools/shared/filePreview";
+import type { MeshFormat, ModelPreviewFormat } from "@t3tools/shared/filePreview";
 import { parseMesh } from "@t3tools/shared/meshFiles";
 
+import { extractBlendThumbnailPng } from "./blendThumbnail.ts";
 import { renderMesh } from "./meshRender.ts";
 import { encodeRgbaPng } from "./rgbaPng.ts";
 
@@ -23,13 +24,12 @@ async function readWhole(handle: NodeFSP.FileHandle, size: number) {
   return bytes.subarray(0, offset);
 }
 
-/** PNG render of a mesh file's geometry, or `null` when the file has nothing to show. */
-export async function modelPreviewPng(
-  format: ModelPreviewFormat,
+async function renderMeshPng(
+  format: MeshFormat,
   handle: NodeFSP.FileHandle,
   size: number,
   signal: AbortSignal,
-): Promise<Uint8Array | null> {
+) {
   if (size > MESH_PREVIEW_MAX_INPUT_BYTES) return null;
   const mesh = await parseMesh(
     format,
@@ -41,4 +41,16 @@ export async function modelPreviewPng(
   const image = mesh ? await renderMesh(mesh, signal) : null;
   signal.throwIfAborted();
   return image ? encodeRgbaPng(image.width, image.height, image.rgba) : null;
+}
+
+/** PNG preview for a model file, or `null` when the file has nothing to show. */
+export function modelPreviewPng(
+  format: ModelPreviewFormat,
+  handle: NodeFSP.FileHandle,
+  size: number,
+  signal: AbortSignal,
+): Promise<Uint8Array | null> {
+  return format === "blend"
+    ? extractBlendThumbnailPng(handle, size, signal)
+    : renderMeshPng(format, handle, size, signal);
 }
