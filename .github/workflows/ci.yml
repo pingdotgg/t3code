@@ -120,6 +120,11 @@ jobs:
             https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/persistence/Migrations.ts
           node scripts/check-upstream-migrations.ts --upstream "$RUNNER_TEMP/upstream-Migrations.ts"
 
+      # Upstream syncs resolve conflicts in tests; this names the fork fix behind any
+      # guard test a sync removed or changed.
+      - name: Check fork guard tests are intact
+        run: node scripts/check-fork-guards.ts
+
       # Files/dependencies are repo-wide; export checks cover clean workspaces only.
       - name: Check unused code
         run: vp run knip:check
