@@ -69,7 +69,7 @@ export interface DraftState {
   readonly savedRunAt: string;
   readonly weekdays: ReadonlySet<number>;
   readonly runMissedOnce: boolean;
-  readonly savedRunMissedOnce?: boolean;
+  readonly savedRunMissedOnce?: boolean | undefined;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;

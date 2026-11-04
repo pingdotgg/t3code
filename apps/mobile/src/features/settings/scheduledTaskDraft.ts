@@ -57,7 +57,7 @@ export type ScheduleDraft = {
   readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly runMissedOnce: boolean;
-  readonly savedRunMissedOnce?: boolean;
+  readonly savedRunMissedOnce?: boolean | undefined;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;

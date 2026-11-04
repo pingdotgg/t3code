@@ -193,6 +193,7 @@ it.effect("runs a fixed-time slot missed during sleep once only when the task as
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
         launch: () =>
           Ref.update(launches, (n) => n + 1).pipe(
