@@ -1,5 +1,6 @@
 import { Chart, Host, type ChartDataPoint } from "@expo/ui/swift-ui";
 import { frame } from "@expo/ui/swift-ui/modifiers";
+import { ScrollView } from "react-native";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
@@ -24,8 +25,9 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
     })),
   );
 
-  return (
-    <Host style={{ height, width: "100%" }}>
+  const scrollable = days.length > 90;
+  const chart = (
+    <Host style={{ height, width: "100%", minWidth: scrollable ? days.length * 4 : undefined }}>
       <Chart
         type="bar"
         data={data}
@@ -36,4 +38,5 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
       />
     </Host>
   );
+  return scrollable ? <ScrollView horizontal>{chart}</ScrollView> : chart;
 }
