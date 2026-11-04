@@ -19,6 +19,8 @@ export interface NativeLayoutMetrics {
     readonly right: number;
   };
   readonly reservedRegions: ReadonlyArray<ReservedRegion>;
+  /** How far above the bottom edge UIKit floats a 48pt bottom bar, level with its tab bar. iOS 27.1+. */
+  readonly bottomBarInset?: number;
 }
 
 export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
@@ -33,6 +35,9 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
     const endY = Math.min(bottom, region.y + region.height);
     if (endX <= x || endY <= y) continue;
     if (region.kind === "division" && region.height >= metrics.height / 2) {
+      // A native column ending at a division is already split there. Only an
+      // interior division needs to move these controls into one side of the view.
+      if (x <= left || endX >= right) continue;
       if (right - endX >= x - left) left = endX;
       else right = x;
     } else if (endY >= bottom - metrics.safeArea.bottom) {

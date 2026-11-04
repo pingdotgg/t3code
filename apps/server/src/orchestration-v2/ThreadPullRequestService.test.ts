@@ -4,24 +4,34 @@ import {
   SourceControlProviderKind,
   ThreadId,
   type OrchestrationProjectShell,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { EventId } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 
@@ -78,6 +88,341 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     };
   };
 
+  it.effect("does not sweep branch pull requests while no client is connected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Polling active branches without a connected client wastes GitHub requests.
+        const thread = { ...threadShell("idle-branch-thread"), branch: "feature/idle" };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const turnLookup = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly refresh: boolean }> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromQueue(domainEvents),
+            getPullRequestSnapshot: () =>
+              Effect.succeed({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads: [thread],
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (_input, options) =>
+              Effect.gen(function* () {
+                const refresh = options?.refresh ?? false;
+                lookups.push({ refresh });
+                if (refresh) yield* Deferred.succeed(turnLookup, undefined);
+                return null;
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          // No client holds an activity lease.
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+
+          // A finished turn still discovers the pull request for its branch.
+          yield* Queue.offer(domainEvents, {
+            type: "checkpoint.captured",
+            threadId: thread.id,
+          } as OrchestrationV2DomainEvent);
+          yield* Deferred.await(turnLookup);
+          yield* service.drain;
+          const lookupsBeforeIdle = lookups.length;
+
+          yield* TestClock.adjust("10 minutes");
+          yield* service.drain;
+
+          expect(lookups.slice(lookupsBeforeIdle)).toEqual([]);
+        }).pipe(Effect.provide(dependencies));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      worktree: "a linked worktree",
+      existingPaths: ["/workspace/worktree", "/workspace/worktree/.git"],
+      unreadablePaths: [],
+      cwd: "/workspace/worktree",
+    },
+    // A folder that outlived its .git makes git fail with not_a_repository.
+    {
+      worktree: "a folder without .git",
+      existingPaths: ["/workspace/worktree"],
+      unreadablePaths: [],
+      cwd: "/workspace/project",
+    },
+    {
+      worktree: "a folder whose .git cannot be checked",
+      existingPaths: ["/workspace/worktree"],
+      unreadablePaths: ["/workspace/worktree/.git"],
+      cwd: "/workspace/worktree",
+    },
+    {
+      worktree: "a missing folder",
+      existingPaths: [],
+      unreadablePaths: [],
+      cwd: "/workspace/project",
+    },
+  ] as const)(
+    "looks up a branch whose worktree is $worktree in $cwd",
+    ({ existingPaths, unreadablePaths, cwd }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const thread = {
+            ...threadShell("worktree-thread"),
+            settledOverride: "settled" as const,
+            settledAt: NOW,
+            branch: "feature/worktree",
+            worktreePath: "/workspace/worktree",
+          };
+          const project: OrchestrationProjectShell = {
+            id: thread.projectId,
+            title: "Project",
+            workspaceRoot: "/workspace/project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const lookupCwds: Array<string> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getPullRequestSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [thread],
+                    archivedThreads: [],
+                  }),
+                ),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: (input) =>
+                Effect.sync(() => {
+                  lookupCwds.push(input.cwd);
+                  return null;
+                }),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () =>
+                Effect.succeed({
+                  canonicalKey: "github.com/acme/project",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "git@github.com:acme/project.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name: "project",
+                }),
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({
+              exists: (path) =>
+                unreadablePaths.some((entry) => entry === path)
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "exists",
+                        pathOrDescriptor: path,
+                      }),
+                    )
+                  : Effect.succeed(existingPaths.some((entry) => entry === path)),
+            }),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(Effect.provide(dependencies));
+
+          expect(lookupCwds).toEqual([cwd]);
+        }),
+      ),
+  );
+
+  it.effect("leaves delegated child threads to their own refresh instead of the sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const parent = {
+          ...threadShell("parent-thread"),
+          branch: "feature/parent",
+          worktreePath: "/workspace/parent",
+        };
+        const child: OrchestrationV2ThreadShell = {
+          ...threadShell("child-thread"),
+          branch: "t3/reply-ok",
+          worktreePath: "/workspace/child",
+          lineage: {
+            rootThreadId: parent.id,
+            parentThreadId: parent.id,
+            relationshipToParent: "subagent",
+          },
+        };
+        const project: OrchestrationProjectShell = {
+          id: parent.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const sweeps = yield* Queue.unbounded<void>();
+        const childLookup = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly branch: string; readonly refresh: boolean }> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromQueue(domainEvents),
+            getPullRequestSnapshot: ({ threadId }) =>
+              threadId !== undefined
+                ? Effect.succeed({ snapshotSequence: 1, threads: [child] })
+                : Queue.offer(sweeps, undefined).pipe(
+                    Effect.as({
+                      schemaVersion: 2,
+                      snapshotSequence: 1,
+                      threads: [parent, child],
+                      archivedThreads: [],
+                    }),
+                  ),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (input, options) =>
+              Effect.gen(function* () {
+                const refresh = options?.refresh ?? false;
+                lookups.push({ branch: input.branch, refresh });
+                if (input.branch === child.branch && refresh) {
+                  yield* Deferred.succeed(childLookup, undefined);
+                }
+                return null;
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(true),
+            shouldRunOpportunisticWork: Effect.succeed(true),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+
+          // Startup backfill sweep, then one periodic sweep.
+          yield* Queue.take(sweeps);
+          yield* service.drain;
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(sweeps);
+          yield* service.drain;
+          const sweepLookups = lookups.map((lookup) => lookup.branch).toSorted();
+
+          // The child's own turn still discovers its pull request.
+          yield* Queue.offer(domainEvents, {
+            type: "checkpoint.captured",
+            threadId: child.id,
+          } as OrchestrationV2DomainEvent);
+          yield* Deferred.await(childLookup);
+          yield* service.drain;
+
+          expect(sweepLookups).toEqual([parent.branch, parent.branch]);
+          expect(lookups.slice(sweepLookups.length)).toEqual([
+            { branch: child.branch, refresh: true },
+          ]);
+        }).pipe(Effect.provide(dependencies));
+      }),
+    ),
+  );
+
   it.effect.each([
     { state: "closed", sameBranch: false },
     { state: "merged", sameBranch: false },
@@ -115,14 +460,37 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
-              getShellSnapshot: () =>
-                Deferred.succeed(sweepStarted, undefined).pipe(
-                  Effect.as({
-                    schemaVersion: 2,
-                    snapshotSequence: 1,
-                    threads: [thread],
-                    archivedThreads: [],
-                  }),
+              getPullRequestSnapshot: (options) =>
+                Effect.gen(function* () {
+                  const store = yield* ProjectionStore.ProjectionStoreV2;
+                  yield* store.apply({
+                    id: EventId.make(`event:${thread.id}:created`),
+                    type: "thread.created",
+                    threadId: thread.id,
+                    occurredAt: NOW,
+                    payload: { ...thread, lastVisitedAt: thread.lastVisitedAt ?? null },
+                  });
+                  const sql = yield* SqlClient.SqlClient;
+                  yield* sql`INSERT INTO orchestration_events (
+                    sequence, event_id, aggregate_kind, stream_id, stream_version, event_type,
+                    occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+                  ) VALUES (7, 'pr-discovery', 'thread', ${thread.id}, 1, 'thread.created',
+                    '2026-09-20T00:00:00.000Z', 'system', '{}', '{}', 2)`;
+                  for (const table of [
+                    "orchestration_v2_projection_turn_items",
+                    "orchestration_v2_projection_messages",
+                    "orchestration_v2_projection_provider_threads",
+                    "orchestration_v2_projection_runs",
+                  ])
+                    yield* sql.unsafe(`DROP TABLE ${table}`);
+                  const snapshot = yield* store.getPullRequestSnapshot(options);
+                  yield* Deferred.succeed(sweepStarted, undefined);
+                  return snapshot;
+                }).pipe(
+                  Effect.provide(
+                    ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+                  ),
+                  Effect.orDie,
                 ),
               dispatch: (command) =>
                 Effect.sync(() => {
@@ -132,7 +500,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
             Layer.mock(ProjectStore.ProjectStoreV2)({
               listShells: () => Effect.succeed([project]),
-              getShell: () => Effect.succeed(Option.some(project)),
+              getShell: () => Effect.succeedSome(project),
             }),
             Layer.mock(GitManager.GitManager)({
               branchPullRequest: () => Effect.succeed(null),
@@ -158,20 +526,19 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                     remoteName: "origin",
                     remoteUrl: "git@github.com:acme/project.git",
                   },
-                  provider: "github" as const,
+                  provider: SourceControlProviderKind.make("github"),
                   owner: "acme",
                   name: "project",
                 }),
             }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
             Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
             Layer.succeed(
-              Crypto.Crypto,
-              Crypto.make({
-                randomBytes: (size) => new Uint8Array(size).fill(1),
-                digest: (_algorithm, data) => Effect.succeed(data),
-              }),
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
             ),
             FileSystem.layerNoop({}),
+            Path.layer,
           );
           yield* Effect.gen(function* () {
             const service = yield* ThreadPullRequestService.make;
@@ -188,6 +555,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             expect(commands[0]).toMatchObject({
               type: "thread.pull-request.sync",
               threadId: thread.id,
+              snapshotSequence: 7,
+              expected: {
+                workspaceRoot: project.workspaceRoot,
+                branch: thread.branch,
+                worktreePath: thread.worktreePath,
+                linkedPullRequest: savedReference,
+                branchPullRequest: savedReference,
+              },
               branchPullRequest: null,
             });
             expect(commands[0]).not.toHaveProperty("linkedPullRequest");

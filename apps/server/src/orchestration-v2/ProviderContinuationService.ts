@@ -201,18 +201,10 @@ export const layer = Layer.effectDiscard(
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
+          // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
           creationSource: request.delivery === "message_text" ? "server" : "provider",
         });
-        // This catch sits outside dispatchIfCurrent so an adapter that clears
-        // its own sticky offer flag on dispatch failure (inside
-        // dispatchIfCurrent) observes the raw failure first. Not every adapter
-        // self-clears that way, so the explicit callback is called here too;
-        // clearIfCurrent implementations are idempotent, so a source that
-        // already cleared is unaffected.
+        // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
         ) =>

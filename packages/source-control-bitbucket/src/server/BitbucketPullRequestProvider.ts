@@ -1,7 +1,8 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
+import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import {
   PullRequestProviderError,
@@ -12,7 +13,7 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -20,8 +21,6 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
-  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
-  // read and none is offered.
   reactions: false,
   review: {
     inlineComment: true,
@@ -31,11 +30,14 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
-  // Bitbucket Cloud states nothing about what a reviewer has already read: no endpoint carries a
-  // viewed file, and the per-pull-request properties it does offer are one value shared by
-  // everyone rather than one per reader. So the marks are kept here, and the client says whose
-  // they are rather than implying bitbucket.org will show them.
+  // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
+};
+
+const UNAVAILABLE_REQUIREMENT = {
+  missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  unauthenticated:
+    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
 };
 
 /**
@@ -60,6 +62,9 @@ export function bitbucketProviderFailure(
 ): PullRequestProviderFailure {
   if (error._tag === "BitbucketResponseError" && error.status === 401) {
     return { reason: "unauthenticated" };
+  }
+  if (error._tag === "SourceControlRateLimitPausedError") {
+    return { reason: "rate-limited", retryAt: error.retryAt };
   }
   if (
     (error._tag === "BitbucketResponseError" || error._tag === "BitbucketResponseBodyReadError") &&
@@ -105,6 +110,7 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
 
 export const make = Effect.gen(function* () {
   const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+  const servesHost = yield* BitbucketApi.BitbucketServesHost.pipe(Effect.orDie);
 
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
@@ -144,6 +150,9 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
+    servesHost,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
+    readsPublicHostWithoutCheckout: true,
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
@@ -155,6 +164,11 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
+          author:
+            input.filters?.author === undefined
+              ? undefined
+              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
+          draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
@@ -169,6 +183,20 @@ export const make = Effect.gen(function* () {
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(
         Effect.map(([pullRequest, checks]) => ({ state: pullRequest.state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
+      ),
+
+    getChangeRequestPreview: (input) =>
+      api.getPullRequest({ repository: input.repository, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
       ),
 
     getChangeRequest: (input) => {
@@ -202,8 +230,7 @@ export const make = Effect.gen(function* () {
             closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
             reviewers: pullRequest.reviewers,
             checks,
-            // Bitbucket publishes no per-repository list of allowed strategies, so the ones it
-            // supports are all offered and a strategy the repository forbids fails on merge.
+            // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
           }),
@@ -240,7 +267,7 @@ export const make = Effect.gen(function* () {
         Effect.map((canWrite) => bitbucketViewerPermissions({ canWrite })),
       ),
 
-    // `/diff` answers with the whole patch and pages nothing, so the first slice is the last.
+    // `/diff` returns the whole patch without pagination.
     getDiff: (input) =>
       api
         .getPullRequestDiff({
@@ -262,8 +289,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("getFileRevisions"))),
 
-    // Users only: Bitbucket requests a review of an account, and has no group that stands in for
-    // one on a pull request.
+    // Bitbucket supports user reviewers only.
     listReviewerCandidates: (input) =>
       api
         .listReviewerCandidates({ repository: input.repository, number: input.number })

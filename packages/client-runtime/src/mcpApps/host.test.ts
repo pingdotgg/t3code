@@ -130,6 +130,33 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
   });
 
+  it("sends a later result for a call that had none, without repeating its input", () => {
+    const { host, sent } = setup();
+    initialize(host);
+    sent.length = 0;
+    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
+    host.setToolCall({
+      arguments: { city: "Oslo" },
+      result: { content: [{ type: "text", text: "Sunny" }] },
+    });
+    host.setToolCall({
+      arguments: { city: "Bergen" },
+      result: { content: [{ type: "text", text: "Rain" }] },
+    });
+    expect(sent).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-input",
+        params: { arguments: { city: "Oslo" } },
+      },
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: { content: [{ type: "text", text: "Sunny" }] },
+      },
+    ]);
+  });
+
   it("accepts ui/message as one text block or the SDK's block array", async () => {
     const messages: Array<string> = [];
     const { host, sent } = setup({ sendMessage: async (text) => void messages.push(text) });

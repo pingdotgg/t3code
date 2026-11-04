@@ -4,11 +4,7 @@ import { Atom } from "effect/reactivity";
 export const environmentIdsKey = (environmentIds: ReadonlyArray<EnvironmentId>) =>
   environmentIds.join("\n");
 
-/**
- * Reads one per-environment atom for a list of environments. The list is keyed by its ids, so
- * renders that rebuild an equal list read the same atom instead of a new one whose fresh
- * snapshot would schedule another render.
- */
+/** Key by environment ids so equal input lists reuse the atom and snapshot. */
 export function environmentAtomList<A>(
   label: string,
   atom: (environmentId: EnvironmentId) => Atom.Atom<A>,

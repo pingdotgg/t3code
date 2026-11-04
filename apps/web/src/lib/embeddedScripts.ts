@@ -8,10 +8,7 @@ import {
   type WordPart,
 } from "unbash";
 
-/**
- * `starts[i]` and `ends[i]` are the span of the original command that spells
- * `text[i]`, so a quoted `\"` maps back to both of its characters.
- */
+/** starts[i]..ends[i] spans the original spelling of text[i], including escapes. */
 export interface EmbeddedScript {
   readonly language: string;
   readonly text: string;
@@ -176,10 +173,7 @@ const DELIMITER_LANGUAGES: Record<string, string> = {
   patch: "diff",
 };
 
-/**
- * Returns nothing for a command that does not parse cleanly; where a broken
- * quote ends cannot be trusted.
- */
+/** Returns nothing for commands that do not parse cleanly. */
 export function embeddedScripts(command: string): EmbeddedScript[] {
   const identity = Array.from({ length: command.length }, (_, index) => index);
   return scriptsIn(
@@ -435,10 +429,7 @@ function hereDocText(hereDoc: HereDoc, source: string): MappedText {
   };
 }
 
-/**
- * Expansions such as `$HOME` stay as written. Returns undefined for spellings
- * it cannot map.
- */
+// Preserve literal expansions; return undefined for unmappable spellings.
 function wordText(word: Word, source: string): MappedText | undefined {
   const builder = new MappedTextBuilder();
   const parts: ReadonlyArray<WordPart> = word.parts ?? [

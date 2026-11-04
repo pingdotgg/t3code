@@ -173,7 +173,6 @@ it.effect.each(["initial", "waiting"])(
 it.effect.each([
   { order: "cleanup-first", restoreFiles: true },
   { order: "rollback-first", restoreFiles: true },
-  // A path the server would not have made is left missing, not recreated.
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
 ])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false }) =>
   Effect.gen(function* () {
@@ -230,7 +229,7 @@ it.effect.each([
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id) => {
               assert.equal(id, projectId);
-              return Effect.succeed(Option.some({ workspaceRoot } as never));
+              return Effect.succeedSome({ workspaceRoot } as never);
             },
           }),
           Layer.mock(GitWorkflow.GitWorkflowService)({

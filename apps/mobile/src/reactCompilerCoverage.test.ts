@@ -12,27 +12,18 @@ const babel: {
 const metroConfig: Promise<{ transformer: { babelTransformerPath: string } }> =
   requireFromMobile("./metro.config.js");
 
-// Files the compiler skips today. A skipped file still ships, just unmemoized.
-// This list only shrinks: the test fails when a file here starts compiling, so
-// delete its entry (and its manual useMemo/useCallback/memo) in the same change.
+// Remove bailout entries and manual memoization when compilation starts; this check rejects stale entries.
 const KNOWN_BAILOUTS: Record<string, string> = {
-  "src/components/ComposerAttachmentStrip.tsx": "unsupported syntax",
-  "src/components/ui/AndroidAnchoredMenu.tsx": "ref read during render",
   "src/components/ui/Menu.tsx": "ref read during render",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",
-  "src/features/terminal/ThreadTerminalRouteScreen.tsx": "ref read during render",
-  "src/features/threads/PendingUserInputCard.tsx": "mutates a frozen value",
   "src/features/threads/ThreadArrangementSheet.tsx": "ref read during render",
-  "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
-  "src/native/StackHeader.tsx": "ref read during render",
   "src/native/T3ComposerEditor.ios.tsx": "ref read during render",
   "src/native/T3ComposerEditor.native.tsx": "ref read during render",
 };
 
-// Caller flags Metro passes for an iOS release bundle. supportsReactCompiler is
-// what `experiments.reactCompiler` in app.config.ts turns on.
+// Use Metro's iOS release flags; experiments.reactCompiler enables supportsReactCompiler.
 const metroCaller = {
   name: "metro",
   bundler: "metro",
@@ -66,8 +57,7 @@ interface CompilerEvent {
 
 // babel.config.js is the file Metro loads; the logger rides on the preset's
 // own react-compiler option so the plugin runs with Metro's exact settings.
-function compilerBailouts(file: string): string[] {
-  const events: CompilerEvent[] = [];
+function compileLikeMetro(file: string, events: CompilerEvent[], output: Record<string, unknown>) {
   const babelConfig = requireFromMobile("./babel.config.js")({ cache: () => {} });
   const presets = babelConfig.presets.map(([name, options]: [string, object]) =>
     name === "babel-preset-expo"
@@ -82,20 +72,67 @@ function compilerBailouts(file: string): string[] {
         ]
       : [name, options],
   );
-  babel.transformFileSync(NodePath.join(mobileRoot, file), {
+  return babel.transformFileSync(NodePath.join(mobileRoot, file), {
     babelrc: false,
     configFile: false,
     cwd: mobileRoot,
     presets,
     caller: metroCaller,
     code: false,
+    ...output,
   });
+}
+
+function compilerBailouts(file: string): string[] {
+  const events: CompilerEvent[] = [];
+  compileLikeMetro(file, events, {});
   return events
     .filter((event) => event.kind === "CompileError" || event.kind === "CompileSkip")
     .map(
       (event) =>
         `line ${(event.detail?.options?.loc ?? event.detail?.options?.details?.[0]?.loc)?.start?.line ?? "?"}: ${event.detail?.options?.category ?? event.kind} ${event.detail?.options?.reason ?? ""}`,
     );
+}
+
+interface AstNode {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+const isAstNode = (value: unknown): value is AstNode =>
+  typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
+
+function walkAst(
+  value: unknown,
+  visit: (node: AstNode, ancestors: readonly AstNode[]) => void,
+  ancestors: readonly AstNode[] = [],
+) {
+  if (typeof value !== "object" || value === null) return;
+  const node = isAstNode(value) ? value : null;
+  if (node) visit(node, ancestors);
+  const childAncestors = node ? [...ancestors, node] : ancestors;
+  for (const child of Object.values(value)) walkAst(child, visit, childAncestors);
+}
+
+// For each call to `callee`, whether it runs only on the cache-miss branch of
+// an `if ($[n] !== dep)` block rather than on every render.
+function compilerCachedCalls(file: string, callee: string): boolean[] {
+  const result = compileLikeMetro(file, [], { ast: true });
+  const cached: boolean[] = [];
+  if (typeof result !== "object" || result === null || !("ast" in result)) return cached;
+  walkAst(result.ast, (node, ancestors) => {
+    if (node.type !== "CallExpression" || !isAstNode(node.callee)) return;
+    if (node.callee.type !== "Identifier" || node.callee.name !== callee) return;
+    cached.push(
+      ancestors.some(
+        (ancestor, index) =>
+          ancestor.type === "IfStatement" &&
+          ancestors[index + 1] === ancestor.consequent &&
+          JSON.stringify(ancestor.test).includes('"name":"$"'),
+      ),
+    );
+  });
+  return cached;
 }
 
 describe("React Compiler coverage", () => {
@@ -135,6 +172,32 @@ describe("React Compiler coverage", () => {
     } else {
       expect(bailouts).toEqual([]);
     }
+  });
+
+  // The compiler once silently dropped this cache, so every
+  // ThreadFeed render rebuilt the feed and handed LegendList a new data array.
+  it("caches the thread feed derivation", () => {
+    expect(
+      compilerCachedCalls("src/features/threads/ThreadFeed.tsx", "deriveThreadFeedPresentation"),
+    ).toEqual([true]);
+  });
+
+  // The compiler once silently dropped these caches, so the new-task context
+  // value changed on every provider render and re-rendered every consumer.
+  it("caches the new-task model options and host environments", () => {
+    const file = "src/features/threads/new-task-flow-provider.tsx";
+    expect(compilerCachedCalls(file, "buildModelOptions")).toEqual([true]);
+    expect(compilerCachedCalls(file, "repositoryGroupingKeyOf")).toEqual([true, true]);
+  });
+
+  // An uncached registration would re-register the workspace inspector on every render.
+  it("registers the workspace inspector only when its renderer changes", () => {
+    expect(
+      compilerCachedCalls(
+        "src/features/layout/AdaptiveWorkspaceLayout.tsx",
+        "registerWorkspaceInspector",
+      ),
+    ).toEqual([true]);
   });
 
   it("lists only files that exist", () => {

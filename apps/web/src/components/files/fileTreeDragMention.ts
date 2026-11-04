@@ -46,8 +46,7 @@ export function createFileTreeDragMentionController(
       if (event.dataTransfer === null) {
         return;
       }
-      // Only drags that originate on a tree row are mentions; a text/plain
-      // fallback would also tag drags of selected text from the panel chrome.
+      // Require a tree-row origin; text/plain fallback would misclassify selected panel text as a mention.
       let itemPath: string | null = null;
       for (const node of event.composedPath()) {
         itemPath = itemPathOf(node);

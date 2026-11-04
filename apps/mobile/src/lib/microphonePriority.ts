@@ -1,14 +1,9 @@
-/**
- * iOS lists only connected inputs, and only while a recording session is set up, so a device
- * cannot be listed before then.
- */
-export const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
+const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
 
 export type MicrophoneKind = (typeof MICROPHONE_KINDS)[number];
 
 export interface MicrophoneDevice {
   readonly kind: MicrophoneKind;
-  /** iOS's port identifier, stable across reconnects of the same device. */
   readonly uid: string;
   readonly name: string;
 }
@@ -21,12 +16,13 @@ interface MicrophoneInput {
   readonly type: string;
 }
 
-// A car without CarPlay connects as a Bluetooth headset, so it is a Bluetooth device.
+// A car without CarPlay, and Android Auto, routes its microphone over Bluetooth, so it is a Bluetooth device.
 const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   MicrophoneWired: "wired",
   USBAudio: "wired",
   LineIn: "wired",
   BluetoothHFP: "bluetooth",
+  BluetoothSCO: "bluetooth",
   BluetoothLE: "bluetooth",
   MicrophoneBuiltIn: "builtIn",
   CarAudio: "carPlay",
@@ -50,10 +46,13 @@ export function microphoneEntryKey(entry: MicrophoneEntry): string {
 
 export function microphoneOrder(
   saved: ReadonlyArray<MicrophoneEntry> = [],
+  platform: "ios" | "android" = "ios",
 ): ReadonlyArray<MicrophoneEntry> {
+  const kinds = MICROPHONE_KINDS.filter((kind) => platform === "ios" || kind !== "carPlay");
   const order: MicrophoneEntry[] = [];
   const keys = new Set<string>();
   for (const entry of saved) {
+    if (!kinds.includes(entry.kind)) continue;
     const row =
       isMicrophoneDevice(entry) && DEVICE_KINDS.has(entry.kind) ? entry : { kind: entry.kind };
     const key = microphoneEntryKey(row);
@@ -61,7 +60,7 @@ export function microphoneOrder(
     keys.add(key);
     order.push(row);
   }
-  for (const kind of MICROPHONE_KINDS) {
+  for (const kind of kinds) {
     if (keys.has(`kind:${kind}`)) continue;
     const lastDevice = order.map((entry) => entry.kind).lastIndexOf(kind);
     const below = order.findIndex(
@@ -98,7 +97,7 @@ export function rememberMicrophones(
   return next ?? order;
 }
 
-/** The connected input of the first entry that has one, or null to leave the route to iOS. */
+/** The connected input of the first entry that has one, or null for the system default. */
 export function preferredMicrophoneInput<Input extends MicrophoneInput>(
   inputs: ReadonlyArray<Input>,
   order: ReadonlyArray<MicrophoneEntry>,

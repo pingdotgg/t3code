@@ -1,23 +1,16 @@
-import { useNavigation } from "@react-navigation/native";
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { Platform, Pressable } from "react-native";
+import { Platform } from "react-native";
 
-import { Menu } from "../../../components/ui/Menu";
-import { SymbolView } from "../../../components/ui/AppSymbol";
+import type { AppBarMenu } from "../../../components/ui/AppBar.types";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
-import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
 export function SettingsEnvironmentFilterHeader(props: {
-  readonly closeSettings?: boolean;
   readonly trailingItems?: readonly NativeStackHeaderItem[];
 }) {
-  const navigation = useNavigation();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
   const {
     availableTargets,
     selectedTargets,
@@ -35,7 +28,6 @@ export function SettingsEnvironmentFilterHeader(props: {
       ? "line.3.horizontal.decrease"
       : "line.3.horizontal.decrease.circle.fill";
   const filterVersion = JSON.stringify({
-    closeSettings,
     selection: selectedIds === null ? null : [...selectedIds].sort(),
     targets: availableTargets.map((entry) => [
       entry.environmentId,
@@ -54,7 +46,6 @@ export function SettingsEnvironmentFilterHeader(props: {
       options={{
         unstable_headerRightItems: () => [
           withNativeGlassHeaderItem({
-            axisBehavior: "horizontalOnly",
             accessibilityLabel: "Filter settings environments and projects",
             icon: { name: filterIcon, type: "sfSymbol" },
             label: "",
@@ -108,7 +99,7 @@ export function SettingsEnvironmentFilterHeader(props: {
                     },
                     ...selectableProjectGroups.map((group) => ({
                       type: "action" as const,
-                      label: group.label,
+                      label: projectMenuLabel(group),
                       state: selectedProjectKey === group.key ? ("on" as const) : undefined,
                       onPress: () => selectProject(group.key),
                     })),
@@ -118,26 +109,14 @@ export function SettingsEnvironmentFilterHeader(props: {
             },
           }),
           ...(props.trailingItems ?? []),
-          ...(closeSettings
-            ? [
-                withNativeGlassHeaderItem({
-                  axisBehavior: "horizontalOnly",
-                  accessibilityLabel: "Close settings",
-                  icon: { name: "xmark", type: "sfSymbol" },
-                  identifier: "settings-close",
-                  label: "",
-                  onPress: () => navigation.goBack(),
-                  type: "button",
-                }),
-              ]
-            : []),
         ],
       }}
     />
   );
 }
 
-export function AndroidSettingsEnvironmentFilter() {
+/** Android's settings scope filter, as an `AppBar` menu. */
+export function useSettingsEnvironmentMenu(): AppBarMenu {
   const {
     availableTargets,
     selectedIds,
@@ -147,67 +126,42 @@ export function AndroidSettingsEnvironmentFilter() {
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
-  const filterIcon =
-    selectedIds === null && selectedProjectKey === null
-      ? "line.3.horizontal.decrease"
-      : "line.3.horizontal.decrease.circle.fill";
-
-  return (
-    <Menu
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Filter settings environments and projects"
-      title="Settings scope"
-      actions={[
-        {
-          id: "all",
-          title: "All connected environments",
-          state: selectedIds === null ? ("on" as const) : ("off" as const),
-        },
-        ...availableTargets.map((entry) => ({
-          id: `environment:${entry.environmentId}`,
-          title: `Environment · ${entry.label}`,
-          image: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
-          subtitle: entry.displayUrl ?? undefined,
-          state:
-            selectedIds === null || selectedIds.has(entry.environmentId)
-              ? ("on" as const)
-              : ("off" as const),
-        })),
-        {
-          id: "project:all",
-          title: "All projects",
-          state: selectedProjectKey === null ? ("on" as const) : ("off" as const),
-        },
-        ...selectableProjectGroups.map((group) => ({
-          id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
-          state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
-        })),
-      ]}
-      onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "all") selectAll();
-        else if (nativeEvent.event === "project:all") selectProject(null);
-        else if (nativeEvent.event.startsWith("project:")) {
-          const group = selectableProjectGroups.find(
-            (entry) => `project:${entry.key}` === nativeEvent.event,
-          );
-          if (group) selectProject(group.key);
-        } else {
-          const target = availableTargets.find(
-            (entry) => `environment:${entry.environmentId}` === nativeEvent.event,
-          );
-          if (target) toggleEnvironment(target.environmentId);
-        }
-      }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Filter settings environments and projects"
-        className="size-11 items-center justify-center rounded-full"
-      >
-        <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
-      </Pressable>
-    </Menu>
-  );
+  return {
+    title: "Filter settings environments and projects",
+    icon:
+      selectedIds === null && selectedProjectKey === null
+        ? "line.3.horizontal.decrease.circle"
+        : "line.3.horizontal.decrease.circle.fill",
+    items: [
+      {
+        id: "all",
+        title: "All connected environments",
+        selected: selectedIds === null,
+        onPress: selectAll,
+      },
+      ...availableTargets.map((entry) => ({
+        id: `environment:${entry.environmentId}`,
+        title: `Environment · ${entry.label}`,
+        icon: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
+        subtitle: entry.displayUrl ?? undefined,
+        selected: selectedIds === null || selectedIds.has(entry.environmentId),
+        onPress: () => toggleEnvironment(entry.environmentId),
+      })),
+      {
+        id: "project:all",
+        title: "All projects",
+        selected: selectedProjectKey === null,
+        onPress: () => selectProject(null),
+      },
+      ...selectableProjectGroups.map((group) => ({
+        id: `project:${group.key}`,
+        title: `Project · ${projectMenuLabel(group)}`,
+        selected: selectedProjectKey === group.key,
+        onPress: () => selectProject(group.key),
+      })),
+    ],
+  };
 }
+
+const projectMenuLabel = (group: { readonly label: string; readonly archived: boolean }) =>
+  group.archived ? `${group.label} · Archived` : group.label;

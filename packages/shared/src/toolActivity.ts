@@ -194,10 +194,7 @@ function extractPrimaryPath(data: Record<string, unknown> | undefined): string |
   return collectToolFilePaths(data)[0];
 }
 
-/**
- * Later ACP updates often resend `rawInput: {}`. Keep the first object that
- * actually carried keys so a parsed path is not wiped out.
- */
+/** Preserve the first nonempty rawInput; later ACP updates often resend an empty object. */
 export function mergeToolActivityData(
   previous: unknown,
   next: unknown,

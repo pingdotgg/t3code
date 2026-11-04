@@ -3,6 +3,8 @@ import type {
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 
+import { restoreSnapshotBodies } from "./orchestrationV2DedupedBodies.ts";
+
 function isLocalTimelineRow(
   projection: Pick<OrchestrationV2ThreadProjection, "thread">,
   row: OrchestrationV2ProjectedTurnItem,
@@ -16,8 +18,7 @@ export function omitLocalVisibleTurnItems(
   let omitted = 0;
   for (const row of projection.visibleTurnItems) {
     if (!isLocalTimelineRow(projection, row)) continue;
-    // Same object, not merely the same id: restoring from the row must
-    // reproduce the original entry exactly.
+    // Require object identity so row restoration reproduces the exact entry.
     if (projection.turnItems[omitted] !== row.item) return null;
     omitted += 1;
   }
@@ -25,10 +26,7 @@ export function omitLocalVisibleTurnItems(
   return { ...projection, turnItems: projection.turnItems.slice(omitted) };
 }
 
-/**
- * Client half: call on a decoded snapshot that carries the
- * `turnItemsOmitLocalVisible` marker, before reducers or caches see it.
- */
+/** Restore marked snapshots before reducers or caches see them. */
 export function restoreLocalVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
@@ -39,11 +37,14 @@ export function restoreLocalVisibleTurnItems(
   return { ...projection, turnItems: [...local, ...projection.turnItems] };
 }
 
+/** Undoes both opt-in compactions; bodies carry their own markers, so they need no flag. */
 export function boundedSnapshotProjection(snapshot: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly turnItemsOmitLocalVisible?: true | undefined;
 }): OrchestrationV2ThreadProjection {
-  return snapshot.turnItemsOmitLocalVisible === true
-    ? restoreLocalVisibleTurnItems(snapshot.projection)
-    : snapshot.projection;
+  return restoreSnapshotBodies(
+    snapshot.turnItemsOmitLocalVisible === true
+      ? restoreLocalVisibleTurnItems(snapshot.projection)
+      : snapshot.projection,
+  );
 }

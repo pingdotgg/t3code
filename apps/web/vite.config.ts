@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -9,6 +11,7 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
+import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
 
 import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
@@ -23,10 +26,7 @@ import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
-// Single-origin dev is signalled positively, because it cannot be inferred from
-// the absence of VITE_HTTP_URL/VITE_WS_URL: the runner deletes those keys but
-// `loadRepoEnv` merges `.env`/`.env.local` *underneath* the process env, so a
-// developer with either URL in their `.env` gets it back here.
+// Signal single-origin dev explicitly; loadRepoEnv can restore deleted URL keys from .env.
 const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
 
 const port = Number(process.env.PORT ?? 5733);
@@ -42,11 +42,14 @@ const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || 
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
+const configuredReleaseChannel =
+  process.env.T3CODE_BUILT_DEV === "1" ? "dev" : process.env.VITE_RELEASE_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
+const configuredFeatureSecrets = process.env.T3CODE_FEATURE_SECRETS?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -91,19 +94,35 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
-// Anything that renders React or touches the DOM is named *.browser.test.{ts,tsx} and runs
-// in headless Chromium through the same plugins as the app, so it exercises compiled code.
-// Vitest's fixed browser API port (63315) collides when two checkouts run
-// browser tests at once, and `server.strictPort` above is inherited, so the
-// second run fails instead of moving on. Hash the checkout path like
-// scripts/dev-runner.ts does, into 61000-64999 (above Linux's ephemeral range).
+// Hash checkout paths to ports 61000-64999; Vitest's fixed port collides under inherited strictPort.
 const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
 
 const browserTestProject = {
   extends: true,
-  // Pre-bundled so a late first import does not trigger a mid-run reload. The
-  // dependency scan misses autocomplete because tests reach it only through lazy imports.
-  optimizeDeps: { include: ["vite-plus/test/browser", "@base-ui/react/autocomplete"] },
+  // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
+  optimizeDeps: {
+    include: [
+      "vite-plus/test/browser",
+      "@base-ui/react/autocomplete",
+      "saxes",
+      "@betteroffice/docx/editor",
+      "@betteroffice/docx/layout",
+      "@betteroffice/docx/layout/render",
+      "@betteroffice/docx/yrs",
+      "@betteroffice/fonts",
+      "@betteroffice/pptx",
+      "@betteroffice/xlsx",
+      "@betteroffice/xlsx/headless",
+      "fast-xml-parser",
+      "entities",
+      "dompurify",
+      "heic-to/next",
+      "jszip",
+      "pdfjs-dist",
+      "sql.js",
+      "tiff",
+    ],
+  },
   test: {
     name: "browser",
     include: ["src/**/*.browser.test.{ts,tsx}"],
@@ -128,6 +147,34 @@ const browserTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
+// Render scenarios count React commits; they run only through scripts/render-metrics.ts,
+// which reads the per-scenario reports this command writes.
+const renderScenariosProject = {
+  ...browserTestProject,
+  test: {
+    ...browserTestProject.test,
+    name: "renders",
+    include: ["test/*.renders.tsx"],
+    // App scenarios mount the whole app per test, which outlasts 15s on a loaded machine.
+    hookTimeout: 60_000,
+    testTimeout: 60_000,
+    setupFiles: ["./test/renderCounter.ts", ...browserTestProject.test.setupFiles],
+    browser: {
+      ...browserTestProject.test.browser,
+      // Vitest names each instance in place, so a shared array would clash with the browser project.
+      instances: [{ browser: "chromium" }],
+      commands: {
+        ...browserTestProject.test.browser.commands,
+        writeRenderReport: async (_context, scenario: string, json: string) => {
+          const directory = process.env.T3CODE_RENDER_REPORT_DIR;
+          if (!directory) throw new Error("T3CODE_RENDER_REPORT_DIR is not set");
+          await NodeFSP.writeFile(`${directory}/${scenario}.json`, json);
+        },
+      },
+    },
+  },
+} satisfies TestProjectInlineConfiguration;
+
 function resolveDevProxyTarget(
   backendPort: string | undefined,
   wsUrl: string | undefined,
@@ -137,8 +184,7 @@ function resolveDevProxyTarget(
     return `http://localhost:${port}/`;
   }
 
-  // dev:desktop still points the renderer straight at the backend, so fall
-  // back to deriving the target from the explicit websocket URL.
+  // dev:desktop connects directly to the backend; derive its target from the explicit WebSocket URL.
   if (!wsUrl) {
     return undefined;
   }
@@ -161,8 +207,7 @@ function resolveDevProxyTarget(
 
 const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
 
-// Brotli quality 5 keeps encode time in the hundreds of ms; the default
-// (quality 11) would trade the transfer stall for an equally long encode stall.
+// Brotli quality 5 encodes in hundreds of ms; default quality 11 would replace transfer stalls with encode stalls.
 function devCompressionPlugin(): Plugin {
   return {
     name: "t3code:dev-compression",
@@ -177,9 +222,31 @@ function devCompressionPlugin(): Plugin {
   };
 }
 
-// Vite rejects requests whose Host header isn't localhost, which blocks sharing
-// a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
-// the DNS is controlled by tailscale, so they can't be rebound by an attacker.
+// A static import cycle between chunks can run a chunk before the values it imports exist,
+// which blanks the app at boot. Fail the build instead of shipping it.
+function chunkCycleGuardPlugin(): Plugin {
+  return {
+    name: "t3code:chunk-cycle-guard",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const done = new Set<string>();
+      const visit = (fileName: string, path: string[]) => {
+        if (done.has(fileName)) return;
+        const start = path.indexOf(fileName);
+        if (start !== -1) {
+          this.error(`Chunk import cycle: ${[...path.slice(start), fileName].join(" -> ")}`);
+        }
+        const chunk = bundle[fileName];
+        if (chunk?.type !== "chunk") return;
+        for (const imported of chunk.imports) visit(imported, [...path, fileName]);
+        done.add(fileName);
+      };
+      for (const fileName of Object.keys(bundle)) visit(fileName, []);
+    },
+  };
+}
+
+// Allow Tailnet hosts for sharing; Tailscale-controlled DNS prevents attacker rebinding.
 const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((entry) => entry.trim())
@@ -190,9 +257,9 @@ export default defineConfig(() => {
   return {
     run: {
       tasks: {
-        // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
         typecheck: {
-          command: "tsc-rs --noEmit",
+          command: "tsc --noEmit",
           cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
         },
       },
@@ -200,6 +267,7 @@ export default defineConfig(() => {
     assetsInclude: ["**/*.wasm"],
     plugins: [
       devCompressionPlugin(),
+      chunkCycleGuardPlugin(),
       builtDev
         ? undefined
         : thirdPartyLicensesPlugin({
@@ -231,9 +299,7 @@ export default defineConfig(() => {
     },
     define: {
       "import.meta.env.VITE_WS_URL": JSON.stringify(configuredWsUrl ?? ""),
-      // Pinned explicitly rather than left to Vite's automatic VITE_ exposure:
-      // under single-origin dev this must stay empty even when a `.env`
-      // supplies it, so the client falls back to window.location.origin.
+      // Override .env URLs with empty values in single-origin dev so clients use window.location.origin.
       "import.meta.env.VITE_HTTP_URL": JSON.stringify(configuredHttpUrl ?? ""),
       "import.meta.env.VITE_T3CODE_RELAY_URL": JSON.stringify(configuredRelayUrl),
       "import.meta.env.VITE_CLERK_PUBLISHABLE_KEY": JSON.stringify(configuredClerkPublishableKey),
@@ -251,10 +317,18 @@ export default defineConfig(() => {
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(
         configuredDesktopUpdateRepository,
       ),
+      "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
+      "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },
     resolve: {
       tsconfigPaths: true,
+      alias: {
+        "@betteroffice/fonts-cjk": new URL(
+          "./src/components/files/office/fonts-cjk.ts",
+          import.meta.url,
+        ).pathname,
+      },
       dedupe: ["react", "react-dom"],
     },
     experimental: {
@@ -265,18 +339,14 @@ export default defineConfig(() => {
       port,
       strictPort: true,
       allowedHosts,
-      // Transform the whole module graph at server start instead of on the
-      // first request. Without this, a cold worktree discovers and transforms
-      // modules one import-level at a time while the browser waits — which
-      // over a tailnet origin turns into minutes of waterfall. Bundled dev
-      // ignores this; warmBundledDevPlugin covers it there.
+      // Warm the module graph before first request to avoid serial import transforms over tailnet.
+      // Bundled dev ignores this; warmBundledDevPlugin handles it there.
       warmup: {
         clientFiles: ["./src/main.tsx"],
       },
       ...(devProxyTarget
         ? {
-            // One entry per shared prefix; the server's dev catch-all 404s the
-            // same list, so the two sides cannot drift.
+            // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.
             proxy: Object.fromEntries(
               DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
                 prefix,
@@ -289,11 +359,7 @@ export default defineConfig(() => {
             ),
           }
         : {}),
-      // Electron's BrowserWindow needs the HMR socket pinned to an explicit
-      // host to connect reliably; dev:desktop is the only mode that sets HOST.
-      // Everywhere else, leaving this unset lets the client derive it from the
-      // page origin, which is what makes HMR work over Tailscale/LAN instead of
-      // failing an attempt against the wrong machine's localhost first.
+      // Electron needs an explicit HMR host; elsewhere derive it from page origin for Tailscale/LAN.
       ...(explicitHost
         ? {
             hmr: {
@@ -304,8 +370,7 @@ export default defineConfig(() => {
           }
         : {}),
     },
-    // @tailwindcss/vite only emits a CSS sourcemap when devSourcemap is on; without it
-    // rolldown flags the transform as SOURCEMAP_BROKEN on every sourcemapped build.
+    // Tailwind needs devSourcemap to avoid Rolldown SOURCEMAP_BROKEN on sourcemapped builds.
     css: {
       devSourcemap: buildSourcemap !== false,
     },
@@ -314,9 +379,23 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      rolldownOptions: {
+        output: {
+          // PDF.js resolves decoder modules and ICC data relative to wasmUrl.
+          assetFileNames: (asset) =>
+            asset.originalFileNames.some((path) => /[/\\]pdfjs-dist[/\\]wasm[/\\]/.test(path))
+              ? `assets/pdfjs-${pdfjsPkg.version}/[name][extname]`
+              : "assets/[name]-[hash][extname]",
+        },
+      },
     },
+    worker: { format: "es" },
     test: {
-      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
+      projects: [
+        defineProject(unitTestProject),
+        defineProject(browserTestProject),
+        defineProject(renderScenariosProject),
+      ],
     },
   };
 });
