@@ -65,7 +65,11 @@ const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
 ];
-const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
+const FULL_ACCESS = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "browser", resource: "*", effect: "deny" },
+  { action: "skill", resource: "browser", effect: "deny" },
+];
 
 const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
 
@@ -113,12 +117,13 @@ const autoEditRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "allow" },
   { action: "external_directory", resource: "*", effect: "ask" },
+  ...FULL_ACCESS.slice(1),
   ...BUILD_PATHS,
   ...mcpRules(name),
 ];
 
 const planRules = (name: string) => [
-  { action: "*", resource: "*", effect: "allow" },
+  ...FULL_ACCESS,
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS,
   ...mcpRules(name),
@@ -752,8 +757,9 @@ describe("OpenCode 2 through the orchestrator", () => {
     "settles a background subagent whose end was lost with the stream, and takes the next turn",
     () =>
       Effect.gen(function* () {
+        const name = "opencode2-background-lost";
         const { result, projection } = yield* backgroundReconnect({
-          name: "opencode2-background-lost",
+          name,
 
           cut: "session.step.started.3",
           reconnect: (parent) => [
@@ -788,6 +794,13 @@ describe("OpenCode 2 through the orchestrator", () => {
                 },
               ],
               cursor: {},
+            }),
+            out("session.get", { sessionID: parent }),
+            reply("session.get", {
+              data: {
+                ...sessionInfo("<work>", t3Rules(name), name).data,
+                id: parent,
+              },
             }),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
             reply("session.prompt", {
