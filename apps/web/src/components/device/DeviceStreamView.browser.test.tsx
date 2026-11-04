@@ -230,4 +230,6 @@ it("sends Mac editing shortcuts to the simulator and leaves the rest to the brow
   expect(keys).toEqual([]);
   expect(press("KeyA", "a")).toBe(false);
   expect(keys).toEqual(["down e3", "down 4", "up 4"]);
+  expect(press("KeyC", "с")).toBe(false);
+  expect(keys.slice(3)).toEqual(["down 6", "up 6"]);
 });

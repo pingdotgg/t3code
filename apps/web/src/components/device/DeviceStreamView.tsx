@@ -4,6 +4,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { Button } from "~/components/ui/button";
 import {
   deviceDetailAtom,
@@ -341,7 +342,7 @@ export function DeviceStreamView(props: {
         aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.metaKey && !SIMULATOR_COMMAND_KEYS.has(event.key.toLowerCase())) return;
+          if (event.metaKey && !SIMULATOR_COMMAND_KEYS.has(surfaceShortcutKey(event) ?? "")) return;
           // Let browser paste chords fire the paste event.
           if (
             (event.ctrlKey && (event.key === "v" || event.key === "V")) ||
