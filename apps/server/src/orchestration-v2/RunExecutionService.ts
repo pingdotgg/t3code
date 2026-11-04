@@ -621,6 +621,7 @@ export const layer: Layer.Layer<
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
         readonly run: OrchestrationV2Run;
+        readonly providerSessionId: ProviderSessionId;
         readonly rootNode: OrchestrationV2ExecutionNode;
         readonly checkpointScope: OrchestrationV2CheckpointScope;
         readonly providerThread: OrchestrationV2ProviderThread;
@@ -738,8 +739,24 @@ export const layer: Layer.Layer<
         const checkpointCaptureCommandId = CommandId.make(
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
-        // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
+        // Failed turns without continuing children have no consumer for their pending callbacks.
+        const cancelledRequestEvents =
+          input.terminal.status === "failed" && !childTurnsContinue(input.terminal)
+            ? (yield* providerEventIngestor.normalize({
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: input.run.providerInstanceId,
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: input.rootNode.id,
+                event: input.terminal,
+                withdrawApprovals: true,
+              })).filter(
+                (event) => event.type !== "turn-item.updated" || event.payload.type !== "error",
+              )
+            : [];
         const finalization = {
+          guardPendingRuntimeRequestCancellations: true,
+          // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
           effects:
             input.terminal.status === "completed" ||
             input.terminal.status === "interrupted" ||
@@ -758,6 +775,7 @@ export const layer: Layer.Layer<
                 ]
               : [],
           events: [
+            ...cancelledRequestEvents,
             ...cascadedSubagentEvents,
             ...(input.abandonedProviderTurn === undefined
               ? []
@@ -860,12 +878,11 @@ export const layer: Layer.Layer<
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
           const result = yield* eventSink.writeIfRunCurrent({
+            ...finalization,
             threadId: input.run.threadId,
             runId: input.run.id,
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
             expectedStatus: input.writeIfRunCurrent.expectedStatus,
-            events: finalization.events,
-            effects: finalization.effects,
           });
           if (!result.committed) {
             return;
@@ -906,11 +923,13 @@ export const layer: Layer.Layer<
         const makeFailedTerminalEvent = (
           failure: OrchestrationV2ProviderFailure,
           failureItemOrdinal: number,
+          providerTurnId?: ProviderTurnId | null,
         ): ProviderTerminalEvent => ({
           type: "turn.terminal",
           driver: input.providerThread.driver,
           providerThreadId: input.providerThread.id,
           providerTurnId:
+            providerTurnId ??
             input.attempt.providerTurnId ??
             idAllocator.derive.providerTurn({
               driver: input.providerThread.driver,
@@ -966,6 +985,7 @@ export const layer: Layer.Layer<
                 cause,
               });
               yield* writeFinalRunEvents({
+                providerSessionId: input.providerSessionId,
                 run: input.run,
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
@@ -1082,6 +1102,7 @@ export const layer: Layer.Layer<
           const providerThread = yield* Ref.get(latestProviderThread);
           const openSubagents = yield* Ref.get(openRunOwnedSubagents);
           yield* writeFinalRunEvents({
+            providerSessionId: input.providerSessionId,
             run: input.run,
             rootNode: input.rootNode,
             checkpointScope: input.checkpointScope,
@@ -1601,6 +1622,7 @@ export const layer: Layer.Layer<
                 const squashed = Cause.squash(cause);
                 let nextRetryWarningAt = completedAt;
                 yield* writeFinalRunEvents({
+                  providerSessionId: input.providerSessionId,
                   run: input.run,
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
@@ -1622,6 +1644,7 @@ export const layer: Layer.Layer<
                       class: "unknown",
                     }),
                     latestItemOrdinal + 1,
+                    routing.rootProviderTurnId,
                   ),
                   failureItemPersisted: false,
                   refreshAfterTurn,
@@ -1762,6 +1785,7 @@ export const layer: Layer.Layer<
                     Ref.get(openRunOwnedSubagents).pipe(
                       Effect.flatMap((openSubagents) =>
                         writeFinalRunEvents({
+                          providerSessionId: input.providerSessionId,
                           run: input.run,
                           rootNode: input.rootNode,
                           checkpointScope: input.checkpointScope,
