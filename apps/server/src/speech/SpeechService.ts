@@ -494,7 +494,9 @@ const make = Effect.gen(function* () {
     language: string | undefined,
   ) => {
     return (
-      options.speechRemoveFillerWords ? removeSpeechFillerWords(text, language) : text
+      options.speechRemoveFillerWords
+        ? removeSpeechFillerWords(text, language, options.speechCorrectionWord)
+        : text
     ).trim();
   };
 
