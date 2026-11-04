@@ -120,6 +120,7 @@ const TranscriptRecord = Schema.Struct({
       message: Schema.optional(Schema.String),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
+      history_base: Schema.optional(Schema.Unknown),
       content: Schema.optional(Schema.Array(TranscriptContentBlock)),
       internal_chat_message_metadata_passthrough: Schema.optional(Schema.Unknown),
     }),
@@ -144,6 +145,12 @@ const decodePiEntryLinks = Schema.decodeUnknownOption(
 );
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
+const decodeCodexHistoryBase = Schema.decodeUnknownOption(
+  Schema.Struct({ thread_id: Schema.String, end_byte_offset: Schema.Number }),
+);
+// Original rollouts end in their thread ID, rewound ones in `<thread ID>_<rollout ID>`.
+const CODEX_ROLLOUT_ID_PATTERN =
+  /[-_]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
   Schema.fromJsonString(CodexSessionIndexEntry),
 );
@@ -333,6 +340,21 @@ function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
     if (entry !== undefined && name) names.set(entry.id, name);
   }
   return names;
+}
+
+// A rewound paginated Codex thread continues in a new rollout that inherits a
+// byte prefix of the rollout it replaced.
+function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
+  const base = Option.getOrUndefined(
+    decodeCodexHistoryBase(
+      records.find((record) => record.type === "session_meta")?.payload?.history_base,
+    ),
+  );
+  return base !== undefined &&
+    Number.isSafeInteger(base.end_byte_offset) &&
+    base.end_byte_offset >= 0
+    ? base
+    : undefined;
 }
 
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
@@ -997,8 +1019,10 @@ export const make = Effect.gen(function* () {
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
+    prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
-    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    const readBytes = prefix?.endByteOffset ?? expected.size;
+    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -1010,7 +1034,7 @@ export const make = Effect.gen(function* () {
             const records: Array<DecodedTranscriptRecord> = [];
             let cwd = Option.none<string>();
             let claudeFields = emptyClaudeFields;
-            let historyBytes = 0;
+            let historyBytes = prefix?.historyBytes ?? 0;
             let recordBytes = 0;
             let recordCount = 0;
             let bytesRead = 0;
@@ -1062,9 +1086,9 @@ export const make = Effect.gen(function* () {
               return true;
             };
 
-            while (bytesRead < expected.size) {
+            while (bytesRead < readBytes) {
               const next = yield* file.readAlloc(
-                Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
+                Math.min(TRANSCRIPT_PREFIX_BYTES, readBytes - bytesRead),
               );
               if (Option.isNone(next)) {
                 return null;
@@ -1089,7 +1113,7 @@ export const make = Effect.gen(function* () {
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, cwd, claudeFields }
+              ? { records, cwd, claudeFields, historyBytes }
               : null;
           }),
         ),
@@ -1667,6 +1691,56 @@ export const make = Effect.gen(function* () {
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
+    const codexRolloutPaths = new Map<ProviderInstanceId, ReadonlyMap<string, string>>();
+    const codexRolloutPath = (providerInstanceId: ProviderInstanceId, rolloutId: string) => {
+      let paths = codexRolloutPaths.get(providerInstanceId);
+      if (paths === undefined) {
+        paths = new Map(
+          candidates.flatMap((candidate) =>
+            candidate.source === "codex" && candidate.providerInstanceId === providerInstanceId
+              ? candidate.transcripts.flatMap((transcript) => {
+                  const id = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1];
+                  return id === undefined ? [] : [[id, transcript.filePath] as const];
+                })
+              : [],
+          ),
+        );
+        codexRolloutPaths.set(providerInstanceId, paths);
+      }
+      return paths.get(rolloutId);
+    };
+    // Reads the prefixes a rewound rollout inherits, oldest first. Without all of
+    // them the rollout is imported on its own, as before.
+    const readCodexHistoryBase = Effect.fn("AgentSessionScanner.readCodexHistoryBase")(function* (
+      providerInstanceId: ProviderInstanceId,
+      records: ReadonlyArray<DecodedTranscriptRecord>,
+      historyBytes: number,
+    ) {
+      const prefixes: Array<ReadonlyArray<DecodedTranscriptRecord>> = [];
+      const visited = new Set<string>();
+      for (let base = codexHistoryBase(records); base !== undefined;) {
+        const filePath = visited.has(base.thread_id)
+          ? undefined
+          : codexRolloutPath(providerInstanceId, base.thread_id);
+        if (filePath === undefined || base.end_byte_offset > bytesRemaining) return null;
+        visited.add(base.thread_id);
+        const stats = yield* statOption(filePath);
+        if (Option.isNone(stats) || stats.value.type !== "File") return null;
+        bytesRemaining -= base.end_byte_offset;
+        const inherited = yield* readTranscript(
+          filePath,
+          transcriptIdentity(filePath, stats.value),
+          "codex",
+          { endByteOffset: base.end_byte_offset, historyBytes },
+        );
+        if (inherited === null) return null;
+        historyBytes = inherited.historyBytes;
+        // The rollout's own session_meta names the thread; inherited ones may name a fork parent.
+        prefixes.unshift(inherited.records.filter((record) => record.type !== "session_meta"));
+        base = codexHistoryBase(inherited.records);
+      }
+      return prefixes.flat();
+    });
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
@@ -1719,6 +1793,14 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
+          const inheritedRecords =
+            candidate.source === "codex"
+              ? yield* readCodexHistoryBase(
+                  candidate.providerInstanceId,
+                  snapshot.records,
+                  snapshot.historyBytes,
+                )
+              : null;
           const parsedThread = parseAgentSessionRecords(
             {
               source: candidate.source,
@@ -1726,7 +1808,9 @@ export const make = Effect.gen(function* () {
               fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
               lastActiveAtMs: transcript.mtimeMs,
             },
-            snapshot.records,
+            inheritedRecords === null
+              ? snapshot.records
+              : [...inheritedRecords, ...snapshot.records],
             snapshot.claudeFields,
           );
           if (parsedThread === null) {
