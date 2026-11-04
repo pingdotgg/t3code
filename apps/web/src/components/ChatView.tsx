@@ -1919,7 +1919,7 @@ export default function ChatView(props: ChatViewProps) {
         if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
         return runProjectScriptStable(
           { id: "terminal-editor", name: "editor", command },
-          { rememberAsLastInvoked: false },
+          { rememberAsLastInvoked: false, preferNewTerminal: true },
         );
       },
     });
