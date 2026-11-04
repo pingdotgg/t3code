@@ -79,6 +79,9 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+On Linux, the desktop app needs an unlocked Secret Service keyring, such as
+GNOME Keyring or KWallet, to save connections to other machines.
+
 ### Nix (nixpkgs)
 
 T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).

@@ -383,11 +383,23 @@ export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  /** Fails when `write` is known to be refused, without writing anything. */
+  readonly assertWritable?: Effect.Effect<void, ConnectionTransientError>;
 }
 
 export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
   if (bridge !== undefined) {
+    // The pairing failure toast clamps descriptions of 180+ characters, which would hide the fix.
+    const failUnlessSaved = (saved: boolean) =>
+      saved
+        ? Effect.void
+        : Effect.fail(
+            catalogError(
+              "save",
+              "No unlocked keyring. Unlock GNOME Keyring or KWallet, then restart T3 Code.",
+            ),
+          );
     return {
       read: Effect.tryPromise({
         try: () => bridge.getConnectionCatalog(),
@@ -397,18 +409,11 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
         Effect.tryPromise({
           try: () => bridge.setConnectionCatalog(raw),
           catch: (cause) => catalogError("save", cause),
-        }).pipe(
-          Effect.flatMap((stored) =>
-            stored
-              ? Effect.void
-              : Effect.fail(
-                  catalogError(
-                    "save",
-                    "Desktop secure storage is unavailable in this system context.",
-                  ),
-                ),
-          ),
-        ),
+        }).pipe(Effect.flatMap(failUnlessSaved)),
+      assertWritable: Effect.tryPromise({
+        try: () => bridge.canSaveConnectionCatalog(),
+        catch: (cause) => catalogError("save", cause),
+      }).pipe(Effect.flatMap(failUnlessSaved)),
     };
   }
 
@@ -618,7 +623,8 @@ export const layer = Layer.effectContext(
       makeDatabaseHandle(),
       (owned) => owned.close,
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const catalogBackend = makeCatalogBackend(database);
+    const catalog = yield* makeCatalogStore(catalogBackend);
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
@@ -636,6 +642,9 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
+      assertWritable: (catalogBackend.assertWritable ?? Effect.void).pipe(
+        Effect.mapError((cause) => persistenceError("register-connection", cause)),
+      ),
       register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
         function (registration, routes) {
           return catalog

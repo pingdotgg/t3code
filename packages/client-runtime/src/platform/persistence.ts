@@ -54,6 +54,11 @@ export class ConnectionRegistrationStore extends Context.Service<
   ConnectionRegistrationStore,
   {
     /**
+     * Fails when saves are known to be refused, such as when the desktop cannot encrypt them.
+     * Passing does not guarantee that `register` will succeed.
+     */
+    readonly assertWritable: Effect.Effect<void, ConnectionPersistenceError>;
+    /**
      * Records of routes missing from `routes` are dropped.
      */
     readonly register: (

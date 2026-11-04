@@ -157,6 +157,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreMigrationError
       | DesktopConnectionCatalogStoreProtectionError
     >;
+    readonly canSave: Effect.Effect<boolean, DesktopConnectionCatalogStoreProtectionError>;
     readonly set: (
       catalog: string,
     ) => Effect.Effect<
@@ -486,6 +487,7 @@ export const make = Effect.gen(function* () {
       );
       return Option.some(decrypted);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
+    canSave: encryptionAvailable.pipe(Effect.withSpan("desktop.connectionCatalogStore.canSave")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;

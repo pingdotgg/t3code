@@ -138,6 +138,8 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
+  // A code redeemed for a connection that cannot be saved is spent for nothing.
+  yield* (yield* Persistence.ConnectionRegistrationStore).assertWritable;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
@@ -304,6 +306,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const registrations = yield* Persistence.ConnectionRegistrationStore;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -314,6 +317,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Persistence.ConnectionRegistrationStore, registrations),
     ),
     registerSsh: Effect.fnUntraced(
       function* (input) {
