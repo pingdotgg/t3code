@@ -68,7 +68,6 @@ const CODEX_GOAL_VALIDATION_MESSAGE =
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
-  session_stopped: "the provider session has stopped",
 };
 
 /**

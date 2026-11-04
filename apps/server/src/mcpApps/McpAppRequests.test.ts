@@ -205,10 +205,8 @@ describe("McpAppRequests", () => {
             ...mcpApps,
             readResource: () =>
               Effect.fail(
-                new ProviderAdapter.ProviderAdapterProtocolError({
+                new ProviderAdapter.ProviderAdapterSessionStoppedError({
                   driver: ProviderDriverKind.make("claudeAgent"),
-                  detail: "stopped",
-                  reason: "session_stopped",
                 }),
               ),
           },

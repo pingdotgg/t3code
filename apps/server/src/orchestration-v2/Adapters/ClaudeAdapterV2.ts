@@ -7381,10 +7381,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             liveQuery.stopping ||
             liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
           ) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
               driver: CLAUDE_PROVIDER,
-              detail: "No running Claude process owns this thread.",
-              reason: "session_stopped",
             });
           }
           if (!claudeSupportsMcpApps(liveQuery.capabilities)) {
