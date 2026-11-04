@@ -23,6 +23,50 @@ describe("ScheduledTaskSchedule", () => {
     });
   });
 
+  it("accepts an interval window and rejects an inverted or invalid one", () => {
+    const window = { start: "9:00", end: "10:00", weekdays: [1, 1, 5] };
+    const schedule = { type: "interval" as const, everyMs: 60_000, window };
+    expect(decodeSchedule(schedule)).toEqual(schedule);
+    expect(decodeUpsertSchedule(schedule)).toEqual(schedule);
+    expect(
+      decodeSchedule({
+        type: "interval",
+        everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
+        window: { start: "9:00", end: "10:00" },
+      }),
+    ).toEqual({
+      type: "interval",
+      everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
+      window: { start: "9:00", end: "10:00" },
+    });
+
+    const daily = {
+      type: "interval",
+      everyMs: 60_000,
+      window: { start: "10:00", end: "20:00", weekdays: [] },
+    };
+    expect(decodeSchedule(daily)).toEqual(daily);
+    expect(decodeUpsertSchedule(daily)).toEqual(daily);
+
+    for (const decode of [decodeSchedule, decodeUpsertSchedule]) {
+      expect(() =>
+        decode({ type: "interval", everyMs: 60_000, window: { start: "10:00", end: "9:00" } }),
+      ).toThrow();
+      expect(() =>
+        decode({ type: "interval", everyMs: 60_000, window: { start: "10:00", end: "10:00" } }),
+      ).toThrow();
+      for (const weekdays of [[7], [-1], [1.5]]) {
+        expect(() =>
+          decode({
+            type: "interval",
+            everyMs: 60_000,
+            window: { start: "10:00", end: "20:00", weekdays },
+          }),
+        ).toThrow();
+      }
+    }
+  });
+
   it("accepts a one-time run only with an offset", () => {
     for (const runAt of ["2026-11-03T09:00Z", "2026-11-03T09:00:00.000-08:00"]) {
       expect(decodeUpsertSchedule({ type: "once", runAt })).toEqual({ type: "once", runAt });

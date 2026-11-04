@@ -115,4 +115,22 @@ describe("new scheduled task link", () => {
     takeScheduledTaskNewLink({ routes: [{ name: "SettingsSheet" }] });
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(editing);
   });
+
+  it("keeps an interval time-window edit until it is discarded", () => {
+    startScheduledTaskEditor(editing);
+    const edited = {
+      ...editing,
+      draft: {
+        ...editing.draft,
+        schedule: { ...editing.draft.schedule, intervalWindowEnabled: true },
+      },
+    };
+    updateScheduledTaskEditor(edited, null);
+
+    takeScheduledTaskNewLink(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
+
+    discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
 });
