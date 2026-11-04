@@ -1,0 +1,205 @@
+---
+title: Pub/Sub
+description: Publish to Pub/Sub topics from Cloud Run, consume them with push delivery or a pull loop, filter by attribute, and dead-letter failures.
+---
+
+Pub/Sub moves messages between services. A producer publishes to a
+topic. Each consumer gets its own subscription and sees every message
+it subscribes to, independent of the others.
+
+## Create a topic
+
+```typescript
+// src/resources.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Orders = GCP.PubSub.Topic("Orders", {});
+```
+
+## Publish
+
+`WriteTopic` returns a client with `publish`:
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Orders } from "./resources.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const orders = yield* GCP.PubSub.WriteTopic(Orders);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const order = yield* request.json;
+        const messageId = yield* orders.publish({
+          data: JSON.stringify(order),
+          attributes: { type: "order.created" },
+        });
+        return yield* HttpServerResponse.json({ messageId }, { status: 202 });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.PubSub.WriteTopicHttp)),
+) {}
+```
+
+`publish` takes a string or bytes and returns the message id.
+Attributes can be filtered on without reading the body. The binding
+grants `roles/pubsub.publisher` on this topic only.
+
+## Consume with push
+
+A Cloud Run service receives messages over HTTP:
+
+```typescript
+// src/Email.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Stream from "effect/Stream";
+import { Orders } from "./resources.ts";
+
+export default class Email extends GCP.Function<Email>()(
+  "Email",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* GCP.PubSub.consumeTopicMessages(Orders, (messages) =>
+      messages.pipe(
+        Stream.runForEach(({ message }) =>
+          Effect.gen(function* () {
+            const order = JSON.parse(atob(message.data ?? ""));
+            yield* Effect.log(`confirm order ${order.id}`);
+          }),
+        ),
+        Effect.orDie,
+      ),
+    );
+
+    return { fetch: Effect.succeed(HttpServerResponse.text("ok")) };
+  }).pipe(Effect.provide(GCP.Run.TopicEventSource)),
+) {}
+```
+
+Alchemy creates a push subscription to a private path on the service,
+signed with the service's own identity. The service stays private:
+only Pub/Sub's signed requests get through. A success acks the
+message. A failure answers 500 and Pub/Sub delivers it again.
+
+## Filter by attribute
+
+Subscribe to a subset of messages. Pub/Sub applies the filter, so
+other messages never reach the service:
+
+```typescript
+yield* GCP.PubSub.consumeTopicMessages(
+  Orders,
+  { filter: 'attributes.type = "order.created"' },
+  (messages) => messages.pipe(Stream.runForEach(handle), Effect.orDie),
+);
+```
+
+## Dead-letter failures
+
+Stop retrying a message after a few tries and park it on another
+topic:
+
+```typescript
+yield* GCP.PubSub.consumeTopicMessages(
+  Orders,
+  {
+    deadLetter: { topic: yield* FailedOrders, maxDeliveryAttempts: 5 },
+  },
+  (messages) => messages.pipe(Stream.runForEach(handle), Effect.orDie),
+);
+```
+
+A topic with no subscription drops what is published to it. Give the
+dead-letter topic a subscription so failed messages are kept:
+
+```typescript
+export const FailedOrdersInbox = Effect.gen(function* () {
+  const topic = yield* FailedOrders;
+  return yield* GCP.PubSub.Subscription("FailedOrdersInbox", {
+    topic: topic.name,
+    messageRetentionDuration: "604800s",
+  });
+});
+```
+
+## Consume with pull
+
+A [worker pool](/gcp/compute/worker-pools) or a
+[job](/gcp/compute/jobs) has no URL. Pull instead:
+
+```typescript
+yield* GCP.PubSub.consumeTopicMessages(
+  Orders,
+  { maxMessages: 50 },
+  (messages) => messages.pipe(Stream.runForEach(handle), Effect.orDie),
+);
+// …provided with Effect.provide(GCP.Run.TopicPullEventSource)
+```
+
+A batch is acked after your handler succeeds.
+
+## Drain a subscription in batches
+
+To control the batch yourself, bind a pull subscription with
+`ReadSubscription`. A [job](/gcp/compute/jobs) can drain it into
+BigQuery and exit:
+
+```typescript
+const subscription = yield* GCP.PubSub.ReadSubscription(Inbox);
+const warehouse = yield* GCP.BigQuery.WriteTable(table);
+
+return {
+  run: Effect.gen(function* () {
+    const received = yield* subscription
+      .pull({ maxMessages: 500 })
+      .pipe(Effect.timeoutOption("10 seconds"));
+    const messages = Option.getOrElse(received, () => []);
+    if (messages.length === 0) return 0;
+
+    const rows = messages.map((message) => JSON.parse(message.text));
+    yield* warehouse.insert(rows, { insertIds: rows.map((row) => row.id) });
+    yield* subscription.acknowledge(messages.map((message) => message.ackId));
+    return messages.length;
+  }).pipe(
+    Effect.repeat({ until: (count) => count === 0 }),
+    Effect.asVoid,
+    Effect.orDie,
+  ),
+};
+```
+
+Insert before you acknowledge. A crash in between delivers the batch
+again, and `insertIds` drops the duplicates. Acknowledging first would
+lose the events.
+
+## Handle repeats
+
+Pub/Sub delivers at least once. Make handlers safe to run twice: write
+with `set` keyed by an id, or use `insertIds` in BigQuery.
+
+## Examples
+
+- [`gcp-pubsub-fanout`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-pubsub-fanout)
+  — one topic, two push consumers, an attribute filter, and a
+  dead-letter topic.
+- [`gcp-pubsub-worker`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-pubsub-worker)
+  — a job queue on a worker pool.
+- [`gcp-event-pipeline`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-event-pipeline)
+  — a service publishes, a job drains into BigQuery.
+
+## Where next
+
+- [Cloud Scheduler](/gcp/messaging/scheduler) — run the drain on a
+  timer.
+- [PubSub reference](/providers/gcp/pubsub#topic) — every prop and
+  attribute.

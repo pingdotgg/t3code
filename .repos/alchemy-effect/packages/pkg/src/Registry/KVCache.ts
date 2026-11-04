@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -7,8 +7,7 @@ import { Cache } from "./Bindings.ts";
 /** KV's floor for both `expirationTtl` and `cacheTtl`. */
 const MIN_TTL = Duration.minutes(1);
 
-const seconds = (duration: Duration.Duration) =>
-  Math.floor(Duration.toSeconds(duration));
+const seconds = (duration: Duration.Duration) => Math.floor(Duration.toSeconds(duration));
 
 /**
  * A lookup-through cache on the registry's KV namespace, shared by every
@@ -28,9 +27,7 @@ const seconds = (duration: Duration.Duration) =>
 export const make = <K, A, I, E, R>(
   key: (input: K) => string,
   value: Schema.Codec<A, I>,
-  lookup: (
-    input: K,
-  ) => Effect.Effect<{ value: A; ttl: Duration.Duration }, E, R>,
+  lookup: (input: K) => Effect.Effect<{ value: A; ttl: Duration.Duration }, E, R>,
 ) => {
   const json = Schema.fromJsonString(value);
   const decode = Schema.decodeUnknownEffect(json);
@@ -40,13 +37,9 @@ export const make = <K, A, I, E, R>(
       const kv = yield* Cloudflare.KV.ReadWriteNamespace(Cache);
       const id = key(input);
       const hit = yield* kv.get(id, { cacheTtl: seconds(MIN_TTL) }).pipe(
-        Effect.flatMap((text) =>
-          text === null ? Effect.succeed(undefined) : decode(text),
-        ),
+        Effect.flatMap((text) => (text === null ? Effect.undefined : decode(text))),
         Effect.catch((e) =>
-          Effect.logWarning(`cache read of ${id} failed: ${e}`).pipe(
-            Effect.as(undefined),
-          ),
+          Effect.logWarning(`cache read of ${id} failed: ${e.message}`).pipe(Effect.as(undefined)),
         ),
       );
       if (hit !== undefined) {
@@ -55,12 +48,8 @@ export const make = <K, A, I, E, R>(
       const fresh = yield* lookup(input);
       if (Duration.isGreaterThanOrEqualTo(fresh.ttl, MIN_TTL)) {
         yield* encode(fresh.value).pipe(
-          Effect.flatMap((text) =>
-            kv.put(id, text, { expirationTtl: seconds(fresh.ttl) }),
-          ),
-          Effect.catch((e) =>
-            Effect.logWarning(`cache write of ${id} failed: ${e}`),
-          ),
+          Effect.flatMap((text) => kv.put(id, text, { expirationTtl: seconds(fresh.ttl) })),
+          Effect.catch((e) => Effect.logWarning(`cache write of ${id} failed: ${e.message}`)),
         );
       }
       return fresh.value;
