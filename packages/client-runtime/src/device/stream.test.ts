@@ -184,8 +184,7 @@ describe("native device stream transport", () => {
     client.stop();
   });
 
-  it("types the character from the user's layout with the simulator's US keys", async () => {
-    vi.stubGlobal("navigator", { platform: "Win32" });
+  const connectIosKeys = async (usLayout = true) => {
     const { client, opened } = setup("ios");
     client.start();
     const socket = await opened;
@@ -214,9 +213,15 @@ describe("native device stream transport", () => {
       }) as unknown as KeyboardEvent;
     const press = (...args: Parameters<typeof keyEvent>) => {
       const event = keyEvent(...args);
-      client.sendKey(event, "down");
-      client.sendKey(event, "up");
+      client.sendKey(event, "down", usLayout);
+      client.sendKey(event, "up", usLayout);
     };
+    return { client, take, keyEvent, press };
+  };
+
+  it("types the character from the user's layout with the simulator's US keys", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, keyEvent, press } = await connectIosKeys();
     const ctrlAlt = { ctrlKey: true, altKey: true };
     const shifted = (usage: string) => ["down e1", `down ${usage}`, `up ${usage}`, "up e1"];
 
@@ -275,6 +280,34 @@ describe("native device stream transport", () => {
     client.sendKey(keyEvent("KeyQ", "a", { metaKey: true }), "down");
     client.sendKey(keyEvent("MetaLeft", "Meta"), "up");
     expect(take()).toEqual(["down e3", "down 4", "up 4", "up e3"]);
+    client.stop();
+  });
+
+  it("sends the key places to a simulator keyboard that is not US", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, press } = await connectIosKeys(false);
+    const ctrlAlt = { ctrlKey: true, altKey: true };
+
+    // Windows Russian keys.
+    press("KeyG", "П", { shiftKey: true });
+    press("Slash", ",", { shiftKey: true });
+    press("KeyB", "и");
+    expect(take()).toEqual([
+      "down e1",
+      "down a",
+      "up a",
+      "down 38",
+      "up 38",
+      "up e1",
+      "down 5",
+      "up 5",
+    ]);
+    // AltGr is Option, not Command and Option.
+    press("Digit0", "@", ctrlAlt, true);
+    expect(take()).toEqual(["down e2", "down 27", "up 27"]);
+    // Shortcuts use the key place, which has the same letter on both keyboards.
+    press("KeyA", "ф", { ctrlKey: true });
+    expect(take()).toEqual(["down e3", "up e2", "down 4", "up 4"]);
     client.stop();
   });
 });

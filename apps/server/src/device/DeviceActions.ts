@@ -489,17 +489,25 @@ const readIos = Effect.fn("DeviceActions.readIos")(function* (
     quiet(
       simctl(run, udid, ["ui", option], option).pipe(Effect.map((out) => out.trim().toLowerCase())),
     );
-  const [appearance, contentSize, contrast, axStatus] = yield* Effect.all(
-    [
-      uiValue("appearance"),
-      uiValue("content_size"),
-      uiValue("increase_contrast"),
-      quiet(axSettings(ready, udid, ["status"]).pipe(Effect.flatMap(decodeAxStatus))),
-    ],
-    { concurrency: 4 },
-  );
+  const defaults = (domain: string, key: string) =>
+    run("xcrun", ["simctl", "spawn", udid, "defaults", "read", domain, key]).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+  const [appearance, contentSize, contrast, axStatus, keyboards, currentKeyboards] =
+    yield* Effect.all(
+      [
+        uiValue("appearance"),
+        uiValue("content_size"),
+        uiValue("increase_contrast"),
+        quiet(axSettings(ready, udid, ["status"]).pipe(Effect.flatMap(decodeAxStatus))),
+        defaults("-g", "AppleKeyboards"),
+        defaults("com.apple.keyboard.preferences", "KeyboardsCurrentAndNext"),
+      ],
+      { concurrency: 6 },
+    );
   const onOff = (value: string | undefined) =>
     value === "on" ? true : value === "off" ? false : undefined;
+  const usLayout = usKeyboardLayout(keyboards, currentKeyboards);
   const settings: DeviceSettings = {
     ...(appearance === "light" || appearance === "dark" ? { appearance } : {}),
     ...(contentSize ? { textSize: textSizeFromIos(contentSize) } : {}),
@@ -526,9 +534,25 @@ const readIos = Effect.fn("DeviceActions.readIos")(function* (
             : {}),
         }
       : {}),
+    ...(usLayout === undefined ? {} : { usKeyboardLayout: usLayout }),
   };
   return { settings, foregroundApp: null };
 });
+
+type DefaultsRead = { stdout: string; stderr: string; code: number } | undefined;
+
+// Measured on iOS 27: at boot, the hardware keyboard takes the layout of the first
+// KeyboardsCurrentAndNext entry, else of the first AppleKeyboards entry, until the next reboot.
+// An entry with hw=Automatic uses the layout of its language, for example fr_FR gives AZERTY.
+// A simulator that never changed its keyboards has no AppleKeyboards key and types US.
+const usKeyboardLayout = (keyboards: DefaultsRead, currentKeyboards: DefaultsRead) => {
+  const firstEntry = (read: DefaultsRead) =>
+    read?.code === 0 ? read.stdout.split("\n")[1]?.match(/([\w-]+)@[^"]*hw=([^;"]+)/) : undefined;
+  const first = firstEntry(currentKeyboards) ?? firstEntry(keyboards);
+  if (!first) return keyboards?.stderr.includes("Could not find key") ? true : undefined;
+  const [, language, layout] = first;
+  return layout === "US" || layout === "U.S." || (layout === "Automatic" && language === "en_US");
+};
 
 const isColorFilter = (value: unknown): value is DeviceSettings["colorFilter"] & string =>
   value === "none" ||

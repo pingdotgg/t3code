@@ -312,7 +312,8 @@ export interface DeviceStreamClient {
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
-  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
+  /** iOS only: `usLayout: false` sends the key places, for a simulator keyboard that is not US. */
+  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up", usLayout?: boolean) => void;
   /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
   readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
@@ -442,8 +443,10 @@ export function createDeviceStreamClient(
     if (usage !== null) sendIosKey(type, usage);
   };
   const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
+    // Windows reports AltGr as Ctrl+Alt. Option alone is the AltGr of Apple layouts.
+    const altGraph = event?.getModifierState?.("AltGraph") === true;
     for (const [flag, code] of iosModifierKeys()) {
-      const held = event?.[flag] === true;
+      const held = event?.[flag] === true && !(altGraph && flag === "ctrlKey");
       if (held === iosHeldModifiers.has(code) || (held && phase === "up")) continue;
       if (held) iosHeldModifiers.add(code);
       else iosHeldModifiers.delete(code);
@@ -461,19 +464,18 @@ export function createDeviceStreamClient(
       if (option) sendIosCode("up", "AltLeft");
     }
   };
-  const pressIosKey = (event: KeyboardEvent) => {
+  const pressIosKey = (event: KeyboardEvent, usLayout: boolean) => {
     if (event.isComposing || event.key === "Dead" || /^(Shift|Control|Alt|Meta)/.test(event.code)) {
       return;
     }
     const character = typedCharacter(event);
     // Keypad keys type the same character on every layout.
-    const strokes =
-      character === null || event.code.startsWith("Numpad") ? null : usKeyStrokes(character);
-    if (strokes) return typeIosStrokes(strokes);
-
-    const usage = hidUsageForCode(
-      (character === null ? usKey(event.key)?.code : undefined) ?? event.code,
-    );
+    if (usLayout && character !== null && !event.code.startsWith("Numpad")) {
+      const strokes = usKeyStrokes(character);
+      if (strokes) return typeIosStrokes(strokes);
+    }
+    const usShortcutCode = usLayout && character === null ? usKey(event.key)?.code : undefined;
+    const usage = hidUsageForCode(usShortcutCode ?? event.code);
     if (usage === null) return;
     syncIosModifiers(event);
     sendIosKey("down", usage);
@@ -1440,9 +1442,9 @@ export function createDeviceStreamClient(
       const action = phase === "begin" ? "down" : phase === "move" ? "move" : "up";
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
-    sendKey: (event, phase) => {
+    sendKey: (event, phase, usLayout = true) => {
       if (avcc) {
-        if (phase === "down") pressIosKey(event);
+        if (phase === "down") pressIosKey(event, usLayout);
         else releaseIosKey(event);
         return;
       }

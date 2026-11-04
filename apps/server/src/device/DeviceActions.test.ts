@@ -197,6 +197,66 @@ describe("readDeviceDetail", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      keyboards: '(\n    "ru_RU@sw=Russian;hw=Russian",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
+      us: false,
+    },
+    {
+      keyboards: '(\n    "fr_FR@sw=AZERTY;hw=Automatic",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
+      us: false,
+    },
+    {
+      keyboards: '(\n    "en_US@sw=QWERTY;hw=Automatic",\n    "fr_FR@sw=AZERTY;hw=Automatic"\n)\n',
+      us: true,
+    },
+    { keyboards: '(\n    "fr_FR@sw=AZERTY;hw=US"\n)\n', us: true },
+  ])("reads whether the first iOS keyboard is US from $keyboards", ({ keyboards, us }) =>
+    Effect.gen(function* () {
+      const { ready } = makeReady((call) =>
+        call.args.join(" ") === "simctl spawn SIM-1 defaults read -g AppleKeyboards"
+          ? { stdout: keyboards }
+          : { code: 1 },
+      );
+      const detail = yield* readDeviceDetail(ready, "ios", udid);
+      expect(detail.settings.usKeyboardLayout).toBe(us);
+    }),
+  );
+
+  it.effect("reads the current iOS keyboard before the first keyboard in the list", () =>
+    Effect.gen(function* () {
+      const { ready } = makeReady((call) => {
+        const key = call.args.join(" ");
+        if (key.endsWith("-g AppleKeyboards")) {
+          return {
+            stdout:
+              '(\n    "ru_RU@sw=Russian;hw=Russian",\n    "en_US@sw=QWERTY;hw=Automatic"\n)\n',
+          };
+        }
+        if (key.endsWith("com.apple.keyboard.preferences KeyboardsCurrentAndNext")) {
+          return {
+            stdout:
+              '(\n    "en_US@sw=QWERTY;hw=Automatic",\n    "ru_RU@sw=Russian;hw=Russian"\n)\n',
+          };
+        }
+        return { code: 1 };
+      });
+      const detail = yield* readDeviceDetail(ready, "ios", udid);
+      expect(detail.settings.usKeyboardLayout).toBe(true);
+    }),
+  );
+
+  it.effect("reads a simulator with no keyboard list as US", () =>
+    Effect.gen(function* () {
+      const { ready } = makeReady(() => ({
+        code: 1,
+        stderr: "Could not find key 'AppleKeyboards' in domain 'kCFPreferencesAnyApplication'.",
+      }));
+      const detail = yield* readDeviceDetail(ready, "ios", udid);
+      expect(detail.settings).toEqual({ usKeyboardLayout: true });
+    }),
+  );
+
   it.effect("degrades unreadable values to unknown instead of failing", () =>
     Effect.gen(function* () {
       const { ready } = makeReady(() => ({ code: 1, stderr: "boom" }));

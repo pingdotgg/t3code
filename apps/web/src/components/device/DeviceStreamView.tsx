@@ -1,11 +1,16 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import {
+  deviceDetailAtom,
+  deviceDetailReadAtom,
+  renewDeviceHubAccess,
+  useDeviceHubAccess,
+} from "~/state/device";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
@@ -15,7 +20,7 @@ import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import type { DeviceAxElement } from "./deviceHubApi";
-import { androidFoldViewAtom, deviceAxElementsAtom } from "./deviceHubAtoms";
+import { androidFoldViewAtom, deviceAxElementsAtom, NOOP_ATOM } from "./deviceHubAtoms";
 import {
   deviceScreenKey,
   deviceStreamSessionAtom,
@@ -127,6 +132,16 @@ export function DeviceStreamView(props: {
       : NO_SESSION_ATOM,
   );
   const client = session?.stream ?? null;
+  const detailKey = {
+    environmentId: props.environmentId,
+    hostId: props.hostId,
+    deviceId: props.deviceId,
+  };
+  useAtomMount(
+    props.platform === "ios" && props.visible ? deviceDetailReadAtom(detailKey) : NOOP_ATOM,
+  );
+  const usKeyboardLayout =
+    useAtomValue(deviceDetailAtom(detailKey)).detail?.settings.usKeyboardLayout ?? true;
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -335,7 +350,7 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
-          client?.sendKey(event.nativeEvent, "down");
+          client?.sendKey(event.nativeEvent, "down", usKeyboardLayout);
         }}
         onPaste={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -344,7 +359,7 @@ export function DeviceStreamView(props: {
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
-          client?.sendKey(event.nativeEvent, "up");
+          client?.sendKey(event.nativeEvent, "up", usKeyboardLayout);
         }}
       >
         <div
