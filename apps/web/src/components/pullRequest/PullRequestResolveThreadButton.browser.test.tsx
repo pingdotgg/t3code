@@ -55,3 +55,13 @@ it("stays disabled when the detail is rebuilt before refreshed activity arrives"
   await screen.rerender(button(detailWith([{ ...thread, isResolved: true }])));
   await expect.element(screen.getByRole("button", { name: "Unresolve" })).toBeEnabled();
 });
+
+it("stays disabled when its thread is collapsed and reopened before refreshed activity arrives", async () => {
+  const threads = [{ ...thread, id: "reopened" }];
+  await using screen = await render(button(detailWith(threads)));
+  await screen.getByRole("button", { name: "Resolve" }).click();
+
+  await screen.rerender(<></>);
+  await screen.rerender(button(detailWith(threads)));
+  await expect.element(screen.getByRole("button", { name: "Resolve" })).toBeDisabled();
+});

@@ -5,13 +5,29 @@ import type {
   PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { canResolvePullRequestThread } from "@t3tools/client-runtime/pull-request-editing";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+
+type Sent = PullRequestDetailView["reviewThreads"] | "pending";
+
+// Outlives the button, which unmounts when its thread collapses, so reopening it mid-request
+// cannot send a second one.
+const sentByThread = new Map<string, Sent>();
+const sentListeners = new Set<() => void>();
+const subscribeSent = (listener: () => void) => {
+  sentListeners.add(listener);
+  return () => sentListeners.delete(listener);
+};
+const setSentFor = (key: string, sent: Sent | null) => {
+  if (sent === null) sentByThread.delete(key);
+  else sentByThread.set(key, sent);
+  for (const listener of sentListeners) listener();
+};
 
 /**
  * Resolves or unresolves a thread from the conversation rather than from its line in the Code tab,
@@ -33,8 +49,9 @@ export function PullRequestResolveThreadButton({
 }) {
   // Held until refreshed activity arrives: `detail` is rebuilt whenever the core detail reloads,
   // which can land before activity does and would re-enable the button on the old label.
-  const [sent, setSent] = useState<PullRequestDetailView["reviewThreads"] | "pending" | null>(null);
-  if (sent !== null && sent !== "pending" && sent !== detail.reviewThreads) setSent(null);
+  const key = `${environmentId}:${thread.id}`;
+  const sent = useSyncExternalStore(subscribeSent, () => sentByThread.get(key));
+  const waiting = sent === "pending" || sent === detail.reviewThreads;
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
@@ -43,17 +60,17 @@ export function PullRequestResolveThreadButton({
   }
 
   const toggle = async () => {
-    setSent("pending");
+    setSentFor(key, "pending");
     const result = await setThreadResolution({
       environmentId,
       input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
     });
     if (result._tag === "Failure") {
-      setSent(null);
+      setSentFor(key, null);
       toastManager.add({ type: "error", title: "The conversation could not be updated" });
       return;
     }
-    setSent(detail.reviewThreads);
+    setSentFor(key, detail.reviewThreads);
     onRefresh();
   };
 
@@ -62,7 +79,7 @@ export function PullRequestResolveThreadButton({
       size="xs"
       variant="ghost"
       className="shrink-0"
-      disabled={sent !== null}
+      disabled={waiting}
       onClick={() => void toggle()}
     >
       {thread.isResolved ? "Unresolve" : "Resolve"}
