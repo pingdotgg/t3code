@@ -195,9 +195,12 @@ function accountKey(
 ): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
-  return limits?.credentialFingerprint
-    ? `${driver}:credential:${limits.credentialFingerprint}`
-    : null;
+  if (!limits?.credentialFingerprint) return null;
+  // One subscription can have several keys; its monthly reset is anchored to the subscription start.
+  const anchor = limits.windows.find((window) => window.kind === "monthly")?.resetsAt;
+  return anchor
+    ? `${driver}:monthly:${anchor}`
+    : `${driver}:credential:${limits.credentialFingerprint}`;
 }
 
 interface AccountReport {
