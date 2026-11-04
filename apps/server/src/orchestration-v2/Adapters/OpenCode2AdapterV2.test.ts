@@ -1730,6 +1730,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.usage.updated", { sessionID: SESSION }, "drop"),
           { type: "runtime_exit", status: "success" } as const,
           out("event.subscribe"),
+          ...directoryModels(WORK),
           out("session.active"),
           replyData("session.active", { [CHILD]: { type: "running" } }),
           out("permission.list", { sessionID: CHILD }),
@@ -2336,6 +2337,73 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect.each(["auto", "full-access"] as const)(
+    "retains ordered native edit denies and exceptions in %s plan mode",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const privatePath = { action: "edit", resource: "/plans/private/*", effect: "allow" };
+        const denied = { action: "edit", resource: "/plans/*", effect: "deny" };
+        const allowed = { action: "edit", resource: "/plans/allowed.md", effect: "allow" };
+        const externalDeny = {
+          action: "external_directory",
+          resource: "/private/*",
+          effect: "deny",
+        };
+        const externalAsk = {
+          action: "external_directory",
+          resource: "/private/reference/*",
+          effect: "ask",
+        };
+        const externalFallback = { ...externalAsk, resource: "*" };
+        const permissions = [
+          ...(runtimeMode === "full-access" ? [t3Rules[0]] : [supervisedRules[0]]),
+          { action: "edit", resource: "*", effect: "deny" },
+          ...buildPaths,
+          privatePath,
+          denied,
+          allowed,
+          externalDeny,
+          runtimeMode === "full-access" ? { ...externalAsk, effect: "allow" } : externalAsk,
+          runtimeMode === "full-access"
+            ? { ...externalFallback, effect: "allow" }
+            : externalFallback,
+          ...mcpRules,
+        ];
+        const runtime = yield* openCode2ReplayRuntime([
+          ...opening,
+          out("agent.list", "<any>"),
+          reply("agent.list", {
+            ...agentList,
+            data: agentList.data.map((agent) => ({
+              ...agent,
+              permissions: [
+                ...agent.permissions,
+                privatePath,
+                { ...denied, effect: "allow" },
+                denied,
+                allowed,
+                externalDeny,
+                externalAsk,
+                externalFallback,
+              ],
+            })),
+          }),
+          out("session.create", {
+            location: { directory: WORK },
+            model: { providerID: "opencode", id: "big-pickle" },
+            permissions,
+          }),
+          replyData("session.create", sessionInfo({ permissions })),
+        ]);
+        const thread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: { ...policy(), runtimeMode, interactionMode: "plan" },
+        });
+        assert.equal(thread.nativeThreadRef?.nativeId, SESSION);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("does not create an unrestricted session when native permissions cannot be read", () =>
     Effect.gen(function* () {
       const runtime = yield* openCode2ReplayRuntime([
@@ -2391,6 +2459,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   ) => [
     { type: "runtime_exit", status: "success" } as const,
     out("event.subscribe"),
+    ...directoryModels(WORK),
     out("session.active"),
     replyData("session.active", active),
     out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
@@ -2456,6 +2525,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         { type: "runtime_exit", status: "success" } as const,
         out("event.subscribe"),
+        ...directoryModels(WORK),
         out("session.active"),
         replyData("session.active", {}),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
@@ -2557,6 +2627,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("session.command", null),
         { type: "runtime_exit", status: "success" } as const,
         out("event.subscribe"),
+        ...directoryModels(WORK),
         out("session.active"),
         replyData("session.active", {}),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
@@ -2675,6 +2746,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
+      const denied = { action: "shell", resource: "*", effect: "deny" };
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
@@ -2686,6 +2758,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ordinal: 0,
           text: "Arrived on the new stream.",
         }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("agent.list", "<any>"),
+        reply("agent.list", {
+          ...agentList,
+          data: agentList.data.map((agent) => ({
+            ...agent,
+            permissions: [...agent.permissions, denied],
+          })),
+        }),
+        out("session.update", {
+          sessionID: SESSION,
+          permissions: [t3Rules[0], denied, ...mcpRules],
+        }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2705,6 +2793,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({ ...turnInput(thread), runOrdinal: 2, providerTurnOrdinal: 2 });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),
   );
 

@@ -483,13 +483,22 @@ const formGone = {
   SessionNotFoundError: () => Effect.void,
 };
 
-const agentPaths = (rules: ReadonlyArray<Rule>) =>
-  rules.filter(
-    (entry) =>
-      entry.effect === "allow" &&
-      entry.resource !== "*" &&
-      (entry.action === "edit" || entry.action === "external_directory"),
-  );
+const agentPaths = (rules: ReadonlyArray<Rule>, planPolicy?: RulesPolicy) =>
+  rules
+    .filter(
+      (entry) =>
+        ((entry.effect === "allow" && entry.resource !== "*") ||
+          (planPolicy !== undefined &&
+            (entry.action === "external_directory" ||
+              entry.effect === "deny" ||
+              (entry.effect === "ask" && entry.resource !== "*")))) &&
+        (entry.action === "edit" || entry.action === "external_directory"),
+    )
+    .map((entry) =>
+      planPolicy?.runtimeMode === "full-access" && entry.effect === "ask"
+        ? { ...entry, effect: "allow" as const }
+        : entry,
+    );
 
 const nativeSessionRules = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) => {
   if (policy.runtimeMode === "auto") {
@@ -2683,6 +2692,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
+    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const reconnect = Effect.gen(function* () {
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
@@ -2695,6 +2705,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       client = next.client;
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
+      // model.list waits for native config plugins; agent.list can return builtins before they load.
+      yield* Effect.forEach(
+        agentRules.keys(),
+        (directory) =>
+          client.model.list({ location: { directory } }).pipe(Effect.timeout("5 seconds")),
+        { discard: true },
+      );
+      agentRules.clear();
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
@@ -2795,7 +2813,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
-    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const rulesForAgents = Effect.fn("OpenCode2Adapter.rulesForAgents")(function* (
       directory: string,
       agents: ReadonlyArray<string>,
@@ -2824,7 +2841,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const plan = policy.interactionMode === "plan";
       const nativeRules = yield* rulesForAgents(thread.directory, [thread.agent]);
       const paths = plan
-        ? agentPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]))
+        ? agentPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]), policy)
         : policy.runtimeMode === "auto" || policy.runtimeMode === "full-access"
           ? []
           : agentPaths(nativeRules);

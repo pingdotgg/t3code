@@ -119,8 +119,10 @@ const autoEditRules = (name: string) => [
 
 const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
+  { action: "external_directory", resource: "*", effect: "allow" },
+  ...BUILD_PATHS,
   { action: "edit", resource: "*", effect: "deny" },
-  ...PLAN_PATHS,
+  ...PLAN_PATHS.slice(BUILD_PATHS.length),
   ...mcpRules(name),
 ];
 
@@ -605,7 +607,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     readonly name: string;
     readonly cut: string;
     readonly hold?: string;
-    readonly reconnect: (parent: string) => ReadonlyArray<ProviderReplayEntry>;
+    readonly reconnect: (parent: string, directory: string) => ReadonlyArray<ProviderReplayEntry>;
     readonly steps: (
       thread: ReturnType<typeof threadCommands>,
       run: (ordinal: number) => OrchestrationV2Run["id"],
@@ -638,7 +640,7 @@ describe("OpenCode 2 through the orchestrator", () => {
       entries: [
         ...kept,
         { type: "runtime_exit", status: "success" },
-        ...input.reconnect(BACKGROUND_PARENT),
+        ...input.reconnect(BACKGROUND_PARENT, cwd),
       ],
     });
     const thread = threadCommands({ name: input.name, worktreePath: cwd });
@@ -667,8 +669,10 @@ describe("OpenCode 2 through the orchestrator", () => {
 
         cut: "session.step.streamed.5",
         hold: "session.text.ended.3",
-        reconnect: (parent) => [
+        reconnect: (parent, directory) => [
           out("event.subscribe"),
+          out("model.list", { "location[directory]": directory }),
+          reply("model.list", { location: { directory }, data: [] }),
           out("session.active"),
           reply("session.active", { data: {} }),
 
@@ -763,8 +767,10 @@ describe("OpenCode 2 through the orchestrator", () => {
           name: "opencode2-background-lost",
 
           cut: "session.step.started.3",
-          reconnect: (parent) => [
+          reconnect: (parent, directory) => [
             out("event.subscribe"),
+            out("model.list", { "location[directory]": directory }),
+            reply("model.list", { location: { directory }, data: [] }),
 
             out("session.active"),
             reply("session.active", { data: {} }),
@@ -796,6 +802,8 @@ describe("OpenCode 2 through the orchestrator", () => {
               ],
               cursor: {},
             }),
+            out("agent.list", "<any>"),
+            reply("agent.list", agentList(directory)),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
             reply("session.prompt", {
               data: {
