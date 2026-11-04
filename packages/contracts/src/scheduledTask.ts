@@ -43,18 +43,21 @@ function clockMinutes(value: string): number {
   return Number(hour) * 60 + Number(minute);
 }
 
+const WindowClock = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
+);
+
 const ScheduledTaskIntervalWindow = Schema.Struct({
-  start: TimeOfDay,
-  end: TimeOfDay,
-  weekdays: ScheduledTaskWeekdays,
-})
-  .check(
-    Schema.makeFilter(
-      (window) =>
-        clockMinutes(window.end) > clockMinutes(window.start) || "End must be after start.",
-    ),
-  )
-  .annotate({ description: "Local hours. Start inclusive, end exclusive." });
+  start: WindowClock,
+  end: WindowClock,
+  weekdays: Schema.optional(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
+  ),
+}).check(
+  Schema.makeFilter(
+    (window) => clockMinutes(window.end) > clockMinutes(window.start) || "End must be after start.",
+  ),
+);
 
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval"),
