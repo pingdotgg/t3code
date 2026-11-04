@@ -137,12 +137,12 @@ export function claudeReportedModels(
   reported: ReadonlyArray<ClaudeModelInfo> | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!reported?.length) return [];
-  const known = new Set<string>();
-  for (const { model } of catalog.models) {
-    known.add(model.slug.toLowerCase());
-    for (const alias of model.aliases ?? []) known.add(alias.toLowerCase());
-  }
-  for (const entry of readCustomModelEntries(customModels)) known.add(entry.slug.toLowerCase());
+  const known = new Set(
+    [
+      ...catalog.models.flatMap(({ model }) => [model.slug, ...(model.aliases ?? [])]),
+      ...readCustomModelEntries(customModels).map((entry) => entry.slug),
+    ].map((id) => stripClaudeContextWindowSuffix(id).toLowerCase()),
+  );
   const models: Array<ServerProviderModel> = [];
   for (const info of reported) {
     const slug = info.value.trim();

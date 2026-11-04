@@ -3046,7 +3046,7 @@ it.layer(
         const status = yield* checkClaudeProviderStatus(
           {
             ...defaultClaudeSettings,
-            customModels: [{ slug: "gateway/kimi-3", name: "Kimi (mine)" }],
+            customModels: [{ slug: "gateway/kimi-3[1m]", name: "Kimi (mine)" }],
           },
           claudeCapabilities({
             models: [
@@ -3059,7 +3059,7 @@ it.layer(
                 displayName: "Best",
                 description: "",
               },
-              { value: "gateway/kimi-3", displayName: "Kimi 3", description: "" },
+              { value: "gateway/kimi-3[1m]", displayName: "Kimi 3", description: "" },
               { value: "gateway/glm-5[1m]", displayName: "GLM 5", description: "" },
               { value: "gateway/glm-5", displayName: "GLM 5 again", description: "" },
               {
@@ -3080,7 +3080,7 @@ it.layer(
           [
             ["gateway/glm-5[1m]", "GLM 5", false],
             ["gateway/claude-relay", "Claude Relay", false],
-            ["gateway/kimi-3", "Kimi (mine)", true],
+            ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
