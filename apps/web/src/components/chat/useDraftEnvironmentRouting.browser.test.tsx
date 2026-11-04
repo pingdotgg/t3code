@@ -34,10 +34,10 @@ vi.mock("../../composerDraftStore", () => {
   };
 });
 vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
-  useLoadBalancedEnvironment: () => ({
+  useLoadBalancedEnvironment: (candidates: readonly string[]) => ({
     refresh: () => {},
     pending: false,
-    environmentId: "box",
+    environmentId: candidates.includes("box") ? "box" : (candidates[0] ?? null),
     failed: false,
   }),
 }));
@@ -87,6 +87,7 @@ type Routing = ReturnType<typeof useDraftEnvironmentRouting>;
 
 function ScratchDraft(props: {
   readonly eligible?: boolean;
+  readonly referencedEnvironmentId?: EnvironmentId;
   readonly onRouting?: (routing: Routing) => void;
 }) {
   const draftThread = useComposerDraftStore((store) => store.getDraftSession(draftId));
@@ -114,7 +115,9 @@ function ScratchDraft(props: {
       [box, [provider]],
     ]) as never,
     loadBalancingSettings: { loadBalancingWeights: {} },
-    referencedThreadContexts: [],
+    referencedThreadContexts: props.referencedEnvironmentId
+      ? [{ environmentId: props.referencedEnvironmentId } as never]
+      : [],
     activeProviderInstanceId: null,
     selectedProvider: codex,
     composerHasAttachments: false,
@@ -166,18 +169,21 @@ describe("useDraftEnvironmentRouting", () => {
     expect(mocks.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
-  it("drops a balanced move whose draft stopped being eligible while the folder opened", async () => {
+  it.each([
+    { change: "a file is attached", props: { eligible: false } },
+    { change: "a thread on this machine is referenced", props: { referencedEnvironmentId: mac } },
+  ])("drops a balanced move when $change while the folder opens", async ({ props }) => {
     setup(boxScratch);
     const opens = deferOpens();
 
     // The harness only runs the hook and renders nothing routed.
     await using screen = await render(<ScratchDraft />, { router: false });
     await vi.waitFor(() => expect(opens).toHaveLength(1));
-    await screen.rerender(<ScratchDraft eligible={false} />);
+    await screen.rerender(<ScratchDraft {...props} />);
     await act(() => opens[0]?.(boxScratch));
 
-    expect(mocks.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
     expect(mocks.draft.environmentId).toBe(mac);
+    expect(mocks.draft.loadBalancedEnvironmentId).not.toBe(box);
   });
 
   it("lets Auto balance win over a manual switch that is still opening", async () => {

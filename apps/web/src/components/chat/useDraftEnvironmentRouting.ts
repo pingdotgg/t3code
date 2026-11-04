@@ -128,11 +128,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     readonly scope: string;
   } | null>(null);
   const environmentChangeScopeRef = useRef("");
-  const automaticEnvironmentRef = useRef(automaticEnvironment);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope and routing mode into refs that async environment switches compare against
+  const balancingCandidatesRef = useRef(loadBalancingCandidates);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope and balancing candidates into refs that async environment switches compare against
   useLayoutEffect(() => {
     environmentChangeScopeRef.current = environmentChangeScope;
-    automaticEnvironmentRef.current = automaticEnvironment;
+    balancingCandidatesRef.current = loadBalancingCandidates;
   });
   // Leaving the scope, or unmounting, abandons a change still in flight.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight environment change when the draft or project scope changes or unmounts
@@ -198,7 +198,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return (
         environmentChangeRef.current === request &&
         environmentChangeScopeRef.current === request.scope &&
-        (!automatic || automaticEnvironmentRef.current) &&
+        (!automatic || balancingCandidatesRef.current.includes(target.environmentId)) &&
         !sendInFlightRef.current &&
         currentDraft !== null &&
         !currentDraft.promotedTo &&
