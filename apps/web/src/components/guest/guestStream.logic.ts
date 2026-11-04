@@ -99,14 +99,20 @@ export function applyGuestStreamEvent(
   event: GuestStreamEvent | GuestHistoryPageLoaded,
 ): GuestStreamState {
   switch (event.type) {
-    case "history-page":
+    case "history-page": {
       // A snapshot since the request replaced the thread and its cursor.
       if (state.projection === null || state.historyCursor !== event.cursor) return state;
+      const projection = mergeOlderHistoryIntoProjection(state.projection, event.page.items);
       return {
         ...state,
-        projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+        projection,
+        awaitingRowIds: withoutPlaced(
+          state.awaitingRowIds,
+          projection.visibleTurnItems.map((row) => row.item),
+        ),
         historyCursor: event.page.hasMoreHistory ? event.page.nextCursor : null,
       };
+    }
     case "view":
       // The page follows the share it names; a view of another one means the link changed.
       if (state.view !== null && state.view.shareId !== event.view.shareId) {
