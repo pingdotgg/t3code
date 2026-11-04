@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ManagedUpdatesPolicy } from "@t3tools/contracts";
+import { cliReleaseIndexPageUrl } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -197,21 +198,21 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
     }),
   );
 
-  it.effect("looks for updates on the policy's mirror, never the public releases", () =>
+  it.effect("ignores the policy's mirror, which serves T3 Code builds", () =>
     Effect.gen(function* () {
       const requested: string[] = [];
       const error = yield* runWithPolicy(
         { mode: "auto", feedUrl: "https://updates.example.com/t3code" },
         { channel: "stable" },
         HttpClient.make((request) => {
-          requested.push(new URL(request.url).origin);
+          requested.push(request.url);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
           );
         }),
       );
-      assert.include(error.message, "from Example Corp's update mirror");
-      assert.deepStrictEqual(requested, ["https://updates.example.com"]);
+      assert.equal(error.message, "Could not list t3 releases.");
+      assert.deepStrictEqual(requested, [cliReleaseIndexPageUrl(1)]);
     }),
   );
 });
