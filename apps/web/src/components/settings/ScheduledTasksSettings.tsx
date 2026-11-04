@@ -48,6 +48,7 @@ import {
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { getProviderModelCapabilities } from "../../providerModels";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -75,6 +76,7 @@ import {
   clampManagedRuntimeMode,
   managedCapabilityDenial,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
@@ -102,6 +104,13 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import {
+  ComposerEffortColumn,
+  ComposerPickerFooter,
+  describeComposerEffort,
+} from "../chat/ComposerModelEffort";
+import { withImplicitFastModeDefault } from "../chat/composerProviderState";
+import type { TraitsSelectionInput } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -155,10 +164,9 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "main",
   startFromOrigin: true,
   existingWorktreePath: "",
-  modelKey: "",
+  modelSelection: null,
   runtimeMode: "full-access",
   interactionMode: "default",
-  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -285,15 +293,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
 }
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -1288,8 +1287,8 @@ function ScheduledTaskEditorForm({
   );
 
   const firstInstance = instanceEntries[0];
-  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
-  const activeSelection =
+  const draftSelection = draft.modelSelection;
+  const activeSelection: ModelSelection | null =
     draftSelection &&
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
       ? draftSelection
@@ -1303,6 +1302,41 @@ function ScheduledTaskEditorForm({
     activeInstanceId,
     activeModel,
   );
+  const activeEntry = activeSelection
+    ? instanceEntries.find((entry) => entry.instanceId === activeSelection.instanceId)
+    : undefined;
+  // The task prompt is a plain field, so effort never rides in it as Ultrathink.
+  const traits: TraitsSelectionInput | null =
+    activeSelection && activeEntry
+      ? {
+          provider: activeEntry.driverKind,
+          instanceId: activeSelection.instanceId,
+          models: activeEntry.models,
+          model: activeSelection.model,
+          modelOptions: withImplicitFastModeDefault(
+            getProviderModelCapabilities(
+              activeEntry.models,
+              activeSelection.model,
+              activeEntry.driverKind,
+              settings.planModeEnabled,
+            ),
+            activeSelection.options,
+          ),
+          allowPromptInjectedEffort: false,
+          planModeEnabled: settings.planModeEnabled,
+          // Writes the whole selection, so a change made on the default model pins that model too.
+          onModelOptionsChange: (options) =>
+            setDraft((current) => ({
+              ...current,
+              modelSelection: createModelSelection(
+                activeSelection.instanceId,
+                activeSelection.model,
+                options,
+              ),
+            })),
+        }
+      : null;
+  const effort = describeComposerEffort(traits, settings.effortDisplay, "sm");
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1372,12 +1406,6 @@ function ScheduledTaskEditorForm({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1398,7 +1426,7 @@ function ScheduledTaskEditorForm({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
         clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
@@ -1448,8 +1476,7 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
-                  modelKey: "",
-                  baseModelSelection: null,
+                  modelSelection: null,
                   baseRef: "main",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1641,8 +1668,17 @@ function ScheduledTaskEditorForm({
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                triggerSuffix={effort.suffix}
+                triggerDetail={effort.detail}
+                effortColumn={<ComposerEffortColumn traits={traits} />}
+                footer={<ComposerPickerFooter traits={traits} />}
                 onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  setDraft((current) =>
+                    // Picking the same model again keeps its options, as in the composer.
+                    activeSelection?.instanceId === instanceId && activeSelection.model === model
+                      ? current
+                      : { ...current, modelSelection: createModelSelection(instanceId, model) },
+                  )
                 }
               />
             </div>
