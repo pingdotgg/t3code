@@ -342,6 +342,71 @@ describe("acpToolCallDiffPatch", () => {
         "",
       ].join("\n"),
     );
+    assert.equal(
+      acpToolCallDiffPatch([
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/a.ts" }],
+          patch: {
+            format: "git_patch",
+            text: "diff --git a/repo/a.ts b/repo/a.ts\n@@ -1 +1 @@\n-a\n+A\n",
+          },
+        },
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/b.ts" }],
+          patch: {
+            format: "git_patch",
+            text: "diff --git a/repo/b.ts b/repo/b.ts\n@@ -1 +1 @@\n-b\n+B\n",
+          },
+        },
+        { type: "diff", path: "/repo/c.ts", oldText: "c\n", newText: "C\n" },
+      ]),
+      [
+        "diff --git a/repo/a.ts b/repo/a.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        "+A",
+        "",
+        "diff --git a/repo/b.ts b/repo/b.ts",
+        "@@ -1 +1 @@",
+        "-b",
+        "+B",
+        "",
+        'diff --git "a//repo/c.ts" "b//repo/c.ts"',
+        "--- /repo/c.ts",
+        "+++ /repo/c.ts",
+        "@@ -1,1 +1,1 @@",
+        "-c",
+        "+C",
+        "",
+      ].join("\n"),
+    );
+    assert.equal(
+      acpToolCallDiffPatch([
+        { type: "diff", path: "/repo/new.txt", oldText: null, newText: "hello\n" },
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/a.ts" }],
+          patch: { format: "git_patch", text: "@@ -1 +1 @@\n-a\n+A\n" },
+        },
+      ]),
+      [
+        'diff --git "a//repo/new.txt" "b//repo/new.txt"',
+        "--- /dev/null",
+        "+++ /repo/new.txt",
+        "@@ -0,0 +1,1 @@",
+        "+hello",
+        "",
+        'diff --git "a//repo/a.ts" "b//repo/a.ts"',
+        '--- "a//repo/a.ts"',
+        '+++ "b//repo/a.ts"',
+        "@@ -1 +1 @@",
+        "-a",
+        "+A",
+        "",
+      ].join("\n"),
+    );
   });
 });
 
@@ -381,6 +446,8 @@ function makeMockRuntime(input: {
           ? runtimeInput.protocolLogging
           : {
               ...runtimeInput.protocolLogging,
+              logIncoming: true,
+              logOutgoing: true,
               logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
                 Queue.offer(protocolEvents, event).pipe(
                   Effect.andThen(runtimeInput.protocolLogging.logger?.(event) ?? Effect.void),
@@ -3077,6 +3144,92 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("keeps protocol diagnostics off unless a protocol logger is supplied", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const runTurn = Effect.fn("AcpAdapterV2.testProtocolLoggingTurn")(function* (
+        name: string,
+        nativeLogging?: NonNullable<Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"]>,
+      ) {
+        const events: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
+        const instanceId = ProviderInstanceId.make(`acp-test-${name}`);
+        const threadId = ThreadId.make(`thread-acp-${name}`);
+        const makeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: (runtimeInput) =>
+              makeRuntime({
+                ...runtimeInput,
+                protocolLogging: {
+                  ...runtimeInput.protocolLogging,
+                  logger: (event) =>
+                    Effect.sync(() => void events.push(event)).pipe(
+                      Effect.andThen(runtimeInput.protocolLogging.logger?.(event) ?? Effect.void),
+                    ),
+                },
+              }),
+          },
+          selfInvocation,
+          ...(nativeLogging === undefined ? {} : { nativeLogging }),
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-acp-${name}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 1,
+          }),
+        );
+        const terminal = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrThrow(terminal).status, "completed");
+        return events;
+      });
+
+      assert.deepEqual(yield* runTurn("protocol-logging-default"), []);
+
+      const explicit: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
+      yield* runTurn("protocol-logging-explicit", () => ({
+        protocolLogging: {
+          logIncoming: true,
+          logOutgoing: true,
+          logger: (event) => Effect.sync(() => void explicit.push(event)),
+        },
+      }));
+      assert.isTrue(explicit.some((e) => e.direction === "incoming" && e.stage === "raw"));
+      assert.isTrue(explicit.some((e) => e.direction === "outgoing"));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("advertises ACP session notices and shows them as system notices", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -4437,6 +4590,140 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect.each([
+    {
+      label: "answers Always allow with the agent's allow-always option",
+      options: [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: "allow-always",
+    },
+    {
+      label: "answers Always allow with allow-once when the agent offers no allow-always option",
+      options: [
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: "allow-once",
+    },
+  ] as const)("$label", ({ options, optionId }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleRequestPermission: (handler) =>
+            Effect.sync(() => {
+              requestPermission = handler;
+            }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+        }),
+      });
+      const instanceId = ProviderInstanceId.make("acp-test-always-allow");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              runtimeInput = input;
+            }).pipe(Effect.andThen(makeRuntime(input))),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const threadId = ThreadId.make("thread-acp-always-allow");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-always-allow"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      if (requestPermission === undefined) {
+        return yield* Effect.die("ACP runtime must register a permission handler");
+      }
+
+      const permissionFiber = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { toolCallId: "always-allow-tool", title: "Run tests", kind: "execute" },
+          options,
+        },
+        { requestId: "always-allow-request", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped);
+      const pending = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected an ACP approval request");
+      }
+      const responseFiber = yield* runtime
+        .respondToRuntimeRequest({
+          requestId: pending.runtimeRequest.id,
+          decision: "acceptForSession",
+        })
+        .pipe(Effect.forkScoped);
+      const { outcome } = yield* Fiber.join(permissionFiber);
+      if (runtimeInput?.onOutgoingResponse === undefined) {
+        return yield* Effect.die("ACP runtime must expose native response acknowledgements");
+      }
+      yield* runtimeInput.onOutgoingResponse("always-allow-request");
+      yield* Fiber.join(responseFiber);
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
+      yield* Fiber.join(turnFiber);
+      assert.deepEqual(outcome, { outcome: "selected", optionId });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -4458,10 +4745,16 @@ describe("AcpAdapterV2", () => {
         browserToolsAvailable: false,
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const nativeRuntimes: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
+      let sessionEventCount = 0;
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
         environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
+        wrapRuntime: (nativeRuntime) => {
+          nativeRuntimes.push(nativeRuntime);
+          return nativeRuntime;
+        },
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -4472,6 +4765,10 @@ describe("AcpAdapterV2", () => {
             Effect.sync(() => runtimeInputs.push(runtimeInput)).pipe(
               Effect.andThen(makeRuntime(runtimeInput)),
             ),
+          onSessionEvent: () =>
+            Effect.sync(() => {
+              sessionEventCount += 1;
+            }),
         },
         selfInvocation,
       });
@@ -4566,6 +4863,7 @@ describe("AcpAdapterV2", () => {
       });
       assert.deepEqual(snapshotAfterRollback.providerTurns, []);
       assert.deepEqual(snapshotAfterRollback.messages, []);
+      const sessionEventsBeforeSecondTurn = sessionEventCount;
 
       yield* runtime.startTurn(
         makeTurnInput({
@@ -4592,6 +4890,8 @@ describe("AcpAdapterV2", () => {
         }
       }
       assert.equal(secondStatus, "completed");
+      yield* nativeRuntimes[1]!.drainEvents;
+      assert.isAbove(sessionEventCount, sessionEventsBeforeSecondTurn);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

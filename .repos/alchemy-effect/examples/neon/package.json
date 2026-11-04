@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/sql": "workspace:*",
     "@aws-sdk/client-s3": "3.984.0",
     "@aws-sdk/s3-request-presigner": "3.984.0",
     "@effect/platform-node": "catalog:",
@@ -34,14 +36,17 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/neon": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "@vercel/nft": "catalog:",
-    "typescript": "catalog:",
     "neonctl": "4.21.1",
+    "typescript": "catalog:",
     "vite": "catalog:"
   },
-  "engines": { "node": ">=24" }
+  "engines": {
+    "node": ">=24"
+  }
 }
