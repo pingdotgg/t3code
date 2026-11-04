@@ -62,6 +62,33 @@ impl Window {
         serde_json::json!({"title": self.title, "appName": self.class, "appIdentifier": self.class,
             "processId": self.pid, "bounds": self.bounds(), "clientBounds": self.bounds()})
     }
+    /// Same window, geometry and state; only a CLI title spinner may differ.
+    pub fn matches_after_capture(&self, current: &Self) -> bool {
+        self.address == current.address
+            && self.pid == current.pid
+            && self.class == current.class
+            && self.at == current.at
+            && self.size == current.size
+            && self.mapped == current.mapped
+            && self.hidden == current.hidden
+            && capture_title(&self.title) == capture_title(&current.title)
+    }
+}
+
+/// Match the same leading CLI spinner accepted by the Wayland AT-SPI window matcher.
+fn capture_title(title: &str) -> &str {
+    let mut chars = title.chars();
+    if matches!(
+        chars.next(),
+        Some('⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏')
+    ) && chars.clone().next().is_some_and(char::is_whitespace)
+    {
+        let label = chars.as_str().trim_start();
+        if !label.is_empty() {
+            return label;
+        }
+    }
+    title
 }
 
 pub fn session_directory() -> Result<PathBuf> {

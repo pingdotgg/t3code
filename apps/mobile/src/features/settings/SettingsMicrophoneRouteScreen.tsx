@@ -3,7 +3,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
-import { Linking, useWindowDimensions, View } from "react-native";
+import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -16,7 +16,6 @@ import {
   type MicrophoneEntry,
   type MicrophoneKind,
   microphoneEntryKey,
-  microphoneOrder,
 } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
@@ -24,6 +23,10 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
+import {
+  deviceMicrophoneOrder,
+  localVoiceTranscriberAtom,
+} from "../voice-input/VoiceInputProvider";
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
@@ -71,7 +74,10 @@ const KINDS: Record<
   bluetooth: {
     label: "Bluetooth",
     row: "Other Bluetooth",
-    rowDescription: "AirPods, headsets, and cars not listed",
+    rowDescription:
+      Platform.OS === "android"
+        ? "Earbuds, headsets, and cars, including Android Auto, not listed"
+        : "AirPods, headsets, and cars not listed",
     icon: "headphones",
   },
   builtIn: {
@@ -88,12 +94,44 @@ const KINDS: Record<
   },
 };
 
+const UNAVAILABLE_EXPLANATION =
+  Platform.OS === "android"
+    ? "T3 Code's voice input uses Google's on-device speech recognition, which needs Android 12 or later with compatible Google speech services for the device language. Without it, the composer has no microphone button, and allowing microphone access won't add one. Keyboard voice typing is separate and isn't affected."
+    : "T3 Code's voice input uses Apple's on-device speech transcription, which needs iOS 26 or later on a device that supports it. Without it, the composer has no microphone button, and allowing microphone access won't add one. Apple keyboard dictation is separate and isn't affected.";
+
 export function SettingsMicrophoneRouteScreen() {
+  const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  // Android's probe is asynchronous; an empty sheet avoids flashing "unavailable" first.
+  if (transcriber === "checking") return <View collapsable={false} className="flex-1 bg-sheet" />;
+  return transcriber === null ? <VoiceInputUnavailable /> : <MicrophoneSettings />;
+}
+
+function VoiceInputUnavailable() {
+  const insets = useSafeAreaInsets();
+  return (
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-3 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      >
+        <SettingsSection title="Voice input">
+          <ListRowLayout icon="mic" label="Not available on this device" />
+        </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">{UNAVAILABLE_EXPLANATION}</Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+function MicrophoneSettings() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
-  const entries = microphoneOrder(
+  const entries = deviceMicrophoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
   );
   const { permission, request: requestPermission } = useMicrophonePermission();
@@ -108,7 +146,7 @@ export function SettingsMicrophoneRouteScreen() {
   const move = (key: string, steps: number) =>
     savePreferences({
       transform: (current) => {
-        const next = [...microphoneOrder(current.microphones)];
+        const next = [...deviceMicrophoneOrder(current.microphones)];
         const from = next.findIndex((entry) => microphoneEntryKey(entry) === key);
         const to = Math.min(next.length - 1, Math.max(0, from + steps));
         if (from === -1 || from === to) return {};
@@ -120,7 +158,7 @@ export function SettingsMicrophoneRouteScreen() {
   const forget = (key: string) =>
     savePreferences({
       transform: (current) => ({
-        microphones: microphoneOrder(current.microphones).filter(
+        microphones: deviceMicrophoneOrder(current.microphones).filter(
           (entry) => microphoneEntryKey(entry) !== key,
         ),
       }),
@@ -197,9 +235,12 @@ export function SettingsMicrophoneRouteScreen() {
           })}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Voice input records from the first connected microphone in this list. Wired and Bluetooth
+          Voice input prefers the first connected microphone in this list. Wired and Bluetooth
           devices are added by name after you use voice input with them connected; until then, the
           Other row ranks them. Swipe a device left to forget it.
+          {Platform.OS === "android"
+            ? " Android may use another input when the preferred microphone cannot be routed."
+            : null}
         </Text>
       </ScrollView>
     </View>
