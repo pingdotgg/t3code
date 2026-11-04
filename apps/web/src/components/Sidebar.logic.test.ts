@@ -15,6 +15,7 @@ import {
   isSidebarEnvironmentDisconnected,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
+  resolveSidebarRowActionKeys,
   resolveSidebarSweepKeys,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -856,6 +857,16 @@ describe("resolveSidebarSweepKeys", () => {
   it("leaves out rows that cannot settle and rows that left the list", () => {
     expect(resolveSidebarSweepKeys(ordered, "c", "blocked", canSettle)).toEqual(["c", "d"]);
     expect(resolveSidebarSweepKeys(ordered, "gone", "a", canSettle)).toEqual([]);
+  });
+});
+
+describe("resolveSidebarRowActionKeys", () => {
+  it.each([
+    ["a selected row", "b", ["a", "b", "c"], ["a", "b", "c"]],
+    ["an unselected row", "d", ["a", "b", "c"], ["d"]],
+    ["a row with nothing selected", "a", [], ["a"]],
+  ] as const)("acting on %s", (_case, rowKey, selected, expected) => {
+    expect(resolveSidebarRowActionKeys(rowKey, new Set(selected))).toEqual(expected);
   });
 });
 
