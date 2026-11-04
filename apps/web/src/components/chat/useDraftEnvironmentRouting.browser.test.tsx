@@ -1,7 +1,7 @@
 import { EnvironmentId, ProjectId, ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 
@@ -83,13 +83,19 @@ const provider = {
   availability: "available",
 };
 
-function ScratchDraft() {
+type Routing = ReturnType<typeof useDraftEnvironmentRouting>;
+
+function ScratchDraft(props: {
+  readonly eligible?: boolean;
+  readonly onRouting?: (routing: Routing) => void;
+}) {
   const draftThread = useComposerDraftStore((store) => store.getDraftSession(draftId));
-  useDraftEnvironmentRouting({
+  const routing = useDraftEnvironmentRouting({
     draftId,
     draftThread,
     envLocked: false,
-    automaticEnvironment: true,
+    automaticEnvironment:
+      (props.eligible ?? true) && draftThread?.environmentSelection !== "manual",
     logicalProjectEnvironments: [mac, box].map((environmentId) => ({
       environmentId,
       projectId: environmentId === mac ? ProjectId.make(mocks.macScratch.id) : null,
@@ -117,7 +123,14 @@ function ScratchDraft() {
     projectGroupingSettings: {} as never,
     sendInFlightRef: { current: false },
   });
+  props.onRouting?.(routing);
   return null;
+}
+
+function deferOpens() {
+  const opens: Array<(project: typeof boxScratch) => void> = [];
+  mocks.openScratchProject.mockImplementation(() => new Promise((resolve) => opens.push(resolve)));
+  return opens;
 }
 
 describe("useDraftEnvironmentRouting", () => {
@@ -151,5 +164,43 @@ describe("useDraftEnvironmentRouting", () => {
       }),
     );
     expect(mocks.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("drops a balanced move whose draft stopped being eligible while the folder opened", async () => {
+    setup(boxScratch);
+    const opens = deferOpens();
+
+    // The harness only runs the hook and renders nothing routed.
+    await using screen = await render(<ScratchDraft />, { router: false });
+    await vi.waitFor(() => expect(opens).toHaveLength(1));
+    await screen.rerender(<ScratchDraft eligible={false} />);
+    await act(() => opens[0]?.(boxScratch));
+
+    expect(mocks.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(mocks.draft.environmentId).toBe(mac);
+  });
+
+  it("lets Auto balance win over a manual switch that is still opening", async () => {
+    setup(boxScratch);
+    mocks.draft = { ...mocks.draft, environmentSelection: "manual" };
+    const opens = deferOpens();
+    let routing: Routing | undefined;
+
+    // The harness only runs the hook and renders nothing routed.
+    await using _screen = await render(<ScratchDraft onRouting={(next) => (routing = next)} />, {
+      router: false,
+    });
+    await act(() => routing?.onEnvironmentChangeStable(box));
+    await act(() => routing?.onAutoEnvironmentStable());
+    await vi.waitFor(() => expect(opens).toHaveLength(2));
+    await act(() => opens[0]?.(boxScratch));
+    await act(() => opens[1]?.(boxScratch));
+
+    expect(mocks.draft).toMatchObject({
+      environmentId: box,
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: box,
+    });
+    expect(mocks.setLogicalProjectDraftThreadId).toHaveBeenCalledTimes(1);
   });
 });

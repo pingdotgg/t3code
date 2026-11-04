@@ -111,29 +111,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
   );
-  const onAutoEnvironment = () => {
-    if (envLocked || !draftId) return;
-    if (composerHasAttachments) {
-      toastManager.add({
-        type: "warning",
-        id: "load-balancing-attachments",
-        title: "Keep attachments on this machine",
-        description:
-          "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
-      });
-      return;
-    }
-    loadBalancing.refresh(
-      logicalProjectEnvironments.map((environment) => environment.environmentId),
-    );
-    setDraftThreadContext(draftId, {
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: null,
-      branch: null,
-      worktreePath: null,
-    });
-  };
-  const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
   const autoEnvironmentLabel = automaticEnvironment
     ? draftThread?.loadBalancedEnvironmentId
       ? "Auto balance"
@@ -151,9 +128,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     readonly scope: string;
   } | null>(null);
   const environmentChangeScopeRef = useRef("");
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope into a ref that async environment switches compare against
+  const automaticEnvironmentRef = useRef(automaticEnvironment);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope and routing mode into refs that async environment switches compare against
   useLayoutEffect(() => {
     environmentChangeScopeRef.current = environmentChangeScope;
+    automaticEnvironmentRef.current = automaticEnvironment;
   });
   // Leaving the scope, or unmounting, abandons a change still in flight.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight environment change when the draft or project scope changes or unmounts
@@ -177,6 +156,33 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   } | null>(null);
   const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
 
+  const onAutoEnvironment = () => {
+    if (envLocked || !draftId) return;
+    if (composerHasAttachments) {
+      toastManager.add({
+        type: "warning",
+        id: "load-balancing-attachments",
+        title: "Keep attachments on this machine",
+        description:
+          "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+      });
+      return;
+    }
+    loadBalancing.refresh(
+      logicalProjectEnvironments.map((environment) => environment.environmentId),
+    );
+    // Choosing Auto supersedes a manual switch still opening its target.
+    environmentChangeRef.current = null;
+    setBusyEnvironmentChange(null);
+    setDraftThreadContext(draftId, {
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: null,
+      branch: null,
+      worktreePath: null,
+    });
+  };
+  const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
+
   const moveDraft = (target: (typeof logicalProjectEnvironments)[number], automatic: boolean) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     const originalDraft = getDraftSession(draftId);
@@ -192,6 +198,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return (
         environmentChangeRef.current === request &&
         environmentChangeScopeRef.current === request.scope &&
+        (!automatic || automaticEnvironmentRef.current) &&
         !sendInFlightRef.current &&
         currentDraft !== null &&
         !currentDraft.promotedTo &&
