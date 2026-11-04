@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the synchronous preload bootstrap needs a synchronous, fail-closed credential read.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -43,16 +44,14 @@ function parseTokenEnvironmentFile(contents: string): string | null {
   return null;
 }
 
+const credentialFile = (homeDirectory: string) =>
+  NodePath.join(homeDirectory, ".config", "t3code", "mcp-gateway.env");
+
 export function readMcpGatewayBridgeToken(source: McpGatewayCredentialSource): string | null {
   const environmentToken = validateToken(source.env.T3_MCP_BRIDGE_TOKEN);
   if (environmentToken !== null) return environmentToken;
 
-  const credentialPath = NodePath.join(
-    source.homeDirectory,
-    ".config",
-    "t3code",
-    "mcp-gateway.env",
-  );
+  const credentialPath = credentialFile(source.homeDirectory);
   try {
     const file = source.statFile(credentialPath);
     if (!file.isFile() || (source.userId !== null && file.uid !== source.userId)) return null;
@@ -63,12 +62,49 @@ export function readMcpGatewayBridgeToken(source: McpGatewayCredentialSource): s
   }
 }
 
+export interface McpGatewayCredentialStore extends McpGatewayCredentialSource {
+  readonly makeDirectory: (path: string) => void;
+  /** Creates the file only if it does not exist yet. */
+  readonly createFileExclusive: (path: string, contents: string) => void;
+  readonly newToken: () => string;
+}
+
+/**
+ * The token, creating the protected env file when there is none, so an enabled gateway keeps
+ * the same token across restarts. A file that exists but is unusable is left for its owner to fix.
+ */
+export function ensureMcpGatewayBridgeToken(store: McpGatewayCredentialStore): string | null {
+  const existing = readMcpGatewayBridgeToken(store);
+  if (existing !== null) return existing;
+  const credentialPath = credentialFile(store.homeDirectory);
+  try {
+    store.makeDirectory(NodePath.dirname(credentialPath));
+    store.createFileExclusive(
+      credentialPath,
+      `${TOKEN_ENVIRONMENT_VARIABLE}=${store.newToken()}\n`,
+    );
+  } catch {
+    // Another window created it first, or it cannot be written; the read below decides.
+  }
+  return readMcpGatewayBridgeToken(store);
+}
+
+const processCredentialSource = (homeDirectory: string): McpGatewayCredentialStore => ({
+  env: process.env,
+  homeDirectory,
+  userId: typeof process.getuid === "function" ? process.getuid() : null,
+  statFile: NodeFS.statSync,
+  readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+  makeDirectory: (path) => NodeFS.mkdirSync(path, { recursive: true, mode: 0o700 }),
+  createFileExclusive: (path, contents) =>
+    NodeFS.writeFileSync(path, contents, { flag: "wx", mode: 0o600 }),
+  newToken: () => NodeCrypto.randomBytes(32).toString("hex"),
+});
+
 export function readMcpGatewayBridgeTokenFromProcess(homeDirectory: string): string | null {
-  return readMcpGatewayBridgeToken({
-    env: process.env,
-    homeDirectory,
-    userId: typeof process.getuid === "function" ? process.getuid() : null,
-    statFile: NodeFS.statSync,
-    readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
-  });
+  return readMcpGatewayBridgeToken(processCredentialSource(homeDirectory));
+}
+
+export function ensureMcpGatewayBridgeTokenFromProcess(homeDirectory: string): string | null {
+  return ensureMcpGatewayBridgeToken(processCredentialSource(homeDirectory));
 }

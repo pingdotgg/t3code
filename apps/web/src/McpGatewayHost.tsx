@@ -13,6 +13,7 @@ import { openDesktopGatewayThread, openDesktopGatewayAgents } from "./mcpGateway
 import { connectionAtomRuntime } from "./connection/runtime";
 import {
   getMcpGatewayConfiguration,
+  MCP_GATEWAY_STATE_EVENT,
   mcpGatewayStartupMessage,
   publishMcpGatewayStartup,
   publishMcpGatewayStatus,
@@ -22,6 +23,9 @@ import {
   subscribeMcpGatewayConfiguration,
 } from "./mcpGatewayState";
 import { appAtomRegistry } from "./rpc/atomRegistry";
+
+const MISSING_TOKEN_MESSAGE =
+  "The gateway has no bridge token, so it did not start. Make ~/.config/t3code/mcp-gateway.env yours with mode 600 and a T3_MCP_BRIDGE_TOKEN line, or enter a token in Settings > MCP Gateway.";
 
 export function McpGatewayHost({ router }: { readonly router: AppRouter }) {
   const configuration = useSyncExternalStore(
@@ -45,6 +49,7 @@ export function McpGatewayHost({ router }: { readonly router: AppRouter }) {
   }, []);
 
   const nativeEnabled = available && configuration.enabled && configuration.token.length >= 16;
+  const missingToken = available && configuration.enabled && !nativeEnabled;
   const nativeToken = configuration.token;
   const nativePort = configuration.port;
   // The effect below restarts the managed gateway on any change here, so it keys on
@@ -64,6 +69,11 @@ export function McpGatewayHost({ router }: { readonly router: AppRouter }) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     const desktop = window.desktopBridge;
     if (!desktop?.configureManagedMcpGateway) return;
+    // The new token reaches the configuration snapshot, which starts the gateway on the next run.
+    if (missingToken && desktop.ensureMcpGatewayBridgeToken?.()) {
+      window.dispatchEvent(new Event(MCP_GATEWAY_STATE_EVENT));
+      return;
+    }
     publishMcpGatewayStartup({ phase: "starting" });
     void desktop
       .configureManagedMcpGateway(nativeEnabled ? { token: nativeToken, port: nativePort } : null)
@@ -72,7 +82,10 @@ export function McpGatewayHost({ router }: { readonly router: AppRouter }) {
           if (stopped) return;
           startupFailures.current = 0;
           setReadyKey(nativeKey);
-          publishMcpGatewayStartup({ phase: "ready" });
+          // Nothing started without a token, so there is no bridge to wait on.
+          if (nativeEnabled) publishMcpGatewayStartup({ phase: "ready" });
+          else if (missingToken)
+            publishMcpGatewayStartup({ phase: "failed", message: MISSING_TOKEN_MESSAGE });
         },
         (error: unknown) => {
           if (stopped) return;
@@ -95,7 +108,7 @@ export function McpGatewayHost({ router }: { readonly router: AppRouter }) {
         .configureManagedMcpGateway?.(null)
         .catch(() => console.error("MCP gateway shutdown failed"));
     };
-  }, [nativeEnabled, nativeToken, nativePort, nativeKey]);
+  }, [nativeEnabled, missingToken, nativeToken, nativePort, nativeKey]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the authenticated gateway bridge, connection runtime subscription and relays while enabled
   useEffect(() => {

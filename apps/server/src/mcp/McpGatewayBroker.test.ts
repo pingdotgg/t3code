@@ -12,6 +12,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { make } from "./McpGatewayBroker.ts";
 
 type Broker = Effect.Success<typeof make>;
@@ -59,6 +60,45 @@ it.effect("runs calls on the newest app that reaches every environment in them",
       );
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "lists every connected app's environments and routes around an app that stopped answering",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* make;
+        const summary = (environmentId: string, connectionState: string) => ({
+          environmentId,
+          label: environmentId,
+          connectionState,
+          targetKind: "remote",
+        });
+        yield* serve(broker, "studio", { studio: ["read"] }, () => ({
+          result: [summary("studio", "connected")],
+        }));
+        yield* serve(broker, "laptop", { laptop: ["read"], studio: ["read"] }, () => ({
+          result: [summary("laptop", "connected"), summary("studio", "connecting")],
+        }));
+        // An app that stopped answering must not hold up the others' environments.
+        yield* broker
+          .connect("asleep", { asleep: ["read"], laptop: ["read"] })
+          .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
+        const listing = yield* broker
+          .forward("listEnvironments", [], [])
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Fiber.join(listing)).toEqual([
+          summary("laptop", "connected"),
+          summary("studio", "connected"),
+        ]);
+        // Having timed out, the silent app no longer takes calls another app can run.
+        expect(yield* broker.forward("listProjects", ["laptop"], ["laptop"])).toEqual([
+          summary("laptop", "connected"),
+          summary("studio", "connecting"),
+        ]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("fails calls no connected app can run, and reports app errors", () =>

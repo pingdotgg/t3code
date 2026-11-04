@@ -91,6 +91,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const result = ipcRenderer.sendSync(IpcChannels.GET_MCP_GATEWAY_BRIDGE_TOKEN_CHANNEL);
     return typeof result === "string" ? result : null;
   },
+  ensureMcpGatewayBridgeToken: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.ENSURE_MCP_GATEWAY_BRIDGE_TOKEN_CHANNEL);
+    return typeof result === "string" ? result : null;
+  },
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),

@@ -21,6 +21,7 @@ vi.mock(import("./rpc/atomRegistry"), () => ({
 
 import { McpGatewayHost } from "./McpGatewayHost";
 import {
+  getMcpGatewayStartup,
   getMcpGatewayStatus,
   MCP_GATEWAY_ENABLED_KEY,
   MCP_GATEWAY_TOKEN_KEY,
@@ -84,4 +85,51 @@ it("restarts the configured profile gateway through desktop IPC and replaces its
     expect(getMcpGatewayStatus()).toBe("degraded");
   }
   expect(restartMcpGateway()).toBe(false);
+});
+
+it("reports a missing bridge token instead of a started gateway, including on restart", async () => {
+  using _gateway = enabledGateway();
+  sessionStorage.removeItem(MCP_GATEWAY_TOKEN_KEY);
+  const configure = vi.fn().mockResolvedValue(undefined);
+  using _bridge = stubGlobal("desktopBridge", {
+    getMcpGatewayLaunchConfig: () => ({}),
+    getMcpGatewayBridgeToken: () => null,
+    configureManagedMcpGateway: configure,
+  });
+  await using _screen = await render(<McpGatewayHost router={{} as AppRouter} />, {
+    router: false,
+  });
+  await vi.waitFor(() => expect(getMcpGatewayStartup()).toMatchObject({ phase: "failed" }));
+  await act(() => {
+    expect(restartMcpGateway()).toBe(true);
+  });
+  await vi.waitFor(() =>
+    expect(getMcpGatewayStartup()).toMatchObject({
+      phase: "failed",
+      message: expect.stringContaining("has no bridge token"),
+    }),
+  );
+  expect(configure.mock.calls.every(([input]) => input === null)).toBe(true);
+  expect(gateway.connect).not.toHaveBeenCalled();
+});
+
+it("starts an enabled gateway with a durable token the desktop creates after a restart", async () => {
+  using _gateway = enabledGateway();
+  // An app restart drops the session token; the desktop then has none until it creates one.
+  sessionStorage.removeItem(MCP_GATEWAY_TOKEN_KEY);
+  let stored: string | null = null;
+  const configure = vi.fn().mockResolvedValue(undefined);
+  gateway.connect.mockReturnValue({ stop: gateway.stop, requestStatus: () => true });
+  using _bridge = stubGlobal("desktopBridge", {
+    getMcpGatewayLaunchConfig: () => ({}),
+    getMcpGatewayBridgeToken: () => stored,
+    ensureMcpGatewayBridgeToken: () => (stored = "durable-token-0123456789abcdef"),
+    configureManagedMcpGateway: configure,
+  });
+  await using _screen = await render(<McpGatewayHost router={{} as AppRouter} />, {
+    router: false,
+  });
+  await vi.waitFor(() => expect(getMcpGatewayStartup()).toEqual({ phase: "ready" }));
+  expect(configure).toHaveBeenCalledWith({ token: "durable-token-0123456789abcdef", port: 47631 });
+  expect(gateway.connect).toHaveBeenCalledOnce();
 });

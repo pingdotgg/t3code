@@ -7,13 +7,21 @@ SQLite store, ingests runtime events, and runs webhook delivery.
 
 Enabling MCP Gateway makes the desktop an MCP host: it opens a stdio connection using
 its packaged launch config, including `ELECTRON_RUN_AS_NODE=1` and an explicit
-`T3_MCP_STATE_FILE`. This keeps the owner running for external MCP hosts.
+`T3_MCP_STATE_FILE`. This keeps the owner running for external MCP hosts. The desktop's bridge
+token comes from a token entered in Settings (kept for that window session), then
+`T3_MCP_BRIDGE_TOKEN` in its environment, then `~/.config/t3code/mcp-gateway.env` (owner-only,
+mode 0600). When the gateway is enabled and none exists, the desktop creates that file so the
+token survives restarts. It never rewrites an existing file it cannot use; it reports the
+missing token instead.
 
 Agents in T3 chats do not use the gateway process. Each server adds the same tool catalog to
 its own `t3-code` MCP and runs it against its own RPC handlers. For other environments, the
 desktop registers a relay on each granted environment over its authenticated T3 connection
 and advertises its grants. The server routes runtime port calls for other environments to that
 relay. The desktop answers only for environments it grants, and the server applies scopes.
+Several devices' apps can relay for one server, each seeing its own links, so the server merges
+every app's environment listing and sends each call to the newest app that grants the
+environment, skipping an app that timed out until it answers again.
 The desktop executable, bridge token, and state path are never sent to remote machines.
 Tools that read the gateway's own event store (events, webhooks, operation history, waiting
 on status) stay gateway-only. In-flight mutations are never replayed on reconnect.
