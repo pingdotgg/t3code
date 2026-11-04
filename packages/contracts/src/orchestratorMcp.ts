@@ -167,7 +167,12 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(
+    OrchestratorMcpTarget.annotate({
+      description:
+        "Omit provider, driver, and model to inherit this thread's selection. An exhausted inherited model uses the configured fallback when available.",
+    }),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
@@ -633,6 +638,19 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  fallbackModelSelection: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        providerInstanceId: ProviderInstanceId,
+        model: Schema.String,
+      }),
+    ).annotate({ description: "Configured fallback; options are omitted." }),
+  ),
+  fallbackAppliesToInherited: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Whether this fallback can replace the inherited selection now.",
+    }),
+  ),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
