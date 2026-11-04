@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -238,6 +239,23 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect(
+  "allows another model operation after an already-installed download completes immediately",
+  () =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const models = yield* speech.downloadModel("test-model").pipe(
+        Effect.provideService(Scheduler.Scheduler, {
+          executionMode: "sync",
+          shouldYield: () => false,
+          makeDispatcher: () => ({ scheduleTask: (task) => task(), flush: () => {} }),
+        }),
+      );
+      expect(models.models.find((model) => model.id === "test-model")?.state).toBe("installed");
+      yield* speech.selectModel("fallback-model");
+    }).pipe(Effect.provide(layer)),
+);
+
 it.effect("honors exact aliases and phrase boundaries in batch and streamed text", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
@@ -360,6 +378,25 @@ it.effect("resets cancelled streams and reuses the loaded model", () =>
     }).pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledOnce();
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("releases a failed stream start without waiting for its socket scope to close", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const socket = yield* Scope.fork(yield* Effect.scope);
+    yield* speech.updateAcceleration("cpu");
+    native.begin.mockRejectedValueOnce(new Error("cannot start streaming"));
+    const error = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Scope.provide(socket), Effect.flip);
+    expect(error._tag).toBe("SpeechOperationError");
+    expect(yield* speech.status).toMatchObject({ state: "ready" });
+    expect(native.dispose).toHaveBeenCalledOnce();
+    const next = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    yield* Scope.close(socket, Exit.void);
+    expect(yield* speech.status).toMatchObject({ state: "transcribing" });
+    expect(yield* next.finish).toBe("hello");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("closes its scope without waiting for hung native inference", () =>
