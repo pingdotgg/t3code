@@ -16,9 +16,10 @@ import * as SpeechService from "./SpeechService.ts";
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
   supportsStreaming: true,
+  supportsLongForm: false,
   supportsTranslation: true,
   supportsInitialPrompt: false,
-  begin: vi.fn(async (_language?: string, _words?: readonly string[], _dictionary?: unknown) => {}),
+  begin: vi.fn(async (_options?: unknown, _filterSilence?: boolean, _vadPath?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
     text: { committed: "", tentative: "hello" },
@@ -61,13 +62,13 @@ const modelDefinitions = vi.hoisted(() => [
     name: "fallback",
     description: "fallback",
     size: 8,
-    languages: ["en"],
+    languages: ["en", "fr"],
     accuracy: 2,
     speed: 2,
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: false,
-    supportsTranslation: false,
+    supportsTranslation: true,
   },
 ]);
 vi.mock("./native.ts", () => ({
@@ -108,6 +109,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   native.backend = "Vulkan0";
   native.supportsInitialPrompt = false;
+  native.supportsStreaming = true;
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
@@ -140,6 +142,21 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
     yield* speech.prepareModel;
     expect(loadNative).toHaveBeenCalledTimes(1);
     expect(native.transcribe).not.toHaveBeenCalled();
+    native.supportsStreaming = false;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+        speechTranslateToEnglish: true,
+        speechSilenceFiltering: false,
+      });
+      expect(native.begin).toHaveBeenLastCalledWith(
+        { timestamps: "none", language: "fr", task: "translate", targetLanguage: "en" },
+        false,
+        "test.gguf",
+      );
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped);
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     expect(loadNative).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(layer)),

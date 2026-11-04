@@ -31,7 +31,8 @@ and how long it keeps the model in memory after use. With hardware set to
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
-text while you speak; others transcribe when you stop.
+text while you speak. Other models can process long recordings in chunks at pauses
+while you record; models with built-in long-form support transcribe when you stop.
 
 ## Dictate
 
@@ -66,6 +67,11 @@ are down, and **Toggle** always needs a second press. Change the chord itself in
   entries apply to every project there. Project spellings win when they overlap
   your personal dictionary. Each recording carries up to 100 entries from the
   two combined.
+- **Silence filtering** skips non-speech audio before recognition and is on by
+  default. Turn it off to keep raw audio; long recordings can still be split at
+  pauses. The chosen environment downloads a small Silero helper on first use.
+  If it is unavailable, transcription uses raw audio instead. This preference
+  does not enable audio consent or reduce the audio sent to that environment.
 - **Remove filler words** drops hesitation sounds from finished transcripts.
 
 Language and these preferences travel with each recording to the chosen

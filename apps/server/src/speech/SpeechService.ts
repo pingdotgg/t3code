@@ -30,6 +30,7 @@ import {
   type SpeechModel,
 } from "./model.ts";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+import { SILERO_VAD } from "./silero.ts";
 import { isSpeechPlatformSupported } from "./platform.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
@@ -37,14 +38,13 @@ const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
 export const MAX_SPEECH_BYTES =
   SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * MAX_SPEECH_DURATION_SECONDS;
-const MIN_CAPTURE_RMS = 0.0005;
 
 export class SpeechInvalidAudioError extends Schema.TaggedError<SpeechInvalidAudioError>()(
   "SpeechInvalidAudioError",
   { byteLength: Schema.Number, message: Schema.String },
 ) {}
 
-export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): Float32Array {
+export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
   if (
     pcmBytes.byteLength === 0 ||
     pcmBytes.byteLength > MAX_SPEECH_BYTES ||
@@ -58,7 +58,6 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
   // WebSocket frames can be pooled Node Buffers whose backing storage is larger
   // than the frame. Copy the view so only the received bytes are decoded.
   const pcm = new Float32Array(Uint8Array.from(pcmBytes).buffer);
-  let energy = 0;
   for (const sample of pcm) {
     if (!Number.isFinite(sample) || sample < -1 || sample > 1) {
       throw new SpeechInvalidAudioError({
@@ -66,11 +65,8 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
         message: "audio contains an invalid PCM sample",
       });
     }
-    energy += sample * sample;
   }
-  return !preserveSilence && Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS
-    ? new Float32Array()
-    : pcm;
+  return pcm;
 }
 
 export class SpeechOperationError extends Schema.TaggedError<SpeechOperationError>()(
@@ -524,6 +520,22 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const silenceModelPath = Effect.fn("SpeechService.silenceModelPath")(function* (
+    loaded: LoadedModel,
+    options: SpeechTranscriptionOptions,
+  ) {
+    if (!options.speechSilenceFiltering && (loaded.supportsStreaming || loaded.supportsLongForm))
+      return undefined;
+    return yield* store.download(SILERO_VAD).pipe(
+      Effect.timeout("15 seconds"),
+      Effect.catch(() =>
+        Effect.logWarning("Silero unavailable; using raw audio with bounded ASR processing.").pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    );
+  });
+
   const transcribe: SpeechService["Service"]["transcribe"] = Effect.fn("SpeechService.transcribe")(
     function* (pcmBytes, options) {
       const settings = yield* readSettings("transcription");
@@ -555,6 +567,7 @@ const make = Effect.gen(function* () {
                 ),
               catch: (cause) => speechError("model preparation", cause),
             });
+            const vadPath = yield* silenceModelPath(loaded, options);
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
             const transcribeWith = (inference: LoadedModel) =>
@@ -562,21 +575,26 @@ const make = Effect.gen(function* () {
                 try: (signal) => {
                   // Interruption kills the isolated process; the next request reloads the model.
                   signal.addEventListener("abort", () => dropModel(inference), { once: true });
-                  return inference.transcribe(pcm, {
-                    timestamps: "none",
-                    ...(language === "auto" ? {} : { language }),
-                    ...(translateToEnglish
-                      ? { task: "translate" as const, targetLanguage: "en" as const }
-                      : {}),
-                    ...(customWords.length > 0 && inference.supportsInitialPrompt
-                      ? {
-                          family: {
-                            kind: "whisper" as const,
-                            initialPrompt: customWords.join(", "),
-                          },
-                        }
-                      : {}),
-                  });
+                  return inference.transcribe(
+                    pcm,
+                    {
+                      timestamps: "none",
+                      ...(language === "auto" ? {} : { language }),
+                      ...(translateToEnglish
+                        ? { task: "translate" as const, targetLanguage: "en" as const }
+                        : {}),
+                      ...(customWords.length > 0 && inference.supportsInitialPrompt
+                        ? {
+                            family: {
+                              kind: "whisper" as const,
+                              initialPrompt: customWords.join(", "),
+                            },
+                          }
+                        : {}),
+                    },
+                    options.speechSilenceFiltering,
+                    vadPath,
+                  );
                 },
                 catch: (cause) => {
                   dropModel(inference);
@@ -682,10 +700,32 @@ const make = Effect.gen(function* () {
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
     );
     loaded = streamModel;
+    const vadPath = yield* silenceModelPath(streamModel, options);
+    const translateToEnglish =
+      options.speechTranslateToEnglish &&
+      !streamModel.supportsStreaming &&
+      streamModel.supportsTranslation &&
+      language !== "en";
     const beginStream = async () => {
-      if (!streamModel.supportsStreaming)
-        throw new Error("The selected model does not support streaming.");
-      await streamModel.begin(language === "auto" ? undefined : language);
+      await streamModel.begin(
+        {
+          timestamps: "none",
+          ...(language === "auto" ? {} : { language }),
+          ...(translateToEnglish
+            ? { task: "translate" as const, targetLanguage: "en" as const }
+            : {}),
+          ...(dictionary.length > 0 && streamModel.supportsInitialPrompt
+            ? {
+                family: {
+                  kind: "whisper" as const,
+                  initialPrompt: dictionary.map(({ term }) => term).join(", "),
+                },
+              }
+            : {}),
+        },
+        options.speechSilenceFiltering,
+        vadPath,
+      );
       started = true;
     };
     // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
@@ -744,7 +784,7 @@ const make = Effect.gen(function* () {
               byteLength: bytes.byteLength,
               message: "Speech stream audio limit exceeded.",
             });
-          const pcm = decodeSpeechPcm(bytes, true);
+          const pcm = decodeSpeechPcm(bytes);
           byteLength += bytes.byteLength;
           received.push(pcm);
           let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
@@ -772,7 +812,7 @@ const make = Effect.gen(function* () {
         return finalizeTranscript(
           correct(text),
           options,
-          language === "auto" ? undefined : language,
+          translateToEnglish ? "en" : language === "auto" ? undefined : language,
         );
       }),
     };

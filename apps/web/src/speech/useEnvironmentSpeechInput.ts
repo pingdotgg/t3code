@@ -262,6 +262,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
           speechCustomWords,
           speechRemoveFillerWords: settings.speechRemoveFillerWords,
+          speechSilenceFiltering: settings.speechSilenceFiltering,
         };
       },
       getMicrophoneId: () => latestRef.current.clientSettings.voiceMicrophone,

@@ -123,6 +123,7 @@ export const SpeechTranscriptionOptions = Schema.Struct({
   speechTranslateToEnglish: Schema.Boolean,
   speechCustomWords: SpeechCustomWords,
   speechRemoveFillerWords: Schema.Boolean,
+  speechSilenceFiltering: Schema.Boolean,
 });
 export type SpeechTranscriptionOptions = typeof SpeechTranscriptionOptions.Type;
 export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = {
@@ -130,6 +131,7 @@ export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = 
   speechTranslateToEnglish: false,
   speechCustomWords: [],
   speechRemoveFillerWords: true,
+  speechSilenceFiltering: true,
 };
 export const SPEECH_MAX_OPTIONS_BYTES = 128_000;
 

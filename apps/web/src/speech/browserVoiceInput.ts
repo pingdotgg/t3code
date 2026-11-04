@@ -3,7 +3,6 @@ import {
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
   openSpeechStream,
-  prepareEnvironmentSpeechModel,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
@@ -69,31 +68,18 @@ export function createBrowserVoiceInputPlatform(input: {
         );
       }
     };
-    if (status.supportsStreaming) {
-      const url = await runtime.runPromise(getEnvironmentSpeechStreamUrl(input.prepared), options);
-      return {
-        locale,
-        transcribe: transcribeRecording,
-        streaming: openSpeechStream({
-          url,
-          canSend: input.hasAudioConsent,
-          options: recordingOptions,
-          signal: options.signal,
-          onText: input.onText,
-          onError: (error) => input.onError(error.message),
-        }),
-      };
-    }
-    // The first transcription retries preparation if the speculative warmup failed.
-    const warmup = runtime
-      .runPromise(prepareEnvironmentSpeechModel(input.prepared), options)
-      .catch(() => undefined);
+    const url = await runtime.runPromise(getEnvironmentSpeechStreamUrl(input.prepared), options);
     return {
       locale,
-      transcribe: async (uri: string, transcriptionOptions: VoiceTranscriptionOptions) => {
-        await warmup;
-        return transcribeRecording(uri, transcriptionOptions);
-      },
+      transcribe: transcribeRecording,
+      streaming: openSpeechStream({
+        url,
+        canSend: input.hasAudioConsent,
+        options: recordingOptions,
+        signal: options.signal,
+        onText: input.onText,
+        onError: (error) => input.onError(error.message),
+      }),
     };
   });
 }
