@@ -94,7 +94,6 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
@@ -1066,7 +1065,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-  const deletionLane = yield* Semaphore.make(1);
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -13767,7 +13765,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // Fork-family cleanup eligibility must be planned after earlier deletions commit.
     if (command.type === "thread.delete")
-      return yield* deletionLane.withPermit(
+      return yield* threadDispatch.withDeletionLock(
         threadDispatch.withLock(
           command.threadId,
           liveSideChatIds(command.threadId).pipe(

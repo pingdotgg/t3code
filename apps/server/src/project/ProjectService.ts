@@ -478,7 +478,7 @@ export const make = Effect.gen(function* () {
       projectThreads,
       (thread) =>
         threadCommands
-          .withLock(thread.id, deleteChildThread(input, thread.id))
+          .withDeletionLock(threadCommands.withLock(thread.id, deleteChildThread(input, thread.id)))
           .pipe(
             Effect.mapError(
               (cause) =>

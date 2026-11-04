@@ -396,7 +396,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
-  it.effect.each(["sequential", "concurrent"] as const)(
+  it.effect.each(["sequential", "concurrent", "project"] as const)(
     "keeps source content readable until %s fork deletion",
     (deletionMode) =>
       Effect.gen(function* () {
@@ -661,7 +661,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
             commandId: CommandId.make(`${threadId}:delete`),
             threadId,
           });
-        if (deletionMode === "concurrent") {
+        if (deletionMode !== "sequential") {
           const planned = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           const commit = eventSink.commitCommand;
@@ -675,9 +675,17 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
                   )
                 : commit(input),
             );
-          const first = yield* deleteFork(forkThreadId).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
+          const first = yield* Effect.gen(function* () {
+            if (deletionMode === "project") {
+              yield* projects.delete({
+                commandId: CommandId.make(`${projectId}:delete`),
+                projectId,
+                force: true,
+              });
+            } else {
+              yield* deleteFork(forkThreadId);
+            }
+          }).pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(planned);
           const second = yield* deleteFork(grandchildThreadId).pipe(
             Effect.forkChild({ startImmediately: true }),
