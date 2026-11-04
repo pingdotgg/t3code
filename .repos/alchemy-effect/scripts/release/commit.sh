@@ -9,7 +9,7 @@ fi
 tag="v${VERSION}"
 git config user.email "alchemy-version-bot[bot]@users.noreply.github.com"
 git config user.name "alchemy-version-bot[bot]"
-bun scripts/release/release-notes.ts "$tag"
+node scripts/release/release-notes.ts "$tag"
 mapfile -t package_jsons < <(jq -r '.[] | "\(.dir)/package.json"' release-packages.json)
 git add "${package_jsons[@]}" pnpm-lock.yaml CHANGELOG.md
 if ! git diff --cached --quiet; then

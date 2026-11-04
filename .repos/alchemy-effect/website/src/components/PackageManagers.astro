@@ -1,0 +1,92 @@
+---
+/**
+ * Package-manager command tabs (pnpm first), synced site-wide.
+ *
+ * Each prop adds one line, rendered in prop order below:
+ *
+ * ```mdx
+ * <PackageManagers init dir="my-app" />
+ * <PackageManagers add={deps} dev={devDeps} />
+ * <PackageManagers remove="@cloudflare/vite-plugin" />
+ * <PackageManagers run="alchemy deploy --stage prod" />
+ * ```
+ */
+import { Code, TabItem, Tabs } from "@astrojs/starlight/components";
+
+interface Props {
+  /** Initialize a package.json. */
+  init?: boolean;
+  /** With `init`: create and enter this directory first. */
+  dir?: string;
+  /** Dependencies to install. */
+  add?: string;
+  /** Dev dependencies to install. */
+  dev?: string;
+  /** Dependencies to uninstall. */
+  remove?: string;
+  /** A package binary and its arguments, e.g. `alchemy deploy`. */
+  run?: string;
+}
+
+const { init, dir, add, dev, remove, run } = Astro.props;
+
+const managers = [
+  {
+    name: "pnpm",
+    icon: "pnpm",
+    init: "pnpm init",
+    add: "pnpm add",
+    dev: "pnpm add -D",
+    remove: "pnpm remove",
+    run: "pnpm",
+  },
+  {
+    name: "bun",
+    icon: "bun",
+    init: "bun init -y",
+    add: "bun add",
+    dev: "bun add -d",
+    remove: "bun remove",
+    run: "bun",
+  },
+  {
+    name: "npm",
+    icon: "npm",
+    init: "npm init -y",
+    add: "npm install",
+    dev: "npm install -D",
+    remove: "npm uninstall",
+    run: "npx",
+  },
+  {
+    name: "yarn",
+    icon: "seti:yarn",
+    init: "yarn init -y",
+    add: "yarn add",
+    dev: "yarn add -D",
+    remove: "yarn remove",
+    run: "yarn",
+  },
+] as const;
+
+const commands = (pm: (typeof managers)[number]) =>
+  [
+    init && (dir ? `mkdir ${dir} && cd ${dir} && ${pm.init}` : pm.init),
+    add && `${pm.add} ${add}`,
+    dev && `${pm.dev} ${dev}`,
+    remove && `${pm.remove} ${remove}`,
+    run && `${pm.run} ${run}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+---
+
+<Tabs syncKey="pkgManager">
+  {
+    managers.map((pm) => (
+      <TabItem label={pm.name} icon={pm.icon}>
+        <Code code={commands(pm)} lang="sh" />
+      </TabItem>
+    ))
+  }
+</Tabs>

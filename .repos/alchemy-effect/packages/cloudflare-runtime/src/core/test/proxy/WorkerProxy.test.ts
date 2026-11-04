@@ -1,3 +1,5 @@
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -5,7 +7,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as NodeNet from "node:net";
 import * as Internet from "../../globals/Internet.ts";
 import * as WorkerProxy from "../../proxy/WorkerProxy.ts";
 import { ConfigError } from "../../RuntimeError.shared.ts";
@@ -62,9 +63,7 @@ const serveUpstream = (esModule: string) =>
   Effect.gen(function* () {
     const workerd = yield* Workerd.Workerd;
     const ports = yield* workerd.serve({
-      sockets: [
-        { name: "http", address: "127.0.0.1:0", service: { name: "upstream" } },
-      ],
+      sockets: [{ name: "http", address: "127.0.0.1:0", service: { name: "upstream" } }],
       services: [
         {
           name: "upstream",
@@ -79,35 +78,33 @@ const serveUpstream = (esModule: string) =>
   });
 
 layer(services, { excludeTestServices: true })((it) => {
-  it.effect(
-    "proxies an HTTP request/response to the upstream worker once a target is set",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const upstream = yield* serveUpstream(HTTP_WORKER);
-        const instance = yield* proxy.serve();
-        yield* instance.set(upstream);
+  it.effect("proxies an HTTP request/response to the upstream worker once a target is set", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const upstream = yield* serveUpstream(HTTP_WORKER);
+      const instance = yield* proxy.serve();
+      yield* instance.set(upstream);
 
-        const echo = yield* Effect.promise(() =>
-          fetch(new URL("/echo", instance.url), {
-            method: "POST",
-            body: "hello",
-          }).then(async (res) => ({
-            status: res.status,
-            echo: res.headers.get("x-echo"),
-            body: await res.text(),
-          })),
-        );
-        expect(echo).toEqual({ status: 200, echo: "yes", body: "echo:hello" });
+      const echo = yield* Effect.promise(() =>
+        fetch(new URL("/echo", instance.url), {
+          method: "POST",
+          body: "hello",
+        }).then(async (res) => ({
+          status: res.status,
+          echo: res.headers.get("x-echo"),
+          body: await res.text(),
+        })),
+      );
+      expect(echo).toEqual({ status: 200, echo: "yes", body: "echo:hello" });
 
-        const missing = yield* Effect.promise(() =>
-          fetch(new URL("/missing", instance.url)).then(async (res) => ({
-            status: res.status,
-            body: await res.text(),
-          })),
-        );
-        expect(missing).toEqual({ status: 404, body: "not found" });
-      }),
+      const missing = yield* Effect.promise(() =>
+        fetch(new URL("/missing", instance.url)).then(async (res) => ({
+          status: res.status,
+          body: await res.text(),
+        })),
+      );
+      expect(missing).toEqual({ status: 404, body: "not found" });
+    }),
   );
 
   it.effect("handles request url with path beginning in //", () =>
@@ -151,68 +148,56 @@ layer(services, { excludeTestServices: true })((it) => {
       }),
   );
 
-  it.effect(
-    "re-targets requests to a new upstream after set is called again",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const first = yield* serveUpstream(
-          `export default { fetch: () => new Response("first") };`,
-        );
-        const second = yield* serveUpstream(
-          `export default { fetch: () => new Response("second") };`,
-        );
-        const instance = yield* proxy.serve();
+  it.effect("re-targets requests to a new upstream after set is called again", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const first = yield* serveUpstream(`export default { fetch: () => new Response("first") };`);
+      const second = yield* serveUpstream(
+        `export default { fetch: () => new Response("second") };`,
+      );
+      const instance = yield* proxy.serve();
 
-        yield* instance.set(first);
-        const a = yield* Effect.promise(() =>
-          fetch(instance.url).then((res) => res.text()),
-        );
-        expect(a).toBe("first");
+      yield* instance.set(first);
+      const a = yield* Effect.promise(() => fetch(instance.url).then((res) => res.text()));
+      expect(a).toBe("first");
 
-        yield* instance.set(second);
-        const b = yield* Effect.promise(() =>
-          fetch(instance.url).then((res) => res.text()),
-        );
-        expect(b).toBe("second");
-      }),
+      yield* instance.set(second);
+      const b = yield* Effect.promise(() => fetch(instance.url).then((res) => res.text()));
+      expect(b).toBe("second");
+    }),
   );
 
-  it.effect(
-    "queues a request received before the upstream is set and forwards it once ready",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const upstream = yield* serveUpstream(HTTP_WORKER);
-        const instance = yield* proxy.serve();
+  it.effect("queues a request received before the upstream is set and forwards it once ready", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const upstream = yield* serveUpstream(HTTP_WORKER);
+      const instance = yield* proxy.serve();
 
-        // Fire the request *before* any target is set. The proxy should park it
-        // in its queue rather than failing.
-        const pending = yield* Effect.forkChild(
-          Effect.promise(() =>
-            fetch(new URL("/echo", instance.url), {
-              method: "POST",
-              body: "queued",
-            }).then(async (res) => ({
-              status: res.status,
-              body: await res.text(),
-            })),
-          ),
-          { startImmediately: true },
-        );
+      // Fire the request *before* any target is set. The proxy should park it
+      // in its queue rather than failing.
+      const pending = yield* Effect.forkChild(
+        Effect.promise(() =>
+          fetch(new URL("/echo", instance.url), {
+            method: "POST",
+            body: "queued",
+          }).then(async (res) => ({
+            status: res.status,
+            body: await res.text(),
+          })),
+        ),
+        { startImmediately: true },
+      );
 
-        // Give the request time to reach the proxy and be parked in the queue.
-        // Uses a real timer rather than the Effect TestClock so it resolves
-        // under `it.effect`.
-        yield* Effect.promise(
-          () => new Promise((resolve) => setTimeout(resolve, 500)),
-        );
+      // Give the request time to reach the proxy and be parked in the queue.
+      // Uses a real timer rather than the Effect TestClock so it resolves
+      // under `it.effect`.
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)));
 
-        yield* instance.set(upstream);
+      yield* instance.set(upstream);
 
-        const result = yield* Fiber.join(pending);
-        expect(result).toEqual({ status: 200, body: "echo:queued" });
-      }),
+      const result = yield* Fiber.join(pending);
+      expect(result).toEqual({ status: 200, body: "echo:queued" });
+    }),
   );
 
   it.effect("handles many queued requests when the upstream is set", () =>
@@ -240,9 +225,7 @@ layer(services, { excludeTestServices: true })((it) => {
       );
 
       // Wait several seconds, during which requests should be queued.
-      yield* Effect.promise(
-        () => new Promise((resolve) => setTimeout(resolve, 5000)),
-      );
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5000)));
 
       yield* instance.set(upstream);
 
@@ -289,9 +272,7 @@ layer(services, { excludeTestServices: true })((it) => {
           { startImmediately: true },
         );
         // Let the request reach the slow upstream…
-        yield* Effect.promise(
-          () => new Promise((resolve) => setTimeout(resolve, 300)),
-        );
+        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 300)));
         // …then restart the worker the way the dev provider does: the new
         // target is set BEFORE the old instance is torn down. The proxy
         // cannot replay an exchange it never parsed, so the connection
@@ -317,21 +298,19 @@ layer(services, { excludeTestServices: true })((it) => {
       }),
   );
 
-  it.effect(
-    "a connection parked longer than the pending timeout is answered with a 502",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const instance = yield* proxy.serve({ pendingTimeout: "300 millis" });
-        const result = yield* Effect.promise(() =>
-          fetch(new URL("/", instance.url)).then(async (res) => ({
-            status: res.status,
-            body: (await res.json()) as { ok: boolean },
-          })),
-        );
-        expect(result.status).toBe(502);
-        expect(result.body.ok).toBe(false);
-      }),
+  it.effect("a connection parked longer than the pending timeout is answered with a 502", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const instance = yield* proxy.serve({ pendingTimeout: "300 millis" });
+      const result = yield* Effect.promise(() =>
+        fetch(new URL("/", instance.url)).then(async (res) => ({
+          status: res.status,
+          body: (await res.json()) as { ok: boolean },
+        })),
+      );
+      expect(result.status).toBe(502);
+      expect(result.body.ok).toBe(false);
+    }),
   );
 
   it.effect(
@@ -406,30 +385,28 @@ layer(services, { excludeTestServices: true })((it) => {
       }),
   );
 
-  it.effect(
-    "answers 502 immediately when nothing listens at the upstream",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const instance = yield* proxy.serve();
-        const deadPort = yield* PortHelpers.find(0);
+  it.effect("answers 502 immediately when nothing listens at the upstream", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const instance = yield* proxy.serve();
+      const deadPort = yield* PortHelpers.find(0);
 
-        // Point the proxy at an address with nothing listening. The connect
-        // is refused, and the client must get a 502 rather than a hang.
-        yield* instance.set(new URL(`http://127.0.0.1:${deadPort}`));
+      // Point the proxy at an address with nothing listening. The connect
+      // is refused, and the client must get a 502 rather than a hang.
+      yield* instance.set(new URL(`http://127.0.0.1:${deadPort}`));
 
-        const result = yield* Effect.promise(() =>
-          fetch(new URL("/echo", instance.url), {
-            method: "POST",
-            body: "x",
-          }).then((res) => ({
-            status: res.status,
-            retryAfter: res.headers.get("retry-after"),
-          })),
-        );
-        expect(result.status).toBe(502);
-        expect(result.retryAfter).toBeNull();
-      }),
+      const result = yield* Effect.promise(() =>
+        fetch(new URL("/echo", instance.url), {
+          method: "POST",
+          body: "x",
+        }).then((res) => ({
+          status: res.status,
+          retryAfter: res.headers.get("retry-after"),
+        })),
+      );
+      expect(result.status).toBe(502);
+      expect(result.retryAfter).toBeNull();
+    }),
   );
 
   it.effect("proxies a websocket connection to the upstream worker", () =>
@@ -480,167 +457,141 @@ layer(services, { excludeTestServices: true })((it) => {
     }),
   );
 
-  it.effect(
-    "falls back to the next available port when the requested port is in use",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const blocker = yield* PortHelpers.occupy(0);
+  it.effect("falls back to the next available port when the requested port is in use", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const blocker = yield* PortHelpers.occupy(0);
 
-        const instance = yield* proxy.serve({ port: blocker.port });
-        expect(Number(instance.url.port)).toBeGreaterThan(blocker.port);
-      }),
+      const instance = yield* proxy.serve({ port: blocker.port });
+      expect(Number(instance.url.port)).toBeGreaterThan(blocker.port);
+    }),
   );
 
-  it.effect(
-    "serves on the exact requested port when strictPort is set and it is free",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const port = yield* PortHelpers.find(0);
+  it.effect("serves on the exact requested port when strictPort is set and it is free", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const port = yield* PortHelpers.find(0);
 
-        const instance = yield* proxy.serve({ port, strictPort: true });
-        expect(instance.url.port).toBe(String(port));
-      }).pipe(it.flakyTest),
+      const instance = yield* proxy.serve({ port, strictPort: true });
+      expect(instance.url.port).toBe(String(port));
+    }).pipe(it.flakyTest),
   );
 
-  it.effect(
-    "fails when strictPort is set and the requested port is in use",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const blocker = yield* PortHelpers.occupy(0);
-        const error = yield* proxy
-          .serve({ port: blocker.port, strictPort: true })
-          .pipe(Effect.flip);
-        assert(error instanceof ConfigError);
-        expect(Workerd.isAddressInUseError(error)).toBe(true);
-      }),
+  it.effect("fails when strictPort is set and the requested port is in use", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const blocker = yield* PortHelpers.occupy(0);
+      const error = yield* proxy.serve({ port: blocker.port, strictPort: true }).pipe(Effect.flip);
+      assert(error instanceof ConfigError);
+      expect(Workerd.isAddressInUseError(error)).toBe(true);
+    }),
   );
 
-  it.effect(
-    "owns its port on the IPv6 loopback so localhost cannot be shadowed",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const upstream = yield* serveUpstream(HTTP_WORKER);
-        const instance = yield* proxy.serve();
-        yield* instance.set(upstream);
-        const port = Number(instance.url.port);
+  it.effect("owns its port on the IPv6 loopback so localhost cannot be shadowed", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const upstream = yield* serveUpstream(HTTP_WORKER);
+      const instance = yield* proxy.serve();
+      yield* instance.set(upstream);
+      const port = Number(instance.url.port);
 
-        // `localhost` resolves to both 127.0.0.1 and ::1 (and browsers prefer
-        // ::1). A proxy holding only the IPv4 half leaves `[::1]:port` free
-        // for another dev server to claim, silently splitting the port's
-        // traffic between two apps. The proxy must answer on both halves...
-        const viaV6 = yield* Effect.promise(() =>
-          fetch(`http://[::1]:${port}/echo`, {
-            method: "POST",
-            body: "v6",
-          }).then((res) => res.text()),
-        );
-        expect(viaV6).toBe("echo:v6");
+      // `localhost` resolves to both 127.0.0.1 and ::1 (and browsers prefer
+      // ::1). A proxy holding only the IPv4 half leaves `[::1]:port` free
+      // for another dev server to claim, silently splitting the port's
+      // traffic between two apps. The proxy must answer on both halves...
+      const viaV6 = yield* Effect.promise(() =>
+        fetch(`http://[::1]:${port}/echo`, {
+          method: "POST",
+          body: "v6",
+        }).then((res) => res.text()),
+      );
+      expect(viaV6).toBe("echo:v6");
 
-        // ...and a squatter's bind on the IPv6 half must fail.
-        const squat = yield* Effect.callback<string>((resume) => {
-          const server = NodeNet.createServer();
-          server.once("error", (error) =>
-            resume(
-              Effect.succeed(
-                typeof error === "object" && error !== null && "code" in error
-                  ? String(error.code)
-                  : "error",
-              ),
+      // ...and a squatter's bind on the IPv6 half must fail.
+      const squat = yield* Effect.callback<string>((resume) => {
+        const server = NodeNet.createServer();
+        server.once("error", (error) =>
+          resume(
+            Effect.succeed(
+              typeof error === "object" && error !== null && "code" in error
+                ? String(error.code)
+                : "error",
             ),
-          );
-          server.listen({ port, host: "::1", exclusive: true }, () =>
-            server.close(() => resume(Effect.succeed("BOUND"))),
-          );
+          ),
+        );
+        server.listen({ port, host: "::1", exclusive: true }, () =>
+          server.close(() => resume(Effect.succeed("BOUND"))),
+        );
+        return Effect.sync(() => server.close());
+      });
+      expect(squat).toBe("EADDRINUSE");
+    }),
+  );
+
+  it.effect("waits out a previous session's teardown instead of shifting configured ports", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+
+      // Simulate a dev restart racing the old session's teardown: the old
+      // session still holds the middle configured port when the new
+      // session's proxies start. Without a grace window the middle worker
+      // silently drifts onto a neighbor's configured port — serving the
+      // wrong app on a port the user knows.
+      //
+      // The suite runs many port tests concurrently, so a freshly probed
+      // port's neighbors may already be taken — stage the trio by
+      // retrying until the "stale" listener actually binds base + 1 and
+      // base + 2 probes free.
+      const tryBind = (port: number) =>
+        Effect.callback<NodeNet.Server | undefined>((resume) => {
+          const server = NodeNet.createServer();
+          server.once("error", () => resume(Effect.succeed(undefined)));
+          server.listen({ port, exclusive: true }, () => resume(Effect.succeed(server)));
           return Effect.sync(() => server.close());
         });
-        expect(squat).toBe("EADDRINUSE");
-      }),
-  );
-
-  it.effect(
-    "waits out a previous session's teardown instead of shifting configured ports",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-
-        // Simulate a dev restart racing the old session's teardown: the old
-        // session still holds the middle configured port when the new
-        // session's proxies start. Without a grace window the middle worker
-        // silently drifts onto a neighbor's configured port — serving the
-        // wrong app on a port the user knows.
-        //
-        // The suite runs many port tests concurrently, so a freshly probed
-        // port's neighbors may already be taken — stage the trio by
-        // retrying until the "stale" listener actually binds base + 1 and
-        // base + 2 probes free.
-        const tryBind = (port: number) =>
-          Effect.callback<NodeNet.Server | undefined>((resume) => {
-            const server = NodeNet.createServer();
-            server.once("error", () => resume(Effect.succeed(undefined)));
-            server.listen({ port, exclusive: true }, () =>
-              resume(Effect.succeed(server)),
-            );
-            return Effect.sync(() => server.close());
-          });
-        let base!: number;
-        let stale!: NodeNet.Server;
-        for (let attempt = 0; ; attempt++) {
-          const candidate = yield* PortHelpers.find(0);
-          const staleCandidate = yield* tryBind(candidate + 1);
-          if (staleCandidate !== undefined) {
-            const neighbor = yield* tryBind(candidate + 2);
-            if (neighbor !== undefined) {
-              yield* Effect.callback<void>((resume) =>
-                neighbor.close(() => resume(Effect.void)),
-              );
-              base = candidate;
-              stale = staleCandidate;
-              break;
-            }
-            yield* Effect.callback<void>((resume) =>
-              staleCandidate.close(() => resume(Effect.void)),
-            );
+      let base!: number;
+      let stale!: NodeNet.Server;
+      for (let attempt = 0; ; attempt++) {
+        const candidate = yield* PortHelpers.find(0);
+        const staleCandidate = yield* tryBind(candidate + 1);
+        if (staleCandidate !== undefined) {
+          const neighbor = yield* tryBind(candidate + 2);
+          if (neighbor !== undefined) {
+            yield* Effect.callback<void>((resume) => neighbor.close(() => resume(Effect.void)));
+            base = candidate;
+            stale = staleCandidate;
+            break;
           }
-          if (attempt >= 9) {
-            return yield* Effect.die(
-              "could not stage a stale listener on a free port trio",
-            );
-          }
+          yield* Effect.callback<void>((resume) => staleCandidate.close(() => resume(Effect.void)));
         }
-        // The finalizer makes the close idempotent if the test fails early.
-        yield* Effect.addFinalizer(() =>
-          Effect.callback<void>((resume) =>
-            stale.close(() => resume(Effect.void)),
-          ),
-        );
-        // The "old session" releases the port mid-grace-window.
-        yield* Effect.forkChild(
-          Effect.sleep("750 millis").pipe(
-            Effect.andThen(
-              Effect.callback<void>((resume) =>
-                stale.close(() => resume(Effect.void)),
-              ),
-            ),
-          ),
-        );
+        if (attempt >= 9) {
+          return yield* Effect.die("could not stage a stale listener on a free port trio");
+        }
+      }
+      // The finalizer makes the close idempotent if the test fails early.
+      yield* Effect.addFinalizer(() =>
+        Effect.callback<void>((resume) => stale.close(() => resume(Effect.void))),
+      );
+      // The "old session" releases the port mid-grace-window.
+      yield* Effect.forkChild(
+        Effect.sleep("750 millis").pipe(
+          Effect.andThen(Effect.callback<void>((resume) => stale.close(() => resume(Effect.void)))),
+        ),
+      );
 
-        const [a, b, c] = yield* Effect.all(
-          [
-            proxy.serve({ port: base }),
-            proxy.serve({ port: base + 1 }),
-            proxy.serve({ port: base + 2 }),
-          ],
-          { concurrency: "unbounded" },
-        );
+      const [a, b, c] = yield* Effect.all(
+        [
+          proxy.serve({ port: base }),
+          proxy.serve({ port: base + 1 }),
+          proxy.serve({ port: base + 2 }),
+        ],
+        { concurrency: "unbounded" },
+      );
 
-        expect(Number(a.url.port)).toBe(base);
-        expect(Number(b.url.port)).toBe(base + 1);
-        expect(Number(c.url.port)).toBe(base + 2);
-      }),
+      expect(Number(a.url.port)).toBe(base);
+      expect(Number(b.url.port)).toBe(base + 1);
+      expect(Number(c.url.port)).toBe(base + 2);
+    }),
   );
 
   it.effect("serves on a custom host when provided", () =>
@@ -662,25 +613,23 @@ layer(services, { excludeTestServices: true })((it) => {
     }),
   );
 
-  it.effect(
-    "starts many proxies concurrently requesting the same port without collisions",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const basePort = yield* PortHelpers.find(0);
+  it.effect("starts many proxies concurrently requesting the same port without collisions", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const basePort = yield* PortHelpers.find(0);
 
-        // All instances request the same starting port at once. The non-strict
-        // port-selection retry should hand each one a distinct, available port.
-        const count = 25;
-        const instances = yield* Effect.all(
-          Array.from({ length: count }, () => proxy.serve({ port: basePort })),
-          { concurrency: "unbounded" },
-        );
+      // All instances request the same starting port at once. The non-strict
+      // port-selection retry should hand each one a distinct, available port.
+      const count = 25;
+      const instances = yield* Effect.all(
+        Array.from({ length: count }, () => proxy.serve({ port: basePort })),
+        { concurrency: "unbounded" },
+      );
 
-        const ports = instances.map((instance) => instance.url.port);
-        expect(ports.every((port) => Number(port) >= basePort)).toBe(true);
-        expect(new Set(ports).size).toBe(count);
-      }),
+      const ports = instances.map((instance) => instance.url.port);
+      expect(ports.every((port) => Number(port) >= basePort)).toBe(true);
+      expect(new Set(ports).size).toBe(count);
+    }),
   );
 
   it.effect("streams a large response body through unchanged", () =>
@@ -701,6 +650,41 @@ layer(services, { excludeTestServices: true })((it) => {
   );
 
   it.effect(
+    "a slow reader gets the whole response when the upstream closes after it",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* WorkerProxy.WorkerProxy;
+        // An upstream that closes the connection after every response, as
+        // one does for a client that sends `Connection: close`.
+        const upstream = yield* Effect.acquireRelease(
+          Effect.callback<NodeHttp.Server>((resume) => {
+            const server = NodeHttp.createServer((_req, res) => {
+              res.setHeader("Content-Length", SLOW_BODY.length);
+              res.end(SLOW_BODY);
+            });
+            server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+          }),
+          (server) =>
+            Effect.callback<void>((resume) => {
+              server.closeAllConnections();
+              server.close(() => resume(Effect.void));
+            }),
+        );
+        const { port } = upstream.address() as NodeNet.AddressInfo;
+        const instance = yield* proxy.serve();
+        yield* instance.set(new URL(`http://127.0.0.1:${port}`));
+
+        // Whether the tail is still in the client socket's write buffer when
+        // the upstream closes is a timing question, so ask it many times.
+        const missing = yield* Effect.forEach(Array.from({ length: 40 }), () =>
+          bytesMissingSlowly(instance.url),
+        );
+        expect(missing.filter((bytes) => bytes !== 0)).toEqual([]);
+      }),
+    60_000,
+  );
+
+  it.effect(
     "answers Expect: 100-continue before the client sends the body",
     () =>
       Effect.gen(function* () {
@@ -715,10 +699,7 @@ layer(services, { excludeTestServices: true })((it) => {
         const transcript = yield* Effect.promise(
           () =>
             new Promise<string>((resolve, reject) => {
-              const socket = NodeNet.connect(
-                Number(instance.url.port),
-                instance.url.hostname,
-              );
+              const socket = NodeNet.connect(Number(instance.url.port), instance.url.hostname);
               socket.on("error", reject);
               const bodies = ["first", "second"];
               let received = "";
@@ -732,8 +713,7 @@ layer(services, { excludeTestServices: true })((it) => {
                 received += chunk.toString();
                 const seen = received.split("HTTP/1.1 100 Continue").length - 1;
                 while (continues < seen) socket.write(bodies[continues++]!);
-                const done = (received.match(/echo:(first|second)/g) ?? [])
-                  .length;
+                const done = (received.match(/echo:(first|second)/g) ?? []).length;
                 if (done > responses) {
                   responses = done;
                   if (responses < bodies.length) send(bodies[responses]!);
@@ -747,9 +727,7 @@ layer(services, { excludeTestServices: true })((it) => {
             }),
         );
         // Each interim response precedes its final response
-        expect(transcript.indexOf("100 Continue")).toBeLessThan(
-          transcript.indexOf("200 OK"),
-        );
+        expect(transcript.indexOf("100 Continue")).toBeLessThan(transcript.indexOf("200 OK"));
         expect(transcript.split("100 Continue").length - 1).toBe(2);
         expect(transcript).toContain("echo:first");
         expect(transcript).toContain("echo:second");
@@ -757,6 +735,45 @@ layer(services, { excludeTestServices: true })((it) => {
     10_000,
   );
 });
+
+const SLOW_BODY = "x".repeat(4 * 1024 * 1024);
+
+/**
+ * Sends one `Connection: close` request and reads the response with a pause
+ * after every chunk, so the proxy is still writing when the upstream closes.
+ * Resolves with how many bytes fewer arrived than the response announced.
+ */
+const bytesMissingSlowly = (url: URL) =>
+  Effect.callback<number>((resume) => {
+    const socket = NodeNet.connect(Number(url.port), url.hostname);
+    let head = "";
+    let received = 0;
+    socket.on("connect", () => {
+      socket.write(`GET / HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
+    });
+    socket.on("data", (chunk) => {
+      if (head.length < 1024) head += chunk.toString("latin1");
+      received += chunk.length;
+      socket.pause();
+      setTimeout(() => socket.resume(), 5);
+    });
+    // A reset connection shows up as missing bytes.
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      const end = head.indexOf("\r\n\r\n");
+      const length = Number(/content-length: (\d+)/i.exec(head)?.[1] ?? Number.NaN);
+      resume(
+        Effect.succeed(
+          end === -1 || Number.isNaN(length)
+            ? Number.POSITIVE_INFINITY
+            : end + 4 + length - received,
+        ),
+      );
+    });
+    return Effect.sync(() => {
+      socket.destroy();
+    });
+  });
 
 const roundTrip = (url: URL, payload: string) =>
   Effect.callback<{
