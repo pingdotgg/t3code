@@ -185,6 +185,39 @@ it.effect.each([
     }),
 );
 
+it.effect.each([
+  [undefined, "gitlab.example.test:8443"],
+  ["gitlab.example.test:8443", "gitlab.example.test:8443"],
+  ["SSH.Example.Test", "ssh.example.test"],
+] as const)("resolves a split-host checkout for requested host %s", ([requestedHost, expected]) =>
+  Effect.gen(function* () {
+    const remoteUrl = "git@SSH.Example.Test:team/repo.git";
+    const provider = yield* makeProvider({
+      resolveHost: (input) => {
+        assert.deepStrictEqual(input, { cwd: "/repo", host: "SSH.Example.Test", remoteUrl });
+        return Effect.succeed({ cliHost: "SSH.Example.Test", webHost: "gitlab.example.test:8443" });
+      },
+    });
+    const resolve = provider.resolveRemoteWebHost;
+    assert.ok(resolve);
+    const host = yield* resolve({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("gitlab"),
+          name: "GitLab",
+          baseUrl: "https://ssh.example.test",
+        },
+        remoteName: "origin",
+        remoteUrl,
+        ...(requestedHost === undefined ? {} : { requestedHost }),
+      },
+      resolveContext: () => Effect.die("Unexpected remote discovery"),
+    });
+    assert.strictEqual(host, expected);
+  }),
+);
+
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {
   assert.deepStrictEqual(
     parseGitLabAuthStatusHosts(`localhost:8080

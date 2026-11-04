@@ -1,6 +1,8 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -23,6 +25,106 @@ function processOutput(stdout: string): SourceControlHost.SourceControlProcessOu
     stderrTruncated: false,
   };
 }
+
+it.effect.each([
+  { operation: "view", requestedHost: "gitlab.example.test:8443", mapped: true },
+  { operation: "checkout", requestedHost: "gitlab.example.test:8443", mapped: true },
+  { operation: "api", requestedHost: "gitlab.example.test:8443", mapped: true },
+  { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
+  { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    apiHost: "https://user:password@gitlab.example.test:8443",
+  },
+] as const)(
+  "routes $operation for $requestedHost using the configured host (mapped: $mapped)",
+  (scenario) =>
+    Effect.gen(function* () {
+      const { operation, requestedHost, mapped } = scenario;
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
+      const webHost = "gitlab.example.test:8443";
+      const cliHost = "GitLab-SSH.example.test";
+      const path = "/team/nested/repo/-/merge_requests/42";
+      const glab = yield* GitLabCli.make.pipe(
+        Effect.provide(
+          TestSourceControlHost.layer({
+            git: {
+              remotes: () =>
+                Effect.succeed(
+                  Effect.succeed({
+                    remotes: [
+                      {
+                        name: "origin",
+                        url: `git@${cliHost}:team/nested/repo.git`,
+                        pushUrl: Option.none(),
+                        isPrimary: true,
+                      },
+                    ],
+                    freshness: {
+                      source: "live-local",
+                      observedAt: DateTime.makeUnsafe(0),
+                      expiresAt: Option.none(),
+                    },
+                  }),
+                ),
+            },
+            process: {
+              run: (input) => {
+                calls.push(input);
+                if (input.args[0] === "config") {
+                  const candidate = input.args[4];
+                  assert.ok(candidate === cliHost || candidate === requestedHost);
+                  return Effect.succeed(
+                    processOutput(
+                      candidate === cliHost
+                        ? `${"apiHost" in scenario ? scenario.apiHost : webHost}\n`
+                        : "",
+                    ),
+                  );
+                }
+                assert.strictEqual(input.env?.GITLAB_HOST, mapped ? cliHost : requestedHost);
+                if (operation !== "api") {
+                  assert.strictEqual(input.args.at(-1), `https://${cliHost}${path}`);
+                }
+                return Effect.succeed(
+                  processOutput(
+                    JSON.stringify({
+                      iid: 42,
+                      title: "Split-host MR",
+                      web_url: `https://${webHost}${path}`,
+                      target_branch: "main",
+                      source_branch: "feature/mr",
+                    }),
+                  ),
+                );
+              },
+            },
+          }),
+        ),
+      );
+      const input = { cwd: "/repo", reference: `https://${webHost}${path}` };
+      if (operation === "view") {
+        const result = yield* glab.getMergeRequest(input);
+        assert.strictEqual(result.number, 42);
+        assert.strictEqual(result.url, input.reference);
+      } else if (operation === "checkout") {
+        yield* glab.checkoutMergeRequest(input);
+      } else {
+        yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+        yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+      }
+      assert.strictEqual(
+        calls.filter((input) => input.args[0] !== "config").length,
+        operation === "api" ? 2 : 1,
+      );
+      assert.strictEqual(
+        calls.filter((input) => input.args[0] === "config").length,
+        mapped ? 1 : 2,
+      );
+    }),
+);
 
 afterEach(() => {
   mockedRun.mockReset();
