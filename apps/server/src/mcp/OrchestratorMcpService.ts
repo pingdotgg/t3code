@@ -1522,7 +1522,7 @@ const make = Effect.gen(function* () {
         {
           messageRoles: ["user"],
           omitSettledLeafNodes: true,
-          omitSettledSubagents: !includeExecutionEvidence,
+          omitSettledSubagents: includeExecutionEvidence ? undefined : true,
         },
       )
       .pipe(Effect.mapError(threadManagementFailure));
