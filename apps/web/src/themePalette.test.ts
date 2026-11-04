@@ -6,6 +6,7 @@ import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChi
 
 import {
   applyThemePalette,
+  applyThemeColorPreview,
   contextChipVariables,
   getThemeColorsForMode,
   getThemeModes,
@@ -551,6 +552,52 @@ describe("theme files", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("sidebar selection foreground", () => {
+  it.each([
+    ["#88c0d0", "--contrast-accent-foreground"],
+    ["rgb(136 192 208)", "--contrast-accent-foreground"],
+    ["#2e3440", "--contrast-sidebar-foreground"],
+    ["#88c0d033", "--contrast-sidebar-foreground"],
+  ])("pairs selection %s with its own surface", (selection, foreground) => {
+    const properties = new Map<string, string>();
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    vi.stubGlobal("document", {
+      documentElement: {
+        dataset: {},
+        classList: { toggle: () => {} },
+        style: {
+          setProperty: (name: string, value: string) => properties.set(name, value),
+          removeProperty: (name: string) => properties.delete(name),
+        },
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      applyThemeColorPreview(
+        {
+          ...getStandardThemeColors("dark"),
+          accentSurface: "#88c0d0",
+          accentSurfaceForeground: "#18232b",
+          sidebarRowSelected: selection,
+        },
+        "dark",
+      );
+      expect(properties.get("--app-theme-sidebar-row-selected-foreground")).toBe(
+        `var(${foreground})`,
+      );
+      applyThemePalette("t3-chat", "dark");
+      expect(properties.get("--app-theme-sidebar-row-selected-foreground")).toBe(
+        "var(--contrast-sidebar-foreground)",
+      );
+      applyThemePalette("system", "dark");
+      expect(properties.has("--app-theme-sidebar-row-selected-foreground")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
   });
 });
 
