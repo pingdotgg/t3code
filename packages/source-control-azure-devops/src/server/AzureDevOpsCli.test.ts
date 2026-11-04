@@ -233,6 +233,27 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("checks out a pull request with only the arguments az repos pr checkout accepts", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.checkoutPullRequest({ cwd: "/repo", reference: "#1", remoteName: "origin" });
+
+      // `az repos pr checkout` has no --detect/--organization; it reads the org from the remote.
+      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0].args, [
+        "repos",
+        "pr",
+        "checkout",
+        "--only-show-errors",
+        "--id",
+        "1",
+        "--remote-name",
+        "origin",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
