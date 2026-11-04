@@ -179,6 +179,10 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
+import {
+  ThreadContributionStatusStrip,
+  useThreadContributionStatusStripInset,
+} from "./ThreadContributionStatusStrip";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
@@ -1192,6 +1196,12 @@ function ThreadDetailBody(
         providerSubagentProvider.models,
       )
     : null;
+  const statusStripInset = useThreadContributionStatusStripInset({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    supported: props.serverConfig?.environment.capabilities.contributionStatus === true,
+    driver: providerSubagentProvider?.driver,
+  });
   const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
     (model) => model.slug === providerSubagentModelSlug,
   );
@@ -1471,6 +1481,7 @@ function ThreadDetailBody(
                 sendingWithKeyboard={sendingWithKeyboard}
                 fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
                 contentTopInset={0}
+                topOverlayInset={statusStripInset}
                 contentBottomInset={
                   questionInFlow
                     ? 0
@@ -1501,8 +1512,29 @@ function ThreadDetailBody(
           threadId={props.selectedThread.id}
           tabs={browserTabs.tabs}
           loaded={browserTabs.loaded}
-          top={navigationHeaderHeight + 8}
+          top={
+            navigationHeaderHeight +
+            (props.usesAutomaticContentInsets === true && Platform.OS === "ios"
+              ? statusStripInset
+              : 0) +
+            8
+          }
           onOpen={openBrowserPreview}
+        />
+      ) : null}
+
+      {showContent ? (
+        <ThreadContributionStatusStrip
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          // A transparent (glass) header overlaps the screen; an opaque one
+          // ends where the screen begins.
+          top={
+            props.usesAutomaticContentInsets === true && Platform.OS === "ios"
+              ? navigationHeaderHeight
+              : 0
+          }
+          contentMaxWidth={contentMaxWidth}
         />
       ) : null}
 

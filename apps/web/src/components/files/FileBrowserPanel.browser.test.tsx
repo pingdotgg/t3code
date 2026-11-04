@@ -54,6 +54,7 @@ describe("FileBrowserPanel", () => {
         selectedPath={null}
         selectedPathRevealId={0}
         onOpenFile={() => {}}
+        addToChat={() => "inserted"}
         workspaceMutationId={null}
       />,
     );
@@ -92,6 +93,7 @@ describe("FileBrowserPanel", () => {
         selectedPath={null}
         selectedPathRevealId={0}
         onOpenFile={onOpenFile}
+        addToChat={() => "inserted"}
         workspaceMutationId={null}
       />,
     );

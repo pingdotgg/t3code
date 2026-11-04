@@ -49,8 +49,10 @@ loads for the current workspace; selecting one uses Pi's native skill expansion.
 
 Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi.
 Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Notifications appear in
-the work log. Pi terminal decoration such as titles, status lines, and widgets does not have a T3
-Code equivalent.
+the work log. On web and desktop, extension statuses (`setStatus`) appear beside the thread title; on mobile,
+they appear under the thread header.
+They can lag a session change until the extension updates them. Pi terminal titles and widgets
+do not have a T3 Code equivalent.
 
 ## Permission Modes
 

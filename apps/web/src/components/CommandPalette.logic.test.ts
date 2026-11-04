@@ -1,13 +1,25 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PluginActionId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type PluginAction,
+} from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  buildCommandPaletteRows,
+  findHighlightedCommandPaletteItem,
+  type CommandPaletteActionItem,
+  type CommandPaletteGroup,
   newThreadNoProjectIndex,
   buildNestedSearchItems,
   resolveCommandPaletteProject,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
+  buildPluginActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
@@ -837,6 +849,121 @@ it.each([
   expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
     "Implementation",
   ]);
+});
+
+describe("filterCommandPaletteGroups", () => {
+  it("sorts secondary settings results after other matches", () => {
+    const item = (value: string, title: string, secondary?: boolean) =>
+      ({
+        kind: "action",
+        value,
+        title,
+        searchTerms: [title, "General"],
+        icon: null,
+        run: async () => undefined,
+        ...(secondary ? { secondary } : {}),
+      }) satisfies CommandPaletteActionItem;
+    const [group] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "model",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [
+        item("setting:keybinding-modelPicker.toggle", "Model Picker: Toggle", true),
+        item("setting:default-model", "Default model"),
+      ],
+      threadSearchItems: [],
+    });
+    expect(group?.items.map((entry) => entry.value)).toEqual([
+      "setting:default-model",
+      "setting:keybinding-modelPicker.toggle",
+    ]);
+  });
+});
+
+describe("virtualized command palette rows", () => {
+  const action = (value: string, disabled = false): CommandPaletteActionItem => ({
+    kind: "action",
+    value,
+    searchTerms: [],
+    title: value,
+    icon: null,
+    ...(disabled ? { disabled } : {}),
+    run: async () => {},
+  });
+  const groups: CommandPaletteGroup[] = [
+    { value: "actions", label: "Actions", items: [action("new-thread"), action("offline", true)] },
+    { value: "threads", label: "Threads", items: [action("thread-a"), action("thread-b")] },
+  ];
+
+  it("keeps group order and headings while indexing only enabled items", () => {
+    const { rows, itemValues, rowIndexByItemIndex } = buildCommandPaletteRows(groups);
+
+    expect(rows.map((row) => (row.kind === "label" ? `# ${row.label}` : row.key))).toEqual([
+      "# Actions",
+      "actions:new-thread",
+      "actions:offline",
+      "# Threads",
+      "threads:thread-a",
+      "threads:thread-b",
+    ]);
+    expect(itemValues).toEqual(["new-thread", "thread-a", "thread-b"]);
+    expect(rowIndexByItemIndex).toEqual([1, 4, 5]);
+    expect(rows.flatMap((row) => (row.kind === "item" ? [row.itemIndex] : []))).toEqual([
+      0,
+      null,
+      1,
+      2,
+    ]);
+  });
+
+  it("resolves Enter to the highlighted item without needing its row mounted", () => {
+    expect(findHighlightedCommandPaletteItem(groups, "thread-b")?.value).toBe("thread-b");
+    expect(findHighlightedCommandPaletteItem(groups, "offline")).toBeNull();
+    expect(findHighlightedCommandPaletteItem(groups, null)).toBeNull();
+  });
+});
+
+describe("plugin actions in the palette", () => {
+  const environmentId = EnvironmentId.make("environment-plugins");
+  const threadId = ThreadId.make("thread-plugins");
+  const deploy: PluginAction = {
+    id: PluginActionId.make("plugin-deploy:deploy"),
+    pluginId: "plugin-deploy",
+    pluginName: "Deploy",
+    name: "deploy",
+    title: "Deploy this thread",
+    target: "thread",
+    placements: ["command-palette"],
+  };
+  const items = (canOperate: boolean, runAction = vi.fn(async () => {})) =>
+    buildPluginActionItems({
+      environmentId,
+      actions: [deploy],
+      canOperate,
+      threadId,
+      projectId: null,
+      icon: null,
+      runAction,
+    });
+
+  it("runs an offered action in the palette's environment on its target", async () => {
+    const runAction = vi.fn(async () => {});
+    const offered = items(true, runAction);
+    expect(offered.map((item) => item.title)).toEqual(["Deploy this thread"]);
+
+    await offered[0]?.run();
+
+    expect(runAction).toHaveBeenCalledWith({
+      environmentId,
+      action: deploy,
+      target: { _tag: "thread", threadId },
+    });
+  });
+
+  it("offers nothing to a connection that cannot operate the environment", () => {
+    expect(items(false)).toEqual([]);
+  });
 });
 
 describe("command palette search return", () => {

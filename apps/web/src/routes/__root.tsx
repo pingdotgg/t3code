@@ -30,6 +30,8 @@ import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAp
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
+import { PluginActionSubscriptions } from "../components/PluginActionSubscriptions";
+import { PluginNotificationCoordinator } from "../components/PluginNotificationCoordinator";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
@@ -207,6 +209,8 @@ function RootRouteBranch() {
         <SshPasswordPromptDialog />
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
+        <PluginActionSubscriptions />
+        <PluginNotificationCoordinator />
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />

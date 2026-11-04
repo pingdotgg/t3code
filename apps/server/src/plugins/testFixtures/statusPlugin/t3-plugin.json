@@ -1,0 +1,9 @@
+{
+  "id": "test.status",
+  "name": "Status fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "proposedApi": true,
+  "capabilities": ["status"]
+}
