@@ -210,6 +210,12 @@ export const ORCHESTRATOR_MCP_RUNNING_TASK_NEXT =
   "Completion wakes this thread, so end your turn. Do not wait on it or poll it.";
 const OrchestratorMcpRunningTaskNext = Schema.Literal(ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
 
+export const OrchestratorMcpWorkState = Schema.Literals([
+  "working",
+  "waiting_for_children",
+  "result_available",
+]);
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
@@ -222,7 +228,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
-  workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
+  workState: OrchestratorMcpWorkState,
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),
   latestTerminalStatus: Schema.NullOr(OrchestratorMcpTerminalDelegatedTaskStatus),
@@ -652,6 +658,18 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
   /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
   resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
+  workState: Schema.optional(
+    OrchestratorMcpWorkState.annotate({
+      description:
+        "With untilDelegatedWorkSettled, once the run ended. working: another run continues the thread; waiting_for_children: its tasks or awaited background work remain.",
+    }),
+  ),
+  unreachable: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "The thread's environment did not answer; work there continues, so call again. status and runId are the last seen.",
+    }),
+  ),
   hasPendingQuestion: Schema.optional(Schema.Boolean),
   pendingRequestId: Schema.optional(RuntimeRequestId),
   pendingApproval: Schema.optional(

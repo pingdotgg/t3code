@@ -62,6 +62,8 @@ interface Seen {
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
+  /** Waits, counted from 1, that fail as a peer that stops answering would. */
+  readonly droppedWaits?: ReadonlyArray<number>;
 }
 const nothingSeen: Seen = {
   sends: [],
@@ -137,11 +139,21 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
       })),
     waitForThread: (input) =>
       Ref.updateAndGet(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
-        Effect.map(({ waits }) => ({
-          threadId: input.threadId,
-          run: run(waits.length < 3 ? "running" : "completed"),
-          timedOut: waits.length < 3,
-        })),
+        Effect.flatMap(({ waits, droppedWaits }) =>
+          droppedWaits?.includes(waits.length)
+            ? Effect.fail(
+                new ThreadManagement.ThreadManagementProjectionLoadError({
+                  projectId: boxProject,
+                  threadId: input.threadId,
+                  cause: "dropped",
+                }),
+              )
+            : Effect.succeed({
+                threadId: input.threadId,
+                run: run(waits.length < 3 ? "running" : "completed"),
+                timedOut: waits.length < 3,
+              }),
+        ),
       ),
   });
 };
@@ -545,6 +557,37 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       expect(retried).toBe(first);
       expect(other).not.toBe(first);
       expect(first).not.toContain("same-key");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("reports a linked environment that stops answering mid-wait instead of failing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>({ ...nothingSeen, droppedWaits: [2] });
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+      const wait = a.call("thread:laptop-full", "t3_thread_wait", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        timeoutMs: 600_000,
+      });
+
+      const dropped = yield* wait;
+      expect(dropped.isError).toBe(false);
+      expect(dropped.structuredContent).toMatchObject({
+        runId: boxRun,
+        status: "running",
+        timedOut: true,
+        unreachable: expect.any(String),
+      });
+      expect((yield* wait).structuredContent).toMatchObject({
+        status: "completed",
+        timedOut: false,
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

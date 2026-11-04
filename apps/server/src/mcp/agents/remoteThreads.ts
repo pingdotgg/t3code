@@ -301,15 +301,14 @@ const stillActive = (remote: RemoteEnvironment, threadId: ThreadId, runId: RunId
  * The relaying app answers requests but streams nothing back, so a wait on another environment
  * polls, backing off to every five seconds. Each poll reads the small thread list and fetches
  * the thread itself only once its run is no longer the active one. Without runId, a restart
- * moves the wait to the run that continues the work, as a local wait does.
+ * moves the wait to the run that continues the work. A silent environment yields `unreachable`.
  */
 export const waitForThread = Effect.fn("remoteThreads.waitForThread")(function* (
   remote: RemoteEnvironment,
   input: OrchestratorMcpThreadWaitInput,
 ): Effect.fn.Return<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure> {
   const deadline = (yield* Clock.currentTimeMillis) + clampWaitTimeoutMs(input.timeoutMs);
-  let thread = yield* getRemoteThread(remote, input.threadId);
-  let runId = input.runId ?? thread.runs.at(-1)?.id;
+  let runId = input.runId;
   const result = (status: OrchestratorMcpThreadWaitResult["status"], timedOut: boolean) => ({
     environmentId: remote.environmentId,
     threadId: input.threadId,
@@ -317,6 +316,17 @@ export const waitForThread = Effect.fn("remoteThreads.waitForThread")(function* 
     status,
     timedOut,
   });
+  const unreachable = (
+    status: OrchestratorMcpThreadWaitResult["status"],
+    failure: OrchestratorMcpFailure,
+  ) =>
+    failure.code === "orchestration_error"
+      ? Effect.succeed({ ...result(status, true), unreachable: failure.message })
+      : Effect.fail(failure);
+  const first = yield* getRemoteThread(remote, input.threadId).pipe(Effect.result);
+  if (first._tag === "Failure") return yield* unreachable("idle", first.failure);
+  let thread = first.success;
+  runId ??= thread.runs.at(-1)?.id;
   if (runId === undefined) return result("idle", false);
   let delay = FIRST_POLL;
   let failures = 0;
@@ -350,7 +360,7 @@ export const waitForThread = Effect.fn("remoteThreads.waitForThread")(function* 
       thread = next.success;
       failures = 0;
     } else if (++failures >= RELAY_FAILURES_TOLERATED) {
-      return yield* next.failure;
+      return yield* unreachable(run.status, next.failure);
     }
   }
 });

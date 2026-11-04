@@ -88,6 +88,12 @@ export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
     "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
 });
 
+/**
+ * A failure that calling again may not repeat: the route or the peer, not a
+ * refusal. Refusals carry their own codes, as PeerMcpClient maps them.
+ */
+const isTransient = (error: OrchestratorMcpFailure) => error.code === "orchestration_error";
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
@@ -191,9 +197,18 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
-    "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
+  /**
+   * With `reportUnreachable`, a peer that stops answering ends the wait with
+   * `unreachable` and the last result seen instead of failing it, so an
+   * agent's wait loop survives a dropped route.
+   */
+  const waitInPieces = Effect.fn("PeerForwarding.waitForThread")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadWaitInput,
+    reportUnreachable: boolean,
+  ) {
+    let last: OrchestratorMcpThreadWaitResult | undefined;
     let remaining = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
@@ -201,7 +216,7 @@ const make = Effect.gen(function* () {
     let runId = input.runId;
     while (true) {
       const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
-      const result = yield* forward<OrchestratorMcpThreadWaitResult>(
+      const piece = forward<OrchestratorMcpThreadWaitResult>(
         scope,
         "t3_thread_wait",
         OrchestratorMcpThreadWaitInput,
@@ -219,12 +234,33 @@ const make = Effect.gen(function* () {
             : { returnOnQuestion: input.returnOnQuestion }),
         },
       );
+      const result = reportUnreachable
+        ? yield* piece.pipe(
+            Effect.catchIf(isTransient, (error) =>
+              Effect.succeed({
+                ...(last ?? {
+                  environmentId,
+                  threadId: input.threadId,
+                  runId: runId ?? null,
+                  status: "idle" as const,
+                }),
+                timedOut: true,
+                unreachable: error.message,
+              }),
+            ),
+          )
+        : yield* piece;
+      if (result.unreachable !== undefined) return result;
+      last = result;
       remaining -= chunk;
       if (!result.timedOut || remaining <= 0) return result;
       // Later pieces wait for the run the first one picked, not a newer one.
       runId = result.runId ?? undefined;
     }
   });
+
+  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
+    waitInPieces(scope, environmentId, input, false);
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
   // following through readThread, waitForThread and interruptThread, so they still finish.
@@ -237,10 +273,11 @@ const make = Effect.gen(function* () {
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
     > = tool.name === "t3_thread_wait"
-      ? (waitForThread(
+      ? (waitInPieces(
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          true,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
     return Effect.andThen(requireEnabled, forwarded);
