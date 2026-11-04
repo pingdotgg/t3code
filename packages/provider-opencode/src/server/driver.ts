@@ -293,7 +293,13 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      openCode2Server.withConnection(({ client }) =>
+        // An external server cannot resolve this host's cwd, so it uses its own directory.
+        loadOpenCode2Catalog(
+          client,
+          effectiveConfig.serverUrl.trim().length > 0 ? undefined : host.paths.cwd,
+        ),
+      ),
     );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>

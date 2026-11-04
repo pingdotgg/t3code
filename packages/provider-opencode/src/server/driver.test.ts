@@ -21,11 +21,13 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -184,6 +186,79 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       yield* Effect.yieldNow;
       assert.isDefined(capabilities.pollUnsafe());
       yield* Fiber.join(capabilities);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  // regression: #30912 a remote server rejects this host's cwd as an unknown location
+  it.effect("lists an external server's models without sending this host's directory", () =>
+    Effect.gen(function* () {
+      const catalogDirectories: Array<string | undefined> = [];
+      const replies = {
+        ...OPENCODE_2_RESPONSES,
+        "/api/provider": {
+          status: 200,
+          contentType: "application/json",
+          body: '{"location":{"directory":"/remote"},"data":[]}',
+        },
+        "/api/model": {
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            location: { directory: "/remote" },
+            data: [
+              {
+                id: "big-pickle",
+                modelID: "big-pickle",
+                providerID: "opencode",
+                name: "Big Pickle",
+                package: "@opencode/ai/providers/openai-compatible",
+                settings: {},
+                compatibility: {},
+                capabilities: { tools: true, input: ["text"], output: ["text"] },
+                variants: [],
+                time: { released: 1789516800000 },
+                cost: [],
+                status: "active",
+                enabled: true,
+                limit: { context: 1000000, output: 65536 },
+              },
+            ],
+          }),
+        },
+      };
+      const replay = replayOpenCodeServer(replies, "secret");
+      const server = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/model" || path === "/api/provider") {
+          catalogDirectories.push(
+            Option.getOrUndefined(UrlParams.getFirst(request.urlParams, "location[directory]")),
+          );
+        }
+        return replay.execute(request);
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+
+      const ready = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.status === "ready"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(ready));
+      assert.deepStrictEqual(
+        snapshot?.models.map((model) => model.slug),
+        ["opencode/big-pickle"],
+      );
+      assert.isNotEmpty(catalogDirectories);
+      assert.deepStrictEqual(
+        catalogDirectories.filter((directory) => directory !== undefined),
+        [],
+      );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 

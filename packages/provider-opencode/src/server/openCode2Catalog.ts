@@ -8,17 +8,20 @@ import type { OpenCode2Model } from "./status.ts";
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const PROVIDER_NAME_TIMEOUT = "3 seconds";
 
-/** Provider names are optional decoration; bound their read so models cannot stall. */
+/**
+ * Provider names are optional decoration; bound their read so models cannot stall.
+ * Without a directory the server lists the catalog for its own default directory.
+ */
 export const loadOpenCode2Catalog = (
   client: OpenCodeClient,
-  directory: string,
+  directory: string | undefined,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> => {
-  const location = { directory };
+  const input = directory === undefined ? {} : { location: { directory } };
   return Effect.all(
     {
-      models: client.model.list({ location }),
+      models: client.model.list(input),
       providers: client.provider
-        .list({ location })
+        .list(input)
         .pipe(Effect.timeout(PROVIDER_NAME_TIMEOUT), Effect.option),
     },
     { concurrency: "unbounded" },
