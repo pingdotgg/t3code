@@ -7,6 +7,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -106,6 +108,7 @@ const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loadNative.mockReset();
   native.backend = "Vulkan0";
   native.supportsInitialPrompt = false;
   readyModels.clear();
@@ -323,8 +326,7 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
       .mockRejectedValueOnce(new Error("worker stopped"))
       .mockResolvedValueOnce({ revision: 1, text })
       .mockResolvedValueOnce({ revision: 2, text })
-      .mockResolvedValueOnce({ revision: 3, text })
-      .mockRejectedValueOnce(new Error("worker stopped again"));
+      .mockResolvedValueOnce({ revision: 3, text });
     const speech = yield* SpeechService.SpeechService;
     const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
     expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text });
@@ -334,6 +336,108 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
     expect(native.begin).toHaveBeenCalledTimes(2);
     expect(native.feed).toHaveBeenCalledTimes(4);
     expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text });
+    native.finish.mockRejectedValueOnce(new Error("CPU finish failed"));
+    expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);
+    expect(loadNative).toHaveBeenCalledTimes(2);
     expect(Result.isFailure(yield* Effect.result(stream.feed(pcm())))).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect.each([false, true])(
+  "recovers Auto stream finalization on a fresh CPU worker with retained audio: %s",
+  (withAudio) =>
+    Effect.gen(function* () {
+      const cpu = {
+        ...native,
+        backend: "CPU",
+        begin: vi.fn(async (_language?: string) => {}),
+        feed: vi.fn(async (_pcm: Float32Array) => ({
+          revision: 1,
+          text: { committed: "", tentative: "" },
+        })),
+        finish: vi.fn(async () => "Robert"),
+        dispose: vi.fn(),
+      };
+      const gpu = {
+        ...native,
+        finish: vi.fn(async () => {
+          throw new Error("GPU finish failed");
+        }),
+      };
+      loadNative.mockResolvedValueOnce(gpu).mockResolvedValueOnce(cpu);
+      const speech = yield* SpeechService.SpeechService;
+      const chunks = withAudio ? [new Float32Array([0.25, 0]), new Float32Array([-0.5])] : [];
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream({
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: "fr",
+          speechCustomWords: [{ term: "Bob", aliases: ["Robert"] }],
+        });
+        for (const chunk of chunks) yield* stream.feed(new Uint8Array(chunk.buffer));
+        expect(yield* stream.finish).toBe("Bob");
+        expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
+          chunks.map((chunk) => [...chunk]),
+        );
+        expect(cpu.begin).toHaveBeenCalledWith("fr");
+        expect(gpu.dispose).toHaveBeenCalledOnce();
+        expect(cpu.dispose).not.toHaveBeenCalled();
+        const busy = yield* Effect.result(speech.selectModel("fallback-model"));
+        expect(Result.isFailure(busy) && busy.failure).toMatchObject({ _tag: "SpeechBusyError" });
+      }).pipe(Effect.scoped);
+      expect(loadNative.mock.calls.map(([path, , , acceleration]) => [path, acceleration])).toEqual(
+        [
+          ["test.gguf", "auto"],
+          ["test.gguf", "cpu"],
+        ],
+      );
+      yield* speech.selectModel("fallback-model");
+      expect(cpu.dispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each(["auto", 'gpu:["vulkan","gpu-1"]', "cpu"] as const)(
+  "reports finalization failure without repeated or explicit-backend fallback: %s",
+  (acceleration) =>
+    Effect.gen(function* () {
+      const failure = new Error("finish failed");
+      const worker = {
+        ...native,
+        backend: acceleration === "cpu" ? "CPU" : "Vulkan0",
+        finish: vi.fn(async () => {
+          throw failure;
+        }),
+      };
+      const cpu = { ...worker, backend: "CPU", dispose: vi.fn() };
+      loadNative.mockResolvedValueOnce(worker);
+      if (acceleration === "auto") loadNative.mockResolvedValueOnce(cpu);
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateAcceleration(acceleration);
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);
+      expect(worker.finish).toHaveBeenCalledTimes(acceleration === "auto" ? 2 : 1);
+      expect(loadNative).toHaveBeenCalledTimes(acceleration === "auto" ? 2 : 1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("does not restart a stream cancelled while native finalization is pending", () =>
+  Effect.gen(function* () {
+    const pending = Promise.withResolvers<string>();
+    const started = Promise.withResolvers<void>();
+    native.finish.mockImplementationOnce(() => {
+      started.resolve();
+      return pending.promise;
+    });
+    const speech = yield* SpeechService.SpeechService;
+    const streamScope = yield* Scope.make();
+    const stream = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.provideService(Scope.Scope, streamScope));
+    const request = yield* Effect.result(stream.finish).pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    yield* Scope.close(streamScope, Exit.void);
+    pending.reject(new Error("cancelled worker stopped"));
+    expect(Result.isFailure(yield* Fiber.join(request))).toBe(true);
+    expect(loadNative).toHaveBeenCalledOnce();
+    expect(native.reset).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
 );
