@@ -42,12 +42,14 @@ export function ZoomableImage({
   src,
   name,
   mimeType,
+  fill,
   onError,
   ref,
 }: {
   src: string;
   name: string;
   mimeType?: string | undefined;
+  fill?: boolean | undefined;
   onError: () => void;
   ref?: Ref<ZoomableImageHandle>;
 }) {
@@ -73,7 +75,7 @@ export function ZoomableImage({
   const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
   // A vector scales without loss, and an SVG without width and height reports a tiny default size.
   const fit = Math.min(
-    mimeType === "image/svg+xml" ? Infinity : 1,
+    fill || mimeType === "image/svg+xml" ? Infinity : 1,
     (viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
   );
