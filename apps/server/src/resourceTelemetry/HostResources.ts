@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - iowait exists only in /proc/stat, which must be read at the same instant as os.cpus() and has no Effect equivalent.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -14,7 +16,27 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-export function readCpu() {
+// os.cpus() drops iowait from idle and from the total, so a disk-blocked core reads as busy.
+// libuv turns the 100 Hz tick counters behind os.cpus() into milliseconds, hence the scale here.
+function readDiskWait(platform: NodeJS.Platform): number | null {
+  if (platform !== "linux") return 0;
+  try {
+    const stat = NodeFS.readFileSync("/proc/stat", "utf8");
+    // cpu user nice system idle iowait irq softirq steal guest guest_nice
+    const ioWaitTicks = Number(stat.slice(0, stat.indexOf("\n")).split(/\s+/)[5]);
+    return Number.isFinite(ioWaitTicks) ? ioWaitTicks * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A load average above the core count can mean disk wait on Linux alone:
+ * macOS counts runnable threads only, and Windows reports no load average.
+ */
+export const loadAverageCountsDiskWait = (platform: NodeJS.Platform) => platform === "linux";
+
+export function readCpu(platform: NodeJS.Platform) {
   const cpus = NodeOS.cpus();
   const cpu = cpus.reduce(
     (sum, { times }) => ({
@@ -23,13 +45,20 @@ export function readCpu() {
     }),
     { idle: 0, total: 0 },
   );
-  return { ...cpu, count: cpus.length };
+  const diskWait = readDiskWait(platform);
+  return {
+    idle: cpu.idle + (diskWait ?? 0),
+    total: cpu.total + (diskWait ?? 0),
+    count: cpus.length,
+    diskWait,
+  };
 }
 
 type CpuTimes = ReturnType<typeof readCpu>;
 
 /** Share of core time spent running work between two readings, null if they are not comparable. */
 export function cpuBusyBetween(previous: CpuTimes, next: CpuTimes): number | null {
+  if (previous.diskWait === null || next.diskWait === null) return null;
   const totalDelta = next.total - previous.total;
   const idleDelta = next.idle - previous.idle;
   return previous.count === next.count && totalDelta > 0 && idleDelta >= 0
@@ -54,9 +83,9 @@ const make = Effect.fn("makeHostResources")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const sample = Effect.fn("HostResources.sample")(function* () {
-    const previousCpu = readCpu();
+    const previousCpu = readCpu(platform);
     yield* Effect.sleep("200 millis");
-    const cpu = readCpu();
+    const cpu = readCpu(platform);
     const cpuUtilization = cpuBusyBetween(previousCpu, cpu);
     const totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
