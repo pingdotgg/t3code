@@ -572,6 +572,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "a provider.rate-limit admission refusal",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.rate-limit",
+        message:
+          "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)",
+        status: 429,
+      },
+    },
+    {
       name: "a Claude limit without a reset timestamp",
       failureClass: "usage_limit",
       error: {

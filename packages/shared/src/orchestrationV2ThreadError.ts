@@ -11,6 +11,29 @@ type FailureScanTurnItem =
   | ErrorTurnItem
   | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "error"> };
 
+export function providerFailurePresentation(
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "code" | "message">,
+  storedTitle?: string | null,
+): {
+  readonly kind: "provider_capacity" | "usage_limit" | "provider_error";
+  readonly title: string;
+} {
+  if (
+    failure.class === "usage_limit" &&
+    (failure.code === "provider.rate-limit" || failure.code === "APIError") &&
+    failure.message.includes("[ttft_admission_refused]")
+  ) {
+    return { kind: "provider_capacity", title: "Provider at capacity" };
+  }
+
+  return {
+    kind: failure.class === "usage_limit" ? "usage_limit" : "provider_error",
+    title:
+      storedTitle?.trim() ||
+      (failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"),
+  };
+}
+
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
