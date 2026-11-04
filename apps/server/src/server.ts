@@ -25,6 +25,7 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as HostWakeLock from "./background/HostWakeLock.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
@@ -586,6 +587,10 @@ const layerIdleCompactionWorker = Layer.effectDiscard(
   IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(ProjectionStoreV2.layer));
 
+const layerHostWakeLockWorker = Layer.effectDiscard(
+  HostWakeLock.make.pipe(Effect.flatMap((service) => service.start())),
+).pipe(Layer.provide(ProjectionStoreV2.layer));
+
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
@@ -627,6 +632,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
+  layerHostWakeLockWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
   layerThreadPullRequestWorker,

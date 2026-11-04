@@ -986,6 +986,10 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const KeepHostAwakeMode = Schema.Literals(["off", "whileWorking", "always"]);
+export type KeepHostAwakeMode = typeof KeepHostAwakeMode.Type;
+const DEFAULT_KEEP_HOST_AWAKE_MODE: KeepHostAwakeMode = "off";
+
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
@@ -1283,6 +1287,9 @@ export const ServerSettings = Schema.Struct({
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
+  keepHostAwake: KeepHostAwakeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEEP_HOST_AWAKE_MODE)),
+  ),
 
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
     Schema.withDecodingDefault(
@@ -1659,6 +1666,7 @@ export const ServerSettingsPatch = Schema.Struct({
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  keepHostAwake: Schema.optionalKey(KeepHostAwakeMode),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

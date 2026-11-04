@@ -14,6 +14,7 @@ export function preferences(settings: ServerSettings) {
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
     backgroundActivity,
+    keepHostAwake,
     sourceControlWritingStyle,
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
@@ -22,6 +23,7 @@ export function preferences(settings: ServerSettings) {
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
     backgroundActivity: { profile: backgroundActivity.profile },
+    keepHostAwake,
     sourceControlWritingStyle: {
       ...sourceControlWritingStyle,
       customInstructions: characters.slice(0, 4000).join(""),
