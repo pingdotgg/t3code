@@ -74,12 +74,24 @@ const harness = Effect.gen(function* () {
       );
     }),
   );
-  const store = yield* SpeechModelStore.SpeechModelStore.pipe(
+  const openStore = SpeechModelStore.SpeechModelStore.pipe(
     Effect.provide(
       SpeechModelStore.layer.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
     ),
   );
-  return { model, directory, stale, fs, requests, bodies, transportFailure, bodyStarted, store };
+  const store = yield* openStore;
+  return {
+    model,
+    directory,
+    stale,
+    fs,
+    requests,
+    bodies,
+    transportFailure,
+    bodyStarted,
+    store,
+    openStore,
+  };
 });
 
 const dependencies = ServerConfig.layerTest("/tmp", { prefix: "speech-model-store-" }).pipe(
@@ -136,7 +148,7 @@ it.effect("rejects a same-size download whose SHA-256 differs from the catalog",
   }).pipe(Effect.provide(dependencies)),
 );
 
-it.effect("cancelling a download removes the partial file and keeps the existing model", () =>
+it.effect("cleans only download partials on cancellation or restart", () =>
   Effect.gen(function* () {
     const h = yield* harness;
     h.bodies.current = () => Stream.concat(Stream.succeed(bytes.subarray(0, SPLIT)), Stream.never);
@@ -145,5 +157,13 @@ it.effect("cancelling a download removes the partial file and keeps the existing
     yield* Fiber.interrupt(fiber);
     expect(yield* h.fs.readDirectory(h.directory)).toEqual(["model.gguf"]);
     expect([...(yield* h.fs.readFile(h.stale))]).toEqual([...new Uint8Array(bytes.length)]);
+    const orphan = `${h.stale}.f660de6c-e172-4146-8ffe-d3c32eb48cd4.part`;
+    yield* h.fs.writeFile(orphan, bytes.subarray(0, SPLIT));
+    yield* h.fs.writeFileString(`${h.stale}.notes.part`, "not a download");
+    yield* h.openStore;
+    expect((yield* h.fs.readDirectory(h.directory)).sort()).toEqual([
+      "model.gguf",
+      "model.gguf.notes.part",
+    ]);
   }).pipe(Effect.provide(dependencies)),
 );
