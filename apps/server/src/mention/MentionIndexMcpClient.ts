@@ -56,8 +56,6 @@ export class MentionIndexMcpClient extends Context.Service<
   {
     readonly resolveServer: (input: {
       readonly kind: MentionMcpKind;
-      /** Ignored for discovery: project-local mcp.json is untrusted. */
-      readonly projectRoot?: string | undefined;
       readonly serverName?: string | undefined;
     }) => Effect.Effect<MentionMcpServerConfig | null>;
     readonly withSession: <A, E>(
@@ -372,12 +370,10 @@ const make = Effect.gen(function* () {
 
   const resolveServer = Effect.fn("MentionIndexMcpClient.resolveServer")(function* (input: {
     readonly kind: MentionMcpKind;
-    readonly projectRoot?: string | undefined;
     readonly serverName?: string | undefined;
   }) {
     // Trust boundary: only user-level MCP configs. Project-local `.cursor/mcp.json`
     // can ship arbitrary commands and must not be discovered or executed.
-    void input.projectRoot;
     const candidates: MentionMcpServerConfig[] = [];
     const files = [
       path.join(home, ".cursor", "mcp.json"),

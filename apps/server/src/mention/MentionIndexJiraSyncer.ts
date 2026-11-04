@@ -3,11 +3,9 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 
-import * as ProjectService from "../project/ProjectService.ts";
 import { MentionIndex, mentionIndexScopeKey, type MentionIndexRow } from "./MentionIndex.ts";
 import { MentionIndexMcpClient, MentionIndexMcpError } from "./MentionIndexMcpClient.ts";
 
@@ -25,7 +23,6 @@ export class MentionIndexJiraSyncer extends Context.Service<
 const make = Effect.gen(function* () {
   const index = yield* MentionIndex;
   const mcp = yield* MentionIndexMcpClient;
-  const projects = yield* ProjectService.ProjectService;
   const inFlight = yield* Ref.make(new Set<string>());
 
   const syncProject = Effect.fn("MentionIndexJiraSyncer.syncProject")(function* (
@@ -45,13 +42,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const project = yield* projects.getById(projectId).pipe(
-      Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
-    );
     const server = yield* mcp.resolveServer({
       kind: "jira",
-      ...(project?.workspaceRoot !== undefined ? { projectRoot: project.workspaceRoot } : {}),
       ...(jiraSettings?.serverName !== undefined ? { serverName: jiraSettings.serverName } : {}),
     });
     if (server === null) {
