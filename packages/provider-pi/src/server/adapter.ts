@@ -1420,7 +1420,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: [
+                  (method === "input" && turn !== null
+                    ? piAskUserMultiSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+                    : undefined) ?? piQuestion(nativeRequestId, method, title, event),
+                ],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -3427,6 +3431,48 @@ function piQuestion(
   };
 }
 
+const RPIV_MULTI_SELECT_PLACEHOLDER = "1,3; custom answer";
+
+/**
+ * @juicesharp/rpiv-ask-user-question asks a multi-select question over RPC as a text input that
+ * takes option numbers. Rebuild the options from the tool call's arguments so they render as one.
+ */
+function piAskUserMultiSelectQuestion(
+  questionId: string,
+  title: string,
+  event: PiRpcRecord,
+  toolArgs: ReadonlyMap<string, unknown>,
+): OrchestrationV2UserInputQuestion | undefined {
+  if (recordString(event, "placeholder") !== RPIV_MULTI_SELECT_PLACEHOLDER) return undefined;
+  for (const args of toolArgs.values()) {
+    const questions = recordField(args, "questions");
+    if (!Array.isArray(questions)) continue;
+    for (const question of questions) {
+      const text = recordString(question, "question");
+      const header = recordString(question, "header");
+      const options = recordField(question, "options");
+      if (recordField(question, "multiSelect") !== true || text === undefined) continue;
+      if (!Array.isArray(options) || options.length === 0) continue;
+      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}\n\n`)) continue;
+      return {
+        id: questionId,
+        header: header?.trim() || "Question",
+        question: text,
+        multiSelect: true,
+        options: options.map((option, index) => {
+          const label = recordString(option, "label")?.trim() || `Option ${index + 1}`;
+          return {
+            label,
+            description: recordString(option, "description")?.trim() || label,
+            value: String(index + 1),
+          };
+        }),
+      };
+    }
+  }
+  return undefined;
+}
+
 function piUiResponse(
   pending: PendingPiPrompt,
   decision: ProviderApprovalDecision | undefined,
@@ -3438,6 +3484,21 @@ function piUiResponse(
     return { cancelled: true };
   }
   const answer = answers?.[pending.questionId];
+  if (
+    pending.turnItem.type === "user_input_request" &&
+    pending.turnItem.questions[0]?.multiSelect
+  ) {
+    // Option values are 1-based numbers. A leading ";" marks the whole reply as custom text.
+    if (typeof answer === "string") return { value: `; ${answer}` };
+    if (Array.isArray(answer)) {
+      return {
+        value: answer
+          .map(Number)
+          .sort((a, b) => a - b)
+          .join(","),
+      };
+    }
+  }
   // RPC distinguishes empty dialog values from cancellation (undefined).
   if (typeof answer === "string") return { value: answer };
   return { cancelled: true };
