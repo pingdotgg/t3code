@@ -133,7 +133,8 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
-import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { copyPullRequestUrls } from "../lib/copyPullRequestUrls";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
@@ -2361,29 +2362,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
       if (clicked.value === "copy-pr-links") {
-        if (pullRequestUrls.length === 0) return;
-        try {
-          const didCopy = await writeTextToClipboard(
-            pullRequestUrls.join("\n"),
-            "pull request links",
-          );
-          if (!didCopy) return;
-          toastManager.add({
-            type: "success",
-            title: pullRequestUrls.length === 1 ? "PR link copied" : "PR links copied",
-            description:
-              pullRequestUrls.length === 1 ? pullRequestUrls[0] : `${pullRequestUrls.length} links`,
-          });
-        } catch (error) {
-          console.error(error);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to copy PR links",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
+        await copyPullRequestUrls(pullRequestUrls);
         return;
       }
       const actionTargets =

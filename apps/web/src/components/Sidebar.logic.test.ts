@@ -9,6 +9,7 @@ import {
   shouldCreateNewThreadInCurrentProject,
   buildBulkCopyPullRequestLinksContextMenuItem,
   collectVisiblePullRequestUrls,
+  isSidebarActiveIdleThread,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -108,6 +109,54 @@ describe("buildBulkCopyPullRequestLinksContextMenuItem", () => {
       id: "copy-pr-links",
       label: "Copy PR links (3)",
     });
+  });
+});
+
+describe("isSidebarActiveIdleThread", () => {
+  const now = "2026-01-01T12:00:00.000Z";
+
+  it("keeps Active-shelf threads and drops pinned, settled, snoozed, and Working ones", () => {
+    // Finished run → Active shelf. Runtime "idle" is still Working.
+    const active = makeThreadFixture({
+      id: ThreadId.make("active"),
+      settledOverride: null,
+      pinnedAt: null,
+      runtime: null,
+      latestRun: null,
+    });
+    expect(isSidebarActiveIdleThread(active, { now })).toBe(true);
+    expect(
+      isSidebarActiveIdleThread({ ...active, pinnedAt: "2026-01-01T00:00:00.000Z" }, { now }),
+    ).toBe(false);
+    expect(isSidebarActiveIdleThread({ ...active, settledOverride: "settled" }, { now })).toBe(
+      false,
+    );
+    expect(
+      isSidebarActiveIdleThread(
+        {
+          ...active,
+          snoozedUntil: "2026-01-01T18:00:00.000Z",
+          snoozedAt: "2026-01-01T00:00:00.000Z",
+        },
+        { now },
+      ),
+    ).toBe(false);
+    expect(
+      isSidebarActiveIdleThread(
+        {
+          ...active,
+          runtime: {
+            status: "idle",
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerName: "Codex",
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+        { now },
+      ),
+    ).toBe(false);
   });
 });
 

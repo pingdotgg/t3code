@@ -94,6 +94,7 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
+import { copyPullRequestUrls } from "../lib/copyPullRequestUrls";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
   queueWorkspaceFocusFromPalette,
@@ -105,6 +106,7 @@ import {
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
 import { useClientSettings } from "../hooks/useSettings";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -214,7 +216,11 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
+import {
+  collectVisiblePullRequestUrls,
+  isSidebarActiveIdleThread,
+  isSidebarHiddenThread,
+} from "./Sidebar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
   selectCommandPaletteClientSettings,
@@ -475,9 +481,11 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const serverConfigs = useServerConfigs();
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const nowMinute = useNowMinute();
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -499,6 +507,14 @@ function OpenCommandPaletteDialog(props: {
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
   const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  const activeIdlePullRequestUrls = collectVisiblePullRequestUrls(
+    threads.filter((thread) =>
+      isSidebarActiveIdleThread(thread, {
+        now: nowMinute,
+        configLoaded: serverConfigs.has(thread.environmentId),
+      }),
+    ),
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -1376,6 +1392,18 @@ function OpenCommandPaletteDialog(props: {
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
       run: copyActiveThreadReference,
+    });
+  }
+
+  if (activeIdlePullRequestUrls.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:copy-active-pr-links",
+      searchTerms: ["copy", "pull request", "pr", "links", "active", "idle", "clipboard"],
+      title: "Copy PR links from Active",
+      description: `${activeIdlePullRequestUrls.length} link${activeIdlePullRequestUrls.length === 1 ? "" : "s"}`,
+      icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+      run: () => copyPullRequestUrls(activeIdlePullRequestUrls),
     });
   }
 

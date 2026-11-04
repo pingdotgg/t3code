@@ -1,6 +1,7 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -186,6 +187,40 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
+}
+
+/**
+ * Active shelf idle threads: unsettled, unsnoozed, unpinned, and not in Working.
+ * Matches the Active list when the Working shelf is enabled.
+ */
+export function isSidebarActiveIdleThread(
+  thread: Pick<
+    SidebarThreadSummary,
+    | "pinnedAt"
+    | "settledOverride"
+    | "snoozedAt"
+    | "snoozedUntil"
+    | "hasActionableProposedPlan"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "interactionMode"
+    | "latestRun"
+    | "runtime"
+  >,
+  input: { readonly now: string; readonly configLoaded?: boolean },
+): boolean {
+  const configLoaded = input.configLoaded ?? true;
+  if (
+    resolveSidebarThreadSection({
+      snoozed: configLoaded && effectiveSnoozed(thread, { now: input.now }),
+      settled: configLoaded && thread.settledOverride === "settled",
+      pinned: thread.pinnedAt != null,
+    }) !== "active"
+  ) {
+    return false;
+  }
+  return !isThreadWorking(thread);
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
