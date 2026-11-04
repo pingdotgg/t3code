@@ -12,6 +12,8 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -77,6 +79,13 @@ const CurrentProviderBatch = Context.Reference<ProviderBatchPublication | undefi
 );
 
 export interface EventSinkV2Shape {
+  readonly consumeProviderEvents: <E, R, E2, R2>(
+    source: Stream.Stream<ProviderAdapter.ProviderAdapterV2Event, E, R>,
+    process: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void, E2, R2>,
+    after: Effect.Effect<boolean, E2, R2>,
+    canBatch: Effect.Effect<boolean, never, R2>,
+  ) => Effect.Effect<void, EventSinkV2Error, R | R2>;
+
   /** Normalize and persist an ordered group against one transaction; publish after its commit. */
   readonly withProviderBatch: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -894,10 +903,17 @@ const layerBase: Layer.Layer<
       );
     };
 
-    const commitThenPublish: typeof commitThenPublishNow = (transaction, publish) =>
+    const commitThenPublish = <A, E, R>(
+      transaction: Effect.Effect<A, E, R>,
+      publish: (committed: A) => Effect.Effect<void>,
+    ) =>
       Effect.flatMap(CurrentProviderBatch, (batch) =>
         batch === undefined
-          ? commitThenPublishNow(transaction, publish)
+          ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
+              Option.isSome(existing)
+                ? commitThenPublishNow(transaction, publish)
+                : coordinator.barrier(commitThenPublishNow(transaction, publish)),
+            )
           : transaction.pipe(
               Effect.tap((committed) =>
                 Effect.sync(() => {
@@ -936,7 +952,19 @@ const layerBase: Layer.Layer<
       return result;
     });
 
+    const coordinator = yield* ProviderCommitBatch.make(
+      (work) =>
+        withProviderBatch(work).pipe(
+          Effect.mapError((cause) => new ProviderCommitBatch.CommitBatchError({ cause })),
+        ),
+      yield* ProviderCommitBatch.windowMs,
+    );
+
     return EventSinkV2.of({
+      consumeProviderEvents: (source, process, after, canBatch) =>
+        coordinator
+          .consume(source, process, after, canBatch)
+          .pipe(Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause }))),
       withProviderBatch,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(

@@ -18,7 +18,17 @@ describe("Codex replay fixtures", () => {
       harness: CodexOrchestratorReplayHarness,
       materializeWorkspace: (transcript, workspace) =>
         Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
-    }),
+    }).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({
+          T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS:
+            input.fixtureName.includes("subagent") || input.fixtureName === "multi_turn"
+              ? "10"
+              : "0",
+        }),
+      ),
+    ),
   );
 });
 

@@ -27,6 +27,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Queue from "effect/Queue";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -408,6 +411,122 @@ it.effect(
         published,
       );
     }).pipe(Effect.provide(Layer.fresh(layerTest)), Effect.scoped),
+);
+
+it.effect.each([false, true])(
+  "shares the writer across independent consumers with rollback=%s",
+  (rollback) => {
+    const writes: number[] = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (span.name === "orchestrationV2.EventSink.providerBatch" && Exit.isSuccess(exit)) {
+            writes.push(Number(span.attributes.get("orchestration_v2.batch_writes")));
+          }
+        };
+        return span;
+      },
+    });
+    return Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threads = Array.from({ length: 10 }, (_, index) =>
+        makeThread(ThreadId.make(`shared:${index}`), now),
+      );
+      yield* sink.write({
+        events: threads.map((thread, index) =>
+          threadCreatedEvent({ id: `created:${index}`, thread, now }),
+        ),
+      });
+      const highWater = yield* sink.latestSequence();
+      const pulled = yield* Deferred.make<void>();
+      let arrivals = 0;
+      const inputs = yield* Effect.forEach(threads, () =>
+        Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
+      );
+      const consumers = yield* Effect.forEach(inputs, (input, index) =>
+        sink
+          .consumeProviderEvents(
+            Stream.fromQueue(input).pipe(
+              Stream.tap(() =>
+                ++arrivals === 10 ? Deferred.succeed(pulled, undefined) : Effect.void,
+              ),
+            ),
+            (raw) =>
+              raw.type === "message.updated"
+                ? sink
+                    .write({
+                      events: [
+                        {
+                          id: EventId.make(
+                            rollback ? "duplicate-shared-event" : `shared-event:${index}`,
+                          ),
+                          threadId: raw.message.threadId,
+                          occurredAt: now,
+                          type: "message.updated",
+                          payload: raw.message,
+                        },
+                      ],
+                    })
+                    .pipe(Effect.asVoid)
+                : Effect.void,
+            Effect.succeed(false),
+            Effect.succeed(true),
+          )
+          .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true })),
+      );
+      for (let index = 0; index < threads.length; index++) {
+        yield* Queue.offer(inputs[index]!, {
+          type: "message.updated",
+          driver: ProviderDriverKind.make("codex"),
+          message: {
+            id: MessageId.make(`message:${index}`),
+            threadId: threads[index]!.id,
+            runId: null,
+            nodeId: null,
+            createdBy: "agent",
+            creationSource: "provider",
+            role: "assistant",
+            text: `stream:${index}`,
+            streaming: true,
+            attachments: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+      yield* Deferred.await(pulled);
+      yield* TestClock.adjust(0);
+      yield* sink.write({ events: [] });
+      if (rollback) {
+        for (const consumer of consumers)
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(consumer)));
+        assert.equal(yield* sink.latestSequence(), highWater);
+      } else {
+        assert.deepEqual(writes, [10]);
+        assert.equal(yield* sink.latestSequence(), highWater + 10);
+      }
+      for (const thread of threads) {
+        assert.lengthOf(
+          (yield* projections.getThreadRecords(thread.id, ["messages"])).messages,
+          rollback ? 0 : 1,
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.fresh(layerTest)),
+      Effect.withTracer(tracer),
+      Effect.withTracerEnabled(true),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS: "10" }),
+      ),
+    );
+  },
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
