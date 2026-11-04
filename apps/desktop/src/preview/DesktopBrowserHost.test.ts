@@ -973,7 +973,9 @@ describe("DesktopBrowserHost", () => {
         method: "Target.detachFromTarget",
         params: { sessionId: "t3-preview-page-2" },
       });
-      expect(yield* Queue.take(replies)).toBe(6);
+      const answered = [];
+      for (let reply = 0; reply < 4; reply++) answered.push(yield* Queue.take(replies));
+      expect(answered.toSorted()).toEqual([3, 4, 5, 6]);
       yield* settle;
       expect(nativeStops()).toBe(1);
     }).pipe(Effect.scoped),
