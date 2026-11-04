@@ -692,7 +692,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ),
       ).toString("hex")
     : undefined;
+  // Reset credits read the shared config's token, which belongs to a different login.
   const resetCredits =
+    !credentialFingerprint &&
     resolveResetCredits &&
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&

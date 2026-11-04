@@ -3332,19 +3332,14 @@ it.layer(
     it.effect("keeps separate Claude logins that share a config directory apart in Limits", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const configDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-config-",
         });
         const storageDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-login-",
         });
-        const login = (subscriptionType: string) =>
-          JSON.stringify({
-            claudeAiOauth: { accessToken: `token-${subscriptionType}`, subscriptionType },
-          });
-        yield* fileSystem.writeFileString(path.join(configDir, ".credentials.json"), login("max"));
-        yield* fileSystem.writeFileString(path.join(storageDir, ".credentials.json"), login("pro"));
+        // Reset credits come from the shared config's login, so only that login's row may offer them.
+        const configLoginCredits = () => Effect.succeed({ availableCount: 1 });
         const probe = (subscriptionType: string, utilization: number) =>
           claudeCapabilities({
             email: "account-b@example.com",
@@ -3359,16 +3354,20 @@ it.layer(
           });
         const settings = { ...defaultClaudeSettings, homePath: configDir };
         const separateStorage = { CLAUDE_SECURESTORAGE_CONFIG_DIR: storageDir };
+        const check = (subscriptionType: string, utilization: number, environment = {}) =>
+          checkClaudeProviderStatus(
+            settings,
+            probe(subscriptionType, utilization),
+            environment,
+            undefined,
+            undefined,
+            undefined,
+            configLoginCredits,
+          );
         const instances = [
-          ["claude-max", yield* checkClaudeProviderStatus(settings, probe("max", 10), {})],
-          [
-            "claude-pro",
-            yield* checkClaudeProviderStatus(settings, probe("pro", 70), separateStorage),
-          ],
-          [
-            "claude-pro-2",
-            yield* checkClaudeProviderStatus(settings, probe("pro", 70), separateStorage),
-          ],
+          ["claude-max", yield* check("max", 10)],
+          ["claude-pro", yield* check("pro", 70, separateStorage)],
+          ["claude-pro-2", yield* check("pro", 70, separateStorage)],
         ] as const;
         const providers = instances.map(([instanceId, draft]) => ({
           ...draft,
@@ -3386,8 +3385,16 @@ it.layer(
         );
 
         assert.deepStrictEqual(
-          accounts.map((account) => account.limits.windows[0]?.usedPercent).toSorted(),
-          [10, 70],
+          accounts
+            .map((account) => [
+              account.limits.windows[0]?.usedPercent,
+              account.limits.resetCredits?.availableCount,
+            ])
+            .toSorted(([left = 0], [right = 0]) => left - right),
+          [
+            [10, 1],
+            [70, undefined],
+          ],
         );
       }).pipe(
         Effect.provide(
