@@ -42,106 +42,127 @@ const control: ProviderAdapter.ProviderAdapterV2Event = {
   pending: false,
 };
 
+const recordBatches = Effect.fn("test.recordProviderBatches")(function* (window: number) {
+  const output = yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
+  let current: ProviderAdapter.ProviderAdapterV2Event[] = [];
+  const coordinator = yield* ProviderCommitBatch.make(
+    (work) =>
+      Effect.gen(function* () {
+        current = [];
+        yield* work;
+        if (current.length > 0) yield* Queue.offer(output, current);
+      }),
+    window,
+  );
+  const process = (raw: ProviderAdapter.ProviderAdapterV2Event) =>
+    raw.type === "background_work.updated"
+      ? Queue.offer(output, [raw]).pipe(Effect.asVoid)
+      : Effect.sync(() => {
+          current.push(raw);
+        });
+  return { ...coordinator, process, output };
+});
+
 it.effect(
-  "collects successive updates from one stream and flushes before control without waiting for the window",
+  "flushes one stream's pending snapshots before a control without waiting for the window",
   () =>
     Effect.gen(function* () {
-      const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-      const output =
-        yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
-      const consumer = yield* ProviderCommitBatch.group(Stream.fromQueue(input), 25).pipe(
-        Stream.runForEach((batch) => Queue.offer(output, batch.events)),
-        Effect.forkScoped,
-      );
+      const recorder = yield* recordBatches(25);
+      const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const consumer = yield* recorder
+        .consume(Stream.fromQueue(input), recorder.process, Effect.succeed(true))
+        .pipe(Effect.forkScoped);
       yield* Queue.offer(input, event(1));
       yield* TestClock.adjust(5);
       yield* Queue.offer(input, event(2));
       yield* Queue.offer(input, control);
-      const first = yield* Queue.take(output);
-      const second = yield* Queue.take(output);
-      assert.deepEqual(first, [event(1), event(2)]);
-      assert.deepEqual(second, [control]);
-      yield* Queue.end(input);
+      assert.deepEqual(yield* Queue.take(recorder.output), [event(1), event(2)]);
+      assert.deepEqual(yield* Queue.take(recorder.output), [control]);
       yield* Fiber.join(consumer);
     }).pipe(Effect.scoped),
 );
 
-it.effect("flushes a sparse stream on the deadline and restarts the next window", () =>
+it.effect("flushes sparse updates on the deadline and restarts the next window", () =>
   Effect.gen(function* () {
-    const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-    const output = yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
-    const consumer = yield* ProviderCommitBatch.group(Stream.fromQueue(input), 25).pipe(
-      Stream.runForEach((batch) => Queue.offer(output, batch.events)),
-      Effect.forkScoped,
-    );
+    const recorder = yield* recordBatches(25);
+    const input = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const pulled = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    yield* recorder
+      .consume(
+        Stream.fromQueue(input).pipe(Stream.tap((raw) => Queue.offer(pulled, raw))),
+        recorder.process,
+        Effect.succeed(false),
+      )
+      .pipe(Effect.forkScoped);
     yield* Queue.offer(input, event(1));
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust(0);
     yield* TestClock.adjust(25);
-    assert.deepEqual(yield* Queue.take(output), [event(1)]);
+    assert.deepEqual(yield* Queue.take(recorder.output), [event(1)]);
     yield* Queue.offer(input, event(2));
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust(0);
     yield* TestClock.adjust(24);
-    assert.isTrue((yield* Queue.poll(output))._tag === "None");
+    assert.isTrue((yield* Queue.poll(recorder.output))._tag === "None");
     yield* TestClock.adjust(1);
-    assert.deepEqual(yield* Queue.take(output), [event(2)]);
-    yield* Queue.end(input);
-    yield* Fiber.join(consumer);
+    assert.deepEqual(yield* Queue.take(recorder.output), [event(2)]);
   }).pipe(Effect.scoped),
 );
 
-it.effect("bounds transaction groups by count and bytes and flushes the final partial group", () =>
+it.effect("bounds transactions by count and bytes, including the final partial group", () =>
   Effect.gen(function* () {
-    const events = Array.from({ length: 129 }, (_, index) => event(index));
-    const batches = yield* ProviderCommitBatch.group(Stream.fromArray(events), 25).pipe(
-      Stream.runCollect,
-    );
-    assert.deepEqual(
-      batches.map((batch) => batch.events.length),
-      [64, 64, 1],
-    );
-    assert.deepEqual(
-      batches.flatMap((batch) => batch.events),
-      events,
-    );
-    const large = event(1, "x".repeat(1024 * 1024));
-    const sized = yield* ProviderCommitBatch.group(Stream.make(event(0), large, event(2)), 25).pipe(
-      Stream.runCollect,
-    );
-    assert.deepEqual(
-      sized.map((batch) => batch.events.length),
-      [1, 1, 1],
-    );
-    assert.deepEqual(
-      sized.flatMap((batch) => batch.events),
-      [event(0), large, event(2)],
-    );
-  }),
+    const workloads = [
+      { events: Array.from({ length: 129 }, (_, index) => event(index)), sizes: [64, 64, 1] },
+      { events: [event(0), event(1, "x".repeat(1024 * 1024)), event(2)], sizes: [1, 1, 1] },
+      {
+        events: [event(0, "x".repeat(600_000)), event(1, "y".repeat(600_000)), event(2)],
+        sizes: [1, 1, 1],
+      },
+    ];
+    for (const { events, sizes } of workloads) {
+      const recorder = yield* recordBatches(25);
+      const pulled = yield* Deferred.make<void>();
+      let arrivals = 0;
+      const consumer = yield* recorder
+        .consume(
+          Stream.fromArray(events).pipe(
+            Stream.tap(() =>
+              ++arrivals === events.length ? Deferred.succeed(pulled, undefined) : Effect.void,
+            ),
+          ),
+          recorder.process,
+          Effect.succeed(false),
+        )
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(pulled);
+      yield* TestClock.adjust(0);
+      yield* recorder.barrier(Effect.void);
+      yield* TestClock.adjust(25);
+      yield* Fiber.join(consumer);
+      const batches = yield* Queue.takeAll(recorder.output);
+      assert.deepEqual(
+        batches.map((batch) => batch.length),
+        sizes,
+      );
+      assert.deepEqual(batches.flat(), events);
+    }
+  }).pipe(Effect.scoped),
 );
 
-it.effect("delivers the pending prefix before propagating a source failure", () =>
+it.effect("keeps updates immediate and ordered when batching is disabled", () =>
   Effect.gen(function* () {
-    const observed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-    const exit = yield* ProviderCommitBatch.group(
-      Stream.concat(Stream.make(event(1), event(2)), Stream.fail("provider failed")),
-      25,
-    ).pipe(
-      Stream.runForEach((batch) => Effect.sync(() => observed.push(...batch.events))),
-      Effect.exit,
-    );
-    assert.deepEqual(observed, [event(1), event(2)]);
-    assert.deepEqual(exit, Exit.fail("provider failed"));
-  }),
-);
-
-it.effect("keeps controls and individual writes immediate when the window is disabled", () =>
-  Effect.gen(function* () {
-    const batches = yield* ProviderCommitBatch.group(
+    const seen: ProviderAdapter.ProviderAdapterV2Event[] = [];
+    const coordinator = yield* ProviderCommitBatch.make(() => Effect.die("must not batch"), 0);
+    yield* coordinator.consume(
       Stream.make(event(1), control, event(2)),
-      0,
-    ).pipe(Stream.runCollect);
-    assert.deepEqual(
-      batches.map((batch) => batch.events),
-      [[event(1)], [control], [event(2)]],
+      (raw) =>
+        Effect.sync(() => {
+          seen.push(raw);
+        }),
+      Effect.succeed(false),
     );
-  }),
+    assert.deepEqual(seen, [event(1), control, event(2)]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect.each([
@@ -152,17 +173,7 @@ it.effect.each([
   "shares bounded transactions across $streams streams with $updates updates each",
   ({ streams, updates }) =>
     Effect.gen(function* () {
-      const commits = yield* Queue.unbounded<ReadonlyArray<string>>();
-      let transaction: string[] = [];
-      const coordinator = yield* ProviderCommitBatch.make(
-        (work) =>
-          Effect.gen(function* () {
-            transaction = [];
-            yield* work;
-            yield* Queue.offer(commits, transaction);
-          }),
-        10,
-      );
+      const coordinator = yield* recordBatches(10);
       const inputs = yield* Effect.forEach(Array.from({ length: streams }), () =>
         Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
       );
@@ -179,10 +190,7 @@ it.effect.each([
                   : Effect.void;
               }),
             ),
-            (raw) =>
-              Effect.sync(() => {
-                if (raw.type === "message.updated") transaction.push(raw.message.text);
-              }),
+            coordinator.process,
             Effect.succeed(true),
           )
           .pipe(Effect.forkScoped({ startImmediately: true })),
@@ -193,12 +201,12 @@ it.effect.each([
       }
       yield* Deferred.await(pulled);
       yield* TestClock.adjust(0);
-      if (updates === 1) assert.equal(yield* Queue.size(commits), 0);
+      if (updates === 1) assert.equal(yield* Queue.size(coordinator.output), 0);
       yield* coordinator.barrier(Effect.void);
-      const batches: ReadonlyArray<string>[] = [];
+      const batches: Array<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>> = [];
       let count = 0;
       while (count < streams * updates) {
-        const batch = yield* Queue.take(commits);
+        const batch = yield* Queue.take(coordinator.output);
         batches.push(batch);
         count += batch.length;
       }
@@ -206,7 +214,14 @@ it.effect.each([
         batches.map((batch) => batch.length),
         streams * updates > 64 ? [64, 36] : [10],
       );
-      assert.equal(new Set(batches.flat()).size, streams * updates);
+      assert.equal(
+        new Set(
+          batches
+            .flat()
+            .flatMap((raw) => (raw.type === "message.updated" ? [raw.message.text] : [])),
+        ).size,
+        streams * updates,
+      );
       for (const input of inputs) yield* Queue.offer(input, control);
       yield* Effect.forEach(consumers, Fiber.join);
     }).pipe(Effect.scoped),
@@ -332,18 +347,8 @@ it.effect.each(["failure", "stop"] as const)(
 it.effect("does not force a separate commit for every consumer that ends", () =>
   Effect.gen(function* () {
     const pulled = yield* Deferred.make<void>();
-    const writes: number[] = [];
     let arrivals = 0;
-    let count = 0;
-    const coordinator = yield* ProviderCommitBatch.make(
-      (work) =>
-        Effect.gen(function* () {
-          count = 0;
-          yield* work;
-          writes.push(count);
-        }),
-      10,
-    );
+    const coordinator = yield* recordBatches(10);
     for (let index = 0; index < 10; index++) {
       yield* coordinator
         .consume(
@@ -352,10 +357,7 @@ it.effect("does not force a separate commit for every consumer that ends", () =>
               ++arrivals === 10 ? Deferred.succeed(pulled, undefined) : Effect.void,
             ),
           ),
-          () =>
-            Effect.sync(() => {
-              count++;
-            }),
+          coordinator.process,
           Effect.succeed(false),
         )
         .pipe(Effect.forkScoped({ startImmediately: true }));
@@ -363,7 +365,10 @@ it.effect("does not force a separate commit for every consumer that ends", () =>
     yield* Deferred.await(pulled);
     yield* TestClock.adjust(0);
     yield* coordinator.barrier(Effect.void);
-    assert.deepEqual(writes, [10]);
+    assert.deepEqual(
+      (yield* Queue.takeAll(coordinator.output)).map((batch) => batch.length),
+      [10],
+    );
   }).pipe(Effect.scoped),
 );
 

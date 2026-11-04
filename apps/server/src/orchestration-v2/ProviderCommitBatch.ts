@@ -1,5 +1,4 @@
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -26,128 +25,74 @@ export const windowMs = Config.String("T3CODE_EXPERIMENTAL_COMMIT_WINDOW_MS").pi
 );
 
 type Event = ProviderAdapter.ProviderAdapterV2Event;
-interface Batch<T = Event> {
-  readonly events: ReadonlyArray<T>;
-  readonly bytes: number;
-  readonly openedAt: number;
-  readonly reason: "deadline" | "limit" | "control" | "end" | "failure";
-}
-
 const isSnapshot = (event: Event) =>
   event.type === "node.updated" ||
   event.type === "message.updated" ||
   event.type === "turn_item.updated" ||
   event.type === "plan.updated";
 
-export function group<E, R>(source: Stream.Stream<Event, E, R>, window: number) {
-  if (window === 0)
-    return source.pipe(
-      Stream.map((event): Batch => ({ events: [event], bytes: 0, openedAt: 0, reason: "control" })),
-    );
-  return collect(source, window, (event) =>
-    (isSnapshot(event)
-      ? encodeQueue(event).pipe(Effect.map(Buffer.byteLength))
-      : Effect.succeed(0)
-    ).pipe(Effect.map((bytes) => ({ snapshot: isSnapshot(event), bytes }))),
-  );
-}
-
-function collect<T, E, R>(
-  source: Stream.Stream<T, E, R>,
-  window: number,
-  describe: (item: T) => Effect.Effect<{ snapshot: boolean; bytes: number }, Schema.SchemaError>,
-) {
-  type Signal =
-    | {
-        readonly _tag: "Event";
-        readonly event: T;
-        readonly bytes: number;
-        readonly snapshot: boolean;
-      }
-    | { readonly _tag: "Failure"; readonly cause: Cause.Cause<E | Schema.SchemaError> }
-    | { readonly _tag: "End" };
-  const signals = source.pipe(
-    Stream.mapEffect((event) =>
-      describe(event).pipe(
-        Effect.map((description): Signal => ({ _tag: "Event", event, ...description })),
-      ),
-    ),
-    // A failed source must not discard the prefix already collected by the sink.
-    Stream.catchCause((cause) => Stream.succeed<Signal>({ _tag: "Failure", cause })),
-    Stream.concat(Stream.succeed<Signal>({ _tag: "End" })),
-  );
-  const collect = Sink.fold(
-    () => ({ signals: [] as Array<Signal>, bytes: 0, openedAt: 0, stop: false }),
-    (state) => !state.stop,
-    (state, signal: Signal) =>
-      Effect.gen(function* () {
-        if (state.signals.length === 0) state.openedAt = yield* Clock.currentTimeMillis;
-        state.signals.push(signal);
-        if (signal._tag === "Event") state.bytes += signal.bytes;
-        state.stop =
-          signal._tag !== "Event" ||
-          !signal.snapshot ||
-          state.signals.length >= MAX_EVENTS ||
-          state.bytes >= MAX_BYTES;
-        return state;
-      }),
-  );
-  return signals.pipe(
-    Stream.aggregateWithin(collect, Schedule.spaced(window)),
-    Stream.flatMap((state) => {
-      const groups: Array<Batch<T> | Extract<Signal, { _tag: "Failure" }>> = [];
-      let events: Array<T> = [];
-      let bytes = 0;
-      const flush = (reason: Batch["reason"]) => {
-        if (events.length === 0) return;
-        groups.push({ events, bytes, openedAt: state.openedAt, reason });
-        events = [];
-        bytes = 0;
-      };
-      for (const signal of state.signals) {
-        if (signal._tag === "Failure") {
-          flush("failure");
-          groups.push(signal);
-        } else if (signal._tag === "End") flush("end");
-        else if (!signal.snapshot) {
-          flush("control");
-          groups.push({
-            events: [signal.event],
-            bytes: signal.bytes,
-            openedAt: state.openedAt,
-            reason: "control",
-          });
-        } else {
-          if (bytes + signal.bytes > MAX_BYTES) flush("limit");
-          events.push(signal.event);
-          bytes += signal.bytes;
-          if (bytes >= MAX_BYTES || events.length >= MAX_EVENTS) flush("limit");
-        }
-      }
-      flush("deadline");
-      return Stream.fromArray(groups).pipe(
-        Stream.mapEffect((batch) =>
-          "_tag" in batch ? Effect.failCause(batch.cause) : Effect.succeed(batch),
-        ),
-      );
-    }),
-  );
-}
-
 export class CommitBatchError extends Schema.TaggedError<CommitBatchError>()("CommitBatchError", {
   cause: Schema.Defect(),
 }) {}
 
 interface Job {
-  readonly owner: object;
+  readonly owner: { active: boolean };
   readonly queuedAt: number;
   readonly snapshot: boolean;
   readonly bytes: number;
-  readonly active: () => boolean;
   readonly execute: Effect.Effect<void, CommitBatchError>;
   readonly settle: (exit: Exit.Exit<void, CommitBatchError>) => Effect.Effect<void>;
   readonly cancel: Effect.Effect<void>;
 }
+interface Batch {
+  readonly events: ReadonlyArray<Job>;
+  readonly bytes: number;
+  readonly reason: "deadline" | "limit" | "control";
+}
+
+function collect(source: Stream.Stream<Job>, window: number) {
+  const sink = Sink.fold(
+    () => ({ events: [] as Array<Job>, bytes: 0, stop: false }),
+    (state) => !state.stop,
+    (state, job: Job) =>
+      Effect.sync(() => {
+        state.events.push(job);
+        state.bytes += job.bytes;
+        state.stop = !job.snapshot || state.events.length >= MAX_EVENTS || state.bytes >= MAX_BYTES;
+        return state;
+      }),
+  );
+  return source.pipe(
+    Stream.aggregateWithin(sink, Schedule.spaced(window)),
+    Stream.flatMap((state) => {
+      const last = state.events.at(-1);
+      if (last === undefined) return Stream.empty;
+      if (last.snapshot && (state.events.length === 1 || state.bytes <= MAX_BYTES)) {
+        return Stream.succeed<Batch>({
+          events: state.events,
+          bytes: state.bytes,
+          reason:
+            state.events.length >= MAX_EVENTS || state.bytes >= MAX_BYTES ? "limit" : "deadline",
+        });
+      }
+      // The fold can include one overflowing job or a trailing control; isolate it from the prefix.
+      const batches: Array<Batch> = [];
+      if (state.events.length > 1)
+        batches.push({
+          events: state.events.slice(0, -1),
+          bytes: state.bytes - last.bytes,
+          reason: last.snapshot ? "limit" : "control",
+        });
+      batches.push({
+        events: [last],
+        bytes: last.bytes,
+        reason: !last.snapshot ? "control" : last.bytes >= MAX_BYTES ? "limit" : "deadline",
+      });
+      return Stream.fromArray(batches);
+    }),
+  );
+}
+
 const CurrentWorker = Context.Reference<number | undefined>(
   "t3/ProviderCommitBatch/CurrentWorker",
   {
@@ -181,7 +126,6 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
       queuedAt: yield* Clock.currentTimeMillis,
       snapshot,
       bytes,
-      active: () => token.active,
       execute: effect.pipe(
         Effect.mapError((cause) => new CommitBatchError({ cause })),
         Effect.provideContext(caller),
@@ -216,14 +160,12 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     return Deferred.await(reply);
   });
   if (window > 0) {
-    yield* collect(Stream.fromQueue(queue), window, (job) =>
-      Effect.succeed({ snapshot: job.snapshot, bytes: job.bytes }),
-    ).pipe(
+    yield* collect(Stream.fromQueue(queue), window).pipe(
       Stream.runForEach((batch) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const jobs = batch.events.filter((job) => job.active());
-            for (const job of batch.events) if (!job.active()) yield* job.cancel;
+            const jobs = batch.events.filter((job) => job.owner.active);
+            for (const job of batch.events) if (!job.owner.active) yield* job.cancel;
             if (jobs.length === 0) return;
             yield* Effect.annotateCurrentSpan({
               "orchestration_v2.work_item_count": jobs.length,
@@ -234,9 +176,13 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
               "orchestration_v2.batch_wait_ms":
                 (yield* Clock.currentTimeMillis) - Math.min(...jobs.map((job) => job.queuedAt)),
             });
-            const work = Effect.forEach(jobs, (job) => (job.active() ? job.execute : job.cancel), {
-              discard: true,
-            });
+            const work = Effect.forEach(
+              jobs,
+              (job) => (job.owner.active ? job.execute : job.cancel),
+              {
+                discard: true,
+              },
+            );
             const exit = yield* restore(
               (batch.reason === "control" && jobs.length === 1 && !jobs[0]!.snapshot
                 ? work
@@ -254,13 +200,10 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   const barrier = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
     if (window === 0 || (yield* CurrentWorker) === (yield* Effect.fiberId)) return yield* effect;
     const token = { active: true };
-    return yield* Effect.gen(function* () {
-      const exit = yield* enqueue(Effect.exit(effect), token, false, 0).pipe(
-        Effect.flatten,
-        Effect.orDie,
-      );
-      return yield* exit;
-    }).pipe(
+    return yield* enqueue(Effect.exit(effect), token, false, 0).pipe(
+      Effect.flatten,
+      Effect.orDie,
+      Effect.flatMap((exit) => exit),
       Effect.ensuring(
         Effect.sync(() => {
           token.active = false;
