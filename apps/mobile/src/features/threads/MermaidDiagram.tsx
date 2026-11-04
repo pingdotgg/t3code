@@ -95,6 +95,7 @@ function RenderedMermaidDiagram(props: { readonly source: string; readonly fallb
           overScrollMode="never"
           onContentProcessDidTerminate={restart}
           onRenderProcessGone={restart}
+          onError={() => setCrashed(true)}
           style={{ flex: 1, backgroundColor: "transparent" }}
         />
       </View>
