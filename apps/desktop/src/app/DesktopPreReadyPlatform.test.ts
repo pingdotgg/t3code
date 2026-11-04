@@ -81,6 +81,38 @@ describe("DesktopPreReadyPlatform", () => {
     readdirSyncMock.mockReset().mockReturnValue([]);
   });
 
+  it.effect.each([
+    { settings: "{}", label: "disables GPU on NVIDIA Wayland", expected: true },
+    {
+      settings: JSON.stringify({ disableGpuAcceleration: false }),
+      label: "honors disableGpuAcceleration:false opt-out",
+      expected: false,
+    },
+  ])("pre-ready GPU switch: $label", ({ settings, expected }) => {
+    vi.stubEnv("T3CODE_HOME", "/isolated");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    existsSyncMock.mockReturnValue(true);
+    readFileSyncMock.mockReturnValue(settings);
+    getSwitchValueMock.mockReturnValue("");
+    hasSwitchMock.mockReturnValue(false);
+    readdirSyncMock.mockReturnValue([]);
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          ),
+        );
+        const appended = appendSwitchMock.mock.calls.some(([name]) => name === "disable-gpu");
+        assert.equal(appended, expected);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
     vi.stubEnv("T3CODE_HOME", "/isolated");
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
