@@ -223,7 +223,11 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     if (!(minutes >= 1 && Number.isSafeInteger(everyMs))) return null;
     if (!draft.intervalWindowEnabled) return { type: "interval", everyMs };
     const weekdays = normalizedWeekdays(draft.weekdays);
-    if (!weekdays || !isIntervalWindowRange(draft.intervalWindowStart, draft.intervalWindowEnd)) {
+    if (
+      !weekdays ||
+      weekdays.length === 0 ||
+      !isIntervalWindowRange(draft.intervalWindowStart, draft.intervalWindowEnd)
+    ) {
       return null;
     }
     return {
@@ -232,7 +236,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
       window: {
         start: draft.intervalWindowStart.trim(),
         end: draft.intervalWindowEnd.trim(),
-        ...(weekdays.length === 0 || weekdays.length === 7 ? {} : { weekdays }),
+        ...(weekdays.length === 7 ? {} : { weekdays }),
       },
     };
   }

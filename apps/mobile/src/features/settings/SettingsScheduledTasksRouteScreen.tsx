@@ -168,9 +168,10 @@ function weekdaysAfterRepeatAction(
   if (id === "weekdays") return [1, 2, 3, 4, 5];
   const day = DAYS.find((item) => String(item.index) === id);
   if (!day) return weekdays;
-  return weekdays.includes(day.index)
+  const next = weekdays.includes(day.index)
     ? weekdays.filter((index) => index !== day.index)
     : [...weekdays, day.index];
+  return next.length === 0 ? weekdays : next;
 }
 
 function repeatLabel(weekdays: ReadonlyArray<number>): string {
@@ -1424,10 +1425,11 @@ function TaskForm({
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined) ||
           (draft.schedule.mode === "interval" &&
             draft.schedule.intervalWindowEnabled &&
-            !isIntervalWindowRange(
-              draft.schedule.intervalWindowStart,
-              draft.schedule.intervalWindowEnd,
-            ))
+            (draft.schedule.weekdays.length === 0 ||
+              !isIntervalWindowRange(
+                draft.schedule.intervalWindowStart,
+                draft.schedule.intervalWindowEnd,
+              )))
         }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}

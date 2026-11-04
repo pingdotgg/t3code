@@ -345,6 +345,7 @@ describe("interval time windows", () => {
   it("keeps an interval without a window unchanged", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.intervalWindowEnabled).toBe(false);
+    expect(draft.weekdays.size).toBe(7);
     expect(draft.intervalWindowStart).toBe("10:00");
     expect(draft.intervalWindowEnd).toBe("20:00");
     expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
@@ -400,7 +401,7 @@ describe("interval time windows", () => {
     };
     expect(draft.weekdays.size).toBe(7);
     expect(scheduleFromDraft(draft)).toEqual(daily);
-    expect(scheduleFromDraft({ ...draft, weekdays: new Set() })).toEqual(daily);
+    expect(scheduleFromDraft({ ...draft, weekdays: new Set() })).toBeNull();
     expect(scheduleFromDraft({ ...draft, intervalWindowEnabled: false })).toEqual({
       type: "interval",
       everyMs: 3_600_000,

@@ -168,6 +168,90 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("reschedules a windowed interval that is due after its window has closed", () =>
+  Effect.gen(function* () {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-07-07T04:00:00.000Z";
+    const due = "2026-07-07T02:30:00.000Z";
+    yield* insertRow(
+      sql,
+      {
+        id: "closed",
+        next: due,
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "20:00" },
+        }),
+      },
+      now,
+    );
+    yield* insertRow(
+      sql,
+      {
+        id: "open",
+        next: due,
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "22:00" },
+        }),
+      },
+      now,
+    );
+    yield* TestClock.setTime(Date.parse(now));
+    const dispatched = yield* Ref.make<Array<string>>([]);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          Layer.provideMerge(
+            ScheduledTaskService.layer,
+            Layer.mergeAll(
+              ManagedPolicy.layerTest(),
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: () =>
+                  Ref.update(dispatched, (ids) => [...ids, "launched"]).pipe(
+                    Effect.andThen(Effect.die(new Error("test launch failure"))),
+                  ),
+              }),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              NodeCrypto.layer,
+              Scheduler.layer,
+            ),
+          ),
+        );
+        yield* TestClock.adjust("6 seconds");
+      }),
+    );
+    const rows = yield* sql<{
+      task_id: string;
+      last_run_status: string;
+      run_count: number;
+      next_run_at: string | null;
+    }>`SELECT task_id, last_run_status, run_count, next_run_at FROM scheduled_tasks`;
+    const byId = new Map(rows.map((row) => [row.task_id, row]));
+    assert.deepEqual(yield* Ref.get(dispatched), ["launched"]);
+    assert.equal(byId.get("closed")?.last_run_status, "never");
+    assert.equal(byId.get("closed")?.run_count, 0);
+    assert.equal(byId.get("closed")?.next_run_at, "2026-07-07T17:00:00.000Z");
+    assert.equal(byId.get("open")?.last_run_status, "failed");
+    assert.equal(byId.get("open")?.run_count, 1);
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
+
 it.effect(
   "releases interrupted runs on startup and still executes due tasks, skipping corrupt rows",
   () =>

@@ -197,6 +197,8 @@ export function scheduleDraftErrors(draft: DraftState) {
       return [{ title: "Invalid time window", description: "Enter a start and end time." }];
     if (end <= start)
       return [{ title: "Invalid time window", description: "End must be after start." }];
+    if (draft.weekdays.size === 0)
+      return [{ title: "Choose days", description: "Select at least one day." }];
     return [];
   }
   if (draft.scheduleMode !== "webhook") return [];
@@ -308,14 +310,14 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     const start = canonicalTimeOfDay(draft.intervalWindowStart);
     const end = canonicalTimeOfDay(draft.intervalWindowEnd);
     if (start === null || end === null) return null;
-    const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
+    if (draft.weekdays.size === 0) return null;
     return {
       type: "interval",
       everyMs,
       window: {
         start,
         end,
-        ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+        ...(draft.weekdays.size === 7 ? {} : { weekdays: [...draft.weekdays].toSorted() }),
       },
     };
   }

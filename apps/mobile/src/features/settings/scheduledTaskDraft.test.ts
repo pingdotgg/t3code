@@ -183,7 +183,8 @@ describe("scheduleFromDraft", () => {
       intervalWindowStart: "10:00",
       intervalWindowEnd: "20:00",
     };
-    for (const weekdays of [[], [0, 1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1, 0, 0]]) {
+    expect(scheduleFromDraft({ ...base, weekdays: [] })).toBeNull();
+    for (const weekdays of [[0, 1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1, 0, 0]]) {
       expect(scheduleFromDraft({ ...base, weekdays })).toEqual({
         type: "interval",
         everyMs: 3_600_000,

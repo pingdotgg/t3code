@@ -58,7 +58,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedScheduledRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -1273,12 +1273,14 @@ export const layer = Layer.effect(
         due,
         ({ task, dueAt }) =>
           Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
+            isMissedScheduledRun(task.schedule, dueAt, now)
               ? rescheduleMissedRun(
                   task,
                   now,
                   "missed",
-                  "Missed a scheduled run because the server was not running at that time.",
+                  task.schedule.type === "fixed_time"
+                    ? "Missed a scheduled run because the server was not running at that time."
+                    : undefined,
                 )
               : runTask(task, "scheduled"),
           ).pipe(
