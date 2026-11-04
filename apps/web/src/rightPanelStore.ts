@@ -239,9 +239,8 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
-// The workspace menu stays out of the way until its toggle opens it.
 const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
-  inlineOpen: false,
+  inlineOpen: true,
   popoverOpen: false,
 };
 
