@@ -70,7 +70,7 @@ export default function Spreadsheet(props: {
       .then((value) => {
         if (!value) throw new Error("This workbook has no visible sheets.");
         setOpened({ ...value, engine });
-        onDetails(`${value.tabs.length} sheets`);
+        onDetails(`${value.tabs.length} sheet${value.tabs.length === 1 ? "" : "s"}`);
       })
       .catch(fail);
     return () => {
