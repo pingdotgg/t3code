@@ -34,8 +34,7 @@ describe("StyledDiffCodeView", () => {
   it("copies every line of a file after select all, including rows the virtualizer dropped", async () => {
     const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
     const container = document.createElement("div");
-    container.style.width = "800px";
-    container.style.height = "300px";
+    container.style.cssText = "display: flex; width: 800px; height: 300px;";
     await using _screen = await render(
       <StyledDiffCodeView
         viewerRef={viewerRef}
