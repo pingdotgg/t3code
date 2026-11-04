@@ -445,8 +445,6 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
             : "diff-render-surface [--code-background:var(--code-surface)] outline-none"
         }
         options={{
-          // Changed rows read from their row and gutter tints; no edge bars or +/- glyphs.
-          diffIndicators: "none",
           ...options,
           unsafeCSS,
           itemMetrics: {
