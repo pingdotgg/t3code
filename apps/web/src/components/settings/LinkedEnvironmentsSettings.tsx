@@ -11,6 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -325,7 +326,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={
                     machine === null
-                      ? "From that environment's Connections, or t3 pair there"
+                      ? `From that environment's Connections, or ${T3_LEARN_COMMAND} pair there`
                       : "Paste the code"
                   }
                   disabled={busy}

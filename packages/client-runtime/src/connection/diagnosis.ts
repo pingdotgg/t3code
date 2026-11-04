@@ -3,6 +3,7 @@ import {
   type T3ConnectTroubleshootingSection,
 } from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import * as DateTime from "effect/DateTime";
 
 import type {
@@ -154,7 +155,7 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
 }
 
 function steps(host: string, located: Located, failure: ConnectionAttemptError | null): string[] {
-  const checkHost = `On ${host}, check Settings > Sharing & access or run \`t3 connect status\`.`;
+  const checkHost = `On ${host}, check Settings > Sharing & access or run \`${T3_LEARN_COMMAND} connect status\`.`;
   switch (located.cause) {
     case "offline":
       return ["Connect this device to the internet. T3 Code reconnects on its own."];

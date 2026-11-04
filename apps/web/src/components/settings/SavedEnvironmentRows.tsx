@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import {
   AuthRelayWriteScope,
   type EnvironmentId,
@@ -694,7 +695,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ) : linkRevoked ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description={`This environment was removed from T3 Connect. Run \`${T3_LEARN_COMMAND} connect link\` on the host to link it again.`}
         />
       ) : null}
       {signedOut && isElectron ? null : (

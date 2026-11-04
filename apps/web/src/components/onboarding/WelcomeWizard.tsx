@@ -24,6 +24,7 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import * as Schema from "effect/Schema";
 import {
   ArrowRightIcon,
@@ -541,7 +542,7 @@ function ConnectAccountOption({
             <p className="text-sm text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
-            <CommandBlock command="npx t3 connect" className="mt-3" />
+            <CommandBlock command={`${T3_LEARN_COMMAND} connect`} className="mt-3" />
             <p className="mt-3 text-xs text-muted-foreground">
               Keep {APP_BASE_NAME} running. Select the computers you want to set up above.
             </p>
@@ -650,11 +651,12 @@ function PairingForm({
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
               On the computer with your code, start {APP_BASE_NAME} or run{" "}
-              <code className="font-mono">npx t3 serve</code>, then run:
+              <code className="font-mono">{T3_LEARN_COMMAND} serve</code>, then run:
             </p>
-            <CommandBlock command="npx t3 pair" className="mt-2" />
+            <CommandBlock command={`${T3_LEARN_COMMAND} pair`} className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
+              On a tailnet, run{" "}
+              <code className="font-mono">{T3_LEARN_COMMAND} pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>

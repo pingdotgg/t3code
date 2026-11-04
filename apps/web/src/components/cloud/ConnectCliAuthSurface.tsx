@@ -1,5 +1,6 @@
 import { useAuth, useClerk } from "@clerk/react";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -14,8 +15,7 @@ import { Button } from "../ui/button";
 const invalidLinkMessage = {
   context: "Authorization request",
   title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+  description: `The link is missing its authorization request. Re-run \`${T3_LEARN_COMMAND} connect\` in your terminal and open the freshly printed URL.`,
 } as const;
 
 export function ConnectCliAuthorizeSurface() {
