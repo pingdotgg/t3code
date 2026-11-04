@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -174,51 +175,112 @@ it("titles from a long first line without splitting an emoji", () => {
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
 
-it.effect("list on a linked environment names its project by id and pages through it", () =>
-  Effect.gen(function* () {
-    const environmentId = EnvironmentId.make("env-remote");
-    const projectId = ProjectId.make("project-remote");
-    const page = (nextCursor: number | null) => ({
-      projectId,
-      currentThreadId: null,
-      threads: [],
-      nextCursor,
-      total: 2,
-    });
-    for (const [scope, target] of [
-      [{ project: Option.some(projectId), allProjects: false }, { projectId }],
-      [{ project: Option.none(), allProjects: true }, { allProjects: true }],
-    ] as const) {
-      // No t3_project_list script: resolving the id against local projects dies.
-      const { tools, calls } = scriptedTools({ t3_thread_list: [page(1), page(null)] });
+const repo = { canonicalKey: "github.com/acme/app" };
+const projectList = (...projects: Array<{ id: string; repositoryIdentity?: typeof repo }>) => ({
+  projects: projects.map((project) => ({
+    title: project.id,
+    workspaceRoot: `/work/${project.id}`,
+    ...project,
+  })),
+  nextCursor: null,
+});
+const threadPage = (nextCursor: number | null) => ({
+  projectId: null,
+  currentThreadId: null,
+  threads: [],
+  nextCursor,
+  total: 0,
+});
+const listAt = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.provideService(HostProcess.WorkingDirectory, "/work/app"),
+    Effect.provide(NodeServices.layer),
+  );
 
-      yield* listThreads(tools, { environment: Option.some(environmentId), ...scope });
+it.effect(
+  "list elsewhere takes that environment's project id or the one with this repository",
+  () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("env-remote");
+      for (const project of ["remote-app", "."]) {
+        const { tools, calls } = scriptedTools({
+          t3_project_list: [
+            projectList({ id: "remote-app", repositoryIdentity: repo }, { id: "remote-other" }),
+            projectList({ id: "app", repositoryIdentity: repo }),
+          ],
+          t3_thread_list: [threadPage(1), threadPage(null)],
+        });
 
-      assert.deepStrictEqual(
-        calls.map((entry) => entry.args),
-        [0, 1].map((cursor) => ({
-          environmentId,
-          ...target,
-          includeSubagents: false,
-          limit: 100,
-          cursor,
-        })),
-      );
-    }
-  }).pipe(Effect.provide(NodeServices.layer)),
+        yield* listThreads(tools, {
+          environment: Option.some(environmentId),
+          allEnvironments: false,
+          project: Option.some(project),
+          allProjects: false,
+        });
+
+        assert.deepStrictEqual(
+          calls.filter((entry) => entry.tool === "t3_thread_list").map((entry) => entry.args),
+          [0, 1].map((cursor) => ({
+            environmentId,
+            projectId: "remote-app",
+            includeSubagents: false,
+            limit: 100,
+            cursor,
+          })),
+        );
+      }
+    }).pipe(listAt),
 );
 
-it.effect("list on a linked environment needs a project id or --all-projects", () =>
+it.effect("--all-environments skips a linked environment it cannot list", () =>
   Effect.gen(function* () {
-    const { tools, calls } = scriptedTools({});
+    const link = (id: string, status: "reachable" | "unreachable") => ({
+      environmentId: id,
+      label: id,
+      status,
+      access: "read-only",
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      lastError: null,
+    });
+    const { tools, calls } = scriptedTools({
+      t3_environment_read: [{ environmentId: "env-here", label: "here" }],
+      t3_environment_links: [
+        {
+          environmentId: "env-here",
+          links: [
+            link("env-a", "reachable"),
+            link("env-b", "unreachable"),
+            link("env-c", "reachable"),
+          ],
+          notListed: "",
+        },
+      ],
+      t3_project_list: [
+        projectList({ id: "app", repositoryIdentity: repo }),
+        projectList({ id: "a-app", repositoryIdentity: repo }),
+        projectList({ id: "app", repositoryIdentity: repo }),
+        projectList({ id: "c-other" }),
+        projectList({ id: "app", repositoryIdentity: repo }),
+      ],
+      t3_thread_list: [threadPage(null), threadPage(null)],
+    });
 
-    const error = yield* listThreads(tools, {
-      environment: Option.some("env-remote"),
+    const listed = yield* listThreads(tools, {
+      environment: Option.none(),
+      allEnvironments: true,
       project: Option.none(),
       allProjects: false,
-    }).pipe(Effect.flip);
+    });
 
-    assert.strictEqual(error._tag, "ThreadUsageError");
-    assert.deepStrictEqual(calls, []);
-  }).pipe(Effect.provide(NodeServices.layer)),
+    assert.deepStrictEqual(
+      listed.map((entry) => entry.label),
+      ["here", "env-a"],
+    );
+    assert.deepStrictEqual(
+      calls
+        .filter((entry) => entry.tool === "t3_thread_list")
+        .map((entry) => (entry.args as { projectId: string }).projectId),
+      ["app", "a-app"],
+    );
+  }).pipe(listAt),
 );

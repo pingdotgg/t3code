@@ -114,9 +114,10 @@ the message to read it from stdin.
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.
 
-`t3 thread list --all-projects` lists every project's threads. To list a linked
-environment's threads, pass `--environment <id>` from `t3 environment list`
-together with `--all-projects` or `--project <id>`. Paths name projects only here.
+`t3 thread list --all-projects` lists every project's threads. Add
+`--environment <id>` from `t3 environment list` to list a linked environment's,
+or `--all-environments` for this one and every linked one. There, `.` means the
+project with the same repository; an id from that environment also works.
 
 ## Remove an agent
 

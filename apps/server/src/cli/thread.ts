@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -91,6 +92,16 @@ export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProject
   }
 }
 
+export class ThreadRemoteProjectError extends Schema.TaggedError<ThreadRemoteProjectError>()(
+  "ThreadRemoteProjectError",
+  { environmentId: EnvironmentId, detail: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return `${this.detail} Pass --project with a project id from ${this.environmentId}.`;
+  }
+}
+
 /** Exit code 2 lets a script tell "needs a human" apart from a failed run. */
 export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputError>()(
   "ThreadNeedsInputError",
@@ -121,6 +132,7 @@ const ThreadCliError = Schema.Union([
   ThreadToolFailedError,
   ThreadUsageError,
   ThreadProjectNotFoundError,
+  ThreadRemoteProjectError,
   ThreadNeedsInputError,
   ThreadRunEndedError,
 ]);
@@ -153,7 +165,14 @@ const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
 
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
-    Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
+    Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      workspaceRoot: Schema.String,
+      repositoryIdentity: Schema.optional(
+        Schema.NullOr(Schema.Struct({ canonicalKey: Schema.String })),
+      ),
+    }),
   ),
   nextCursor: Schema.NullOr(Schema.Int),
 });
@@ -258,13 +277,16 @@ const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argum
   return text;
 });
 
-const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools: ThreadTools) {
+const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (
+  tools: ThreadTools,
+  environmentId?: EnvironmentId,
+) {
   const projects: Array<(typeof ProjectListResult.Type)["projects"][number]> = [];
   let cursor: number | null = 0;
   while (cursor !== null) {
     const page: typeof ProjectListResult.Type = yield* tools.call(
       "t3_project_list",
-      { cursor, limit: 100 },
+      { ...(environmentId === undefined ? {} : { environmentId }), cursor, limit: 100 },
       ProjectListResult,
     );
     projects.push(...page.projects);
@@ -561,47 +583,51 @@ const decodeThreadId = (value: string) =>
   );
 
 const decodeEnvironmentId = Schema.decodeUnknownEffect(EnvironmentId);
-const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
 
-/** A linked environment's project is named by id: local paths mean nothing there. */
-export const listThreads = Effect.fn("cli.thread.listThreads")(function* (
+const EnvironmentReadResult = Schema.Struct({ environmentId: EnvironmentId, label: Schema.String });
+
+/**
+ * Project ids are per environment, so a local path or id names the project
+ * there with the same repository, as remote delegation matches it.
+ */
+const resolveRemoteProject = Effect.fn("cli.thread.resolveRemoteProject")(function* (
   tools: ThreadTools,
-  scope: {
-    readonly environment: Option.Option<string>;
-    readonly project: Option.Option<string>;
-    readonly allProjects: boolean;
-  },
+  environmentId: EnvironmentId,
+  identifier: string,
 ) {
-  if (scope.allProjects && Option.isSome(scope.project)) {
-    return yield* new ThreadUsageError({ detail: "Pass --project or --all-projects, not both." });
+  const there = yield* listAllProjects(tools, environmentId);
+  const byId = there.find((project) => project.id === identifier);
+  if (byId !== undefined) return byId.id;
+  const here = yield* resolveProject(tools, identifier);
+  const key = here.repositoryIdentity?.canonicalKey;
+  if (key === undefined) {
+    return yield* new ThreadRemoteProjectError({
+      environmentId,
+      detail: `${here.title} has no repository to match there.`,
+    });
   }
-  const usage = (detail: string) => () => new ThreadUsageError({ detail });
-  let environmentId: EnvironmentId | undefined;
-  if (Option.isSome(scope.environment)) {
-    const value = scope.environment.value;
-    environmentId = yield* decodeEnvironmentId(value.trim()).pipe(
-      Effect.mapError(usage(`'${value}' is not an environment id.`)),
-    );
-  }
-  let target: { readonly allProjects: true } | { readonly projectId: ProjectId };
-  if (scope.allProjects) {
-    target = { allProjects: true };
-  } else if (environmentId === undefined) {
-    const project = yield* resolveProject(
-      tools,
-      Option.getOrElse(scope.project, () => "."),
-    );
-    target = { projectId: project.id };
-  } else if (Option.isSome(scope.project)) {
-    const value = scope.project.value;
-    target = {
-      projectId: yield* decodeProjectId(value.trim()).pipe(
-        Effect.mapError(usage(`'${value}' is not a project id.`)),
-      ),
-    };
-  } else {
-    return yield* usage("With --environment, pass --project <id> or --all-projects.")();
-  }
+  const matches = there.filter((project) => project.repositoryIdentity?.canonicalKey === key);
+  if (matches.length === 1) return matches[0]!.id;
+  return yield* new ThreadRemoteProjectError({
+    environmentId,
+    detail:
+      matches.length === 0
+        ? `No project there has ${here.title}'s repository.`
+        : `Several projects there have ${here.title}'s repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}.`,
+  });
+});
+
+const listThreadsIn = Effect.fn("cli.thread.listThreadsIn")(function* (
+  tools: ThreadTools,
+  environmentId: EnvironmentId | undefined,
+  scope: { readonly project: Option.Option<string>; readonly allProjects: boolean },
+) {
+  const project = Option.getOrElse(scope.project, () => ".");
+  const target = scope.allProjects
+    ? { allProjects: true }
+    : environmentId === undefined
+      ? { projectId: (yield* resolveProject(tools, project)).id }
+      : { projectId: yield* resolveRemoteProject(tools, environmentId, project) };
   const threads: Array<OrchestratorMcpThreadListItem> = [];
   let cursor: number | null = 0;
   while (cursor !== null) {
@@ -622,11 +648,87 @@ export const listThreads = Effect.fn("cli.thread.listThreads")(function* (
   return threads;
 });
 
+/**
+ * With `allEnvironments`, a linked environment that is unreachable, has no
+ * matching project, or fails is reported on stderr and skipped.
+ */
+export const listThreads = Effect.fn("cli.thread.listThreads")(function* (
+  tools: ThreadTools,
+  scope: {
+    readonly environment: Option.Option<string>;
+    readonly allEnvironments: boolean;
+    readonly project: Option.Option<string>;
+    readonly allProjects: boolean;
+  },
+) {
+  if (scope.allProjects && Option.isSome(scope.project)) {
+    return yield* new ThreadUsageError({ detail: "Pass --project or --all-projects, not both." });
+  }
+  if (scope.allEnvironments && Option.isSome(scope.environment)) {
+    return yield* new ThreadUsageError({
+      detail: "Pass --environment or --all-environments, not both.",
+    });
+  }
+  if (!scope.allEnvironments) {
+    let environmentId: EnvironmentId | undefined;
+    if (Option.isSome(scope.environment)) {
+      const value = scope.environment.value;
+      environmentId = yield* decodeEnvironmentId(value.trim()).pipe(
+        Effect.mapError(
+          () => new ThreadUsageError({ detail: `'${value}' is not an environment id.` }),
+        ),
+      );
+    }
+    return [
+      {
+        environmentId: environmentId ?? null,
+        label: null,
+        threads: yield* listThreadsIn(tools, environmentId, scope),
+      },
+    ];
+  }
+  const here = yield* tools.call("t3_environment_read", {}, EnvironmentReadResult);
+  const { links } = yield* tools.call(
+    "t3_environment_links",
+    {},
+    OrchestratorMcpEnvironmentLinksResult,
+  );
+  const listed: Array<{
+    readonly environmentId: EnvironmentId | null;
+    readonly label: string | null;
+    readonly threads: ReadonlyArray<OrchestratorMcpThreadListItem>;
+  }> = [
+    {
+      environmentId: here.environmentId,
+      label: here.label,
+      threads: yield* listThreadsIn(tools, undefined, scope),
+    },
+  ];
+  for (const link of links) {
+    const name = `${link.label} (${link.environmentId})`;
+    if (link.status !== "reachable") {
+      yield* Console.error(`Skipped ${name}: ${link.status}.`);
+      continue;
+    }
+    const threads = yield* listThreadsIn(tools, link.environmentId, scope).pipe(
+      Effect.catchTags({
+        ThreadRemoteProjectError: (error) =>
+          Effect.as(Console.error(`Skipped ${name}: ${error.detail}`), null),
+        ThreadToolFailedError: (error) =>
+          Effect.as(Console.error(`Skipped ${name}: ${error.message}`), null),
+      }),
+    );
+    if (threads !== null)
+      listed.push({ environmentId: link.environmentId, label: link.label, threads });
+  }
+  return listed;
+});
+
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   project: Flag.String("project").pipe(
     Flag.withDescription(
-      "Project id or a path inside the project. Defaults to this directory. With --environment, a project id there.",
+      "Project id or a path inside the project. Defaults to this directory. Elsewhere, the project with its repository, or an id there.",
     ),
     Flag.optional,
   ),
@@ -640,6 +742,10 @@ const threadListCommand = Command.make("list", {
     ),
     Flag.optional,
   ),
+  allEnvironments: Flag.Boolean("all-environments").pipe(
+    Flag.withDescription("Also list every linked environment's threads."),
+    Flag.withDefault(false),
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List a project's threads, newest first."),
@@ -647,12 +753,19 @@ const threadListCommand = Command.make("list", {
     withThreadTools(
       flags,
       Effect.fn("cli.thread.list")(function* (tools) {
-        const threads = yield* listThreads(tools, flags);
+        const listed = yield* listThreads(tools, flags);
         if (flags.json) {
-          return yield* printJson(threads);
+          return yield* printJson(
+            flags.allEnvironments ? listed : listed.flatMap((entry) => entry.threads),
+          );
         }
-        for (const thread of threads) {
-          yield* Console.log(`${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`);
+        for (const { label, threads } of listed) {
+          for (const thread of threads) {
+            const where = label === null ? "" : `${label}  `;
+            yield* Console.log(
+              `${where}${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`,
+            );
+          }
         }
       }),
     ).pipe(reportThreadErrors),
