@@ -199,6 +199,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("keeps a UTF-8 BOM so a read then write round-trips the bytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const contents = "\uFEFFa,b\n1,2\n";
+        yield* fileSystem.writeFile(
+          path.join(cwd, "data.csv"),
+          Uint8Array.from([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("a,b\n1,2\n")]),
+        );
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "data.csv" });
+        expect(result.contents).toBe(contents);
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "copy.csv",
+          contents: result.contents,
+        });
+        const written = yield* fileSystem.readFile(path.join(cwd, "copy.csv"));
+        expect([...written.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      }),
+    );
+
     it.effect("finishes short reads before decoding UTF-8 text", () =>
       Effect.gen(function* () {
         const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;

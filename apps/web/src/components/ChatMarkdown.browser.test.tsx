@@ -321,6 +321,26 @@ describe("ChatMarkdown streaming", () => {
     expect(editedText).toBe("- [ ] A longer first task\n- [x] Second");
     await vi.waitFor(() => expect(checkboxes()[1]!.checked).toBe(true));
   });
+
+  it("edits the task marker in text that starts with a UTF-8 BOM", async () => {
+    setup();
+    const text = "﻿# List\r\n\r\n- [ ] First\r\n- [ ] Second\r\n";
+    let editedText: string | undefined;
+    await using rendered = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        onTaskListChange={({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+        }}
+      />,
+    );
+    const checkbox =
+      rendered.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[0]!;
+
+    await act(async () => checkbox.click());
+    expect(editedText).toBe("﻿# List\r\n\r\n- [x] First\r\n- [ ] Second\r\n");
+  });
 });
 
 describe("ChatMarkdown workspace file opens", () => {

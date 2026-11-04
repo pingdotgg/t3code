@@ -10,7 +10,8 @@ export const T3ProjectFileFromJson = fromLenientJson(T3ProjectFile);
 const decodeT3ProjectFile = Schema.decodeExit(T3ProjectFileFromJson);
 
 export function parseT3ProjectFile(contents: string): T3ProjectFile | null {
-  const decoded = decodeT3ProjectFile(contents);
+  // Project file reads keep a UTF-8 BOM, which JSON.parse rejects.
+  const decoded = decodeT3ProjectFile(contents.replace(/^\uFEFF/, ""));
   return Exit.isSuccess(decoded) ? decoded.value : null;
 }
 
