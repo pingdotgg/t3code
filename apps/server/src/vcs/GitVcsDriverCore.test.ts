@@ -2396,6 +2396,68 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect(
+      "returns an incomplete selected tracked preview while untracked discovery is held",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "README.md", "changed\n");
+          yield* writeTextFile(cwd, "new.txt", "untracked\n");
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let untrackedReads = 0;
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (ChildProcess.isStandardCommand(command) && command.args.includes("--others")) {
+                assert.equal(
+                  ++untrackedReads,
+                  1,
+                  "tracked preview must not enumerate untracked files",
+                );
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return yield* delegate.spawn(command);
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const full = yield* driver
+            .getReviewDiffPreview({ cwd, sourceKind: "working-tree" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          yield* Effect.gen(function* () {
+            const preview = yield* driver.getReviewDiffPreview({
+              cwd,
+              sourceKind: "working-tree",
+              trackedOnly: true,
+            });
+            assert.isTrue(preview.incomplete);
+            assert.deepStrictEqual(
+              preview.sources.map((source) => source.kind),
+              ["working-tree"],
+            );
+            assert.include(preview.sources[0]!.diff, "+changed");
+            assert.notInclude(preview.sources[0]!.diff, "untracked");
+          }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+          const complete = yield* Fiber.join(full);
+          assert.isUndefined(complete.incomplete);
+          assert.include(complete.sources[0]!.diff, "+untracked");
+          yield* writeTextFile(cwd, "README.md", "edited again\n");
+          const refreshed = yield* driver.getReviewDiffPreview({
+            cwd,
+            baseRef: "missing-base",
+            sourceKind: "working-tree",
+            trackedOnly: true,
+          });
+          assert.include(refreshed.sources[0]!.diff, "+edited again");
+        }),
+    );
+
     it.effect("propagates patch failures instead of reporting an empty complete diff", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2734,6 +2796,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(dirty.truncated);
         assert.notInclude(branch.diff, "z-last.txt");
         for (const source of [branch, dirty]) {
+          const selected = yield* driver.getReviewDiffPreview({
+            cwd,
+            baseRef: initialBranch,
+            sourceKind: source.kind === "working-tree" ? "working-tree" : "branch-range",
+          });
+          assert.deepStrictEqual(selected.sources, [source]);
           for (const file of source.files ?? []) {
             const individual = yield* driver.getReviewDiffPreview({
               cwd,
