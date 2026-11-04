@@ -105,12 +105,7 @@ export function ThreadRouteView({
       ? null
       : environmentCatalog.stateAtom(unlistedThreadRef.environmentId),
   );
-  const connectionPhase =
-    connection.error !== null
-      ? "blocked"
-      : connection.isPending
-        ? null
-        : (connection.data?.phase ?? null);
+  const connectionPhase = connection.error !== null ? "blocked" : (connection.data?.phase ?? null);
   const connectionUnavailable =
     connectionPhase !== null && connectionPhase !== "connected" && connectionPhase !== "connecting";
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
