@@ -873,7 +873,7 @@ export function PullRequestSummaryTab({
       }}
       tabIndex={-1}
       data-workspace-focus-default
-      className="h-full overflow-y-auto outline-none"
+      className="h-full overflow-y-auto pb-16 outline-none"
       data-pull-request-summary-scroll
     >
       <section className="px-4 pt-2.5 pb-1">
