@@ -158,11 +158,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const now = yield* Clock.currentTimeMillis;
+    const current = (yield* Ref.get(snapshotStateRef)).snapshot;
     const pollingUsage =
-      (yield* UsagePolling) && ((yield* UsageAfterReset) || now >= usageRefreshAfter);
-    const probedSnapshot = yield* input.checkProvider.pipe(
-      Effect.provideService(UsagePolling, pollingUsage),
-    );
+      (yield* UsagePolling) &&
+      ((yield* UsageAfterReset) ||
+        now >= usageRefreshAfter ||
+        current.usageLimits?.unavailable?.reason === "unsupported");
+    const probedSnapshot =
+      pollingUsage &&
+      input.checkUsageLimits &&
+      current.installed &&
+      current.status === "ready" &&
+      current.auth.status === "authenticated"
+        ? withUsageLimits(current, yield* input.checkUsageLimits)
+        : yield* input.checkProvider.pipe(Effect.provideService(UsagePolling, pollingUsage));
     if (pollingUsage) usageRefreshAfter = (yield* Clock.currentTimeMillis) + 5 * 60_000;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
@@ -186,6 +195,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               probed:
                 !pollingUsage &&
                 probedSnapshot.auth.status === "authenticated" &&
+                (probedSnapshot.usageLimits === undefined ||
+                  probedSnapshot.usageLimits.unavailable?.reason === "probeFailed") &&
                 state.snapshot.usageLimits
                   ? state.snapshot.usageLimits
                   : probedSnapshot.usageLimits,
@@ -240,12 +251,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
-    if (
-      !snapshot.enabled ||
-      !snapshot.usageLimits ||
-      snapshot.usageLimits.unavailable?.reason === "unsupported"
-    )
-      return;
+    if (!snapshot.enabled || snapshot.usageLimits?.externalUsage) return;
     // An in-flight refresh may have read cached usage, so one refresh waits behind it.
     const claim = Symbol();
     const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
@@ -352,7 +358,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   // retries, like the periodic and initial checks below.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
-  ).pipe(Effect.forkScoped);
+  ).pipe(Effect.provideService(UsagePolling, false), Effect.forkScoped);
 
   yield* Effect.forever(
     getRefreshInterval.pipe(
@@ -381,9 +387,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       ),
       Effect.ignoreCause({ log: true }),
     ),
-  ).pipe(Effect.forkScoped);
+  ).pipe(Effect.provideService(UsagePolling, false), Effect.forkScoped);
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+    Effect.provideService(UsagePolling, false),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );

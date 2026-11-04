@@ -1,4 +1,3 @@
-import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -750,6 +749,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   managedAuth?: ServerProvider["auth"],
+  skipUsage = false,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -782,7 +782,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    skipNativeUsage: Boolean(managedAuth) || !(yield* UsagePolling),
+    ...(managedAuth || skipUsage ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),

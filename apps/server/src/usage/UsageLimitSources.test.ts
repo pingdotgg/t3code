@@ -1,3 +1,4 @@
+import { UsageProviderFilter } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
@@ -11,6 +12,11 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
+
+const encodeSourceBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeSourceRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ auth_index: Schema.String, url: Schema.String })),
+);
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
 
@@ -156,3 +162,68 @@ it.effect("reads a management key from its secret provider", () => {
     Effect.scoped,
   );
 });
+
+it.effect("retains another window's account when provider-filtered usage refreshes finish", () =>
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["claudeAgent"]));
+    expect((yield* sources.current)[0]?.accounts.map((account) => account.driver)).toEqual([
+      "claudeAgent",
+    ]);
+    yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["codex"]));
+    expect((yield* sources.current)[0]?.accounts.map((account) => account.driver).sort()).toEqual([
+      "claudeAgent",
+      "codex",
+    ]);
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: "key",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        read: () => Effect.succeed([]),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.url.endsWith("/auth-files"))
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  files: [
+                    { id: "claude", auth_index: "claude", provider: "claude" },
+                    { id: "codex", auth_index: "codex", provider: "codex" },
+                  ],
+                }),
+              );
+            const input = decodeSourceRequest(
+              request.body._tag === "Uint8Array"
+                ? new TextDecoder().decode(request.body.body)
+                : "{}",
+            );
+            const body = input.url.endsWith("/rate-limit-reset-credits")
+              ? { credits: [] }
+              : input.auth_index === "claude"
+                ? { five_hour: { utilization: 20, resets_at: null } }
+                : { rate_limit: { primary_window: { used_percent: 20 } } };
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status_code: 200, body: encodeSourceBody(body) }),
+            );
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);

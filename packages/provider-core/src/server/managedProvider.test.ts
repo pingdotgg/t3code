@@ -157,7 +157,7 @@ describe("makeManagedServerProvider", () => {
               if (yield* UsagePolling) yield* Ref.update(reads, (n) => n + 1);
               return refreshedSnapshot;
             }),
-          });
+          }).pipe(Effect.provideService(UsagePolling, true));
           yield* provider.refresh;
           assert.strictEqual(yield* Ref.get(reads), 0);
           yield* Effect.all([provider.refresh, provider.refresh], {
@@ -169,6 +169,57 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(reads), 1);
           yield* provider.refresh.pipe(Effect.provideService(UsagePolling, true));
           assert.strictEqual(yield* Ref.get(reads), 2);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect(
+    "can enable unsupported usage while failed probes still keep their cache lifetime",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reads = yield* Ref.make(0);
+          const limits = yield* Ref.make<ServerProvider["usageLimits"]>({
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            unavailable: { reason: "unsupported" },
+          });
+          const snapshot = Ref.get(limits).pipe(
+            Effect.map((usageLimits) => ({ ...refreshedSnapshot, usageLimits })),
+          );
+          const provider = yield* makeManagedServerProvider({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: () => false,
+            initialSnapshot: () => snapshot,
+            checkProvider: snapshot,
+            checkUsageLimits: Ref.update(reads, (n) => n + 1).pipe(Effect.andThen(Ref.get(limits))),
+          });
+          yield* provider.refresh;
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 1);
+          const good = {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 25 }],
+          } as const;
+          yield* Ref.set(limits, good);
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 2);
+          yield* Ref.set(limits, {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          });
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 2);
+          yield* TestClock.adjust("5 minutes");
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(reads), 3);
+          assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+            ...good,
+            stale: true,
+          });
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

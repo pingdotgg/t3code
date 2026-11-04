@@ -85,8 +85,9 @@ export const make = Effect.gen(function* () {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
     const accountKey = `${id}\0${config.url}\0${managementKey}`;
+    const providers = yield* UsageProviderFilter;
     const accounts = yield* api
-      .readAccounts({ url: config.url, managementKey }, yield* UsageProviderFilter)
+      .readAccounts({ url: config.url, managementKey }, providers)
       .pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
@@ -96,8 +97,15 @@ export const make = Effect.gen(function* () {
         error: accounts.failure.detail,
       };
     }
-    lastGoodSources.set(accountKey, accounts.success);
-    return { ...base, accounts: accounts.success };
+    const retained =
+      providers === undefined
+        ? []
+        : (lastGoodSources.get(accountKey) ?? []).filter(
+            (account) => !providers.includes(account.driver),
+          );
+    const merged = [...retained, ...accounts.success];
+    lastGoodSources.set(accountKey, merged);
+    return { ...base, accounts: merged };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (

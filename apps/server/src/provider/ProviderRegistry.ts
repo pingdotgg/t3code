@@ -59,6 +59,10 @@ export class ProviderRegistry extends Context.Service<
       provider?: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    readonly refreshUsage: (
+      instanceId?: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Unknown instance ids return the cached list without error. */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
@@ -602,13 +606,17 @@ export const layer = Layer.effect(
         .getInstance(instance.instanceId)
         .pipe(Effect.map((current) => current === instance));
 
-    const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
+    const refreshOneSource = Effect.fn("refreshOneSource")(function* (
+      instance: ProviderInstance,
+      usage = false,
+    ) {
       const providerSource = buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
-      const probe = yield* providerSource.refresh.pipe(
-        Effect.andThen(providerSource.getSnapshot),
-        Effect.exit,
-      );
+      const probe = yield* (
+        usage
+          ? (instance.snapshot.refreshUsage ?? Effect.void).pipe(Effect.orDie)
+          : providerSource.refresh
+      ).pipe(Effect.andThen(providerSource.getSnapshot), Effect.exit);
       // Settings can replace or remove the instance mid-probe; its late result or failure is stale.
       if (!(yield* isCurrentInstance(instance))) {
         return yield* Ref.get(providersRef);
@@ -617,6 +625,20 @@ export const layer = Layer.effect(
       return yield* correlateSnapshotWithSource(providerSource, nextProvider).pipe(
         Effect.flatMap(syncProvider),
       );
+    });
+
+    const refreshUsage = Effect.fn("ProviderRegistry.refreshUsage")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances.filter(
+          (instance) => instanceId === undefined || instance.instanceId === instanceId,
+        ),
+        (instance) => refreshOneSource(instance, true),
+        { concurrency: "unbounded" },
+      );
+      return yield* Ref.get(providersRef);
     });
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
@@ -1071,6 +1093,7 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
+      refreshUsage,
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

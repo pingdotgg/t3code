@@ -16,10 +16,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import {
-  cursorKeychainAccessEnvironments,
-  refreshUsageLimits,
-} from "@t3tools/client-runtime/state/usage";
+import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
@@ -251,46 +248,39 @@ export function UsagePage() {
     if (nextMetric === "limits") setLimitsNow(Date.now());
     updatePreferences({ metric: nextMetric });
   };
-  const refreshLimits = (automatic = false, afterPending = false) =>
+  const refreshLimits = () =>
     // Settled so the timestamp still advances when a refresh throws.
     settlePromise(() =>
       Promise.all(
         Array.from(presentationsWithProviders, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshUsageLimits(
-              environmentId,
-              () => {
-                const providers = (presentation.serverConfig?.providers ?? []).filter(
-                  (provider) =>
-                    ![...hiddenProviders].some(
-                      (hidden) =>
-                        hidden === (provider.driver === "claudeAgent" ? "claude" : provider.driver),
-                    ),
-                );
-                return Promise.all([
-                  refreshProviders({
-                    environmentId,
-                    input: {
-                      usageSources: true,
-                      usageProviders: PROVIDER_ORDER.filter(
-                        (provider) => !hiddenProviders.has(provider),
-                      ).map((provider) =>
-                        ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
-                      ),
-                    },
-                  }),
-                  ...providers.map((provider) =>
-                    refreshProviders({
-                      environmentId,
-                      input: { instanceId: provider.instanceId, usage: true },
-                    }),
-                  ),
-                ]);
-              },
-              automatic,
-              afterPending,
+            const providers = (presentation.serverConfig?.providers ?? []).filter(
+              (provider) =>
+                ![...hiddenProviders].some(
+                  (hidden) =>
+                    hidden === (provider.driver === "claudeAgent" ? "claude" : provider.driver),
+                ),
             );
+            return Promise.all([
+              refreshProviders({
+                environmentId,
+                input: {
+                  usageSources: true,
+                  usageProviders: PROVIDER_ORDER.filter(
+                    (provider) => !hiddenProviders.has(provider),
+                  ).map((provider) =>
+                    ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider),
+                  ),
+                },
+              }),
+              ...providers.map((provider) =>
+                refreshProviders({
+                  environmentId,
+                  input: { instanceId: provider.instanceId, usage: true },
+                }),
+              ),
+            ]);
           }
         }),
       ),
@@ -364,7 +354,7 @@ export function UsagePage() {
     .sort()
     .join(",");
   const autoRefreshLimits = useEffectEvent(() => {
-    void refreshLimits(true);
+    void refreshLimits();
   });
   useLiveRefresh(() => autoRefreshLimits(), {
     enabled: showingLimits && connectedLimitsEnvironments !== "",
@@ -561,7 +551,7 @@ export function UsagePage() {
                       environments={cursorAccessEnvironments}
                       onEnabled={() => {
                         void refresh();
-                        void refreshLimits(false, true);
+                        void refreshLimits();
                       }}
                     />
                   ) : null
@@ -594,7 +584,7 @@ export function UsagePage() {
                 showChatGptSharing={showChatGptSharing}
                 onCursorEnabled={() => {
                   void refresh();
-                  void refreshLimits(false, true);
+                  void refreshLimits();
                 }}
                 onSelectModel={selectUsageModel}
               />

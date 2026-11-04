@@ -1,3 +1,4 @@
+import { UsagePolling, UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -167,6 +168,13 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   );
   const initialize = Deferred.succeed(initialProbe, initializeResult).pipe(
     Effect.andThen(initialUpdate),
+    Effect.andThen(
+      Effect.flatMap(UsagePolling, (visible) =>
+        visible && options.probeUsage
+          ? (provider.snapshot.refreshUsage ?? Effect.void)
+          : Effect.void,
+      ),
+    ),
     Effect.asVoid,
   );
   // Subscribe before the trigger; yield the returned pull to await the publish.
@@ -732,7 +740,10 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           });
           yield* harness.provider.snapshot.refresh;
           yield* Deferred.await(failedReadApplied);
-          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual({
+            ...limits,
+            stale: true,
+          });
           yield* harness.provider.onSignedOut;
           expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
           yield* Ref.set(usage, {
@@ -746,6 +757,9 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           yield* harness.provider.snapshot.refresh;
           expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
         }),
+      ).pipe(
+        Effect.provideService(UsagePolling, true),
+        Effect.provideService(UsageAfterReset, true),
       ),
   );
 
@@ -776,7 +790,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Fiber.join(refresh);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
 
   it.effect("reports ready and starts sessions while one shared quota read is pending", () =>
@@ -809,7 +823,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* Deferred.succeed(readResult, limits);
         expect((yield* published)?.usageLimits).toEqual(limits);
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
 
   it.effect("a quota read for the previous account is dropped after a new sign-in", () =>
@@ -846,6 +860,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* harness.provider.onSessionStarted(started);
         expect((yield* republished)?.usageLimits).toEqual(failed);
       }),
-    ),
+    ).pipe(Effect.provideService(UsagePolling, true), Effect.provideService(UsageAfterReset, true)),
   );
 });

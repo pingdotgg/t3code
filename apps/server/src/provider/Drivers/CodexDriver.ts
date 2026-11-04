@@ -232,7 +232,15 @@ export const CodexDriver: ProviderDriver<
     const checkProvider = modelCatalog.refreshInBackground.pipe(
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+          Effect.flatMap(UsagePolling, (includeUsage) =>
+            checkCodexProviderStatus(
+              effectiveConfig,
+              undefined,
+              processEnv,
+              undefined,
+              !includeUsage,
+            ),
+          ),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },

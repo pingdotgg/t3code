@@ -2447,9 +2447,11 @@ export const layerWsRpc = (
                   })
                 : input.reloadSecrets === true
                   ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                  : input.instanceId !== undefined
-                    ? providerRegistry.refreshInstance(input.instanceId)
-                    : providerRegistry.refresh()
+                  : input.usage === true
+                    ? providerRegistry.refreshUsage(input.instanceId)
+                    : input.instanceId !== undefined
+                      ? providerRegistry.refreshInstance(input.instanceId)
+                      : providerRegistry.refresh()
             ).pipe(Effect.provideService(UsagePolling, input.usage === true));
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
