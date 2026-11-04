@@ -38,15 +38,15 @@ function textFromBlocks(
   if (keys.length === 1 && keys[0] === "content")
     return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
+    const text = textFromBlocks(value.content, depth + 1, imageBlocks);
+    const images = Array.isArray(value.content)
+      ? value.content.filter((block) => isRecord(block) && block.type === "image")
+      : [];
     const structured = formatJsonValue(value.structuredContent);
-    if (structured !== null) {
-      const images = Array.isArray(value.content)
-        ? value.content.filter((block) => isRecord(block) && block.type === "image")
-        : [];
+    if (structured !== null && (images.length > 0 || !text?.trim())) {
       const markers = textFromBlocks(images, depth + 1, imageBlocks);
       return [structured, markers].filter(Boolean).join("\n");
     }
-    const text = textFromBlocks(value.content, depth + 1, imageBlocks);
     return text?.trim() ? text : null;
   }
   return null;

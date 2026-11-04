@@ -69,6 +69,14 @@ describe("tool image output parsing", () => {
         const item = toolItem({ structuredContent, content: [{ type: "text", text: "Sunny" }] });
         expect(turnItemOutputText(item)).toBe("Sunny");
       }
+      expect(
+        turnItemOutputText(
+          toolItem({
+            content: [{ type: "text", text: "File contents" }],
+            structuredContent: { path: "read.ts", ready: true },
+          }),
+        ),
+      ).toBe("File contents");
     },
   );
   it.each(["array", "content", "structured"] as const)(
