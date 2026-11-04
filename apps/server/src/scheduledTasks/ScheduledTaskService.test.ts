@@ -204,34 +204,58 @@ it.effect("reschedules a windowed interval that is due after its window has clos
       },
       now,
     );
+    yield* insertRow(
+      sql,
+      {
+        id: "closes-in-batch",
+        next: "2026-07-07T03:59:00.000Z",
+        enabled: 1,
+        status: "never",
+        scheduleJson: JSON.stringify({
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "22:00" },
+        }),
+      },
+      now,
+    );
     yield* TestClock.setTime(Date.parse(now));
     const dispatched = yield* Ref.make<Array<string>>([]);
     yield* Effect.scoped(
-      Effect.gen(function* () {
-        yield* Layer.build(
-          Layer.provideMerge(
-            ScheduledTaskService.layer,
-            Layer.mergeAll(
-              ManagedPolicy.layerTest(),
-              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                launch: () =>
-                  Ref.update(dispatched, (ids) => [...ids, "launched"]).pipe(
-                    Effect.andThen(Effect.die(new Error("test launch failure"))),
+      Layer.build(
+        Layer.provideMerge(
+          ScheduledTaskService.layer,
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Ref.update(dispatched, (ids) => [...ids, "launched"]).pipe(
+                  Effect.andThen(TestClock.setTime(Date.parse("2026-07-07T05:00:00.000Z"))),
+                  Effect.andThen(
+                    Effect.fail(
+                      new ThreadLaunchService.ThreadLaunchError({
+                        operation: "create-thread",
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        cause: new Error("test launch failure"),
+                      }),
+                    ),
                   ),
-              }),
-              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-                namedProjectsRoot: "/projects",
-                isScratchProject: () => Effect.succeed(false),
-              }),
-              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-              Layer.mock(SecretRequests.SecretRequests)({}),
-              NodeCrypto.layer,
-              Scheduler.layer,
-            ),
+                ),
+            }),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            NodeCrypto.layer,
+            Layer.mock(Scheduler.Scheduler)({
+              register: (_name, run) => run.pipe(Effect.orDie),
+            }),
           ),
-        );
-        yield* TestClock.adjust("6 seconds");
-      }),
+        ),
+      ),
     );
     const rows = yield* sql<{
       task_id: string;
@@ -246,6 +270,8 @@ it.effect("reschedules a windowed interval that is due after its window has clos
     assert.equal(byId.get("closed")?.next_run_at, "2026-07-07T17:00:00.000Z");
     assert.equal(byId.get("open")?.last_run_status, "failed");
     assert.equal(byId.get("open")?.run_count, 1);
+    assert.equal(byId.get("closes-in-batch")?.run_count, 0);
+    assert.equal(byId.get("closes-in-batch")?.next_run_at, "2026-07-07T17:00:00.000Z");
   }).pipe(
     Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
     Effect.provide(SqlitePersistence.layerMemory),

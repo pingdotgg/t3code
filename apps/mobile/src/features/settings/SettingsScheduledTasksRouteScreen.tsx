@@ -785,6 +785,7 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const offersIntervalWindow = config?.environment.capabilities.intervalScheduleWindows === true;
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -809,6 +810,17 @@ function TaskForm({
       Dialog.alert(
         "Invalid age limit",
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (
+      draft.schedule.mode === "interval" &&
+      draft.schedule.intervalWindowEnabled &&
+      !offersIntervalWindow
+    ) {
+      Dialog.alert(
+        "Time windows are not available here",
+        "Update this environment to use interval time windows.",
       );
       return;
     }
@@ -1338,6 +1350,7 @@ function TaskForm({
                 </Text>
                 <ThemedSwitch
                   accessibilityLabel="Time window"
+                  disabled={!offersIntervalWindow && !draft.schedule.intervalWindowEnabled}
                   value={draft.schedule.intervalWindowEnabled}
                   onValueChange={(intervalWindowEnabled) => {
                     if (!intervalWindowEnabled) setWindowClock(null);
@@ -1425,7 +1438,8 @@ function TaskForm({
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined) ||
           (draft.schedule.mode === "interval" &&
             draft.schedule.intervalWindowEnabled &&
-            (draft.schedule.weekdays.length === 0 ||
+            (!offersIntervalWindow ||
+              draft.schedule.weekdays.length === 0 ||
               !isIntervalWindowRange(
                 draft.schedule.intervalWindowStart,
                 draft.schedule.intervalWindowEnd,

@@ -965,6 +965,15 @@ export const layer = Layer.effect(
         ) {
           return { task: active, threadId: null, dispatchFailed: false };
         }
+        if (
+          trigger === "scheduled" &&
+          active.schedule.type === "interval" &&
+          Option.isSome(parsedNextRunAt) &&
+          isMissedScheduledRun(active.schedule, parsedNextRunAt.value, startedAt)
+        ) {
+          yield* rescheduleMissedRun(active, startedAt);
+          return { task: active, threadId: null, dispatchFailed: false };
+        }
         // A thread that stays busy would otherwise collect one copy of the
         // prompt per interval. A failed read falls through to the normal send.
         if (
