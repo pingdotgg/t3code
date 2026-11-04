@@ -41,6 +41,7 @@ interface Env {
   [binding: string]: unknown;
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- plain workerd script (no Effect); thrown and caught with try/catch
 class ProxyRequestError extends Error {
   readonly status: number;
   constructor(message: string, status = 400) {
@@ -62,11 +63,7 @@ const isTimingSafeEqual = (a: string, b: string): boolean => {
 const assertAuthorized = (request: WorkerRequest, env: Env) => {
   const token = request.headers.get(HEADER_TOKEN);
   const expected = env[BINDING_PLATFORM_PROXY_TOKEN];
-  if (
-    typeof expected !== "string" ||
-    !token ||
-    !isTimingSafeEqual(token, expected)
-  ) {
+  if (typeof expected !== "string" || !token || !isTimingSafeEqual(token, expected)) {
     throw new ProxyRequestError("platform-proxy: authorization failed", 401);
   }
 };
@@ -83,8 +80,7 @@ const isPlainValue = (value: unknown): boolean => {
       return true;
     case "object": {
       if (value === null) return true;
-      if (value instanceof ArrayBuffer || ArrayBuffer.isView(value))
-        return true;
+      if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return true;
       if (Array.isArray(value)) return value.every(isPlainValue);
       const prototype = Object.getPrototypeOf(value);
       if (prototype === Object.prototype || prototype === null) {
@@ -104,8 +100,7 @@ const describeEnv = (env: Env): { bindings: Array<EnvBindingDescriptor> } => {
     if (isPlainValue(value)) {
       bindings.push({ name, kind: "value", value: encodeValue(value) });
     } else {
-      const className = (value as { constructor?: { name?: string } } | null)
-        ?.constructor?.name;
+      const className = (value as { constructor?: { name?: string } } | null)?.constructor?.name;
       bindings.push({
         name,
         kind: "stub",
@@ -186,10 +181,7 @@ const isR2ObjectsLike = (
   typeof (value as { truncated?: unknown }).truncated === "boolean" &&
   Array.isArray((value as { delimitedPrefixes?: unknown }).delimitedPrefixes);
 
-const encodeR2Object = (
-  value: R2ObjectLike,
-  body?: { base64: string },
-): EncodedValue => {
+const encodeR2Object = (value: R2ObjectLike, body?: { base64: string }): EncodedValue => {
   const fields: Record<string, EncodedValue> = {};
   const plain: Record<string, unknown> = {
     key: value.key,
@@ -211,11 +203,7 @@ const encodeR2Object = (
   return { $: "r2-object", fields, ...(body !== undefined ? { body } : {}) };
 };
 
-const decodeArg = async (
-  env: Env,
-  binding: string,
-  arg: EncodedValue,
-): Promise<unknown> => {
+const decodeArg = async (env: Env, binding: string, arg: EncodedValue): Promise<unknown> => {
   if (arg.$ === "chain") {
     return evaluateChain(env, binding, arg.chain);
   }
@@ -238,16 +226,11 @@ const evaluateChain = async (
 ): Promise<unknown> => {
   let target: unknown = env[binding];
   if (target === undefined) {
-    throw new ProxyRequestError(
-      `platform-proxy: binding "${binding}" not found`,
-      404,
-    );
+    throw new ProxyRequestError(`platform-proxy: binding "${binding}" not found`, 404);
   }
   let path = binding;
   for (const segment of chain) {
-    const args = await Promise.all(
-      segment.args.map((arg) => decodeArg(env, binding, arg)),
-    );
+    const args = await Promise.all(segment.args.map((arg) => decodeArg(env, binding, arg)));
     const method = (target as Record<string, unknown> | null)?.[segment.method];
     if (typeof method !== "function") {
       const targetObject = target as object | null;
@@ -256,9 +239,7 @@ const evaluateChain = async (
           ? []
           : [
               ...Object.getOwnPropertyNames(targetObject),
-              ...Object.getOwnPropertyNames(
-                Object.getPrototypeOf(targetObject) ?? {},
-              ),
+              ...Object.getOwnPropertyNames(Object.getPrototypeOf(targetObject) ?? {}),
             ];
       throw new ProxyRequestError(
         `platform-proxy: "${segment.method}" is not a method on \`${path}\` ` +
@@ -267,11 +248,7 @@ const evaluateChain = async (
     }
     // Reflect.apply (never `method.apply`): property access on workers RPC
     // method stubs turns "apply" into an RPC path segment instead of calling.
-    target = await Reflect.apply(
-      method as (...args: Array<unknown>) => unknown,
-      target,
-      args,
-    );
+    target = await Reflect.apply(method as (...args: Array<unknown>) => unknown, target, args);
     path += `.${segment.method}(…)`;
   }
   return target;
@@ -289,11 +266,7 @@ const encodeResult = async (result: unknown): Promise<Response> => {
   // R2 rich objects: a `get` result carries a one-shot body — buffer it
   // here (async) so the sync encoder can ship it; bodyless heads/lists
   // fall through to the generic path via `encodeWorkerValue`.
-  if (
-    isR2ObjectLike(result) &&
-    result.body !== undefined &&
-    result.arrayBuffer !== undefined
-  ) {
+  if (isR2ObjectLike(result) && result.body !== undefined && result.arrayBuffer !== undefined) {
     const bytes = new Uint8Array(await result.arrayBuffer());
     return Response.json(
       { value: encodeR2Object(result, { base64: bytesToBase64(bytes) }) },
@@ -321,13 +294,8 @@ const encodeResult = async (result: unknown): Promise<Response> => {
     });
   }
   if (ArrayBuffer.isView(result)) {
-    const bytes = new Uint8Array(
-      result.buffer,
-      result.byteOffset,
-      result.byteLength,
-    );
-    const kind =
-      result instanceof Uint8Array ? "uint8array" : result.constructor.name;
+    const bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
+    const kind = result instanceof Uint8Array ? "uint8array" : result.constructor.name;
     return new Response(bytes, {
       headers: resultHeaders("bytes", { [HEADER_BYTES_KIND]: kind }),
     });
@@ -338,10 +306,7 @@ const encodeResult = async (result: unknown): Promise<Response> => {
   );
 };
 
-const handleCall = async (
-  request: WorkerRequest,
-  env: Env,
-): Promise<Response> => {
+const handleCall = async (request: WorkerRequest, env: Env): Promise<Response> => {
   const { binding, chain } = (await request.json()) as CallRequest;
   if (typeof binding !== "string" || !Array.isArray(chain)) {
     throw new ProxyRequestError("platform-proxy: malformed /call request body");
@@ -354,22 +319,15 @@ const handleCall = async (
 // Fetch passthrough
 // ---------------------------------------------------------------------------
 
-const handleProxyFetch = async (
-  request: WorkerRequest,
-  env: Env,
-): Promise<Response> => {
+const handleProxyFetch = async (request: WorkerRequest, env: Env): Promise<Response> => {
   const binding = request.headers.get(HEADER_BINDING);
   const targetUrl = request.headers.get(HEADER_URL);
   if (!binding || !targetUrl) {
-    throw new ProxyRequestError(
-      "platform-proxy: missing binding or target url on /fetch request",
-    );
+    throw new ProxyRequestError("platform-proxy: missing binding or target url on /fetch request");
   }
   const chainHeader = request.headers.get(HEADER_CHAIN);
   const chain: Array<EncodedChainSegment> = chainHeader
-    ? (JSON.parse(
-        decodeURIComponent(chainHeader),
-      ) as Array<EncodedChainSegment>)
+    ? (JSON.parse(decodeURIComponent(chainHeader)) as Array<EncodedChainSegment>)
     : [];
   const target = (await evaluateChain(env, binding, chain)) as {
     fetch?: (request: Request) => Promise<Response>;
@@ -380,21 +338,13 @@ const handleProxyFetch = async (
     );
   }
   const headers = new Headers(request.headers);
-  for (const header of [
-    HEADER_TOKEN,
-    HEADER_BINDING,
-    HEADER_CHAIN,
-    HEADER_URL,
-  ]) {
+  for (const header of [HEADER_TOKEN, HEADER_BINDING, HEADER_CHAIN, HEADER_URL]) {
     headers.delete(header);
   }
   const forwarded = new Request(targetUrl, {
     method: request.method,
     headers,
-    body:
-      request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : request.body,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
     redirect: "manual",
   });
   return await target.fetch(forwarded);
@@ -430,8 +380,7 @@ const getCacheContext = (request: WorkerRequest) => {
     throw new ProxyRequestError("platform-proxy: missing cache name or url");
   }
   const method = request.headers.get(HEADER_CACHE_METHOD) ?? "GET";
-  const ignoreMethod =
-    request.headers.get(HEADER_CACHE_IGNORE_METHOD) === "true";
+  const ignoreMethod = request.headers.get(HEADER_CACHE_IGNORE_METHOD) === "true";
   return { name, key: cacheKey(url), method: ignoreMethod ? "GET" : method };
 };
 
@@ -460,13 +409,9 @@ const handleCachePut = async (request: WorkerRequest): Promise<Response> => {
     throw new ProxyRequestError("Cannot cache response to non-GET request.");
   }
   if (status === 206) {
-    throw new ProxyRequestError(
-      "Cannot cache response to a range request (206 Partial Content).",
-    );
+    throw new ProxyRequestError("Cannot cache response to a range request (206 Partial Content).");
   }
-  const headers = JSON.parse(decodeURIComponent(rawHeaders)) as Array<
-    [string, string]
-  >;
+  const headers = JSON.parse(decodeURIComponent(rawHeaders)) as Array<[string, string]>;
   const vary = headers.find(([header]) => header.toLowerCase() === "vary");
   if (vary && vary[1].includes("*")) {
     throw new ProxyRequestError("Cannot cache response with 'Vary: *' header.");
@@ -483,8 +428,7 @@ const handleCachePut = async (request: WorkerRequest): Promise<Response> => {
 
 const handleCacheDelete = (request: WorkerRequest): Response => {
   const { name, key, method } = getCacheContext(request);
-  const deleted =
-    method === "GET" && (cacheStore.get(name)?.delete(key) ?? false);
+  const deleted = method === "GET" && (cacheStore.get(name)?.delete(key) ?? false);
   return Response.json(deleted);
 };
 
@@ -522,10 +466,7 @@ export default {
         error instanceof Error ? error : new Error(String(error)),
         encodeWorkerValue,
       );
-      return Response.json(
-        { error: encoded },
-        { status, headers: { [HEADER_RESULT]: "error" } },
-      );
+      return Response.json({ error: encoded }, { status, headers: { [HEADER_RESULT]: "error" } });
     }
   },
 } satisfies ExportedHandler<Env>;

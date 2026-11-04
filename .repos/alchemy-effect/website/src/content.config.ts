@@ -1,5 +1,5 @@
 import { docsLoader } from "@astrojs/starlight/loaders";
-import { docsSchema } from "@astrojs/starlight/schema";
+import { docsSchema, i18nSchema } from "@astrojs/starlight/schema";
 import { defineCollection, z } from "astro:content";
 import { blogSchema } from "starlight-blog/schema";
 
@@ -16,4 +16,8 @@ export const collections = {
         }),
     }),
   }),
+  // The site is English-only, but Starlight always reads this collection for
+  // UI strings and Astro 7 warns when it is missing or empty. One empty entry
+  // keeps Starlight's built-in strings without a src/content/i18n directory.
+  i18n: defineCollection({ loader: () => [{ id: "en" }], schema: i18nSchema() }),
 };

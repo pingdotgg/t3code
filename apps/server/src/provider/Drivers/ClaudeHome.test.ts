@@ -64,7 +64,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and labels subscription processes t3-code unless overridden",
+    "drops the launching Claude session and Electron run-as-Node flag, and labels subscription processes t3-code unless overridden",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -76,6 +76,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           CLAUDE_CODE_SESSION_ID: "host-session",
           CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/host-claude.sock",
           CLAUDE_EFFORT: "high",
+          ELECTRON_RUN_AS_NODE: "1",
           KEEP: "1",
         };
         const instance = [

@@ -143,7 +143,8 @@ function claudeSettingsPaths(
   ];
 }
 
-const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+// Untraced: skill discovery resolves every distinct plugin project path, too often for spans.
+const findRepositoryRoot = Effect.fnUntraced(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -164,7 +165,7 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   }
 });
 
-const findPluginRepositoryRoot = Effect.fn("findPluginRepositoryRoot")(function* (cwd: string) {
+const findPluginRepositoryRoot = Effect.fnUntraced(function* (cwd: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* findRepositoryRoot(cwd);
@@ -336,6 +337,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     cwd === undefined
       ? undefined
       : yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+  // Install records repeat project paths, often hundreds of times per discovery.
+  const projectRepositoryRoots = new Map<string, string | undefined>();
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
@@ -347,11 +350,13 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
         Effect.gen(function* () {
           if (record.scope === "user" || record.scope === "managed") return true;
           if (record.projectPath === undefined || workspace === undefined) return false;
-          if (path.resolve(record.projectPath) === workspace) return true;
-          return (
-            repositoryRoot !== undefined &&
-            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
-          );
+          const projectPath = path.resolve(record.projectPath);
+          if (projectPath === workspace) return true;
+          if (repositoryRoot === undefined) return false;
+          if (!projectRepositoryRoots.has(projectPath)) {
+            projectRepositoryRoots.set(projectPath, yield* findPluginRepositoryRoot(projectPath));
+          }
+          return projectRepositoryRoots.get(projectPath) === repositoryRoot;
         }),
     );
     // The native loader keeps registry order, preferring the first install that exists.
@@ -433,7 +438,12 @@ const SETTINGS_ENV_NAMES = [
   "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_ENTRYPOINT",
 ] as const;
-export type ClaudeSettingsEnv = Partial<Record<(typeof SETTINGS_ENV_NAMES)[number], string>>;
+const GATEWAY_ENV_NAMES = [
+  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+  "CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS",
+] as const;
+export type ClaudeSettingsEnv = Partial<Record<(typeof SETTINGS_ENV_NAMES)[number], string>> &
+  Partial<Record<(typeof GATEWAY_ENV_NAMES)[number], unknown>>;
 // Strict like Claude Code, which skips a settings file with comments or trailing commas.
 const decodeSettingsEnv = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -448,6 +458,9 @@ function assignSettingsEnv(
   for (const name of SETTINGS_ENV_NAMES) {
     const value = env?.[name];
     if (typeof value === "string") target[name] = value;
+  }
+  for (const name of GATEWAY_ENV_NAMES) {
+    if (env && name in env) target[name] = env[name];
   }
 }
 

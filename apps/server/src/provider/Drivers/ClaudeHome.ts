@@ -95,6 +95,8 @@ export const mergeClaudeBaseEnvironment = Effect.fn("mergeClaudeBaseEnvironment"
         )
       : { ...hostEnvironment };
   delete baseEnvironment.CLAUDE_CODE_ENTRYPOINT;
+  // Electron apps launched by Claude must run as apps rather than as Node.
+  delete baseEnvironment.ELECTRON_RUN_AS_NODE;
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
   return yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
 });
