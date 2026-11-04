@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -7,6 +8,15 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import type * as HttpClientError from "effect/http/HttpClientError";
 
 const encodeKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const sampleTimes = new WeakMap<HttpClientResponse.HttpClientResponse, string>();
+
+export function usageResponseCheckedAt(
+  response: HttpClientResponse.HttpClientResponse,
+  fallback: string,
+) {
+  return sampleTimes.get(response) ?? fallback;
+}
 
 const TTL_MS = 5 * 60_000;
 
@@ -39,6 +49,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
 ) {
   return Effect.sync(() => {
     type Snapshot = {
+      readonly checkedAt: string;
       readonly status: number;
       readonly headers: Readonly<Record<string, string>>;
       readonly body: ArrayBuffer;
@@ -78,7 +89,12 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
             const previous = cached.get(key);
             if (previous && now < previous.expiresAt) {
               const saved = yield* previous.result;
-              return HttpClientResponse.fromWeb(request, new Response(saved.body.slice(0), saved));
+              const response = HttpClientResponse.fromWeb(
+                request,
+                new Response(saved.body.slice(0), saved),
+              );
+              sampleTimes.set(response, saved.checkedAt);
+              return response;
             }
             if (now < state.retryAt) {
               return HttpClientResponse.fromWeb(
@@ -104,6 +120,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                       );
                   }
                   return {
+                    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
                     status: response.status,
                     headers: response.headers,
                     body: yield* response.arrayBuffer,
@@ -119,7 +136,12 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
               expiresAt: Math.max(finishedAt + TTL_MS, state.retryAt),
             });
             const saved = yield* result;
-            return HttpClientResponse.fromWeb(request, new Response(saved.body.slice(0), saved));
+            const response = HttpClientResponse.fromWeb(
+              request,
+              new Response(saved.body.slice(0), saved),
+            );
+            sampleTimes.set(response, saved.checkedAt);
+            return response;
           }),
         );
       });

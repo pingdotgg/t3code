@@ -1,3 +1,4 @@
+import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -170,7 +171,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
       .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
-      ...makeUsageLimits({ checkedAt, windows }),
+      ...makeUsageLimits({ checkedAt: usageResponseCheckedAt(response, checkedAt), windows }),
       credentialFingerprint,
     };
   }).pipe(

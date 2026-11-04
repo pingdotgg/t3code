@@ -1,3 +1,4 @@
+import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -199,7 +200,7 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
     const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return grokUsageResponseToLimits(body, checkedAt);
+    return grokUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() => probeFailed),

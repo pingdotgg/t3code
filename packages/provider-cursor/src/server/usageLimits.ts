@@ -1,3 +1,4 @@
+import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -146,7 +147,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return cursorUsageResponseToLimits(body, checkedAt);
+    return cursorUsageResponseToLimits(body, usageResponseCheckedAt(response, checkedAt));
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() =>

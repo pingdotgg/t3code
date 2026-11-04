@@ -2436,7 +2436,9 @@ export const layerWsRpc = (
             }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
             if (input.usage === true && input.instanceId === undefined) {
-              yield* usageLimitSources.refresh;
+              yield* usageLimitSources.refresh.pipe(
+                Effect.provideService(UsageProviderFilter, input.usageProviders),
+              );
             }
             let providers = yield* (
               input.cwd !== undefined && input.instanceId !== undefined
@@ -2448,7 +2450,7 @@ export const layerWsRpc = (
                 : input.reloadSecrets === true
                   ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                   : input.usage === true
-                    ? providerRegistry.refreshUsage(input.instanceId)
+                    ? providerRegistry.refreshUsage(input.instanceId, input.usageProviders)
                     : input.instanceId !== undefined
                       ? providerRegistry.refreshInstance(input.instanceId)
                       : providerRegistry.refresh()

@@ -1492,9 +1492,8 @@ it.layer(
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
-        const makeInstance = (name: string) =>
+        const makeInstance = (name: string, driver = ProviderDriverKind.make("codex")) =>
           Effect.gen(function* () {
-            const driver = ProviderDriverKind.make("codex");
             const instanceId = ProviderInstanceId.make(name);
             const provider = {
               instanceId,
@@ -1510,6 +1509,7 @@ it.layer(
               skills: [],
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
+            const usageReads = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
             const instance = {
               instanceId,
@@ -1532,6 +1532,7 @@ it.layer(
                   ),
                 getSnapshot: Effect.succeed(provider),
                 refresh: Effect.succeed(provider),
+                refreshUsage: Ref.update(usageReads, (count) => count + 1),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -1540,11 +1541,12 @@ it.layer(
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
-            return { instance, invalidations, takeMaintenanceReads };
+            return { instance, invalidations, takeMaintenanceReads, usageReads };
           });
         const first = yield* makeInstance("codex_first");
         const second = yield* makeInstance("codex_second");
-        const instances = [first.instance, second.instance];
+        const other = yield* makeInstance("claude_other", ProviderDriverKind.make("claudeAgent"));
+        const instances = [first.instance, second.instance, other.instance];
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
@@ -1569,6 +1571,7 @@ it.layer(
           ProviderLatestVersions.make([
             ["codex_first-package", "1.0.0"],
             ["codex_second-package", "1.0.0"],
+            ["claude_other-package", "1.0.0"],
           ]),
         );
         const readCachedVersion = (key: string) =>
@@ -1578,6 +1581,10 @@ it.layer(
 
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refreshUsage(undefined, [ProviderDriverKind.make("codex")]);
+          assert.strictEqual(yield* Ref.get(first.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(second.usageReads), 1);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 0);
 
           yield* registry.refreshInstance(first.instance.instanceId);
           yield* registry.refresh();

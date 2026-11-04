@@ -1,4 +1,4 @@
-export { makeUsageHttpClient, usageRetryDelay } from "./usageHttpClient.ts";
+export { makeUsageHttpClient, usageRetryDelay, usageResponseCheckedAt } from "./usageHttpClient.ts";
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderUsageLimits,

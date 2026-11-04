@@ -4,7 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { makeUsageHttpClient } from "./usageHttpClient.ts";
+import { makeUsageHttpClient, usageResponseCheckedAt } from "./usageHttpClient.ts";
 
 const url = "https://api.anthropic.com/api/oauth/usage";
 const request = (account: string, suffix = "") =>
@@ -31,8 +31,10 @@ it.effect(
       assert.deepStrictEqual(yield* responses[0]!.json, yield* responses[1]!.json);
       yield* client.execute(request("b"));
       assert.strictEqual(calls, 2);
+      const sampleAt = DateTime.formatIso(yield* DateTime.now);
       yield* TestClock.adjust("4 minutes");
-      yield* client.execute(request("a"));
+      const cached = yield* client.execute(request("a"));
+      assert.strictEqual(usageResponseCheckedAt(cached, "missing"), sampleAt);
       assert.strictEqual(calls, 2);
       yield* TestClock.adjust("1 minute");
       yield* client.execute(request("a"));

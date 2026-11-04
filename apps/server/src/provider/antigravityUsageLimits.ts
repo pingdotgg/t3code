@@ -1,3 +1,4 @@
+import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -206,11 +207,17 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         ),
       );
 
-  const request = (request: HttpClientRequest.HttpClientRequest) =>
+  const request = (
+    request: HttpClientRequest.HttpClientRequest,
+    onSample?: (checkedAt: string) => void,
+  ) =>
     client.execute(request).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
+      Effect.flatMap((response) => {
+        onSample?.(usageResponseCheckedAt(response, ""));
+        return response.json;
+      }),
       Effect.timeout("10 seconds"),
     );
   const read = Effect.gen(function* () {
@@ -269,6 +276,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
+    const sampleTimes: string[] = [];
     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
@@ -282,7 +290,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         (endpoint) =>
           Effect.gen(function* () {
             // Capture each request after auth, so refresh latency does not widen the tolerance.
-            const requestedAt = yield* Clock.currentTimeMillis;
+            let requestedAt = yield* Clock.currentTimeMillis;
             return yield* request(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
@@ -293,6 +301,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   token.project_id ? { project: token.project_id } : {},
                 ),
               ),
+              (sampleAt) => {
+                if (sampleAt) requestedAt = Date.parse(sampleAt);
+                sampleTimes.push(sampleAt || DateTime.formatIso(DateTime.makeUnsafe(requestedAt)));
+              },
             ).pipe(
               Effect.flatMap((response) => parse(response, requestedAt)),
               Effect.orElseSucceed(() => []),
@@ -322,7 +334,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Antigravity did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
+    return {
+      ...makeUsageLimits({ checkedAt: sampleTimes.toSorted()[0] ?? checkedAt, windows }),
+      credentialFingerprint: account,
+    };
   });
   const probe = read.pipe(
     Effect.timeout("30 seconds"),

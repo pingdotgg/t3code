@@ -28,22 +28,15 @@ export function useInstanceLimitsRefresh(
         pending = false;
         if (!disposed) timer = setTimeout(refresh, 5 * 60_000);
       };
-      void Promise.all([
-        runAtomCommand(
-          registry,
-          serverEnvironment.refreshProviders,
-          { environmentId, input: { instanceId, usage: true } },
-          { reportFailure: false },
-        ),
-        driver
-          ? runAtomCommand(
-              registry,
-              serverEnvironment.refreshProviders,
-              { environmentId, input: { usageSources: true, usageProviders: [driver] } },
-              { reportFailure: false },
-            )
-          : undefined,
-      ]).then(completed, completed);
+      void runAtomCommand(
+        registry,
+        serverEnvironment.refreshProviders,
+        {
+          environmentId,
+          input: driver ? { usage: true, usageProviders: [driver] } : { instanceId, usage: true },
+        },
+        { reportFailure: false },
+      ).then(completed, completed);
     };
     void refresh();
     const unsubscribe = subscribeAppState(() => {

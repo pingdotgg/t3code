@@ -61,6 +61,7 @@ export class ProviderRegistry extends Context.Service<
 
     readonly refreshUsage: (
       instanceId?: ProviderInstanceId,
+      providers?: readonly ProviderDriverKind[],
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
@@ -629,11 +630,14 @@ export const layer = Layer.effect(
 
     const refreshUsage = Effect.fn("ProviderRegistry.refreshUsage")(function* (
       instanceId?: ProviderInstanceId,
+      providers?: readonly ProviderDriverKind[],
     ) {
       const instances = yield* instanceRegistry.listInstances;
       yield* Effect.forEach(
         instances.filter(
-          (instance) => instanceId === undefined || instance.instanceId === instanceId,
+          (instance) =>
+            (instanceId === undefined || instance.instanceId === instanceId) &&
+            (providers === undefined || providers.includes(instance.driverKind)),
         ),
         (instance) =>
           refreshOneSource(instance, true).pipe(Effect.catchCause(recoverRefreshFailure)),
@@ -1094,8 +1098,8 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refreshUsage: (instanceId) =>
-        refreshUsage(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshUsage: (instanceId, providers) =>
+        refreshUsage(instanceId, providers).pipe(Effect.catchCause(recoverRefreshFailure)),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
