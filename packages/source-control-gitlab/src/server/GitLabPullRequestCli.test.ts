@@ -81,6 +81,10 @@ function mergeRequestJson(overrides: Record<string, unknown>): string {
   });
 }
 
+function commitJson(id: string) {
+  return { id, title: "Commit", committed_date: "2026-07-01T00:00:00Z" };
+}
+
 function argsOfCall(index: number): ReadonlyArray<string> {
   return callAt(index).args;
 }
@@ -516,16 +520,19 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("deletes the revert branch when GitLab cannot revert cleanly", () =>
+  it.effect.each([
+    ["the revert conflicts", "/revert"],
+    ["opening the merge request fails", "/merge_requests"],
+  ] as const)("deletes the revert branch when %s", ([, failingPath]) =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation(({ args, cwd }) =>
-        args[1]?.endsWith("/revert")
+        args[1]?.endsWith(failingPath) && args.includes("POST")
           ? Effect.fail(
               new GitLabCli.GitLabCliCommandError({
                 operation: "execute",
                 command: "glab",
                 cwd,
-                cause: new Error("Merge request revert failed"),
+                cause: new Error("GitLab rejected the write"),
               }),
             )
           : Effect.succeed(
@@ -544,12 +551,48 @@ layer("GitLabPullRequestCli.layer", (it) => {
       );
 
       expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitLabCliCommandError" } });
-      expect(mockedExecute.mock.calls.map(([input]) => input.args.slice(1, 4))).toEqual([
-        ["projects/acme%2Fweb/merge_requests/7"],
-        ["projects/acme%2Fweb/repository/branches", "--method", "POST"],
-        ["projects/acme%2Fweb/repository/commits/abc12345ff/revert", "--method", "POST"],
-        ["projects/acme%2Fweb/repository/branches/revert-abc12345", "--method", "DELETE"],
+      expect(mockedExecute.mock.calls.at(-1)?.[0].args.slice(1, 4)).toEqual([
+        "projects/acme%2Fweb/repository/branches/revert-abc12345",
+        "--method",
+        "DELETE",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    ["reverts the sole commit of", [commitJson("1111111122")], "revert-11111111"],
+    [
+      "refuses to revert several commits of",
+      [commitJson("1111111122"), commitJson("2222222233")],
+      "GitLabRevertUnavailableError",
+    ],
+  ] as const)("%s a fast-forward merge without squash", ([, commits, expected]) =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(mergeRequestJson({ merge_commit_sha: null, squash_commit_sha: null })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(commits))))
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* Effect.result(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/merge_requests/7/commits?per_page=2");
+      if (expected === "GitLabRevertUnavailableError") {
+        expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: expected } });
+      } else {
+        expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({ branch: expected, ref: "main" });
+      }
     }),
   );
 

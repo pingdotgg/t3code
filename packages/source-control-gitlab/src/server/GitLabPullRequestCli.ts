@@ -928,6 +928,35 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** GitLab reverts a fast-forward merge without squash only when it landed as one commit. */
+  const soleCommitSha = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/commits?per_page=2`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeCommitsJson(result.stdout.trim());
+        if (!Result.isSuccess(decoded)) {
+          return Effect.fail(
+            new GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "runMergeRequestAction",
+              cause: decoded.failure,
+            }),
+          );
+        }
+        const [only, ...rest] = decoded.success;
+        return Effect.succeed(only !== undefined && rest.length === 0 ? only.oid : null);
+      }),
+    );
+
   /** What GitLab's own Revert button does: revert onto a new branch and open a merge request. */
   const revertMergeRequest = Effect.fn("GitLabPullRequestCli.revertMergeRequest")(
     function* (input: {
@@ -960,17 +989,27 @@ export const make = Effect.gen(function* () {
         });
       }
       const target = decoded.success;
-      if (target.commitSha === null) {
+      const commitSha = target.commitSha ?? (yield* soleCommitSha(input));
+      if (commitSha === null) {
         return yield* new GitLabRevertUnavailableError({
           command: "glab",
           cwd: input.cwd,
           number: input.number,
         });
       }
-      const branch = `revert-${target.commitSha.slice(0, 8)}`;
+      const branch = `revert-${commitSha.slice(0, 8)}`;
       yield* write("repository/branches", { branch, ref: target.targetBranch });
-      yield* write(`repository/commits/${target.commitSha}/revert`, { branch }).pipe(
-        // A revert that conflicts leaves nothing worth keeping on the new branch.
+      yield* Effect.andThen(
+        write(`repository/commits/${commitSha}/revert`, { branch }),
+        write("merge_requests", {
+          source_branch: branch,
+          target_branch: target.targetBranch,
+          title: `Revert "${target.title}"`,
+          description: `This reverts merge request !${input.number}`,
+          remove_source_branch: true,
+        }),
+      ).pipe(
+        // Leaving the branch behind would make every retry fail on creating it again.
         Effect.tapError(() =>
           api({
             cwd: input.cwd,
@@ -980,13 +1019,6 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.ignore),
         ),
       );
-      yield* write("merge_requests", {
-        source_branch: branch,
-        target_branch: target.targetBranch,
-        title: `Revert "${target.title}"`,
-        description: `This reverts merge request !${input.number}`,
-        remove_source_branch: true,
-      });
     },
   );
 

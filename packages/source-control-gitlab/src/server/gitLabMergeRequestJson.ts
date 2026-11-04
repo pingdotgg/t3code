@@ -593,7 +593,7 @@ export function decodeDiffRefsJson(
 export interface GitLabRevertTarget {
   readonly title: string;
   readonly targetBranch: string;
-  /** Null for a fast-forward merge without squash, which landed as several commits. */
+  /** Null for a fast-forward merge without squash, which records neither SHA. */
   readonly commitSha: string | null;
 }
 
