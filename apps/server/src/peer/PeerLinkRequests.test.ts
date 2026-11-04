@@ -152,7 +152,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -528,6 +528,9 @@ it.live("the agent asks without waiting, and the user links the box after its tu
           yield* a.orchestrator.getThreadProjection(threadId),
         ).pendingRuntimeRequest,
       ).toBeNull();
+      expect(
+        (yield* a.projections.getSettlementCandidates(threadId)).map((thread) => thread.id),
+      ).toEqual([threadId]);
       expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
 
       // The user's client mints a code on the box and picks more than the agent suggested.
