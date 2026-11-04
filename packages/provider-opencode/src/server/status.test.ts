@@ -1108,15 +1108,16 @@ it.effect("reads an already loaded OpenCode 2 directory once without waiting for
   }),
 );
 
-it.effect("trusts a first read that lists commands when the loaded locations are unknown", () =>
+it.effect("waits for the scan of a loaded OpenCode 2 directory that lists no commands yet", () =>
   Effect.gen(function* () {
     const calls: Array<string> = [];
+    const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
     const workspace = yield* loadOpenCode2Workspace(
-      Effect.sync(() => (calls.push("read"), scanned)),
+      Effect.sync(() => (calls.push("read"), reads.shift()!)),
       Effect.sync(() => void calls.push("scanned")),
-      Effect.sync(() => undefined),
+      Effect.succeed(true),
     );
     NodeAssert.deepEqual(workspace, scanned);
-    NodeAssert.deepEqual(calls, ["read"]);
+    NodeAssert.deepEqual(calls, ["read", "scanned", "read"]);
   }),
 );

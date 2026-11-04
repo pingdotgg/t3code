@@ -526,20 +526,19 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * Reading a location the server has not loaded boots its scan, and only reads after the
- * scan's `command.updated` plus `skill.updated` are complete; `scanned` must listen before
- * `read`. `loaded` is checked before the first read; when unknown (`undefined`), a first read
- * listing commands is taken as done.
+ * Reading a location the server has not loaded boots its scan, and a location another caller
+ * just booted lists no commands until its scan settles. Only reads after the scan's
+ * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
     read: Effect.Effect<OpenCode2Workspace, E>,
     scanned: Effect.Effect<void>,
-    loaded: Effect.Effect<boolean | undefined>,
+    loaded: Effect.Effect<boolean>,
   ) {
     const wasLoaded = yield* loaded;
     const first = yield* read;
-    if (wasLoaded ?? first.commands.length > 0) return first;
+    if (wasLoaded && first.commands.length > 0) return first;
     yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
     return yield* read;
   },
