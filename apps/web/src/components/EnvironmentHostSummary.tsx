@@ -23,8 +23,8 @@ export function EnvironmentHostSummary({
     <span
       className={cn(
         "block truncate",
-        (isHostDiskLow(data) || data.rebootRequired) && "text-warning",
         className,
+        (isHostDiskLow(data) || data.rebootRequired) && "text-warning",
       )}
     >
       {summary}
