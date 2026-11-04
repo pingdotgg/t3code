@@ -157,6 +157,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
+// How long a Stop waits for turn/completed before the user is offered Force stop.
+const CODEX_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -7425,10 +7427,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   return updated;
                 });
+                const stillActiveTurns = yield* Ref.get(activeTurns);
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   const updated = new Map(current);
                   for (const target of interruptTargets) {
                     if (settledTurnContexts.includes(target.context)) continue;
+                    // An unconfirmed turn keeps its commands for its own later completion.
+                    if (stillActiveTurns.get(target.context.nativeTurnId) === target.context)
+                      continue;
                     updated.delete(target.context.nativeTurnId);
                   }
                   return updated;
@@ -7565,7 +7571,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
               });
 
-              yield* Effect.gen(function* () {
+              const rootConfirmed = yield* Effect.gen(function* () {
                 for (const target of interruptTargets) {
                   const context = target.context;
                   if (context.capacityRetryPending !== undefined) {
@@ -7654,16 +7660,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       interruptTargets,
                       (target) => Deferred.await(target.completion),
                       { concurrency: "unbounded", discard: true },
-                    ).pipe(Effect.timeoutOption("10 seconds")),
+                    ).pipe(Effect.timeoutOption(CODEX_STOP_CONFIRM_TIMEOUT_MS)),
                   ],
                   { concurrency: "unbounded" },
                 );
                 if (Option.isNone(completed)) {
+                  let rootStillActive = false;
                   for (const target of interruptTargets) {
                     const context = target.context;
                     if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
                       continue;
                     }
+                    if (lineageRoots.includes(context)) rootStillActive = true;
                     yield* Effect.logWarning("orchestration-v2.codex-interrupt-timeout", {
                       providerSessionId: input.providerSessionId,
                       providerThreadId: context.providerThread.id,
@@ -7671,6 +7679,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       nativeTurnId: context.nativeTurnId,
                     });
                   }
+                  // The lineage stays open: Codex may still be working, and the user decides
+                  // whether to Force stop it. A later turn/completed still finalizes it.
+                  if (rootStillActive) return false;
                 }
 
                 yield* interruptLateDescendants;
@@ -7712,10 +7723,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }
                   }),
                 );
+                return true;
               }).pipe(
                 Effect.onError(() => finalizeRemainingInterruptLineage),
                 Effect.ensuring(cleanupInterruptState),
               );
+              if (!rootConfirmed) {
+                return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: requestedInput.providerThread.id,
+                  providerTurnId: requestedInput.providerTurnId,
+                  timeoutMs: CODEX_STOP_CONFIRM_TIMEOUT_MS,
+                });
+              }
             },
             (effect, requestedInput) =>
               Effect.acquireUseRelease(
@@ -7734,14 +7754,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     else goalStops.delete(nativeThreadId);
                   }),
               ).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterInterruptError({
-                      driver: CODEX_PROVIDER,
-                      providerThreadId: requestedInput.providerThread.id,
-                      providerTurnId: requestedInput.providerTurnId,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterInterruptTimeoutError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterInterruptError({
+                        driver: CODEX_PROVIDER,
+                        providerThreadId: requestedInput.providerThread.id,
+                        providerTurnId: requestedInput.providerTurnId,
+                        cause,
+                      }),
                 ),
               ),
           ),
