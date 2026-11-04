@@ -1829,7 +1829,10 @@ const decodeClaudeStopHookOutput = Schema.decodeUnknownOption(
       continue: Schema.optionalKey(Schema.Boolean),
       decision: Schema.optionalKey(Schema.String),
       hookSpecificOutput: Schema.optionalKey(
-        Schema.Struct({ additionalContext: Schema.optionalKey(Schema.String) }),
+        Schema.Struct({
+          hookEventName: Schema.Literal("Stop"),
+          additionalContext: Schema.optionalKey(Schema.String),
+        }),
       ),
     }),
   ),

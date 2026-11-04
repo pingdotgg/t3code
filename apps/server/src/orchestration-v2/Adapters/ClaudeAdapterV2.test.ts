@@ -15185,6 +15185,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeAssistantTextFrame({ uuid: "answer", text: "Here is the answer." }),
           hookResponse("post-tool", "PostToolUse", "success", context("Not a stop.")),
           hookResponse("failed", "Stop", "error", context("The hook failed.")),
+          hookResponse("missing-event", "Stop", "success", {
+            hookSpecificOutput: { additionalContext: "Missing event name." },
+          }),
+          hookResponse("wrong-event", "Stop", "success", {
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: "Wrong event name.",
+            },
+          }),
           hookResponse("halt", "Stop", "success", { ...context("Halted."), continue: false }),
           hookResponse("continue", "Stop", "success", context("Run the formatter.")),
           makeAssistantTextFrame({ uuid: "reply", text: "The formatter has run." }),
