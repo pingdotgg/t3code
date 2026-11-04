@@ -49,7 +49,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
-    if (labels.length === 0) return;
+    if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
     const response = await setLabels({
       ...target,
@@ -61,7 +61,9 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
         `Couldn't ${applied ? "add" : "remove"} ${names.join(", ")}`,
         cause instanceof Error ? cause.message : "The provider refused the change. Try again.",
       );
+      return false;
     }
+    return true;
   };
   const draft = useSelectionDraft({
     candidates: result.data?.candidates ?? [],
@@ -69,9 +71,8 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     isSelected: (candidate) => candidate.isApplied,
     single: false,
     commit: async ({ add, remove }) => {
-      // Adds first, so the row never shows empty between the two writes.
-      await send(add, true);
-      await send(remove, false);
+      // Adds first, so the row never shows empty between the two writes, or after a failed add.
+      if (await send(add, true)) await send(remove, false);
     },
   });
   // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.

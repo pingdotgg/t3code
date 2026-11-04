@@ -41,7 +41,7 @@ export function PullRequestLabelPicker({
   });
 
   const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
-    if (labels.length === 0) return;
+    if (labels.length === 0) return true;
     const names = labels.map((label) => label.name);
     const result = await setLabels({
       environmentId,
@@ -56,7 +56,9 @@ export function PullRequestLabelPicker({
           "The host refused it. Check that you have triage access on this repository.",
         ),
       });
+      return false;
     }
+    return true;
   };
 
   return (
@@ -83,9 +85,8 @@ export function PullRequestLabelPicker({
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
       onCommit={async ({ add, remove }) => {
-        // Adds first, so the row never shows empty between the two writes.
-        await send(add, true);
-        await send(remove, false);
+        // Adds first, so the row never shows empty between the two writes, or after a failed add.
+        if (await send(add, true)) await send(remove, false);
       }}
     >
       {(candidate, selected) => {

@@ -1165,37 +1165,44 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("offers the project's and its groups' labels, marking those already applied", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation(({ args }) =>
-        Effect.succeed(
-          output(
-            args[1]?.includes("/labels?")
-              ? JSON.stringify([
-                  { name: "bug", color: "#d9534f", description: "Something is broken" },
-                  { name: "docs", color: null, description: null },
-                ])
-              : mergeRequestJson({ labels: ["bug"] }),
+  it.effect(
+    "offers the project's and its groups' labels, marking those already applied, and keeps an applied label past the page",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1]?.includes("/labels?")
+                ? JSON.stringify([
+                    { name: "bug", color: "#d9534f", description: "Something is broken" },
+                    { name: "docs", color: null, description: null },
+                  ])
+                : mergeRequestJson({ labels: ["bug", "stale"] }),
+            ),
           ),
-        ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const list = yield* cli.listLabelCandidates({ cwd: "/w", repository: "acme/web", number: 7 });
+        const list = yield* cli.listLabelCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
 
-      expect(
-        mockedExecute.mock.calls
-          .map(([call]) => call.args[1])
-          .find((path) => path?.includes("/labels?")),
-      ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
-      expect(list).toEqual({
-        candidates: [
-          { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
-          { name: "docs", color: null, description: null, isApplied: false },
-        ],
-        truncated: false,
-      });
-    }),
+        expect(
+          mockedExecute.mock.calls
+            .map(([call]) => call.args[1])
+            .find((path) => path?.includes("/labels?")),
+        ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true");
+        expect(list).toEqual({
+          candidates: [
+            { name: "stale", color: null, description: null, isApplied: true },
+            { name: "bug", color: "#d9534f", description: "Something is broken", isApplied: true },
+            { name: "docs", color: null, description: null, isApplied: false },
+          ],
+          truncated: false,
+        });
+      }),
   );
 
   it.effect("adds labels the project has in one write", () =>
@@ -1270,7 +1277,11 @@ layer("GitLabPullRequestCli.layer", (it) => {
     () =>
       Effect.gen(function* () {
         mockedExecute
-          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(mergeRequestJson({ reviewers: [reviewer, { id: 11, username: "far" }] })),
+            ),
+          )
           .mockReturnValueOnce(
             Effect.succeed(
               output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }])),
@@ -1294,7 +1305,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
         });
 
         expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100");
+        // A reviewer past the project's first page of users stays a row, so it can be removed.
         expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+          ["11", true],
           ["5", true],
           ["9", false],
         ]);

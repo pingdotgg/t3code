@@ -1674,11 +1674,18 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       );
       const applied = new Set(mergeRequest.labels.map((label) => label.name));
+      const listed = new Set(project.labels.map((label) => label.name));
       return {
-        candidates: project.labels.map((label) => ({
-          ...label,
-          isApplied: applied.has(label.name),
-        })),
+        // An applied label past the project's first page stays a row, so it can be removed.
+        candidates: [
+          ...mergeRequest.labels
+            .filter((label) => !listed.has(label.name))
+            .map((label) => ({ ...label, description: null, isApplied: true })),
+          ...project.labels.map((label) => ({
+            ...label,
+            isApplied: applied.has(label.name),
+          })),
+        ],
         truncated: project.truncated,
       };
     }),
@@ -1749,13 +1756,20 @@ export const make = Effect.gen(function* () {
           Effect.map(([mergeRequest, users, multiple]) => {
             const author = mergeRequest.author?.login;
             const requested = new Set(mergeRequest.reviewRequestLogins);
+            const listed = new Set(users.candidates.map((candidate) => candidate.login));
             return {
-              // GitLab forbids requesting a review from the MR author.
-              candidates: users.candidates.flatMap((candidate) =>
-                candidate.login === author
-                  ? []
-                  : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-              ),
+              candidates: [
+                // A reviewer past the project's first page of users stays a row, so it can be removed.
+                ...mergeRequest.reviewerCandidates.filter(
+                  (candidate) => !listed.has(candidate.login),
+                ),
+                // GitLab forbids requesting a review from the MR author.
+                ...users.candidates.flatMap((candidate) =>
+                  candidate.login === author
+                    ? []
+                    : [{ ...candidate, isRequested: requested.has(candidate.login) }],
+                ),
+              ],
               truncated: users.rawCount >= MAX_PAGE_SIZE,
               multiple,
             };

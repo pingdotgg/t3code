@@ -204,6 +204,7 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   /** Set by the detail read, which asks GraphQL; REST carries no label permission. */
   readonly viewerCanEditLabels?: boolean;
   readonly reviewerIds: ReadonlyArray<number>;
+  readonly reviewerCandidates: ReadonlyArray<PullRequestReviewerCandidate>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   /** Absent means not counted, not up to date. */
@@ -338,6 +339,12 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
+    reviewerCandidates: (raw.reviewers ?? []).flatMap((reviewer) => {
+      const actor = toActor(reviewer);
+      return actor === null || reviewer.id === undefined
+        ? []
+        : [{ ...actor, id: String(reviewer.id), kind: "user" as const, isRequested: true }];
+    }),
     ...(autoMerge === undefined ? {} : { autoMergeEnabled: autoMerge }),
     ...(autoMerge === true && raw.squash_on_merge === true
       ? { autoMergeMethod: "squash" as const }
