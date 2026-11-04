@@ -2453,7 +2453,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // session.command returns 204 without an inbox id; the stream drops before session.inbox.enqueued provides it.
       const { runtime, thread } = yield* resumed([
         out("command.list", "<any>"),
-        reply("command.list", { location: { directory: WORK }, data: [{ name: "hello" }] }),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "git/hello" }] }),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
         reply("message.list", {
           data: [
@@ -2461,7 +2461,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           cursor: {},
         }),
-        out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
+        out("session.command", { sessionID: SESSION, name: "git/hello", text: "WORLD" }),
         reply("session.command", null),
         { type: "runtime_exit", status: "success" } as const,
         out("event.subscribe"),
@@ -2498,7 +2498,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       yield* runtime.startTurn({
         ...turnInput(thread),
-        message: { ...turnInput(thread).message, text: "/hello WORLD" },
+        message: { ...turnInput(thread).message, text: "/git/hello WORLD" },
       });
       const collected = yield* Fiber.join(events);
       const texts = collected.flatMap((event) =>
@@ -2756,6 +2756,56 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const last = items.at(-1);
       assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
       assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stores a shell command that exits non-zero as failed", () =>
+    Effect.gen(function* () {
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-exit" };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name: "shell" }),
+        event("session.tool.called", { ...tool, input: { command: "vp test" }, executed: false }),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_toolsuccess_call-exit",
+              created: 1,
+              type: "session.tool.success",
+              data: {
+                ...tool,
+                content: [{ type: "text", text: "1 failed\n" }],
+                metadata: { status: "completed", truncated: false, exit: 1 },
+                executed: false,
+              },
+              durable: { aggregateID: SESSION, seq: 1, version: 2 },
+            },
+          },
+        },
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      const item = collected
+        .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
+        .findLast((item) => item.nativeItemRef?.nativeId?.endsWith(tool.id));
+      assert.equal(item?.type, "command_execution");
+      assert.equal(item?.status, "failed");
+      assert.equal(item?.type === "command_execution" ? item.exitCode : null, 1);
+      assert.equal(
+        collected
+          .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
+          .findLast((node) => node.id === item?.nodeId)?.status,
+        "failed",
+      );
     }).pipe(Effect.scoped),
   );
 

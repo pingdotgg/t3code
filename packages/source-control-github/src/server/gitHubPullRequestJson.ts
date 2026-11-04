@@ -1803,6 +1803,8 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
       ...(status === "removed" ? ["deleted file mode 100644"] : []),
       ...(status === "renamed"
         ? [
+            // The files API has no similarity score; Pierre needs this header to keep the rename.
+            `similarity index ${hunks.length > 0 || (value.additions ?? 0) + (value.deletions ?? 0) > 0 ? 0 : 100}%`,
             `rename from ${quoteGitPatchPath(oldPath)}`,
             `rename to ${quoteGitPatchPath(value.filename)}`,
           ]

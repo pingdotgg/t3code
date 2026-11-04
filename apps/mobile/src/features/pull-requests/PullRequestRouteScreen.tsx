@@ -65,10 +65,9 @@ import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeS
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -481,16 +480,16 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             unstable_headerSubtitle: connected
               ? params.repository
               : `${params.repository} · Offline`,
-            unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
+            unstable_headerLeftItems: sidebarHeaderItem ? () => [sidebarHeaderItem] : undefined,
           }}
-          optionsVersion={[layout.usesSplitView, sidebarHeaderItem]}
+          optionsVersion={[sidebarHeaderItem]}
         />
         {Platform.OS === "android" ? (
-          <AndroidScreenHeader
+          <AppBar
+            embedded
             title={`#${params.number}${connected ? "" : " · Offline"}`}
             subtitle={params.repository}
             onBack={layout.usesSplitView ? undefined : returnToList}
-            leading={layout.usesSplitView ? <AndroidWorkspaceSidebarButton /> : undefined}
             actions={[
               ...(permissions.verdicts.length
                 ? [
@@ -957,7 +956,7 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
     <View className="flex-1 bg-screen">
       <NativeStackScreenOptions options={{ title, headerTitle: title }} />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader title={title} onBack={() => navigation.goBack()} />
+        <AppBar embedded title={title} onBack={() => navigation.goBack()} />
       ) : null}
       <View className="flex-1 items-center justify-center">
         <AppActivityIndicator accessibilityLabel="Loading changes" />
@@ -1154,7 +1153,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <AppBar
+          embedded
           title={title}
           onBack={() => navigation.goBack()}
           trailing={
