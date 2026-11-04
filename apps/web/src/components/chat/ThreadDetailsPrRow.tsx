@@ -174,11 +174,11 @@ export function ThreadDetailsPrRow({
     environmentId,
     (project?.id as ProjectId | undefined) ?? null,
   );
-  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const [confirming, setConfirming] = useState<"merge" | "enable-auto-merge" | null>(null);
 
   const rowAction = resolveThreadPanelPullRequestAction(detail);
-  if (confirmingMerge && rowAction !== "merge") {
-    setConfirmingMerge(false);
+  if (confirming !== null && rowAction !== confirming) {
+    setConfirming(null);
   }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
@@ -348,17 +348,27 @@ export function ThreadDetailsPrRow({
               tooltip: "Fix the failing checks in a new thread",
               onClick: startFixChecks,
             }
-          : rowAction === "merge"
+          : rowAction === "enable-auto-merge"
             ? {
-                label: "Merge",
-                pendingLabel: "Merging...",
+                label: "Enable auto-merge",
+                pendingLabel: "Enabling...",
                 pending: actionPending,
                 destructive: false,
                 suffix: null,
-                tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
-                onClick: () => setConfirmingMerge(true),
+                tooltip: `Enable auto-merge (${selectedMergeMethod}): waits for requirements instead of merging right away`,
+                onClick: () => setConfirming("enable-auto-merge"),
               }
-            : null;
+            : rowAction === "merge"
+              ? {
+                  label: "Merge",
+                  pendingLabel: "Merging...",
+                  pending: actionPending,
+                  destructive: false,
+                  suffix: null,
+                  tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
+                  onClick: () => setConfirming("merge"),
+                }
+              : null;
 
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
@@ -482,13 +492,22 @@ export function ThreadDetailsPrRow({
       ) : (
         openRow(label, "row")
       )}
-      {rowAction === "merge" ? (
-        <AlertDialog open={confirmingMerge} onOpenChange={(open) => setConfirmingMerge(open)}>
+      {rowAction === "merge" || rowAction === "enable-auto-merge" ? (
+        <AlertDialog
+          open={confirming === rowAction}
+          onOpenChange={(open) => setConfirming(open ? rowAction : null)}
+        >
           <AlertDialogPopup>
             <AlertDialogHeader>
-              <AlertDialogTitle>Merge {terminology.singular}?</AlertDialogTitle>
+              <AlertDialogTitle>
+                {rowAction === "enable-auto-merge"
+                  ? "Enable auto-merge?"
+                  : `Merge ${terminology.singular}?`}
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                This merges #{number} using {selectedMergeMethod}.
+                {rowAction === "enable-auto-merge"
+                  ? `The host will merge #${number} using ${selectedMergeMethod} once its requirements are met, not right away.`
+                  : `This merges #${number} using ${selectedMergeMethod}.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -499,11 +518,11 @@ export function ThreadDetailsPrRow({
                 size="sm"
                 disabled={actionPending}
                 onClick={() => {
-                  setConfirmingMerge(false);
-                  void perform("merge", selectedMergeMethod);
+                  setConfirming(null);
+                  void perform(rowAction, selectedMergeMethod);
                 }}
               >
-                Merge
+                {rowAction === "enable-auto-merge" ? "Enable auto-merge" : "Merge"}
               </Button>
             </AlertDialogFooter>
           </AlertDialogPopup>

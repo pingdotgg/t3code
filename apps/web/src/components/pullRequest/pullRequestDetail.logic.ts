@@ -276,7 +276,13 @@ export function isStackedPullRequestBase(
 
 type PullRequestActionableDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
+  | "state"
+  | "isDraft"
+  | "mergeability"
+  | "capabilities"
+  | "viewerPermissions"
+  | "mergeCapabilities"
+  | "autoMergeEnabled"
 >;
 
 export function allowedPullRequestMergeMethods(
@@ -349,7 +355,7 @@ export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) 
   };
 }
 
-type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
+type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge" | "enable-auto-merge";
 
 export function resolveThreadPanelPullRequestAction(
   detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
@@ -361,11 +367,19 @@ export function resolveThreadPanelPullRequestAction(
   }
   const checks = classifyPullRequestChecks(detail.checks);
   if (checks === "failing") return "fix";
+  // Auto-merge already waits on the host; do not keep a Merge control beside Commit.
+  if (detail.autoMergeEnabled === true) return null;
+  const hasMergeMethod = allowedPullRequestMergeMethods(detail).length > 0;
+  if (
+    checks === "pending" &&
+    detail.autoMergeEnabled === false &&
+    canPerformPullRequestAction(detail, "enable-auto-merge") &&
+    hasMergeMethod
+  ) {
+    return "enable-auto-merge";
+  }
   if (checks === "pending") return null;
-  return canPerformPullRequestAction(detail, "merge") &&
-    allowedPullRequestMergeMethods(detail).length > 0
-    ? "merge"
-    : null;
+  return canPerformPullRequestAction(detail, "merge") && hasMergeMethod ? "merge" : null;
 }
 
 export function orderPullRequestComments<T extends { readonly createdAt: string }>(
