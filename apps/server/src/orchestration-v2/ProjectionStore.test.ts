@@ -31,6 +31,7 @@ import {
   type ThreadPullRequestLink,
   isLiveSubagentShell,
   isListedThreadLineage,
+  isSideChatThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -113,12 +114,14 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     });
   assert.deepEqual(
     activity.threads.map(awareness),
-    shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(awareness),
+    shells
+      .filter((thread) => isListedThreadLineage(thread.lineage) && !isSideChatThread(thread))
+      .map(awareness),
   );
   assert.deepEqual(
     activity.threads.map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
     shells
-      .filter((thread) => isListedThreadLineage(thread.lineage))
+      .filter((thread) => isListedThreadLineage(thread.lineage) && !isSideChatThread(thread))
       .map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
   );
   assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));

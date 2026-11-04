@@ -1280,6 +1280,7 @@ it.effect.each(["thread", "shell"] as const)(
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
+          listActiveSideChatThreadIds: () => Effect.succeed([]),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
