@@ -1,4 +1,4 @@
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { ASSET_URL_MAX_IN_FLIGHT, resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   isAssetAttachmentNotFoundFailure,
   runAttachmentUploadCycle,
@@ -105,6 +105,24 @@ async function releaseCreatedUploadsQuietly(
   } catch (error) {
     console.warn("[attachments] could not delete abandoned pending uploads", error);
   }
+}
+
+/** Runs tasks at most `limit` at a time, starting waiting ones in call order. */
+function createConcurrencyLimit(limit: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active < limit) active += 1;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      // Hand the slot straight to the next waiter so `active` never exceeds `limit`.
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
 }
 
 export interface PreparedTurnAttachments {
@@ -304,8 +322,36 @@ export async function prepareTurnAttachments(input: {
   const controller = new AbortController();
   const abort = () => controller.abort();
   input.signal?.addEventListener("abort", abort, { once: true });
+  // Each saved upload is checked with one round trip. Start them all now, a few at a time like
+  // asset URL requests, and let the loop below read the results in attachment order, so N saved
+  // uploads cost about N / limit round trips instead of N. `stopVerifying` drops the ones that
+  // have not started once the loop has finished or thrown.
+  let stopVerifying = false;
+  const limitVerifications = createConcurrencyLimit(ASSET_URL_MAX_IN_FLIGHT);
+  const verifications = input.attachments.map((attachment) => {
+    if (
+      (attachment.type === "image" && !input.supportsImageUploads) ||
+      attachment.uploadEnvironmentId !== environmentId ||
+      attachment.uploadedAttachmentId === undefined
+    ) {
+      return undefined;
+    }
+    const attachmentId = attachment.uploadedAttachmentId;
+    const verification = limitVerifications(async () => {
+      if (stopVerifying || controller.signal.aborted) throw new Error("Upload cancelled.");
+      return await verifyPersistedAttachmentUpload({
+        registry: appAtomRegistry,
+        createAssetUrl: assetEnvironment.createUrl,
+        environmentId,
+        attachmentId,
+      });
+    });
+    // An earlier attachment can end the loop first; its rejection is read only where the loop awaits it.
+    verification.catch(() => {});
+    return verification;
+  });
   try {
-    for (const attachment of input.attachments) {
+    for (const [index, attachment] of input.attachments.entries()) {
       if (controller.signal.aborted) throw new Error("Upload cancelled.");
       requireUploadAccess();
       if (attachment.type === "image" && !input.supportsImageUploads) {
@@ -317,12 +363,7 @@ export async function prepareTurnAttachments(input: {
         attachment.uploadEnvironmentId === environmentId &&
         attachment.uploadedAttachmentId !== undefined
       ) {
-        const verification = await verifyPersistedAttachmentUpload({
-          registry: appAtomRegistry,
-          createAssetUrl: assetEnvironment.createUrl,
-          environmentId,
-          attachmentId: attachment.uploadedAttachmentId,
-        });
+        const verification = await verifications[index]!;
         if (verification.status === "failed") {
           throw verification.error;
         }
@@ -399,6 +440,7 @@ export async function prepareTurnAttachments(input: {
     if (controller.signal.aborted) return { status: "abandoned" };
     throw error;
   } finally {
+    stopVerifying = true;
     input.signal?.removeEventListener("abort", abort);
   }
 }
