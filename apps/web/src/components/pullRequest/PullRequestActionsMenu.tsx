@@ -17,6 +17,7 @@ import type {
 import {
   ArrowUpRightIcon,
   BookOpenIcon,
+  ClockIcon,
   CopyIcon,
   HammerIcon,
   LinkIcon,
@@ -348,7 +349,7 @@ export function PullRequestActionsMenu({
                 closeOnClick={inlineConfirm.isArmed("enable-auto-merge")}
                 aria-label={
                   inlineConfirm.isArmed("enable-auto-merge")
-                    ? "Confirm auto-merge?"
+                    ? "Confirm enable auto-merge?"
                     : "Enable auto-merge"
                 }
                 disabled={actionPending}
@@ -357,9 +358,9 @@ export function PullRequestActionsMenu({
                   () => void perform("enable-auto-merge", selectedMergeMethod),
                 )}
               >
-                <PullRequestGlyph.merged className="size-3.5" />
+                <ClockIcon className="size-3.5" />
                 {inlineConfirm.isArmed("enable-auto-merge")
-                  ? "Confirm auto-merge?"
+                  ? "Confirm enable auto-merge?"
                   : "Enable auto-merge"}
               </MenuItem>
             ) : null}

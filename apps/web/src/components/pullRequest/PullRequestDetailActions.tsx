@@ -4,7 +4,14 @@ import type {
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
+  PlayIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -277,14 +284,14 @@ export function PullRequestPrimaryAction({
                     pendingAction === "enable-auto-merge"
                       ? "Enabling..."
                       : inlineConfirm.isArmed("enable-auto-merge")
-                        ? "Confirm auto-merge?"
+                        ? "Confirm enable auto-merge?"
                         : pendingAutoMergeLabel
                   }
                 >
                   {inlineConfirm.isArmed("enable-auto-merge") ? (
                     <CheckIcon aria-hidden className="size-3.5" />
                   ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                    <ClockIcon aria-hidden className="size-3.5" />
                   )}
                   <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
                     <span className="grid">
@@ -295,7 +302,7 @@ export function PullRequestPrimaryAction({
                         {pendingAction === "enable-auto-merge"
                           ? "Enabling..."
                           : inlineConfirm.isArmed("enable-auto-merge")
-                            ? "Confirm auto-merge?"
+                            ? "Confirm enable auto-merge?"
                             : pendingAutoMergeLabel}
                       </span>
                     </span>
@@ -309,8 +316,8 @@ export function PullRequestPrimaryAction({
               (pendingAction === "enable-auto-merge"
                 ? "Enabling..."
                 : inlineConfirm.isArmed("enable-auto-merge")
-                  ? "Confirm auto-merge?"
-                  : pendingAutoMergeLabel)}
+                  ? "Confirm enable auto-merge?"
+                  : `${pendingAutoMergeLabel}: waits for requirements instead of merging right away`)}
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "auto-merge-armed" ? (
