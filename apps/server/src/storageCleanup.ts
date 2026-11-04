@@ -634,7 +634,7 @@ const make = Effect.gen(function* () {
       progress: {
         onStdoutLine: (line) =>
           Effect.sync(() => {
-            const match = /^(\S) (\d+) ([0-9a-f]+) \d\t(.*)$/.exec(line);
+            const match = /^(\S) (\d+) ([0-9a-f]+) \d\t(.*)$/s.exec(line);
             if (match === null || !hiddenTag.test(match[1]!) || match[2] === "160000") return;
             if (flagged.length < 10_000)
               flagged.push({ mode: match[2]!, id: match[3]!, file: match[4]! });
@@ -644,7 +644,7 @@ const make = Effect.gen(function* () {
     });
     if (overflow) return "hidden tracked files exceed the inspection limit";
     const reason = (file: string) => `has uncommitted changes hidden from git status (${file})`;
-    // Git quotes names with control characters, quotes or backslashes, which hash-object cannot read back.
+    // Git quotes names with control characters, quotes or backslashes, so the listed text is not a path on disk.
     const unreadable = flagged.find(({ file }) => file.startsWith('"'));
     if (unreadable !== undefined) return reason(unreadable.file);
     const onDisk = yield* Effect.forEach(
