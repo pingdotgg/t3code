@@ -6,7 +6,7 @@ export function useSidebarToggle() {
   const role = usePaneRole();
   const { layout, panes, sidebarToggleable, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   if (role !== "content" || !sidebarToggleable) return null;
-  const maximizes = panes.primarySidebarVisible && !layout.primarySidebarOverlaysContent;
+  const maximizes = panes.primarySidebarVisible && layout.variant !== "medium";
   return {
     visible: panes.primarySidebarVisible,
     accessibilityLabel: panes.primarySidebarVisible
