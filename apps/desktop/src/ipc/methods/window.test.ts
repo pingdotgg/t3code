@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ManagedPolicyLimits } from "@t3tools/contracts";
+import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
@@ -386,3 +388,104 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("probeRemoteEditors PATH scan", () => {
+  const platform = HostProcess.Platform.defaultValue();
+  const launcherName = (command: string) => (platform === "win32" ? `${command}.cmd` : command);
+
+  const makeFakePath = Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-probe-path-" });
+    const dirs = ["a", "b", "c", "d"].map((name) => path.join(root, name));
+    for (const dir of dirs) yield* fs.makeDirectory(dir, { recursive: true });
+    // Launchers in different PATH directories, deliberately not in REMOTE_CAPABLE_EDITOR_IDS order.
+    for (const [dir, command] of [
+      [dirs[2]!, "webstorm"],
+      [dirs[0]!, "cursor"],
+      [dirs[3]!, "code"],
+      [dirs[1]!, "zed"],
+    ] as const) {
+      const file = path.join(dir, launcherName(command));
+      yield* fs.writeFileString(file, "#!/bin/sh\n");
+      if (platform !== "win32") yield* fs.chmod(file, 0o755);
+    }
+    return {
+      root,
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: dirs.join(platform === "win32" ? ";" : ":"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      },
+    };
+  });
+
+  const countingFileSystem = (counter: { stat: number }) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return FileSystem.FileSystem.of({
+          ...fs,
+          stat: (target) => {
+            counter.stat += 1;
+            return fs.stat(target);
+          },
+        });
+      }),
+    ).pipe(Layer.provideMerge(NodeServices.layer));
+
+  const serialReference = (env: Record<string, string>) =>
+    Effect.gen(function* () {
+      const available: Array<string> = [];
+      for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+        const editor = EDITORS.find((candidate) => candidate.id === editorId);
+        if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
+          available.push(editorId);
+        }
+      }
+      return available;
+    });
+
+  it.effect("returns the same editors in the same order as a serial uncached scan", () =>
+    Effect.gen(function* () {
+      const { env } = yield* makeFakePath();
+      const reference = yield* serialReference(env);
+      // A different PATH string keeps the 30 s command-resolution cache from sharing results.
+      const probed = yield* probeRemoteEditors.handler(undefined).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...env,
+          PATH: `${env.PATH}${platform === "win32" ? ";" : ":"}${env.HOME}`,
+        }),
+        Effect.provideService(HostProcess.Platform, platform),
+      );
+      assert.deepStrictEqual(reference, ["cursor", "vscode", "zed", "webstorm"]);
+      assert.deepStrictEqual(probed, reference);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads each PATH directory once instead of stat-ing every candidate per editor", () =>
+    Effect.gen(function* () {
+      const { env: baseEnv } = yield* makeFakePath();
+      const delimiter = platform === "win32" ? ";" : ":";
+      const uncachedCounter = { stat: 0 };
+      const cachedCounter = { stat: 0 };
+      const uncachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
+      const cachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
+      const uncached = yield* serialReference(uncachedEnv).pipe(
+        Effect.provide(countingFileSystem(uncachedCounter)),
+      );
+      const cached = yield* probeRemoteEditors
+        .handler(undefined)
+        .pipe(
+          Effect.provideService(HostProcess.Environment, cachedEnv),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provide(countingFileSystem(cachedCounter)),
+        );
+      assert.deepStrictEqual(cached, uncached);
+      assert.isAbove(uncachedCounter.stat, 0);
+      assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
