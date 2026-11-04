@@ -161,6 +161,12 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
 
   private func updateBadge() {
     let item = itemsByTab["threads"]
+    let appearance = tabBar.standardAppearance
+    for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+      layout.normal.badgeBackgroundColor = chatsBadgeColor
+      layout.selected.badgeBackgroundColor = chatsBadgeColor
+    }
+    tabBar.standardAppearance = appearance
     item?.badgeColor = chatsBadgeColor
     item?.badgeValue = selectedTab != "threads" && chatsBadgeColor != nil ? " " : nil
     item?.accessibilityLabel = chatsAccessibilityLabel
