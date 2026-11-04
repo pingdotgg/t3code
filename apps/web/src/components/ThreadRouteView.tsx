@@ -12,6 +12,10 @@ import { SidebarInset } from "./ui/sidebar";
 import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { environmentCatalog } from "../connection/catalog";
+import { readEnvironment } from "../state/environments";
+import { useEnvironmentQuery } from "../state/query";
+import { useAtomCommand } from "../state/use-atom-command";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
@@ -45,6 +49,8 @@ export function ThreadRouteView({
   background?: boolean;
 }) {
   const navigate = useNavigate();
+  const retryConnection = useAtomCommand(environmentCatalog.retryNow);
+  const enableEnvironment = useAtomCommand(environmentCatalog.setEnabled);
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
     draftId === null ? null : store.getDraftSession(draftId),
@@ -94,6 +100,19 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
+  const connection = useEnvironmentQuery(
+    unlistedThreadRef === null
+      ? null
+      : environmentCatalog.stateAtom(unlistedThreadRef.environmentId),
+  );
+  const connectionPhase =
+    connection.error !== null
+      ? "blocked"
+      : connection.isPending
+        ? null
+        : (connection.data?.phase ?? null);
+  const connectionUnavailable =
+    connectionPhase !== null && connectionPhase !== "connected" && connectionPhase !== "connecting";
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
   const unlistedParentKey =
@@ -118,6 +137,7 @@ export function ThreadRouteView({
     );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
+    connectionPhase,
     serverThreadExists: serverThreadShell !== null,
     serverThreadDeleted: serverThreadShell?.deletedAt != null,
     unlistedThreadDetail,
@@ -200,14 +220,29 @@ export function ThreadRouteView({
       <Empty role="alert">
         <EmptyHeader>
           <EmptyTitle>Could not load thread</EmptyTitle>
-          <EmptyDescription>{Option.getOrNull(unlistedThreadDetail.error)}</EmptyDescription>
+          <EmptyDescription>
+            {Option.getOrNull(unlistedThreadDetail.error) ??
+              connection.data?.lastFailure?.message ??
+              connection.error ??
+              "This environment is not connected."}
+          </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => retryEnvironmentThread(target.threadRef)}
+              onClick={() => {
+                retryEnvironmentThread(target.threadRef);
+                if (connectionUnavailable) {
+                  const environmentId = target.threadRef.environmentId;
+                  if (readEnvironment(environmentId)?.entry.enabled === false) {
+                    void enableEnvironment({ environmentId, enabled: true });
+                  } else {
+                    void retryConnection(environmentId);
+                  }
+                }
+              }}
             >
               Retry
             </Button>

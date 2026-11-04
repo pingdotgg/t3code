@@ -63,6 +63,7 @@ describe("threadRoutes", () => {
       expect(
         resolveThreadRouteRenderState({
           bootstrapComplete: isThreadRouteSnapshotAuthoritative(status),
+          connectionPhase: "offline",
           serverThreadExists: source === "server thread",
           serverThreadDeleted: false,
           unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
@@ -76,6 +77,7 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: false,
+        connectionPhase: "connecting",
         serverThreadExists: false,
         serverThreadDeleted: false,
         unlistedThreadDetail: { ...EMPTY_ENVIRONMENT_THREAD_STATE, status: "deleted" },
@@ -85,6 +87,7 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
+        connectionPhase: "connected",
         serverThreadExists: false,
         serverThreadDeleted: false,
         unlistedThreadDetail: { ...EMPTY_ENVIRONMENT_THREAD_STATE, status: "deleted" },
@@ -96,6 +99,7 @@ describe("threadRoutes", () => {
   it("opens an unlisted server thread once its detail arrives, without waiting for the shell", () => {
     const route = {
       bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
+      connectionPhase: "connected" as const,
       serverThreadExists: false,
       serverThreadDeleted: false,
       draftThreadExists: false,
@@ -133,6 +137,13 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         ...route,
+        connectionPhase: "connecting",
+        unlistedThreadDetail: failedDetail,
+      }),
+    ).toBe("loading");
+    expect(
+      resolveThreadRouteRenderState({
+        ...route,
         unlistedThreadDetail: failedDetail,
       }),
     ).toBe("error");
@@ -155,11 +166,40 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
+  it.each(["blocked", "offline", "backoff", "available"] as const)(
+    "offers recovery for an uncached thread while its connection is %s without a detail error",
+    (connectionPhase) => {
+      const route = {
+        bootstrapComplete: false,
+        connectionPhase,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        draftThreadExists: false,
+      };
+      expect(
+        resolveThreadRouteRenderState({
+          ...route,
+          unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
+        }),
+      ).toBe("error");
+      expect(
+        resolveThreadRouteRenderState({
+          ...route,
+          unlistedThreadDetail: {
+            ...EMPTY_ENVIRONMENT_THREAD_STATE,
+            status: "synchronizing",
+          },
+        }),
+      ).toBe("error");
+    },
+  );
+
   it.each(["missing", "deleted", "archived"] as const)(
     "redirects an unlisted thread only after detail confirms it is %s",
     (outcome) => {
       const route = {
         bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
+        connectionPhase: "connected" as const,
         serverThreadExists: false,
         serverThreadDeleted: false,
         draftThreadExists: false,
@@ -203,6 +243,7 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: isThreadRouteSnapshotAuthoritative("cached"),
+        connectionPhase: "offline",
         serverThreadExists: true,
         serverThreadDeleted: true,
         unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,

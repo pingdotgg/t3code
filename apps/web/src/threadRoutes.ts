@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { SupervisorConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -31,6 +32,7 @@ export function isThreadRouteSnapshotAuthoritative(
 
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
+  connectionPhase: SupervisorConnectionPhase | null;
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
   unlistedThreadDetail: EnvironmentThreadState;
@@ -41,14 +43,16 @@ export function resolveThreadRouteRenderState(input: {
   }
   const detail = input.unlistedThreadDetail;
   const projection = Option.getOrNull(detail.data);
-  if (
-    !input.serverThreadExists &&
-    projection === null &&
-    detail.status !== "synchronizing" &&
-    detail.status !== "deleted" &&
-    Option.isSome(detail.error)
-  ) {
-    return "error";
+  if (!input.serverThreadExists && projection === null && detail.status !== "deleted") {
+    if (input.connectionPhase === "connecting") {
+      return "loading";
+    }
+    if (
+      (input.connectionPhase !== null && input.connectionPhase !== "connected") ||
+      (detail.status !== "synchronizing" && Option.isSome(detail.error))
+    ) {
+      return "error";
+    }
   }
   if (!input.bootstrapComplete) {
     return "loading";
