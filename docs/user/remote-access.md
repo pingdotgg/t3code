@@ -223,6 +223,18 @@ check with:
 ssh user@example.com 'sh -lc "command -v claude codex"'
 ```
 
+T3 Code cannot answer a second sign-in prompt such as a Duo code. On macOS and
+Linux it can reuse a connection you signed in to in a terminal instead: turn on
+connection sharing for the host in `~/.ssh/config`, run `ssh <alias>`, then
+connect. When that connection closes, sign in again in a terminal and retry.
+
+```sshconfig
+Host <alias>
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 8h
+```
+
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already
 running is left alone.

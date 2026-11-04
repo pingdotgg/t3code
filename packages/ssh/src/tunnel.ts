@@ -26,6 +26,8 @@ import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
+  controlMasterArgs,
+  findLiveControlPath,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
@@ -1104,6 +1106,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly authOptions: SshAuth.SshAuthOptions;
+  /** Forward through this live ControlMaster instead of signing in again. */
+  readonly controlPath: string | null;
   readonly remoteServerKind: "external" | "managed" | null;
   readonly scope: Scope.Closeable;
 }): Effect.fn.Return<
@@ -1136,7 +1140,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
-  const args = [
+  const directArgs = [
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
@@ -1159,10 +1163,56 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "--",
     hostSpec,
   ];
+  const { controlPath, scope } = input;
+  // The master's own GatewayPorts would otherwise decide the bind address.
+  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
+  const { args, stdin } =
+    controlPath === null
+      ? { args: directArgs, stdin: { stream: Stream.empty, endOnDone: true } }
+      : {
+          // A mux client with -N exits once the master takes the forward, so hold a session
+          // open on stdin to keep a process whose exit means the tunnel is gone.
+          args: [
+            ...baseSshArgs(input.resolvedTarget, { batchMode: "yes" }),
+            ...controlMasterArgs(controlPath),
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ControlMaster=no",
+            "-T",
+            "-L",
+            controlMasterForward,
+            "--",
+            hostSpec,
+            "sh -c 'exec cat >/dev/null'",
+          ],
+          stdin: "pipe" as const,
+        };
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { scope } = input;
+  if (controlPath !== null) {
+    const fileSystemService = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    // The master keeps a forward after the mux client that asked for it exits.
+    yield* Scope.addFinalizer(
+      scope,
+      runSshCommand(input.resolvedTarget, {
+        preHostArgs: [
+          ...controlMasterArgs(controlPath),
+          "-O",
+          "cancel",
+          "-L",
+          controlMasterForward,
+        ],
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystemService),
+        Effect.provideService(Path.Path, pathService),
+        Effect.ignore,
+      ),
+    );
+  }
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
     command: tunnelCommand,
@@ -1176,10 +1226,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
         extendEnv: true,
-        stdin: {
-          stream: Stream.empty,
-          endOnDone: true,
-        },
+        stdin,
       }),
     )
     .pipe(
@@ -1536,18 +1583,32 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
-      operation: (authOptions) =>
-        startSshTunnel({
-          key: input.key,
-          resolvedTarget: input.resolvedTarget,
-          remotePort,
-          localPort,
-          httpBaseUrl,
-          wsBaseUrl,
-          authOptions,
-          remoteServerKind: remoteLaunch.remoteServerKind,
-          scope: entryScope,
-        }),
+      operation: (authOptions) => {
+        const start = (controlPath: string | null) =>
+          startSshTunnel({
+            key: input.key,
+            resolvedTarget: input.resolvedTarget,
+            remotePort,
+            localPort,
+            httpBaseUrl,
+            wsBaseUrl,
+            authOptions,
+            controlPath,
+            remoteServerKind: remoteLaunch.remoteServerKind,
+            scope: entryScope,
+          });
+        // A fresh login cannot answer a second factor such as Duo, but the user's signed-in
+        // ControlMaster already has. Without one, the auth failure goes on to the password prompt.
+        return start(null).pipe(
+          Effect.catchIf(SshAuth.isSshAuthFailure, (error) =>
+            findLiveControlPath(input.resolvedTarget).pipe(
+              Effect.flatMap((controlPath) =>
+                controlPath === null ? Effect.fail(error) : start(controlPath),
+              ),
+            ),
+          ),
+        );
+      },
     }).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),

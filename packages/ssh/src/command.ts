@@ -43,7 +43,7 @@ export interface RunSshCommandOptions extends SshAuthOptions {
   readonly keepErrorOutputTail?: boolean;
 }
 
-export function parseSshResolveOutput(alias: string, stdout: string): DesktopSshEnvironmentTarget {
+function parseSshConfigOutput(stdout: string): Map<string, string> {
   const values = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -56,6 +56,11 @@ export function parseSshResolveOutput(alias: string, stdout: string): DesktopSsh
     }
     values.set(key, rest.join(" ").trim());
   }
+  return values;
+}
+
+export function parseSshResolveOutput(alias: string, stdout: string): DesktopSshEnvironmentTarget {
+  const values = parseSshConfigOutput(stdout);
 
   const hostname = values.get("hostname")?.trim() || alias;
   const username = values.get("user")?.trim() || null;
@@ -115,6 +120,12 @@ export function baseSshArgs(
     "ConnectTimeout=10",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
+}
+
+// `-F none` keeps the user's configured forwards out of T3's requests, and ProxyCommand=false
+// fails closed instead of dialing the host directly once the master is gone.
+export function controlMasterArgs(controlPath: string): string[] {
+  return ["-F", "none", "-o", `ControlPath=${controlPath}`, "-o", "ProxyCommand=false"];
 }
 
 export function getLastNonEmptyOutputLine(stdout: string): string | null {
@@ -371,5 +382,28 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
         }),
       ),
     ),
+  );
+});
+
+/** The control path of the user's signed-in ControlMaster for `target`, or null when none is live. */
+export const findLiveControlPath = Effect.fn("ssh/command.findLiveControlPath")(function* (
+  target: DesktopSshEnvironmentTarget,
+): Effect.fn.Return<
+  string | null,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> {
+  const resolved = yield* runSshCommand(target, { preHostArgs: ["-G"] }).pipe(Effect.option);
+  const controlPath = Option.isSome(resolved)
+    ? parseSshConfigOutput(resolved.value.stdout).get("controlpath")
+    : undefined;
+  if (controlPath === undefined || controlPath === "none") {
+    return null;
+  }
+  return yield* runSshCommand(target, {
+    preHostArgs: [...controlMasterArgs(controlPath), "-O", "check"],
+  }).pipe(
+    Effect.as(controlPath),
+    Effect.orElseSucceed(() => null),
   );
 });
