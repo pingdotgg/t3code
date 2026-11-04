@@ -772,7 +772,7 @@ export function ServerBrowserSurface(props: {
             variant="outline"
             size="xs"
             aria-pressed={accessibleView}
-            disabled={pdfUrl !== null}
+            disabled={pdfUrl !== null && !accessibleView}
             onClick={() => {
               const next = !accessibleView;
               setAccessibleView(next);
