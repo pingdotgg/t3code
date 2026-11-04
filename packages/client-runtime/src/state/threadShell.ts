@@ -13,7 +13,7 @@ import {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
@@ -673,10 +673,42 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
+  // The archive has no live updates, so a removal or a new authoritative shell snapshot rereads it,
+  // and the answer from before counts as loading. Kept outside the family so a swept node still
+  // sees a change it missed.
+  const archiveReads = new Map<
+    EnvironmentId,
+    WeakMap<
+      AtomRegistry.AtomRegistry,
+      {
+        readonly generation: number;
+        readonly removedAt: ReadonlyMap<ThreadId, number>;
+        readonly stale: unknown;
+      }
+    >
+  >();
   // Null while the archived page has not arrived. A failed read counts as empty and current.
   const archivedThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): { readonly ids: ReadonlySet<ThreadId>; readonly sequence: number } | null => {
-      const result = get(input.archivedSnapshotAtom(environmentId));
+      const archiveAtom = input.archivedSnapshotAtom(environmentId);
+      const result = get(archiveAtom);
+      const shell = AsyncResult.getOrElse(get(input.shellStateAtom(environmentId)), () => null);
+      const reads = archiveReads.get(environmentId) ?? new WeakMap();
+      archiveReads.set(environmentId, reads);
+      const previous = reads.get(get.registry);
+      const generation = shell?.generation ?? previous?.generation ?? 0;
+      const removedAt = shell?.removedAt ?? previous?.removedAt ?? new Map();
+      if (
+        previous !== undefined &&
+        (previous.generation !== generation || previous.removedAt !== removedAt)
+      ) {
+        reads.set(get.registry, { generation, removedAt, stale: result });
+        get.refresh(archiveAtom);
+        return null;
+      }
+      const stale = previous?.stale === result;
+      reads.set(get.registry, { generation, removedAt, stale: stale ? result : undefined });
+      if (stale) return null;
       if (result.waiting || AsyncResult.isInitial(result)) return null;
       if (!AsyncResult.isSuccess(result)) return { ids: new Set(), sequence: Infinity };
       const { threads, snapshotSequence } = result.value;
