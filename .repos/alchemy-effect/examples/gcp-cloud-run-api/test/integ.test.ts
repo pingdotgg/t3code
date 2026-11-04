@@ -1,16 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as firestore from "@distilled.cloud/gcp/firestore_v1";
 import * as secretmanager from "@distilled.cloud/gcp/secretmanager_v1";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -22,21 +21,12 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// The service is built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 const API_KEY = "integ-test-key";
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-cloud-run-api", () => {
+describe("gcp-cloud-run-api", () => {
   const stack = beforeAll(
     Effect.gen(function* () {
       const outputs = yield* deploy(Stack);
@@ -135,9 +125,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-run-api", () => {
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
       expect(document.fields?.url?.stringValue).toEqual(target);
 
-      const before = yield* HttpClient.execute(
-        HttpClientRequest.get(`${baseUrl}/links/${code}`),
-      );
+      const before = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/links/${code}`));
       expect(before.status).toBe(200);
       expect((yield* before.json) as { clicks: number }).toMatchObject({
         url: target,
@@ -155,9 +143,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-run-api", () => {
       expect(redirect.status).toBe(302);
       expect(redirect.headers.location).toEqual(target);
 
-      const after = yield* HttpClient.execute(
-        HttpClientRequest.get(`${baseUrl}/links/${code}`),
-      );
+      const after = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/links/${code}`));
       expect((yield* after.json) as { clicks: number }).toMatchObject({
         clicks: 1,
       });
@@ -169,9 +155,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-run-api", () => {
       );
       expect(deleted.status).toBe(204);
 
-      const gone = yield* HttpClient.execute(
-        HttpClientRequest.get(`${baseUrl}/links/${code}`),
-      );
+      const gone = yield* HttpClient.execute(HttpClientRequest.get(`${baseUrl}/links/${code}`));
       expect(gone.status).toBe(404);
     }),
     { timeout: 180_000 },

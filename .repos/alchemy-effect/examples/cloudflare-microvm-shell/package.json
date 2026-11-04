@@ -16,6 +16,8 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
