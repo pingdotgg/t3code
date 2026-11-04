@@ -58,7 +58,7 @@ const PAGE_LENGTH_LIMIT = `a page must be at most ${MAX_HTML_LENGTH.toLocaleStri
 
 export class HtmlRenderPageFileError extends Schema.TaggedError<HtmlRenderPageFileError>()(
   "HtmlRenderPageFileError",
-  { path: Schema.String, reason: Schema.String },
+  { path: Schema.String, reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return `${this.path} cannot be used as the page: ${this.reason}`;
@@ -269,14 +269,18 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
+// Sticky, so it matches at `lastIndex` without copying the page, however much whitespace follows.
+const DOCTYPE_HTML = /<!doctype\s+html[\s>]/iy;
+
 // Like hasSvgRoot, so a renamed .env, key, or JSON file cannot pass for a page. \s includes a BOM.
 const hasHtmlRoot = (text: string) => {
   let at = 0;
   while (at !== -1) {
     while (/\s/.test(text.charAt(at))) at += 1;
+    DOCTYPE_HTML.lastIndex = at;
     if (text.startsWith("<?", at)) at = after(text, "?>", at + 2);
     else if (text.startsWith("<!--", at)) at = after(text, "-->", at + 4);
-    else if (/^<!doctype\s+html[\s>]/i.test(text.slice(at, at + 15))) return true;
+    else if (DOCTYPE_HTML.test(text)) return true;
     else if (text.slice(at, at + 9).toLowerCase() === "<!doctype") at = afterDoctype(text, at + 9);
     else return /^<(?:html|head|body)[\s/>]/i.test(text.slice(at, at + 6));
   }
@@ -286,12 +290,13 @@ const hasHtmlRoot = (text: string) => {
 const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (pagePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const reject = (reason: string) => new HtmlRenderPageFileError({ path: pagePath, reason });
+  const reject = (reason: string, cause?: unknown) =>
+    new HtmlRenderPageFileError({ path: pagePath, reason, cause });
   if (!path.isAbsolute(pagePath)) return yield* reject("use an absolute path.");
   // stat follows symlinks, so the checks below apply to the file a link points to.
   const info = yield* fileSystem
     .stat(pagePath)
-    .pipe(Effect.mapError(() => reject("it does not exist or cannot be read.")));
+    .pipe(Effect.mapError((cause) => reject("it does not exist or cannot be read.", cause)));
   if (info.type !== "File") return yield* reject("it is not a file.");
   const tooLarge = (size: string) => reject(`it is ${size}; ${PAGE_LENGTH_LIMIT}`);
   if (Number(info.size) > MAX_PAGE_FILE_BYTES) {
@@ -300,12 +305,12 @@ const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (pagePath: s
   // The file can grow after stat, so bound the read too.
   const bytes = yield* fileSystem.stream(pagePath, { bytesToRead: MAX_PAGE_FILE_BYTES + 1 }).pipe(
     Stream.mkUint8Array,
-    Effect.mapError(() => reject("it cannot be read.")),
+    Effect.mapError((cause) => reject("it cannot be read.", cause)),
   );
   if (bytes.byteLength > MAX_PAGE_FILE_BYTES) return yield* tooLarge(formatMib(bytes.byteLength));
   const html = yield* Effect.try({
     try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    catch: () => reject("it is not UTF-8 text."),
+    catch: (cause) => reject("it is not UTF-8 text.", cause),
   });
   if (html.length > MAX_HTML_LENGTH) {
     return yield* tooLarge(`${html.length.toLocaleString("en-US")} characters`);

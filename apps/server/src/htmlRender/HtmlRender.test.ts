@@ -330,7 +330,15 @@ describe("HtmlRender", () => {
       expect(
         yield* mcpSessions.takeHtmlRender(threadId, { html, title: "Shot", height: 300 }),
       ).toEqual(inline);
-      for (const start of ['<?xml version="1.0"?>\n<html>', "  <HEAD>", "<body>", "<html/>"]) {
+      for (const start of [
+        '<?xml version="1.0"?>\n<html>',
+        "  <HEAD>",
+        "<body>",
+        "<html/>",
+        // After a doctype, html/head/body may be omitted, and any whitespace may precede "html".
+        "<!DOCTYPE  html><title>Report</title>",
+        "<!doctype\n\thtml\n><title>Report</title>",
+      ]) {
         yield* fileSystem.writeFileString(file, `${start}<p>ok</p>`);
         yield* htmlRender.publish({ threadId, path: file, title: "Ok", height: 200 });
       }
