@@ -959,7 +959,16 @@ export const layerWithOptions = (
                 own !== undefined &&
                 [...existing.busyTurns].some((turnKey) => !isOwnBusyTurn(turnKey, own))
               ) {
-                return ["kept", current] as const;
+                // The caller settled its own turns; one whose end never arrives must not keep
+                // the session from going idle once the turn it was kept for ends.
+                const kept = new Map(current);
+                kept.set(key, {
+                  ...existing,
+                  busyTurns: new Set(
+                    [...existing.busyTurns].filter((turnKey) => !isOwnBusyTurn(turnKey, own)),
+                  ),
+                });
+                return ["kept", kept] as const;
               }
               const updated = new Map(current);
               updated.delete(key);
@@ -2381,8 +2390,11 @@ export const layerWithOptions = (
               throughRunOrdinal: input.throughRunOrdinal,
             },
           });
-          // Identity, not presence: open can install a replacement under the same id meanwhile.
-          return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
+          // Scope, not presence: open can install a replacement under the same id meanwhile, and
+          // a kept entry is rewritten with the same scope.
+          return (
+            before !== undefined && (yield* Ref.get(sessions)).get(key)?.scope !== before.scope
+          );
         }),
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {

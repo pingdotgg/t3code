@@ -1920,6 +1920,24 @@ it.effect("Force stop keeps the session a queued follow-up started its turn on",
           { outcome: "released", sharedWithThreadIds: [] },
           "Force stop detached the thread the follow-up runs on as if its session were shared",
         );
+
+        // The first run's provider never confirms the stop; the follow-up's turn ends normally.
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: followUp.providerThread.id,
+          providerTurnId: ProviderTurnId.make(`provider-turn:${followUp.attemptId}`),
+          runOrdinal: followUp.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* worker.drain();
+        yield* TestClock.adjust("31 minutes");
+        assert.isFalse(
+          yield* sessions.isLive(providerSessionId),
+          "the stopped run's unconfirmed turn kept the session from going idle",
+        );
       }).pipe(Effect.provide(layerLive));
     }),
   ),
