@@ -32,15 +32,11 @@ export function removeSpeechFillerWords(
     ...UNIVERSAL_FILLER_WORDS,
     ...(baseLanguage ? (LANGUAGE_FILLER_WORDS[baseLanguage] ?? []) : []),
   ];
-  let filtered = text;
-  const protectedWord = correctionCue?.trim().toLowerCase();
-  for (const word of words) {
-    if (word === protectedWord) continue;
-    const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}_])${escapeRegex(word)}(?![\\p{L}\\p{N}_])[,.]?`,
-      "giu",
-    );
-    filtered = filtered.replace(pattern, "");
-  }
+  const cuePattern = correctionCue?.trim().split(/\s+/).map(escapeRegex).join("\\s+");
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}_])(?:(${cuePattern || "(?!)"})(?![\\p{L}\\p{N}_])|(?:${words.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])[,.]?)`,
+    "giu",
+  );
+  const filtered = text.replace(pattern, (_match, cue: string | undefined) => cue ?? "");
   return filtered.replace(/\s{2,}/g, " ").trim();
 }

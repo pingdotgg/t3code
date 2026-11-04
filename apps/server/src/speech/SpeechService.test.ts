@@ -106,6 +106,7 @@ const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  native.finish.mockReset();
   native.backend = "Vulkan0";
   native.supportsInitialPrompt = false;
   readyModels.clear();
@@ -217,6 +218,18 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
 
 it.effect.each([
   { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
+  {
+    cue: "uh no",
+    remove: true,
+    text: "Make it red, uh no, blue.",
+    expected: "Make it red, uh no, blue.",
+  },
+  {
+    cue: "uh no",
+    remove: true,
+    text: "Uh, Make it red, UH  NO, blue. Uh nope.",
+    expected: "Make it red, UH NO, blue. nope.",
+  },
   {
     cue: " UM ",
     remove: true,
