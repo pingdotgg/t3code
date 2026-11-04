@@ -432,6 +432,19 @@ export const make = Effect.gen(function* () {
       trigger === "settle"
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
+    // A surviving setup shell may still hold a deleted worktree directory.
+    if (trigger === "setup") {
+      yield* terminalManager.close({ threadId: input.threadId, terminalId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "openTerminal",
+              cause,
+            }),
+        ),
+      );
+    }
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({

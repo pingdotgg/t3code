@@ -61,6 +61,10 @@ const makeHarness = Effect.fn(function* (options: {
         return () => listeners.delete(listener);
       }),
     write: (input) => Queue.offer(writes, input.data).pipe(Effect.asVoid),
+    close: () =>
+      Effect.forEach([...listeners], (listener) => listener({ ...event, type: "closed" }), {
+        discard: true,
+      }),
     closeIdle: () => Effect.void,
     closeOnSettle: () => Effect.void,
   });
@@ -125,7 +129,7 @@ describe("ProjectSetupScriptRunner", () => {
 
   it.effect("shows a startup prompt and types only once the line editor starts", () =>
     Effect.gen(function* () {
-      const { result, writes, outputLines, emit } = yield* setup();
+      const { result, completion, writes, outputLines, emit } = yield* setup();
       expect(result).toMatchObject({ status: "started", terminalId });
 
       yield* emit({ ...event, type: "output", data: "Missing Node.\r\nInstall it? [y/N]: " });
@@ -136,7 +140,12 @@ describe("ProjectSetupScriptRunner", () => {
 
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: false, label: "zsh" });
       yield* emit({ ...event, type: "output", data: "\r\n% \x1b[?2004h" });
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+      const command = yield* Queue.take(writes);
+      expect(command).toMatch(/^ \( vp i\r\);/);
+      const sentinel = command.match(/__T3_SETUP_DONE___[a-f0-9]+:/)?.[0];
+      expect(sentinel).toBeDefined();
+      yield* emit({ ...event, type: "output", data: `${sentinel}0\r\n% ` });
+      expect(yield* completion).toMatchObject({ exitCode: 0 });
     }),
   );
 
