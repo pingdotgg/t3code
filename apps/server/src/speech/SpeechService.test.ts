@@ -7,11 +7,13 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import * as SpeechService from "./SpeechService.ts";
+import { SILERO_VAD } from "./silero.ts";
 
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
@@ -167,14 +169,29 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
     const speech = yield* SpeechService.SpeechService;
     const started = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
-    download.mockImplementationOnce(() =>
-      Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Deferred.await(finish)),
-        Effect.as("test.gguf"),
-      ),
-    );
+    const helperStarted = yield* Deferred.make<void>();
+    let helperStartedDuringInstall = false;
+    download
+      .mockImplementationOnce(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(finish)),
+          Effect.as("test.gguf"),
+        ),
+      )
+      .mockImplementationOnce(() =>
+        Deferred.isDone(finish).pipe(
+          Effect.tap((done) =>
+            Effect.sync(() => {
+              helperStartedDuringInstall = !done;
+            }),
+          ),
+          Effect.andThen(Deferred.succeed(helperStarted, undefined)),
+          Effect.as("silero.gguf"),
+        ),
+      );
     const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
     yield* Deferred.await(started);
+    yield* Deferred.await(helperStarted);
     yield* Fiber.interrupt(request);
     const removed = yield* Effect.result(speech.removeModel("test-model"));
     expect(Result.isFailure(removed) && removed.failure).toMatchObject({ _tag: "SpeechBusyError" });
@@ -183,9 +200,32 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Deferred.succeed(finish, undefined);
     yield* Fiber.join(join);
-    expect(download).toHaveBeenCalledTimes(1);
+    expect(download.mock.calls.map(([model]) => model.id)).toEqual(["test-model", SILERO_VAD.id]);
+    expect(helperStartedDuringInstall).toBe(true);
     yield* speech.removeModel("test-model");
     expect(readyModels.has("test-model")).toBe(false);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps the installed speech model usable when optional Silero acquisition fails", () =>
+  Effect.gen(function* () {
+    download
+      .mockImplementationOnce(() => Effect.succeed("test.gguf"))
+      .mockImplementationOnce(() =>
+        Effect.fail(
+          new PlatformError.PlatformError(
+            new PlatformError.SystemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "open",
+            }),
+          ),
+        ),
+      );
+    const speech = yield* SpeechService.SpeechService;
+    const installed = yield* speech.downloadModel("test-model");
+    expect(installed.models.find((model) => model.id === "test-model")?.state).toBe("installed");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
   }).pipe(Effect.provide(layer)),
 );
 

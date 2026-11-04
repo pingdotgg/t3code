@@ -99,6 +99,10 @@ export function VoiceInputSetup(props: {
                   {environment?.label ?? "your transcription environment"}. Microphone audio is sent
                   there for transcription, as chosen in Voice settings.
                 </p>
+                <p className="mt-2 text-muted-foreground">
+                  Silero (1.2 MB), used for silence filtering and pause detection, downloads
+                  alongside the speech model. An installed copy is reused.
+                </p>
                 {props.downloading ? (
                   <div role="status" className="mt-4 space-y-1 text-muted-foreground">
                     <div

@@ -128,6 +128,9 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     ]);
     expect(yield* h.store.isReady(h.model)).toBe(true);
     expect(yield* h.store.installedPath(h.model)).toBe(installed);
+    const requestsBeforeReuse = h.requests.length;
+    expect(yield* h.store.download(h.model)).toBe(installed);
+    expect(h.requests).toHaveLength(requestsBeforeReuse);
   }).pipe(Effect.provide(dependencies)),
 );
 
