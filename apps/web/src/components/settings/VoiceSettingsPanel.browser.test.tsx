@@ -1,12 +1,87 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { EnvironmentId, type EnvironmentSpeechModel } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { useVoiceTranscriptionDestination } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
+import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
+
+vi.mock(import("../../speech/useEnvironmentSpeechInput"), { spy: true });
+
+it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-progress"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const model: EnvironmentSpeechModel = {
+    id: "tiny",
+    name: "Tiny",
+    description: "",
+    size: 100,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: false,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: false,
+    active: false,
+    state: "downloading",
+  };
+  const status = {
+    supported: true,
+    state: "missing-model",
+    modelId: model.id,
+    model: model.name,
+    size: model.size,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  };
+  const unavailable = () => new Response(null, { status: 503 });
+  const readModels = vi
+    .fn(unavailable)
+    .mockImplementationOnce(() => Response.json({ models: [model] }))
+    .mockImplementationOnce(unavailable)
+    .mockImplementationOnce(() => Response.json({ models: [{ ...model, state: "installed" }] }));
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
+    if (url.pathname === "/api/voice/models") return Promise.resolve(readModels());
+    return fetch(input, init);
+  });
+  using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
+  await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    async () => {
+      const panel = (key: string) => (
+        <SettingsScopeProvider search={{}} onChange={() => {}}>
+          <VoiceSettingsPanel key={key} />
+        </SettingsScopeProvider>
+      );
+      await using screen = await render(panel("first"));
+      await expect.element(screen.getByRole("button", { name: "Use model" })).toBeVisible();
+      expect(notify).not.toHaveBeenCalled();
+      await screen.rerender(panel("reopened"));
+      await vi.waitFor(() =>
+        expect(notify).toHaveBeenCalledWith(
+          expect.objectContaining({ title: "Could not load transcription models" }),
+        ),
+      );
+    },
+  );
+});
 
 it.each([
   ["speech-models", "voice-transcription-destination"],
