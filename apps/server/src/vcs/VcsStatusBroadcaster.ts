@@ -730,7 +730,9 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
-        const initialLocal = yield* getOrLoadLocalStatus(cwd);
+        const initialLocal = input.includeCheckoutDetails
+          ? yield* workflow.localStatus({ cwd, includeCheckoutDetails: true })
+          : yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
         if (input.includeRemote !== false) {
@@ -754,6 +756,13 @@ export const make = Effect.gen(function* () {
           Stream.fromSubscription(subscription).pipe(
             Stream.filter((event) => event.cwd === cwd),
             Stream.map((event) => event.event),
+            Stream.mapEffect((event) =>
+              input.includeCheckoutDetails && event._tag === "localUpdated"
+                ? workflow
+                    .localStatus({ cwd, includeCheckoutDetails: true })
+                    .pipe(Effect.map((local) => ({ ...event, local })))
+                : Effect.succeed(event),
+            ),
           ),
         ).pipe(Stream.ensuring(release));
       }),

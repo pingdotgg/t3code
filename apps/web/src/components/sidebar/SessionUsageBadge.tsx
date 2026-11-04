@@ -1,17 +1,11 @@
-import { type EnvironmentId, type ThreadId, UsageDay } from "@t3tools/contracts";
+import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { formatSessionCost, sessionTokenCount } from "../../lib/sessionUsage";
+import { formatSessionCost, sessionTokenCount, SESSION_USAGE_WINDOW } from "../../lib/sessionUsage";
 
-const WINDOW = {
-  sinceDay: UsageDay.make("2000-01-01"),
-  untilDay: UsageDay.make("9999-12-31"),
-  timeZone: "UTC",
-  includeThreadUsage: true,
-};
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -28,7 +22,9 @@ export function SessionUsageBadge({
 }) {
   const canRead = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   const query = useEnvironmentQuery(
-    canRead ? serverEnvironment.threadUsageSummary({ environmentId, input: WINDOW }) : null,
+    canRead
+      ? serverEnvironment.threadUsageSummary({ environmentId, input: SESSION_USAGE_WINDOW })
+      : null,
   );
   const usage = query.data?.threadUsage?.find((entry) => entry.threadId === threadId);
   if (!canRead) return null;

@@ -1,6 +1,8 @@
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { compactSessionModel, sessionMachineLabel } from "../../lib/sessionLabels";
 import { SessionUsageBadge } from "./SessionUsageBadge";
+import { SessionWorkspaceBadge, SessionWorkspaceDetails } from "./SessionWorkspaceBadge";
+import { SessionContextMeter } from "./SessionContextMeter";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
@@ -40,7 +42,6 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
-  GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -93,7 +94,6 @@ import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
-  ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   terminalStatusFromRunningIds,
@@ -114,7 +114,6 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -295,12 +294,7 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
-        {thread.branch ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-            <MiddleTruncate value={thread.branch} className="flex" />
-          </div>
-        ) : null}
+        <SessionWorkspaceDetails thread={thread} workspaceRoot={project?.workspaceRoot ?? null} />
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
@@ -311,9 +305,6 @@ function SidebarThreadTooltip({
         ) : null}
         {driverKind ? (
           <div className="flex min-w-0 items-center gap-2">
-            <span aria-label={modelLabel} className="text-foreground/75">
-              {compactSessionModel(modelLabel)}
-            </span>
             <ProviderInstanceIcon
               driverKind={driverKind}
               displayName={
@@ -327,6 +318,7 @@ function SidebarThreadTooltip({
               badgeClassName="h-2 min-w-2 px-0"
               iconClassName="size-3 shrink-0 grayscale opacity-60"
             />
+            <span className="text-foreground/75">{modelLabel}</span>
           </div>
         ) : null}
         {previousProviderNames.length > 0 ? (
@@ -812,7 +804,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       providerEntryByInstanceId={props.providerEntryByInstanceId}
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
-      modelLabel={modelLabel}
+      modelLabel={selectedModel?.name ?? modelLabel}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1133,29 +1125,30 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
     !thread.branch && prBadge === null && diff === null && runningTerminalIds.length === 0;
+  const workspaceIndicators = (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      <SessionWorkspaceBadge thread={thread} workspaceRoot={props.project?.workspaceRoot ?? null} />
+      <SessionContextMeter
+        thread={thread}
+        driverKind={providerEntry?.driverKind ?? null}
+        modelLabel={selectedModel?.name ?? modelLabel}
+      />
+    </span>
+  );
   const sessionIndicators = (
     <span className="inline-flex shrink-0 items-center gap-1 text-secondary-label text-xs">
       <SessionUsageBadge environmentId={thread.environmentId} threadId={thread.id} />
       {remoteMachineIcon}
-      <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}
       />
+      <span aria-label={modelLabel}>{compactSessionModel(modelLabel)}</span>
     </span>
   );
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {thread.branch ? (
-        <>
-          <ThreadWorktreeIndicator thread={thread} />
-          <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={thread.branch} showTitle={false} />
-          </span>
-        </>
-      ) : (
-        <span className="flex-1" />
-      )}
+      <span className="flex min-w-0 flex-1">{workspaceIndicators}</span>
       {terminalStatusIcon}
       {prBadge}
       {diff ? (
@@ -1167,7 +1160,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <span className="ml-auto inline-flex shrink-0">{sessionIndicators}</span>
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? sessionIndicators : null;
+  const titleLineIcons = metaLineEmpty ? (
+    <>
+      {workspaceIndicators}
+      {sessionIndicators}
+    </>
+  ) : null;
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
@@ -1229,7 +1227,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : sessionIndicators}
+              {multiline ? (
+                titleLineIcons
+              ) : (
+                <>
+                  {workspaceIndicators}
+                  {sessionIndicators}
+                </>
+              )}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (
@@ -1751,7 +1756,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
           providerEntryByInstanceId={props.providerEntryByInstanceId}
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
-          modelLabel={modelLabel}
+          modelLabel={selectedModel?.name ?? modelLabel}
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}

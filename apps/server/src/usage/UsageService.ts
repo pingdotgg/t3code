@@ -9,6 +9,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
+  ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -106,6 +107,15 @@ const encodeRatesCache = Schema.encodeEffect(Schema.fromJsonString(RatesCacheFil
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
+const decodeThreadContext = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ...ThreadTokenUsageSnapshot.fields,
+      updatedAt: Schema.optional(Schema.String),
+      maxTokens: Schema.optional(Schema.NullOr(Schema.Number)),
+    }),
+  ),
+);
 const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
 
 function isLaterRead(a: CachedFile, b: CachedFile): boolean {
@@ -719,8 +729,44 @@ export const make = Effect.gen(function* () {
     );
 
     let threadIdsBySession: Map<string, readonly string[]> | undefined;
+    const threadContexts: NonNullable<UsageSummary["threadContexts"]>[number][] = [];
     if (input.includeThreadUsage === true) {
       const sql = database;
+      const contexts = yield* sql<{
+        readonly threadId: string;
+        readonly usage: string | null;
+        readonly updatedAt: string;
+      }>`
+        SELECT t.thread_id AS threadId, p.updated_at AS updatedAt,
+          COALESCE((SELECT json_extract(pt.payload_json, '$.tokenUsage')
+            FROM orchestration_v2_projection_provider_turns pt
+            WHERE pt.provider_thread_id = p.provider_thread_id
+              AND json_extract(pt.payload_json, '$.tokenUsage.usedTokens') IS NOT NULL
+            ORDER BY pt.ordinal DESC LIMIT 1), json_extract(p.payload_json, '$.contextUsage')) AS usage
+        FROM orchestration_v2_projection_threads t
+        JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = t.active_provider_thread_id
+        WHERE t.deleted_at IS NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Could not read session context usage.",
+              cause,
+            }),
+        ),
+      );
+      for (const row of contexts) {
+        const decoded = row.usage === null ? Option.none() : decodeThreadContext(row.usage);
+        if (Option.isNone(decoded)) continue;
+        const { maxTokens, updatedAt, ...usage } = decoded.value;
+        threadContexts.push({
+          threadId: row.threadId,
+          usage: { ...usage, ...(maxTokens != null && maxTokens > 0 ? { maxTokens } : {}) },
+          updatedAt: updatedAt ?? row.updatedAt,
+        });
+      }
       const links = yield* sql<{
         readonly threadId: string;
         readonly driver: string;
@@ -919,6 +965,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       ...(aggregated.threadUsage === undefined ? {} : { threadUsage: aggregated.threadUsage }),
+      ...(input.includeThreadUsage ? { threadContexts } : {}),
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),

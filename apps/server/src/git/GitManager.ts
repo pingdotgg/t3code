@@ -85,6 +85,7 @@ import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { readCheckoutDetails } from "./checkoutDetails.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -2399,7 +2400,12 @@ export const make = Effect.gen(function* () {
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
     function* (input) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      return yield* Cache.get(localStatusResultCache, cacheKey);
+      const status = yield* Cache.get(localStatusResultCache, cacheKey);
+      if (!input.includeCheckoutDetails || !status.isRepo) return status;
+      const checkoutDetails = yield* readCheckoutDetails(cacheKey).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, gitCore),
+      );
+      return { ...status, ...(checkoutDetails ? { checkoutDetails } : {}) };
     },
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(

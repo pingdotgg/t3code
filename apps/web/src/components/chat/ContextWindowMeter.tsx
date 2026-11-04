@@ -19,13 +19,25 @@ function formatPercentage(value: number | null): string | null {
 }
 
 export function ContextWindowMeter(props: {
-  usage: ContextWindowSnapshot;
+  usage: ContextWindowSnapshot | null;
   modelDisplayName?: string | null;
   onCompact?: (() => void) | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
+  compact?: boolean;
 }) {
-  const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const { modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const missing = props.usage === null;
+  const usage = props.usage ?? {
+    usedPercentage: null,
+    maxTokens: null,
+    usedTokens: 0,
+    totalProcessedTokens: null,
+    cost: null,
+    compactsAutomatically: false,
+    autoCompactThreshold: null,
+    updatedAt: null,
+  };
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -34,9 +46,11 @@ export function ContextWindowMeter(props: {
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
   const isOverloaded = normalizedPercentage > 90;
-  const usageColor = isOverloaded
-    ? "var(--color-error)"
-    : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+  const usageColor = missing
+    ? "color-mix(in oklab, var(--color-muted-foreground) 30%, transparent)"
+    : isOverloaded
+      ? "var(--color-error)"
+      : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
 
   return (
     <Popover>
@@ -46,16 +60,25 @@ export function ContextWindowMeter(props: {
         closeDelay={onCompact ? 150 : 0}
         render={
           <Button
-            size="icon-sm"
+            size={props.compact ? "icon-xs" : "icon-sm"}
             variant="ghost-muted"
-            className="size-7"
+            className={props.compact ? undefined : "size-7"}
+            onClick={(event) => event.stopPropagation()}
             aria-label={
-              usage.maxTokens !== null && usedPercentage
-                ? `Context window ${usedPercentage} used`
-                : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
+              missing
+                ? "Context usage unavailable"
+                : usage.maxTokens !== null && usedPercentage
+                  ? `Context window ${usedPercentage} used`
+                  : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
-            <span className="relative flex size-5 items-center justify-center">
+            <span
+              className={
+                props.compact
+                  ? "relative flex size-3.5 items-center justify-center"
+                  : "relative flex size-5 items-center justify-center"
+              }
+            >
               <svg
                 viewBox="0 0 24 24"
                 className="-rotate-90 absolute inset-0 size-full transform-gpu mx-0!"
@@ -77,7 +100,7 @@ export function ContextWindowMeter(props: {
                   stroke={usageColor}
                   strokeWidth="3"
                   strokeLinecap="round"
-                  strokeDasharray={circumference}
+                  strokeDasharray={missing ? "2 3" : circumference}
                   strokeDashoffset={dashOffset}
                   className="transition-[stroke-dashoffset,stroke] duration-500 ease-out motion-reduce:transition-none"
                 />
@@ -98,7 +121,7 @@ export function ContextWindowMeter(props: {
         <div className="flex flex-col gap-2 p-(--floating-content-inset)">
           <div className="flex items-center justify-between gap-3">
             <div className="font-medium text-muted-foreground text-xs">Context Window</div>
-            {usage.maxTokens !== null && usedPercentage ? (
+            {missing ? null : usage.maxTokens !== null && usedPercentage ? (
               <div className="text-secondary-label text-2xs tabular-nums">
                 <span>{usedPercentage}</span>
                 <span className="mx-1">·</span>
@@ -136,6 +159,19 @@ export function ContextWindowMeter(props: {
               </span>
             </div>
           ) : null}
+          {usage.maxTokens != null ? (
+            <div className="flex items-center justify-between gap-3 text-2xs">
+              <span>Remaining</span>
+              <span>
+                {formatContextWindowTokens(Math.max(0, usage.maxTokens - usage.usedTokens))}
+              </span>
+            </div>
+          ) : null}
+          {usage.updatedAt ? (
+            <div className="text-secondary-label text-2xs">
+              Updated {new Date(usage.updatedAt).toLocaleString()}
+            </div>
+          ) : null}
           {usage.cost != null ? (
             <div className="flex items-center justify-between gap-3 text-2xs leading-4">
               <span className="text-secondary-label">Cost</span>
@@ -156,7 +192,10 @@ export function ContextWindowMeter(props: {
                 variant="outline"
                 className="mt-1 w-full justify-center"
                 disabled={compactDisabled}
-                onClick={onCompact}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCompact();
+                }}
               >
                 <Minimize2Icon aria-hidden="true" />
                 Compact context
