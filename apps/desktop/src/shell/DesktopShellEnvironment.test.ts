@@ -605,45 +605,35 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("leaves macOS preparation incomplete when no login shell returns a PATH", () =>
-    Effect.gen(function* () {
-      const prepared = yield* runShellEnvironment({
-        env: { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
-        platform: "darwin",
-        handler: () => "",
-      });
+  it.effect(
+    "leaves macOS preparation incomplete when no login shell returns a PATH, then retries",
+    () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+        let shellReady = false;
+        yield* runShellEnvironment({
+          env,
+          platform: "darwin",
+          handler: (command) =>
+            shellReady && command._tag === "StandardCommand" && command.command === "/bin/zsh"
+              ? envOutput({ PATH: "/fresh/bin" })
+              : "",
+          use: (service) =>
+            Effect.gen(function* () {
+              assert.isFalse(yield* service.awaitDiscovery);
+              assert.equal(env.PATH, "/usr/bin");
 
-      assert.isFalse(prepared);
-    }),
-  );
+              yield* TestClock.adjust("30 seconds");
+              assert.equal(env.PATH, "/usr/bin");
 
-  it.effect("retries discovery later when the login shell returned no PATH", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
-      let shellReady = false;
-      yield* runShellEnvironment({
-        env,
-        platform: "darwin",
-        handler: (command) =>
-          shellReady && command._tag === "StandardCommand" && command.command === "/bin/zsh"
-            ? envOutput({ PATH: "/fresh/bin" })
-            : "",
-        use: (service) =>
-          Effect.gen(function* () {
-            assert.isFalse(yield* service.awaitDiscovery);
-            assert.equal(env.PATH, "/usr/bin");
-
-            yield* TestClock.adjust("30 seconds");
-            assert.equal(env.PATH, "/usr/bin");
-
-            // A Mac that slept during launch answers a later probe.
-            shellReady = true;
-            yield* TestClock.adjust("30 seconds");
-            assert.equal(env.PATH, "/fresh/bin:/usr/bin");
-            return true;
-          }),
-      });
-    }),
+              // A Mac that slept during launch answers a later probe.
+              shellReady = true;
+              yield* TestClock.adjust("30 seconds");
+              assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+              return true;
+            }),
+        });
+      }),
   );
 
   it.effect("loads PowerShell profile environment on Windows", () =>
