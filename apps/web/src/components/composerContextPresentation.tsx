@@ -24,6 +24,7 @@ import {
   fileContextReference,
   imageContextReference,
   isPullRequestCheckContext,
+  isPullRequestFeedbackContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -455,7 +456,9 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
                 ? pullRequestContextKindLabel(entry.record)
                 : isPullRequestCheckContext(entry.record)
                   ? "Check"
-                  : "Review comment"
+                  : isPullRequestFeedbackContext(entry.record)
+                    ? "Feedback"
+                    : "Review comment"
             }
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}

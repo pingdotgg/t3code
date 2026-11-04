@@ -115,6 +115,7 @@ import {
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
@@ -128,6 +129,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
@@ -1093,6 +1095,23 @@ export function PullRequestDetailPanel({
     );
   };
 
+  const startFixFeedback = () => {
+    if (!detail) return;
+    void startHandoff(
+      PULL_REQUEST_FIX_FEEDBACK_KEY,
+      buildFixFeedbackHandoff({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        reviewThreads: detail.reviewThreads,
+        comments: detail.comments,
+        commentsTruncated: detail.commentsTruncated,
+      }),
+    );
+  };
+
   const startFixFindings = () => {
     if (!detail) return;
     void startHandoff(
@@ -1773,8 +1792,13 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   fixChecksLabel={handoffLabels.fixChecks}
+                  fixFeedbackLabel={handoffLabels.fixFeedback}
                   {...(canFixFindings
-                    ? { onFixFinding: startFixFinding, onFixChecks: startFixChecks }
+                    ? {
+                        onFixFinding: startFixFinding,
+                        onFixChecks: startFixChecks,
+                        onFixFeedback: startFixFeedback,
+                      }
                     : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}

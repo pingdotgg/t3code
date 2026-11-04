@@ -65,7 +65,9 @@ import {
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
   classifyPullRequestChecks,
+  hasActionablePullRequestFeedback,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -391,8 +393,10 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   fixChecksLabel = "Fix all",
+  fixFeedbackLabel = "Fix all",
   onFixFinding,
   onFixChecks,
+  onFixFeedback,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -408,8 +412,10 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   fixChecksLabel?: string;
+  fixFeedbackLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
   onFixChecks?: () => void;
+  onFixFeedback?: () => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -878,6 +884,24 @@ export function PullRequestSummaryTab({
         title={`Comments (${detail.commentCount})`}
         actions={
           <div className="flex shrink-0 items-center gap-1">
+            {onFixFeedback &&
+            hasActionablePullRequestFeedback({
+              reviewThreads: detail.reviewThreads,
+              comments: detail.comments,
+            }) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pendingFinding !== null && pendingFinding !== undefined}
+                onClick={onFixFeedback}
+              >
+                <HammerIcon className="size-3" />
+                {pendingFinding === PULL_REQUEST_FIX_FEEDBACK_KEY
+                  ? "Preparing..."
+                  : fixFeedbackLabel}
+              </Button>
+            ) : null}
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}

@@ -26,8 +26,11 @@ import {
   buildExplainPullRequestHandoff,
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
+  describeThreadPanelFixAction,
+  hasActionablePullRequestFeedback,
   buildPullRequestReferenceContext,
   buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
   buildFixFindingsHandoff,
@@ -663,13 +666,19 @@ describe("fix findings handoff", () => {
     url: null,
   };
 
-  it("attaches a review thread as an annotation instead of quoting it in the prompt", () => {
+  it("adds feedback as chips that leave the draft alone", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
       reviewThreads: [thread("rename the helper")],
       checks: [],
     });
+    expect(handoff.additive).toBe(true);
+    expect(handoff.prompt).toBe("");
     expect(handoff.reviewComments).toEqual([
+      expect.objectContaining({
+        filePath: "Review feedback on #42",
+        text: expect.stringContaining("untrusted data"),
+      }),
       expect.objectContaining({
         filePath: "apps/web/src/page.tsx",
         rangeLabel: "L12",
@@ -678,21 +687,19 @@ describe("fix findings handoff", () => {
         text: "reviewer: rename the helper",
       }),
     ]);
-    expect(handoff.prompt).not.toContain("rename the helper");
-    expect(handoff.prompt).toContain("untrusted data");
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {
-    const handoff = buildFixFindingsHandoff({
+    const handoff = buildFixFeedbackHandoff({
       ...base,
       reviewThreads: [thread("x".repeat(5_000))],
-      checks: [],
     });
-    expect(handoff.reviewComments[0]?.text).toHaveLength(1_000);
-    expect(handoff.reviewComments[0]?.text.endsWith("...")).toBe(true);
+    const threadChip = handoff.reviewComments.find((comment) => comment.rangeLabel === "L12");
+    expect(threadChip?.text).toHaveLength(1_000);
+    expect(threadChip?.text.endsWith("...")).toBe(true);
   });
 
-  it("keeps the newest threads and the failing checks when it has to cut", () => {
+  it("keeps the newest threads and adds failing checks as their own chip", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
       reviewThreads: Array.from({ length: 25 }, (_, index) =>
@@ -700,26 +707,30 @@ describe("fix findings handoff", () => {
       ),
       checks: [failingCheck],
     });
-    const texts = handoff.reviewComments.map((comment) => comment.text);
-    expect(texts).toHaveLength(19);
-    expect(texts.at(-1)).toBe("reviewer: finding 24");
-    expect(texts).not.toContain("reviewer: finding 0");
-    expect(handoff.prompt).toContain("typecheck");
-    expect(handoff.prompt).toContain("6 further findings were omitted");
+    const threadChips = handoff.reviewComments.filter((comment) =>
+      comment.id.startsWith("pr-finding:"),
+    );
+    const checkChip = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-checks:"));
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    expect(threadChips).toHaveLength(20);
+    expect(threadChips.at(-1)?.text).toBe("reviewer: finding 24");
+    expect(threadChips.map((comment) => comment.text)).not.toContain("reviewer: finding 0");
+    expect(summary?.text).toContain("5 further findings were omitted");
+    expect(checkChip?.text).toContain("typecheck");
   });
 
   it("names a GitLab merge request as one", () => {
-    const handoff = buildFixFindingsHandoff({
+    const handoff = buildFixFeedbackHandoff({
       ...base,
       title: "Add the page",
       url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
       reviewThreads: [],
-      checks: [],
     });
-    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
-    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
-    expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
-    expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
+    const [chip] = handoff.reviewComments;
+    expect(chip?.text).toContain("Fix the actionable review feedback on this merge request");
+    expect(chip?.text).toContain("The merge request is #42");
+    expect(chip?.text).toContain("inspect the merge request before changing code");
+    expect(chip?.text).not.toMatch(/\bPR\b|pull request/u);
   });
 });
 
@@ -749,9 +760,9 @@ describe("findings that cannot be attached", () => {
   it("carries a review submitted with words but no line, which has nothing to attach to", () => {
     const handoff = buildFixFindingsHandoff({ ...base, comments: [review] });
 
-    expect(handoff.reviewComments).toEqual([]);
-    expect(handoff.prompt).toContain("revert the middleware change");
-    expect(handoff.prompt).not.toContain("No unresolved review findings");
+    expect(handoff.reviewComments).toHaveLength(1);
+    expect(handoff.reviewComments[0]?.text).toContain("revert the middleware change");
+    expect(handoff.reviewComments[0]?.text).not.toContain("No unresolved review findings");
   });
 
   it("does not repeat a remark that was already attached as a thread", () => {
@@ -780,8 +791,10 @@ describe("findings that cannot be attached", () => {
       comments: [{ ...review, id: attachedId, kind: "review-comment", body: "rename the helper" }],
     });
 
-    expect(handoff.reviewComments).toHaveLength(1);
-    expect(handoff.prompt).not.toContain("rename the helper");
+    expect(
+      handoff.reviewComments.filter((comment) => comment.id.startsWith("pr-finding:")),
+    ).toHaveLength(1);
+    expect(handoff.reviewComments[0]?.text).not.toContain("rename the helper");
   });
 });
 
@@ -1304,6 +1317,46 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("failure"), check("pending")] }),
       ),
     ).toBe("fix");
+  });
+
+  it("offers Fix for unresolved review feedback even while checks pass or run", () => {
+    const feedback = {
+      reviewThreads: [
+        {
+          id: "t1",
+          path: "a.ts",
+          line: 1,
+          side: "right" as const,
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "c1",
+              author: { login: "reviewer", name: null, avatarUrl: null },
+              body: "please rename this",
+              createdAt: "2026-07-03T00:00:00Z",
+              url: null,
+            },
+          ],
+        },
+      ],
+      comments: [],
+    };
+    expect(hasActionablePullRequestFeedback(feedback)).toBe(true);
+    expect(resolveThreadPanelPullRequestAction(openDetail(), feedback)).toBe("fix");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("success"), check("pending")] }),
+        feedback,
+      ),
+    ).toBe("fix");
+    expect(
+      describeThreadPanelFixAction({
+        failingChecks: false,
+        hasFeedback: true,
+        inThisThread: false,
+      }).tooltip,
+    ).toContain("review feedback");
   });
 
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {

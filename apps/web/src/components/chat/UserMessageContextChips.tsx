@@ -45,6 +45,7 @@ import {
 } from "../contextChipParts";
 import {
   isPullRequestCheckContext,
+  isPullRequestFeedbackContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -453,11 +454,14 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         const isPullRequest = isPullRequestSummaryContext(record);
         const label = reviewCommentContextLabel(record);
         const isCheck = isPullRequestCheckContext(record);
+        const isFeedback = isPullRequestFeedbackContext(record);
         const kindLabel = isPullRequest
           ? pullRequestContextKindLabel(record)
           : isCheck
             ? "Check"
-            : "Review comment";
+            : isFeedback
+              ? "Feedback"
+              : "Review comment";
         const pullRequestState = pullRequestContextDisplayState(record) ?? "unknown";
         if (isPullRequest && record.pullRequest !== undefined) {
           return (
@@ -568,7 +572,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="text-xs font-medium text-foreground">
-          {isPullRequestCheckContext(comment)
+          {isPullRequestCheckContext(comment) || isPullRequestFeedbackContext(comment)
             ? comment.filePath
             : formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
