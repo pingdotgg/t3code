@@ -346,10 +346,14 @@ export const make = Effect.gen(function* () {
           );
           return { iterations, changedFiles };
         });
-        const [{ iterations, changedFiles }, pullRequest] = yield* Effect.all(
+        const [{ iterations, changedFiles }] = yield* Effect.all(
           [pushes, dated(input.cwd, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
           { concurrency: "unbounded" },
         );
+        const pullRequest = yield* dated(
+          input.cwd,
+          AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
+        )(read);
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
         const detail: ProviderChangeRequestDetail = {

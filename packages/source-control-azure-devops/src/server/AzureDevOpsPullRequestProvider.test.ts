@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
@@ -127,13 +128,26 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
 describe("getChangeRequest", () => {
   it.effect("preserves the newest head when file counting fails", () =>
     Effect.gen(function* () {
+      const dated = yield* Deferred.make<void>();
+      let updatedAt = PULL_REQUEST.updatedAt;
+      const pushedAt = "2026-07-03T00:00:00.000Z";
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
-            activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
+            activityAt: () =>
+              Effect.gen(function* () {
+                const at = updatedAt;
+                yield* Deferred.succeed(dated, undefined);
+                return at;
+              }),
             listIterations: () =>
-              Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
+              Deferred.await(dated).pipe(
+                Effect.map(() => {
+                  updatedAt = pushedAt;
+                  return [ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }];
+                }),
+              ),
             listIterationChanges: () =>
               Effect.fail(
                 new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
@@ -154,6 +168,7 @@ describe("getChangeRequest", () => {
         number: 7,
       });
       expect(detail.headSha).toBe("new-head");
+      expect(detail.updatedAt).toBe(pushedAt);
       expect(detail.changedFiles).toBe(0);
     }),
   );
