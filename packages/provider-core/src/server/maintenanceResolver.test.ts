@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -44,8 +45,8 @@ const driver = (value: string) => ProviderDriverKind.make(value);
 // Shell stubs use POSIX paths; Windows temp paths cannot split on colon.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((random) => random.uuidV4()),
     Effect.map((id) => NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), `${name}-${id}`)),
   );
 const isNativeTestCommandPath =
@@ -131,7 +132,11 @@ function stdoutSpawner(
 }
 
 it.layer(
-  NodeServices.layer.pipe(Layer.merge(Layer.succeed(HostProcess.Environment, { PATH: "" }))),
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    Layer.succeed(HostProcess.Environment, { PATH: "" }),
+  ),
 )("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
@@ -234,7 +239,7 @@ it.layer(
         let probes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
-          { binaryPath, env: { PATH: "" } },
+          { binaryPath, env: { PATH: fixture.install === "npm" ? npmBinDir : "" } },
         ).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
           Effect.provideService(
@@ -416,7 +421,7 @@ it.layer(
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "pins npm updates to the global prefix that owns the package",
+    "pins npm updates to the global prefix that owns the package and the provider's PATH",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-capabilities");
@@ -426,12 +431,14 @@ it.layer(
           "@example",
           "package-tool",
         ]);
+        // A version manager's Node, which only the provider's settings put on PATH.
+        const providerEnv = { PATH: NodePath.join(tempDir, "bin") };
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
           {
             binaryPath: link,
-            env: { PATH: "" },
+            env: providerEnv,
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
@@ -450,6 +457,7 @@ it.layer(
               "@example/package-tool@latest",
             ],
             lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
+            env: providerEnv,
           },
         });
       }),
@@ -703,7 +711,7 @@ it.layer(
           maintenanceCapabilities: capabilities,
         }),
       ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("stays unknown when choco search fails instead of asking npm", () =>
@@ -734,7 +742,7 @@ it.layer(
       );
 
       expect(latest).toBeNull();
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each([
@@ -922,7 +930,8 @@ it.layer(
 
   it.effect.each([
     {
-      case: "the eligible release",
+      case: "the eligible release with an inherited PATH",
+      inheritPath: true,
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
       npmOutput: '"1.2.0"',
@@ -977,9 +986,11 @@ it.layer(
         let npmProbes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
-          { binaryPath: link, env: { PATH: "" } },
+          { binaryPath: link, env: fixture.inheritPath ? {} : { PATH: pnpmBinDir } },
         ).pipe(
-          Effect.provideService(HostProcess.Environment, { PATH: pnpmBinDir }),
+          Effect.provideService(HostProcess.Environment, {
+            PATH: fixture.inheritPath ? pnpmBinDir : "",
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
@@ -1119,6 +1130,34 @@ it.layer(
         expect(capabilities.update).toBeNull();
       });
     },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "updates an npm-owned launcher in a native install location with npm",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-npm");
+        const prefix = NodePath.join(tempDir, ".local");
+        const packageBin = NodePath.join("node_modules", "@example", "native-package-tool", "bin");
+        writeExecutable(NodePath.join(prefix, "lib", packageBin, "native-package-tool.exe"));
+        const launcher = NodePath.join(prefix, "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(launcher), { recursive: true });
+        NodeFS.symlinkSync(
+          NodePath.join("..", "lib", packageBin, "native-package-tool.exe"),
+          launcher,
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: launcher, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toMatchObject({
+          executable: "npm",
+          args: expect.arrayContaining(["--prefix", prefix]),
+          lockKey: `npm-global:${normalizeCommandPath(prefix)}`,
+        });
+      }),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -1425,6 +1464,26 @@ it.layer(
           env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
+
+        // A mise command wrapper is a symlink to the mise binary, not to the tool.
+        const miseBinary = NodePath.join(tempDir, "usr", "bin", "mise");
+        writeExecutable(miseBinary);
+        const wrapper = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "mise",
+          "command-wrappers",
+          "bin",
+          "package-tool",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(wrapper), { recursive: true });
+        NodeFS.symlinkSync(miseBinary, wrapper);
+        const viaWrapper = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: wrapper,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(viaWrapper.update).toBeNull();
       }),
   );
 
