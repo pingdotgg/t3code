@@ -1219,7 +1219,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {inFolder ? null : (
                 <span
                   className={cn(
-                    "flex shrink-0 items-center transition-opacity",
+                    "-mr-2.5 flex shrink-0 items-center transition-opacity",
                     (!props.isActive || variantAction === "unsettle") &&
                       "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
                   )}
@@ -1294,7 +1294,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         )}
                       >
                         <TopStatusIcon icon={topStatus.icon} className="size-3" />
-                        {topStatus.label}
+                        {status === "working" ? (
+                          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                        ) : (
+                          topStatus.label
+                        )}
                       </span>
                     ) : (
                       <span className="text-xs">
@@ -1411,7 +1415,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {accessibleTitle}
           <div className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              {topStatus ? (
+              {topStatus && topStatus.icon !== "done" ? (
                 isWokeStatus ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1443,7 +1447,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
-                    {topStatus.label}
+                    {status !== "working" ? topStatus.label : null}
                     {status === "working" ? (
                       <span aria-hidden>
                         <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
@@ -1458,7 +1462,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {draftIndicator}
               {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                <ProjectFavicon project={props.project} className="-mr-1.5 size-4 shrink-0" />
               ) : null}
               {title}
               {pinIndicator}
@@ -1486,7 +1490,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus === null ? (
+                    {topStatus?.icon === "done" ? (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 font-medium",
+                          topStatus.className,
+                        )}
+                      >
+                        <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                        {topStatus.label}
+                      </span>
+                    ) : topStatus === null ? (
                       <RelativeTimeLabel timestamp={threadTimeTimestamp(thread)} />
                     ) : null}
                   </span>

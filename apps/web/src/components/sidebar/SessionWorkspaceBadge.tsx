@@ -110,7 +110,7 @@ export function SessionWorkspaceBadge({
           <button
             type="button"
             onClick={(event) => event.stopPropagation()}
-            className="inline-flex shrink-0 items-center gap-1"
+            className="inline-flex shrink-0 items-center gap-0"
             aria-label={thread.worktreePath ? "Worktree details" : "Main checkout details"}
           />
         }
