@@ -395,11 +395,12 @@ const make = Effect.gen(function* () {
       path.join(cwd, "assets", "icon.svg"),
       namedProjectIconSvg(name),
     );
-    // Force explicit filenames so global ignore rules cannot drop them.
+    // Force explicit filenames so global ignore rules cannot drop them, and keep
+    // core.safecrlf=true from refusing the LF files under CRLF conversion.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
-      args: ["add", "--force", "--", "README.md", "assets/icon.svg"],
+      args: ["-c", "core.safecrlf=false", "add", "--force", "--", "README.md", "assets/icon.svg"],
       timeoutMs: 10_000,
     });
     return yield* git
