@@ -153,7 +153,7 @@ export function ComposerAttachmentMediaRow({
   return (
     <div
       className={cn(
-        "mb-3 flex max-w-full gap-2",
+        "mb-3 flex max-w-full gap-1.5",
         pendingSnapShotIds.length > 0 ||
           expandedImages.some((image) => image.source?.kind === "snap-shot")
           ? "snap-x snap-proximity overflow-x-auto overscroll-x-contain pb-1 scrollbar-thumb-foreground/18 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/18 [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-foreground/28 [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
@@ -188,7 +188,7 @@ export function ComposerAttachmentMediaRow({
                 "group/attachment shrink-0 snap-start bg-background",
                 source?.kind === "snap-shot"
                   ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
-                  : "relative h-16 w-16 overflow-hidden rounded-lg border border-border/80",
+                  : "relative size-12 overflow-hidden rounded-lg border border-border/80",
                 snapShotAnimationPending && "invisible",
               )}
             >
@@ -333,7 +333,7 @@ export function ComposerAttachmentMediaRow({
         return (
           <div
             key={file.id}
-            className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            className="relative size-12 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
           >
             <button
               type="button"
@@ -403,7 +403,7 @@ export function ComposerAttachmentMediaRow({
   );
 }
 
-/** Non-media file attachments, listed under the media row. */
+/** Non-media file attachments, shown as cards beside the media row. */
 export function ComposerAttachmentFileList({
   files,
   resolvedTheme,
@@ -429,7 +429,7 @@ export function ComposerAttachmentFileList({
 }) {
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   return (
-    <div className="mb-3 flex flex-col gap-1">
+    <div className="contents">
       {files.map((file) => {
         const fileCanUpload =
           supportsAttachmentUploads &&
@@ -441,38 +441,42 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="relative flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            className="group/file relative flex h-12 min-w-0 max-w-64 items-center gap-2 overflow-clip rounded-lg border border-border bg-muted/40 pe-1 ps-2"
           >
-            <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
+            <span
+              aria-hidden
+              className="flex h-8 w-7 shrink-0 items-center justify-center rounded-sm bg-foreground/8"
+            >
+              <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
+            </span>
             <button
               type="button"
               disabled={needsReattach}
-              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left focus-visible:outline-2"
               onClick={() => onPreviewFile(file.id)}
             >
-              {file.name}
-            </button>
-            <span
-              className={cn(
-                "shrink-0 text-xs text-secondary-label",
-                !needsReattach && upload?.status === "uploading" && "text-info",
-              )}
-            >
-              {needsReattach
-                ? canReattachFile
-                  ? "Attach again"
-                  : "Remove to send"
-                : upload?.status === "uploading"
-                  ? `Uploading · ${formatAttachmentUploadProgress(upload.progress)} of ${formatAttachmentSize(file.sizeBytes)}`
-                  : formatAttachmentSize(file.sizeBytes)}
-            </span>
-            {!needsReattach && upload?.status === "uploading" ? (
+              <span className="w-full truncate font-medium text-foreground text-xs hover:underline">
+                {file.name}
+              </span>
               <span
-                aria-hidden
-                className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-border"
+                className={cn(
+                  "w-full truncate text-3xs text-muted-foreground",
+                  !needsReattach && upload?.status === "uploading" && "text-info-foreground",
+                )}
               >
+                {needsReattach
+                  ? canReattachFile
+                    ? "Attach again"
+                    : "Remove to send"
+                  : upload?.status === "uploading"
+                    ? `Uploading · ${formatAttachmentUploadProgress(upload.progress)} of ${formatAttachmentSize(file.sizeBytes)}`
+                    : formatAttachmentSize(file.sizeBytes)}
+              </span>
+            </button>
+            {!needsReattach && upload?.status === "uploading" ? (
+              <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 bg-border">
                 <span
-                  className="block h-full rounded-full bg-info"
+                  className="block h-full bg-info"
                   style={{ width: formatAttachmentUploadProgress(upload.progress) }}
                 />
               </span>

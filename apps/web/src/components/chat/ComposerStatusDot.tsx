@@ -16,7 +16,15 @@ const variantColor: Record<ComposerBannerVariant, string> = {
   warning: "text-warning",
 };
 
-/** One dot beside Send stands for every notice; clicking it opens the list. */
+const variantTitleColor: Record<ComposerBannerVariant, string> = {
+  default: "text-info-foreground",
+  error: "text-error-foreground",
+  info: "text-info-foreground",
+  success: "text-success-foreground",
+  warning: "text-warning-foreground",
+};
+
+/** One ring beside Send stands for every notice; clicking it opens the list. */
 export function ComposerStatusDot({
   items,
 }: {
@@ -45,48 +53,63 @@ export function ComposerStatusDot({
         data-chat-composer-collapsed-controls="true"
       >
         {items.length === 1 ? (
-          <span
+          // Static on purpose: a spinning ring repaints every frame.
+          <svg
             aria-hidden
-            className={cn(
-              "flex size-5 items-center justify-center rounded-full border-2 border-current/35",
-              variantColor[variant],
-            )}
+            viewBox="0 0 28 28"
+            className={cn("size-7 shrink-0", variantColor[variant])}
           >
-            <ComposerBanner.Dot />
-          </span>
+            <circle cx="14" cy="14" r="11" fill="none" stroke="var(--border)" strokeWidth="2.5" />
+            <circle
+              cx="14"
+              cy="14"
+              r="11"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeDasharray="42.9 69.1"
+              transform="rotate(-90 14 14)"
+            />
+            <circle cx="14" cy="14" r="3" fill="currentColor" />
+          </svg>
         ) : (
           <span
             aria-hidden
             className={cn(
-              "flex size-6 items-center justify-center rounded-full border border-current bg-current/15 font-mono text-2xs font-semibold tabular-nums",
+              "flex size-7 items-center justify-center rounded-full border border-current bg-current/20 font-mono text-2xs font-semibold tabular-nums",
               variantColor[variant],
             )}
           >
-            {items.length}
+            <span className={variantTitleColor[variant]}>{items.length}</span>
           </span>
         )}
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" width="lg" padding="none" {...menuProps}>
-        <div className="flex flex-col gap-px p-1 text-xs">
+      <PopoverPopup side="top" align="end" width="md" padding="none" {...menuProps}>
+        <div className="flex flex-col p-1 text-xs">
           {ordered.map((item) => (
             <div
               key={item.id}
               role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
-              className={cn(
-                "flex flex-col gap-1 rounded-md px-2.5 py-1.5",
-                item.variant === "error" && "bg-error/6",
-              )}
+              className={cn("rounded-md px-2.5", item.variant === "error" && "bg-error/6")}
             >
-              <div className="flex min-h-6 min-w-0 items-center gap-2">
+              <div className="flex min-h-8 min-w-0 items-center gap-2">
                 <ComposerBanner.Dot className={variantColor[item.variant]} />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="min-w-0 font-medium wrap-anywhere">{item.title}</span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 py-1.5 wrap-anywhere",
+                    variantTitleColor[item.variant],
+                    item.variant === "error" && "font-medium",
+                  )}
+                >
+                  {item.title}
                   {item.description ? (
-                    <span className="min-w-0 text-muted-foreground wrap-anywhere">
+                    <span className="opacity-80">
+                      <ComposerBanner.Separator />
                       {item.description}
                     </span>
                   ) : null}
-                </div>
+                </span>
                 {item.actions || item.onDismiss ? (
                   <span className="flex flex-none items-center gap-1">
                     {item.actions}
@@ -99,7 +122,7 @@ export function ComposerStatusDot({
                   </span>
                 ) : null}
               </div>
-              {item.children ? <div className="ps-3.5">{item.children}</div> : null}
+              {item.children ? <div className="ps-3.5 pb-1.5">{item.children}</div> : null}
             </div>
           ))}
         </div>

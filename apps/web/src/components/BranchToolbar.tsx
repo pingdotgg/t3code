@@ -769,9 +769,8 @@ export const BranchToolbar = memo(function BranchToolbar({
       {showGitControls || showEnvironmentIndicator ? (
         <div
           className={cn(
-            "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
+            "min-h-7 min-w-10 items-center gap-0.5 sm:min-h-6",
             showGitControls ? "hidden @xl/composer-surface:flex" : "flex",
-            "flex-1",
           )}
         >
           {showEnvironmentIndicator && availableEnvironments && (
@@ -788,7 +787,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               {showGitControls ? (
                 <Separator
                   orientation="vertical"
-                  className="mx-0.5 h-3.5!"
+                  className="mx-1 h-3!"
                   data-composer-context-control
                 />
               ) : null}
@@ -809,11 +808,19 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
+      {showGitControls && effectiveEnvMode === "worktree" && !activeWorktreePath ? (
+        <span
+          aria-hidden
+          className="hidden shrink-0 text-muted-foreground/60 @xl/composer-surface:inline"
+        >
+          from
+        </span>
+      ) : null}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
-          className="min-w-0 flex-initial justify-end @xl/composer-surface:ml-auto"
+          className="min-w-0 flex-initial justify-end"
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}

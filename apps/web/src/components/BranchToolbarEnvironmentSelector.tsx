@@ -57,7 +57,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const updateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const updateLabel =
     updateState.status === "running" ? (
-      <span className="text-info"> · {serverUpdateStageLabel(updateState.stage)}</span>
+      <span className="text-info">
+        {" "}
+        · {serverUpdateStageLabel(updateState.stage).toLowerCase()}
+      </span>
     ) : null;
 
   const environmentItems = [
