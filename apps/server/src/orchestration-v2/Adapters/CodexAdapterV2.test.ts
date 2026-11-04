@@ -3403,9 +3403,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               nativeTurnId,
               prompt: "Open github.com.",
             }),
-            {
-              type: "emit_inbound",
-              label: "error/retry",
+            ...[
+              "Reconnecting... 2/5",
+              "Reconnecting... 5/5",
+              "Reconnecting... waiting for network",
+              "Reconnecting... waiting for network",
+            ].map((message, index) => ({
+              type: "emit_inbound" as const,
+              label: `error/retry/${index}`,
               frame: {
                 method: "error",
                 params: {
@@ -3413,7 +3418,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   turnId: nativeTurnId,
                   willRetry: true,
                   error: {
-                    message: "Reconnecting... 2/5",
+                    message,
                     additionalDetails: "The response stream disconnected.",
                     codexErrorInfo: {
                       responseStreamDisconnected: { httpStatusCode: 529 },
@@ -3421,7 +3426,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               },
-            },
+            })),
             {
               type: "emit_inbound",
               label: "item/started/after-retry",
@@ -3505,17 +3510,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? [event.turnItem]
             : [],
         );
-        assert.lengthOf(retryItems, 2);
+        assert.lengthOf(retryItems, 5);
         assert.equal(retryItems[0]?.status, "running");
         assert.equal(retryItems[0]?.failure.code, "responseStreamDisconnected");
-        assert.deepEqual(retryItems[0]?.retry, {
-          attempt: 2,
-          maxAttempts: 5,
-          retryDelayMs: null,
-        });
-        assert.equal(retryItems[1]?.id, retryItems[0]?.id);
-        assert.equal(retryItems[1]?.status, "completed");
-        assert.equal(retryItems[1]?.title, "Provider recovered");
+        assert.deepEqual(
+          retryItems.slice(0, 4).map((item) => item.retry),
+          [
+            { attempt: 2, maxAttempts: 5, retryDelayMs: null },
+            { attempt: 5, maxAttempts: 5, retryDelayMs: null },
+            { attempt: 6, maxAttempts: null, retryDelayMs: null },
+            { attempt: 7, maxAttempts: null, retryDelayMs: null },
+          ],
+        );
+        assert.equal(retryItems[4]?.id, retryItems[0]?.id);
+        assert.equal(retryItems[4]?.status, "completed");
+        assert.equal(retryItems[4]?.title, "Provider recovered");
 
         const recoveredIndex = harness.events.findIndex(
           (event) =>
