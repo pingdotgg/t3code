@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
-import type { SpeechModel } from "./model.ts";
+import { getSpeechModel, type SpeechModel } from "./model.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
 const bytes = Uint8Array.from({ length: 64 }, (_, index) => (index * 7) % 256);
@@ -22,20 +22,10 @@ const SPLIT = 20;
 const harness = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
   const model: SpeechModel = {
-    id: "test/model",
-    revision: "rev",
-    name: "Test",
-    description: "test",
+    ...getSpeechModel("handy-computer/whisper-tiny-gguf")!,
     filename: "model.gguf",
     size: bytes.length,
     sha256: Hex.encode(yield* digest.digest(Digest.sha256, bytes).pipe(Effect.orDie)),
-    languages: ["en"],
-    accuracy: 1,
-    speed: 1,
-    recommended: false,
-    supportsStreaming: false,
-    supportsLanguageDetection: false,
-    supportsTranslation: false,
   };
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
@@ -119,6 +109,10 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
       undefined,
       `bytes=${SPLIT}-`,
     ]);
+    expect(h.requests.map((request) => request.url)).toEqual([
+      "https://huggingface.co/handy-computer/whisper-tiny-gguf/resolve/6687f30c99641ee265df421e582354adbc8848fc/model.gguf",
+      "https://huggingface.co/handy-computer/whisper-tiny-gguf/resolve/6687f30c99641ee265df421e582354adbc8848fc/model.gguf",
+    ]);
     expect(progress.at(0)).toBe(0);
     expect(progress.at(-1)).toBe(bytes.length);
     expect([...(yield* h.fs.readFile(installed))]).toEqual([...bytes]);
@@ -128,6 +122,17 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     ]);
     expect(yield* h.store.isReady(h.model)).toBe(true);
     expect(yield* h.store.installedPath(h.model)).toBe(installed);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect("rejects a same-size download whose SHA-256 differs from the catalog", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    h.bodies.current = () => Stream.succeed(new Uint8Array(bytes.length));
+    const result = yield* Effect.result(h.store.download(h.model));
+    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "verification" } });
+    expect(yield* h.fs.readDirectory(h.directory)).toEqual(["model.gguf"]);
+    expect(yield* h.store.installedPath(h.model)).toBeUndefined();
   }).pipe(Effect.provide(dependencies)),
 );
 
