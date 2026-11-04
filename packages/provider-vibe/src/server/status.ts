@@ -112,8 +112,7 @@ export function vibeRuntimeModes(
   const listed = flattenSelectChoices(modeOption.options).map((choice) =>
     vibeRuntimeModeForSessionMode(choice.value),
   );
-  const modes = VIBE_SUPPORTED_RUNTIME_MODES.filter((mode) => listed.includes(mode));
-  return modes.length > 0 ? modes : VIBE_SUPPORTED_RUNTIME_MODES;
+  return VIBE_SUPPORTED_RUNTIME_MODES.filter((mode) => listed.includes(mode));
 }
 
 const snapshot = (
@@ -193,7 +192,7 @@ const probeVibeAcp = Effect.fn("VibeProvider.probeVibeAcp")(function* (
   );
   if (auth.status !== "authenticated") return { auth, configOptions: undefined };
   const configOptions = yield* runtime.start().pipe(
-    Effect.map((started) => started.sessionSetupResult.configOptions ?? []),
+    Effect.map((started) => started.sessionSetupResult.configOptions ?? undefined),
     Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
     Effect.map(Option.getOrUndefined),
     Effect.orElseSucceed(() => undefined),
@@ -204,7 +203,7 @@ const probeVibeAcp = Effect.fn("VibeProvider.probeVibeAcp")(function* (
 /** The snapshot status for what the ACP probe learned. */
 export function vibeProbeStatus(
   auth: ServerProviderAuth,
-  modelsListed: boolean,
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined,
 ): Pick<ProviderProbeResult, "status" | "message"> {
   if (auth.status === "unauthenticated") {
     return {
@@ -215,11 +214,18 @@ export function vibeProbeStatus(
   if (auth.status !== "authenticated") {
     return { status: "warning", message: "Could not confirm the Mistral Vibe sign-in." };
   }
-  return modelsListed
+  if (configOptions === undefined) {
+    return {
+      status: "warning",
+      message: "Mistral Vibe is signed in but its models could not be listed.",
+    };
+  }
+  return vibeRuntimeModes(configOptions).length > 0
     ? { status: "ready" }
     : {
-        status: "warning",
-        message: "Mistral Vibe is signed in but its models could not be listed.",
+        status: "error",
+        message:
+          "Mistral Vibe enables none of the agents T3 Code runs: ask, accept-edits, auto-approve.",
       };
 }
 
@@ -283,7 +289,7 @@ export const checkVibeProviderStatus = Effect.fn("checkVibeProviderStatus")(func
       installed: true,
       version,
       auth: probed.auth,
-      ...vibeProbeStatus(probed.auth, probed.configOptions !== undefined),
+      ...vibeProbeStatus(probed.auth, probed.configOptions),
     },
     probed.configOptions,
   );

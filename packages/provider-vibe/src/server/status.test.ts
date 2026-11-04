@@ -97,29 +97,40 @@ describe("vibeModelsFromConfigOptions", () => {
 
 describe("vibeProbeStatus", () => {
   it("keeps a confirmed sign-in when the model list fails", () => {
-    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, true), { status: "ready" });
-    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, false), {
+    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, VIBE_CONFIG_OPTIONS), {
+      status: "ready",
+    });
+    assert.deepEqual(vibeProbeStatus({ status: "authenticated" }, undefined), {
       status: "warning",
       message: "Mistral Vibe is signed in but its models could not be listed.",
     });
-    assert.equal(vibeProbeStatus({ status: "unauthenticated" }, false).status, "error");
-    assert.equal(vibeProbeStatus({ status: "unknown" }, false).status, "warning");
+    assert.equal(vibeProbeStatus({ status: "unauthenticated" }, undefined).status, "error");
+    assert.equal(vibeProbeStatus({ status: "unknown" }, undefined).status, "warning");
   });
 });
+
+const onlyAgents = (agents: ReadonlyArray<string>) =>
+  VIBE_CONFIG_OPTIONS.map((option) =>
+    option.id === "mode"
+      ? { ...option, options: agents.map((agent) => ({ value: agent, name: agent })) }
+      : option,
+  );
 
 describe("vibeRuntimeModes", () => {
   it("offers only the modes whose Vibe agent the session lists", () => {
     const allModes = ["approval-required", "auto-accept-edits", "full-access"] as const;
     assert.deepEqual(vibeRuntimeModes(VIBE_CONFIG_OPTIONS), allModes);
     assert.deepEqual(vibeRuntimeModes(undefined), allModes);
-    const withoutAutoApprove = VIBE_CONFIG_OPTIONS.map((option) =>
-      option.id === "mode"
-        ? { ...option, options: option.options.filter((choice) => choice.value !== "auto-approve") }
-        : option,
-    );
-    assert.deepEqual(vibeRuntimeModes(withoutAutoApprove), [
+    assert.deepEqual(vibeRuntimeModes(onlyAgents(["ask", "accept-edits"])), [
       "approval-required",
       "auto-accept-edits",
     ]);
+  });
+
+  // `enabled_agents = ["smart-approve"]` leaves no agent T3 Code can select.
+  it("reports a Vibe that enables none of T3's agents", () => {
+    const smartOnly = onlyAgents(["smart-approve"]);
+    assert.deepEqual(vibeRuntimeModes(smartOnly), []);
+    assert.equal(vibeProbeStatus({ status: "authenticated" }, smartOnly).status, "error");
   });
 });

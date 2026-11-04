@@ -27,7 +27,7 @@ The permission mode picks the Vibe agent a thread runs as:
 - **Supervised** runs Vibe's `ask` agent. Commands and file changes wait for your approval; reads
   and searches run without asking.
 - **Auto-accept edits** runs `accept-edits`: Vibe applies file edits itself and asks before
-  commands.
+  other tools.
 - **Full access** runs `auto-approve`, which runs every tool without asking.
 
 Vibe offers no **Auto** mode in T3 Code.
