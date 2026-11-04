@@ -208,6 +208,8 @@ const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
 // Far above any frame or ordinary long task, so only a page that is already hung pays it.
 const SCRIPT_PROBE_MS = 1_000;
+// Chromium acknowledges a termination once the script stops; a host that never does is not waited on.
+const TERMINATION_ACK_MS = 1_000;
 
 // Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
@@ -807,23 +809,35 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
-/** Resolves `null` and terminates the page's script when it has not answered within `timeoutMs`. */
+/** Settles `"expired"` after `ms` unless `promise` settles first. */
+const raceTimeout = <A>(promise: Promise<A>, ms: number) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => resolve("expired"), ms);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+};
+
+/**
+ * Resolves `null` and terminates the page's script when it has not answered within `timeoutMs`.
+ * Within the rest of `budgetMs`, it also waits for Chromium to acknowledge the termination.
+ */
 const evaluateOrTerminate = async (
   cdp: CDPSession,
   params: { expression: string; awaitPromise?: boolean; returnByValue?: boolean },
   timeoutMs: number,
+  budgetMs = timeoutMs,
 ) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<null>((resolve) => {
-    timer = setTimeout(() => {
-      // Stops a busy script; an awaited promise is abandoned and settles unread.
-      void cdp.send("Runtime.terminateExecution").catch(constVoid);
-      resolve(null);
-    }, timeoutMs);
-  });
+  const startedAt = performance.now();
   const evaluation = cdp.send("Runtime.evaluate", params);
   void evaluation.catch(constVoid);
-  return Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
+  const result = await raceTimeout(evaluation, timeoutMs);
+  if (result !== "expired") return result;
+  // Stops a busy script; an awaited promise is abandoned and settles unread.
+  const termination = cdp.send("Runtime.terminateExecution").catch(constVoid);
+  const ackMs = Math.min(TERMINATION_ACK_MS, budgetMs - (performance.now() - startedAt));
+  if (ackMs > 0) await raceTimeout(termination, ackMs);
+  return null;
 };
 
 /** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
@@ -869,9 +883,13 @@ export const evaluate = async (
 /**
  * A same-site navigation cannot commit while the page's script never yields. Terminate only after a
  * probe goes unanswered: on an idle renderer V8 terminates the next script, possibly the new page's.
+ * Resolves once the script has stopped, so the navigation that follows starts on a yielded renderer.
  */
-export const stopUnresponsiveScript = (cdp: CDPSession, budgetMs = SCRIPT_PROBE_MS) =>
-  evaluateOrTerminate(cdp, { expression: "0" }, Math.min(SCRIPT_PROBE_MS, budgetMs)).then(
+export const stopUnresponsiveScript = (
+  cdp: CDPSession,
+  budgetMs = SCRIPT_PROBE_MS + TERMINATION_ACK_MS,
+) =>
+  evaluateOrTerminate(cdp, { expression: "0" }, Math.min(SCRIPT_PROBE_MS, budgetMs), budgetMs).then(
     constVoid,
     constVoid,
   );

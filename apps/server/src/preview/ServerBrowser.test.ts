@@ -91,6 +91,9 @@ function makeRenderer() {
   return {
     /** A page script that never yields; Chromium stops it on `Runtime.terminateExecution`. */
     busyScript: null as PromiseWithResolvers<void> | null,
+    /** When set, Chromium answers `Runtime.terminateExecution` only once this resolves. */
+    terminationAck: null as PromiseWithResolvers<void> | null,
+    terminationRequested: Promise.withResolvers<void>(),
     gotoStarted: Promise.withResolvers<void>(),
     /** Rejecting these stands in for Playwright's goto timeout while the script runs. */
     stalledGotos: [] as Array<(cause: Error) => void>,
@@ -112,6 +115,8 @@ function makeSession(
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       const busyScript = renderer?.busyScript;
       if (method === "Runtime.terminateExecution" && busyScript) {
+        renderer.terminationRequested.resolve();
+        if (renderer.terminationAck) await renderer.terminationAck.promise;
         renderer.busyScript = null;
         busyScript.resolve();
         return {};
@@ -757,6 +762,64 @@ it.live.each(["load", "none"] as const)(
         const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)!;
         expect(gotoOptions?.timeout).toBeLessThan(200);
         expect(waited).toMatchObject({ _tag: "Success" });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { case: "acknowledged", timeoutMs: 5_000, acknowledge: true, gotoTimeoutAtMost: 4_000 },
+  // 1s probe, then the 1s acknowledgement window: navigating sooner would hit the busy renderer.
+  { case: "never acknowledged", timeoutMs: 5_000, acknowledge: false, gotoTimeoutAtMost: 3_000 },
+  // 1s probe, then only the 200ms the budget has left.
+  {
+    case: "never acknowledged, short budget",
+    timeoutMs: 1_200,
+    acknowledge: false,
+    gotoTimeoutAtMost: 200,
+  },
+])(
+  "an agent navigation waits for the busy script to stop ($case)",
+  ({ timeoutMs, acknowledge, gotoTimeoutAtMost }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        yield* broker.invoke({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://localhost:5173/busy" },
+        });
+        const { page, renderer } = contexts[0]!;
+        renderer.busyScript = Promise.withResolvers<void>();
+        renderer.terminationAck = Promise.withResolvers<void>();
+        renderer.terminationRequested = Promise.withResolvers<void>();
+        renderer.gotoStarted = Promise.withResolvers<void>();
+
+        const navigation = yield* broker
+          .invoke({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: "http://localhost:5173/next", readiness: "none", timeoutMs },
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Effect.promise(() => renderer.terminationRequested.promise);
+        if (acknowledge) renderer.terminationAck.resolve();
+        yield* Effect.promise(() => renderer.gotoStarted.promise);
+        const [url, gotoOptions] = page.goto.mock.calls.at(-1)!;
+        expect(url).toBe("http://localhost:5173/next");
+        // An acknowledged termination leaves a renderer that commits instead of stalling.
+        expect(renderer.stalledGotos).toHaveLength(acknowledge ? 0 : 1);
+        // Waiting for the script to stop comes out of the navigation's own budget.
+        expect(gotoOptions?.timeout).toBeLessThanOrEqual(gotoTimeoutAtMost);
+
+        renderer.terminationAck.resolve();
+        for (const timeOut of renderer.stalledGotos.splice(0)) {
+          timeOut(
+            Object.assign(new Error("page.goto: Timeout exceeded."), { name: "TimeoutError" }),
+          );
+        }
+        yield* Fiber.join(navigation);
       }),
     ).pipe(Effect.provide(layer)),
 );
