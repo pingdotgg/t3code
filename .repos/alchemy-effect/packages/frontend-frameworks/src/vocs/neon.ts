@@ -1,23 +1,19 @@
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { finishNeonOutput, makeNeonTarget } from "../core/NeonServe.ts";
+import type { Plugin } from "vite";
+import { runBuildChild } from "../core/BuildChild.ts";
 import type { BuildOutput } from "../core/BuildOutput.ts";
 import { DeployTargetError } from "../core/DeployTarget.ts";
-import { FrameworkError, type FrameworkDevOptions } from "../core/Framework.ts";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { isInsideDevChild, runDevChild } from "../core/DevChild.ts";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { FrameworkError, type FrameworkDevOptions } from "../core/Framework.ts";
 import { Framework } from "../core/Framework.ts";
+import { finishNeonOutput, makeNeonTarget } from "../core/NeonServe.ts";
+import { makeNodeTarget, type VocsNodeFrameworkOptions } from "./node.ts";
 import { make as makeVocsLayer } from "./Vocs.ts";
-import type { Plugin } from "vite";
-import {
-  make as makeNode,
-  makeNodeTarget,
-  type VocsNodeFrameworkOptions,
-} from "./node.ts";
 
 // Preserve config imports and closures; only the dev-only Vite loader is removed.
 const runtimeConfigPlugin = (): Plugin => ({
@@ -28,13 +24,8 @@ const runtimeConfigPlugin = (): Plugin => ({
     if (file?.endsWith("/vocs/dist/internal/mdx.js")) {
       const logger =
         /const logger = createLogger\(undefined, \{ allowClearScreen: false, prefix: '\[vocs\]' \}\);/;
-      if (
-        !logger.test(code) ||
-        !code.includes("import { createLogger } from 'vite';")
-      )
-        throw new Error(
-          "Vocs MDX logger changed; update the Neon runtime bridge.",
-        );
+      if (!logger.test(code) || !code.includes("import { createLogger } from 'vite';"))
+        throw new Error("Vocs MDX logger changed; update the Neon runtime bridge.");
       return code
         .replace("import { createLogger } from 'vite';", "")
         .replace(
@@ -46,9 +37,7 @@ const runtimeConfigPlugin = (): Plugin => ({
     const pattern =
       /export async function resolve\(options = \{\}\) \{[\s\S]*?\n\}\n(?=export let global;)/;
     if (!pattern.test(code))
-      throw new Error(
-        "Vocs runtime config shape changed; update the Neon config bridge.",
-      );
+      throw new Error("Vocs runtime config shape changed; update the Neon config bridge.");
     return code.replace(
       pattern,
       "export async function resolve() {\n" +
@@ -71,26 +60,18 @@ export const buildInChild = (config: { root: string }) =>
             vitePlugins: (context) =>
               node
                 .vitePlugins(context)
-                .pipe(
-                  Effect.map((plugins) => [...plugins, runtimeConfigPlugin()]),
-                ),
+                .pipe(Effect.map((plugins) => [...plugins, runtimeConfigPlugin()])),
           },
         }),
       ),
     );
-    return yield* framework
-      .build({ root: config.root })
-      .pipe(Effect.flatMap(finishNeonOutput));
+    return yield* framework.build({ root: config.root }).pipe(Effect.flatMap(finishNeonOutput));
   });
 
 /** Vocs production output served by a Neon Fetch handler. */
 export const target = (config?: Parameters<typeof makeNodeTarget>[0]) => ({
   ...makeNeonTarget(makeNodeTarget(config)),
-  build: (
-    context: Parameters<
-      NonNullable<ReturnType<typeof makeNodeTarget>["build"]>
-    >[0],
-  ) =>
+  build: (context: Parameters<NonNullable<ReturnType<typeof makeNodeTarget>["build"]>>[0]) =>
     runBuildChild({
       runtime: "node",
       module: import.meta.url,
@@ -112,12 +93,9 @@ export const target = (config?: Parameters<typeof makeNodeTarget>[0]) => ({
 export default target;
 
 /** Native Vocs development with Neon-compatible production output. */
-export const make = Effect.fn(function* (
-  options: VocsNodeFrameworkOptions = {},
-) {
+export const make = Effect.fn(function* (options: VocsNodeFrameworkOptions = {}) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const node = yield* makeNode(options);
   const services = Layer.mergeAll(
     Layer.succeed(FileSystem.FileSystem)(fs),
     Layer.succeed(Path.Path)(path),
@@ -142,8 +120,7 @@ export const make = Effect.fn(function* (
             return {
               vocs: pathToFileURL(vocs).href,
               vite: pathToFileURL(require.resolve("vite")).href,
-              react: pathToFileURL(require.resolve("@vitejs/plugin-react"))
-                .href,
+              react: pathToFileURL(require.resolve("@vitejs/plugin-react")).href,
             };
           },
           catch: fail,
@@ -154,15 +131,11 @@ export const make = Effect.fn(function* (
           catch: fail,
         });
         const react = yield* Effect.tryPromise({
-          try: () =>
-            import(modules.react) as Promise<
-              typeof import("@vitejs/plugin-react")
-            >,
+          try: () => import(modules.react) as Promise<typeof import("@vitejs/plugin-react")>,
           catch: fail,
         });
         const vocs = yield* Effect.tryPromise({
-          try: () =>
-            import(modules.vocs) as Promise<typeof import("vocs/vite")>,
+          try: () => import(modules.vocs) as Promise<typeof import("vocs/vite")>,
           catch: fail,
         });
         const server = yield* Effect.acquireRelease(
@@ -183,12 +156,8 @@ export const make = Effect.fn(function* (
           (server) => Effect.promise(() => server.close()),
         );
         yield* Effect.tryPromise({ try: () => server.listen(), catch: fail });
-        const url =
-          server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0];
-        if (!url)
-          return yield* Effect.fail(
-            fail(new Error("Vocs did not report a dev URL")),
-          );
+        const url = server.resolvedUrls?.local[0] ?? server.resolvedUrls?.network[0];
+        if (!url) return yield* fail(new Error("Vocs did not report a dev URL"));
         return { url };
       }
       return yield* runDevChild({

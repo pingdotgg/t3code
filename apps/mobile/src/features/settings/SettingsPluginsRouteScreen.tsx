@@ -24,7 +24,7 @@ import { pluginEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
-  AndroidSettingsEnvironmentFilter,
+  useSettingsEnvironmentMenu,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -85,13 +85,14 @@ const SCROLL_PROPS = {
 } as const;
 
 export function SettingsPluginsRouteScreen() {
+  const environmentMenu = useSettingsEnvironmentMenu();
   const insets = useSafeAreaInsets();
   const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const targets = selectedTargets.filter(supportsPlugins);
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Plugins" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="Plugins" menus={[environmentMenu]}>
         <ScrollView
           {...SCROLL_PROPS}
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
