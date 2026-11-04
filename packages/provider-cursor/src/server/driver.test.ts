@@ -123,6 +123,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
                 openedKeys.push(request.options.apiKey);
                 return {
                   agentId: "browser-auth-agent",
+                  rollback: () => Effect.void,
                   listMessages: Effect.succeed([]),
                   send: () => Effect.die("This test only opens a session"),
                   close: Effect.sync(() => {
@@ -228,6 +229,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
               openedModels.push(request.options.model);
               return {
                 agentId: "native-cursor-window",
+                rollback: () => Effect.void,
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
                 send: (input) =>

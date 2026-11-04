@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { JsonlLocalAgentStore } from "@cursor/sdk";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -136,6 +138,74 @@ const layerTest = CursorAgentSdk.layer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("restores persisted run boundaries and rejects unavailable or active targets", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "cursor-rollback-" });
+      const store = new JsonlLocalAgentStore(root);
+      const agentId = "agent-cursor-agent-sdk-test";
+      const checkpoint = { schemaVersion: 1 as const, rootBlobId: "retained" };
+      const document = {
+        agentId,
+        cwd: root,
+        status: "idle" as const,
+        activeRunId: null,
+        createdAt: 0,
+        updatedAt: 0,
+        latestCheckpoint: { ...checkpoint, rootBlobId: "discarded" },
+        sdkMetadata: { preserved: true },
+      };
+      yield* Effect.promise(async () => {
+        await store.agents.create({ agent: document });
+        await store.checkpoints.create({
+          agentId,
+          blobId: checkpoint.rootBlobId,
+          data: new Uint8Array([1]),
+        });
+        await store.runs.create({
+          run: {
+            agentId,
+            runId: "retained-run",
+            turnNumber: 1,
+            status: "finished",
+            createdAt: 0,
+            updatedAt: 0,
+            latestCheckpointRef: checkpoint,
+          },
+        });
+      });
+      cursorSdkMock.setAgentCloseFailure(undefined);
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId,
+        threadId: ThreadId.make("rollback"),
+        providerSessionId: ProviderSessionId.make("rollback"),
+        options: { local: { cwd: root, store } },
+      });
+      yield* session.rollback("retained-run");
+      const reopened = new JsonlLocalAgentStore(root);
+      const restored = yield* Effect.promise(() => reopened.agents.get({ agentId }));
+      assert.deepStrictEqual(restored?.latestCheckpoint, checkpoint);
+      assert.deepStrictEqual(restored?.sdkMetadata, document.sdkMetadata);
+      const missing = yield* session.rollback("missing").pipe(Effect.exit);
+      assert(Exit.isFailure(missing));
+      yield* Effect.promise(() =>
+        store.agents.update({ agent: { ...document, status: "running" } }),
+      );
+      assert(Exit.isFailure(yield* session.rollback(null).pipe(Effect.exit)));
+      yield* Effect.promise(() => store.agents.update({ agent: document }));
+      yield* Effect.promise(() =>
+        store.checkpoints.delete({
+          filter: { agentIds: [agentId], blobIds: [checkpoint.rootBlobId] },
+        }),
+      );
+      assert(Exit.isFailure(yield* session.rollback("retained-run").pipe(Effect.exit)));
+      yield* session.rollback(null);
+      assert.isNull((yield* Effect.promise(() => store.agents.get({ agentId })))?.latestCheckpoint);
+    }).pipe(Effect.provide(Layer.merge(layerTest, NodeServices.layer))),
+  );
+
   it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
     Effect.gen(function* () {
       const failure = new Error("missing SDK chunk");

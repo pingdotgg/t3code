@@ -153,8 +153,8 @@ export const CursorProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: true,
-    providerCanRollbackConversation: false,
-    providerRollbackReturnsSnapshot: false,
+    providerCanRollbackConversation: true,
+    providerRollbackReturnsSnapshot: true,
     providerCanReadConversationSnapshot: true,
   },
   identity: {
@@ -2823,15 +2823,65 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               ),
           ),
-          rollbackThread: (rollbackInput) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver: CursorAgentSdk.CURSOR_PROVIDER,
-                providerThreadId: rollbackInput.providerThread.id,
-                checkpointId: rollbackInput.target.checkpointId,
-                cause: "Cursor Agent SDK does not expose conversation rollback.",
-              }),
-            ),
+          rollbackThread: Effect.fn("CursorAdapterV2.rollbackThread")(
+            function* (rollbackInput) {
+              if ((yield* Ref.get(activeTurn)) !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cannot roll back while a Cursor turn is active.",
+                });
+              }
+              const target = rollbackInput.target;
+              const runId =
+                target.type === "thread_start" ? null : target.providerTurn.nativeTurnRef?.nativeId;
+              if (
+                (target.type === "provider_turn" && runId == null) ||
+                (target.type === "provider_turn" &&
+                  target.providerTurn.providerThreadId !== rollbackInput.providerThread.id)
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor rollback target has no matching native turn.",
+                });
+              }
+              const agent = yield* openAgent({
+                operation: "resume",
+                agentId: nativeThreadId(rollbackInput.providerThread),
+                threadId: rollbackInput.providerThread.appThreadId ?? input.threadId,
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+              });
+              yield* agent.session.rollback(runId ?? null).pipe(
+                Effect.onError(() => agent.session.close.pipe(Effect.ignore)),
+                Effect.ensuring(Ref.set(liveAgent, null)),
+              );
+              yield* Ref.set(told, null);
+              return {
+                providerThread: {
+                  ...rollbackInput.providerThread,
+                  nativeConversationHeadRef:
+                    target.type === "thread_start" ? null : target.providerTurn.nativeTurnRef,
+                  status: "idle" as const,
+                  updatedAt: yield* DateTime.now,
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+              };
+            },
+            (effect, rollbackInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      providerThreadId: rollbackInput.providerThread.id,
+                      checkpointId: rollbackInput.target.checkpointId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           forkThread: (forkInput) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({
