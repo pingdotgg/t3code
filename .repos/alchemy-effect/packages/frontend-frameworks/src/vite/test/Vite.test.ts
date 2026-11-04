@@ -1,9 +1,9 @@
+import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
-import * as NodeFs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { makeDeployTarget } from "../../core/index.ts";
 import { makeAwsTarget } from "../aws.ts";
@@ -13,9 +13,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 /** A minimal html-entry Vite project written into a scoped temp directory. */
@@ -45,8 +43,7 @@ const writeFixtureProject = Effect.fn(function* (marker: string) {
  * `/private/var`) but NOT Windows 8.3 short names (`RUNNER~1` vs
  * `runneradmin`); only `realpath.native` does both.
  */
-const canonicalPath = (p: string) =>
-  Effect.sync(() => NodeFs.realpathSync.native(p));
+const canonicalPath = (p: string) => Effect.sync(() => NodeFs.realpathSync.native(p));
 
 /** An adapter-less in-process target (no build child) for direct testing. */
 const inProcessTarget = makeDeployTarget({
@@ -63,10 +60,7 @@ describe("readViteOutput", () => {
         const dir = yield* fs.makeTempDirectoryScoped({
           prefix: "vite-output-",
         });
-        yield* fs.writeFileString(
-          path.join(dir, "index.html"),
-          "<!doctype html>",
-        );
+        yield* fs.writeFileString(path.join(dir, "index.html"), "<!doctype html>");
         return yield* readViteOutput({ outDir: dir }).pipe(
           Effect.map((output) => ({
             distDirectory: output.distDirectory,
@@ -137,9 +131,7 @@ describe("make().build", () => {
         return {
           clientDirectory: output.clientDirectory,
           expected: path.join(root, "build-output"),
-          exists: yield* fs.exists(
-            path.join(root, "build-output", "index.html"),
-          ),
+          exists: yield* fs.exists(path.join(root, "build-output", "index.html")),
         };
       }),
     );

@@ -1,0 +1,165 @@
+---
+title: Cloud SQL
+description: Run Postgres on Cloud SQL, connect Cloud Run to it over the Cloud SQL socket with GCP.SQL.Connect, and query it with Drizzle.
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const pkgs = "@alchemy.run/drizzle drizzle-orm";
+
+Cloud SQL runs Postgres or MySQL for you. A Cloud Run service reaches
+it through the Cloud SQL socket, with no public IP and no VPC to set
+up. This page builds a Postgres todo API with Drizzle.
+
+<PackageManagers add={pkgs} />
+
+## Create the instance
+
+```typescript
+// src/database.ts
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as GCP from "@alchemy.run/gcp";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export const database = Effect.gen(function* () {
+  const instance = yield* GCP.SQL.Instance("Postgres", {
+    databaseVersion: "POSTGRES_17",
+    edition: "ENTERPRISE",
+    tier: "db-f1-micro",
+    availabilityType: "ZONAL",
+    backup: { enabled: false },
+    dataApiAccess: true,
+  });
+```
+
+`db-f1-micro` with no backups is the cheapest Postgres Cloud SQL runs.
+Creating an instance takes 5 to 15 minutes.
+
+## Add a user
+
+```typescript
+  const password = yield* Alchemy.Random("AppPasswordValue", { bytes: 24 });
+  const user = yield* GCP.SQL.User("AppUser", {
+    instance: instance.instanceName,
+    password: password.text,
+    deletionPolicy: "ABANDON",
+  });
+```
+
+`Alchemy.Random` generates the password once and keeps it in state.
+`ABANDON` leaves the user in place on destroy, because Postgres won't
+drop a user that owns tables. Deleting the instance removes it.
+
+## Keep the password in Secret Manager
+
+The service reads the password from a secret in the instance's region:
+
+```typescript
+  const passwordSecret = yield* GCP.SecretManager.LocationsSecret("AppPassword", {
+    location: instance.region,
+  });
+```
+
+The example's `StorePassword` Action writes the password into the secret
+at deploy time. Copy
+[`src/password.ts`](https://github.com/alchemy-run/alchemy/blob/main/examples/gcp-cloud-sql-drizzle/src/password.ts)
+into your project and yield it from your stack.
+
+## Apply migrations at deploy time
+
+```typescript
+  const schema = yield* Drizzle.Schema("Schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+  });
+
+  const db = yield* GCP.SQL.Database("App", {
+    instance: instance.instanceName,
+    migrations: schema,
+    migrationsUser: user.userName,
+    migrationsPassword: password.text,
+  });
+
+  return { instance, db, user, password, passwordSecret, schema };
+});
+```
+
+`Drizzle.Schema` regenerates `./migrations` whenever `src/schema.ts`
+changes. Each deploy applies the pending ones as `migrationsUser`
+through the Cloud SQL Data API, so your machine never needs a network
+path to the database. Set `migrationsTransport: "connector"` to connect
+through the Cloud SQL connector instead.
+
+## Connect from Cloud Run
+
+`GCP.SQL.Connect` mounts the instance's socket into the service and
+returns a connection URL. Pass it to Drizzle:
+
+```typescript
+// src/Api.ts
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { database } from "./database.ts";
+import { todos } from "./schema.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  Effect.gen(function* () {
+    const { schema } = yield* database;
+    return {
+      main: import.meta.url,
+      invokerIamDisabled: true,
+      env: { SCHEMA_VERSION: schema.snapshotHash },
+    };
+  }),
+  Effect.gen(function* () {
+    const { instance, db: appDb, user, passwordSecret } = yield* database;
+    const connect = yield* GCP.SQL.Connect(instance, {
+      database: appDb,
+      user,
+      passwordSecret,
+    });
+    const db = yield* Drizzle.Postgres(connect.pipe(Effect.map((info) => info.url)));
+
+    return {
+      fetch: Effect.gen(function* () {
+        const rows = yield* db.select().from(todos).orderBy(todos.title);
+        return yield* HttpServerResponse.json(rows);
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.SQL.ConnectHttp)),
+) {}
+```
+
+Binding the database makes the service deploy after its migrations are
+applied, and `SCHEMA_VERSION` rolls out a new revision when the schema
+changes.
+
+`Connect` grants `roles/cloudsql.client` on this instance only, and
+`secretAccessor` on the password secret.
+
+## Register the providers
+
+Drizzle and `Random` bring their own providers:
+
+```typescript
+// alchemy.run.ts
+providers: Layer.mergeAll(
+  GCP.providers(),
+  Drizzle.providers(),
+  Alchemy.RandomProvider(),
+),
+```
+
+## Example
+
+[`examples/gcp-cloud-sql-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-cloud-sql-drizzle)
+is the complete todo API, migrations included, with a live test.
+
+## Where next
+
+- [Drizzle on Postgres](/sql/drizzle/postgres) — schemas, migrations, and queries.
+- [SQL reference](/providers/gcp/sql#instance) — every instance prop.
