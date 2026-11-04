@@ -1,3 +1,4 @@
+import { StrictMode, type ReactNode } from "react";
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -86,6 +87,10 @@ vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async ()
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
+// Exercise Pierre's real geometry without starting syntax-highlighting workers.
+vi.mock("./DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
@@ -123,7 +128,10 @@ function setup(failedBaseRef: string | null) {
       branchBaseRefByThreadKey: {},
       keepSelectionOnOpenThreadKey: null,
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({
+      collapsedFileKeysByScopeKey: {},
+      scrollPositionByScopeKey: {},
+    });
   };
   reset();
   state.diffFilesCollapsed = false;
@@ -268,3 +276,54 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+it("resumes a long diff after the panel unmounts", async () => {
+  using context = setup("origin/orphan");
+  const result = preview();
+  const patch = [
+    "diff --git a/long.ts b/long.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/long.ts",
+    "@@ -0,0 +1,600 @@",
+    ...Array.from({ length: 600 }, (_, index) => `+const line${index + 1} = ${index + 1};`),
+    "",
+  ].join("\n");
+  state.previews.set(
+    null,
+    Atom.make(
+      AsyncResult.success({
+        ...result,
+        sources: result.sources.map((source) => ({ ...source, diff: patch, diffHash: "long" })),
+      }),
+    ),
+  );
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, null);
+  const panel = () => (
+    <StrictMode>
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 500 }}>
+          <DiffPanel
+            mode="embedded"
+            composerDraftTarget={context.threadRef}
+            workspaceMutationId={null}
+            visible
+          />
+        </div>
+      </RegistryContext.Provider>
+    </StrictMode>
+  );
+  await using screen = await render(panel());
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse long.ts", exact: true }))
+    .toBeVisible();
+  const viewport = () => screen.container.querySelector<HTMLElement>(".diff-render-surface")!;
+  await vi.waitFor(() => expect(viewport()?.scrollHeight).toBeGreaterThan(4000));
+  const scrolled = new Promise<void>((resolve) => {
+    viewport().addEventListener("scroll", () => resolve(), { once: true });
+  });
+  viewport().scrollTop = 3200;
+  await scrolled;
+  await screen.rerender(<div>Files</div>);
+  await screen.rerender(panel());
+  await vi.waitFor(() => expect(viewport()?.scrollTop).toBe(3200));
+});

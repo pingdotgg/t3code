@@ -2,6 +2,7 @@ import type {
   AnnotationSide,
   CodeViewDiffItem,
   CodeViewItem,
+  CodeView,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -99,6 +100,7 @@ interface AnnotatableCodeViewProps {
     collapsed: boolean,
   ) => ReactNode;
   onRevealSearchMatch: (fileKey: string) => void;
+  onScroll?: (scrollTop: number, viewer: CodeView<DiffCommentAnnotationGroup, undefined>) => void;
 }
 
 interface DiffSelectionContext {
@@ -123,6 +125,7 @@ export function AnnotatableCodeView({
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
   onRevealSearchMatch,
+  onScroll,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -269,6 +272,7 @@ export function AnnotatableCodeView({
           }
         : {})}
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
+      {...(onScroll ? { onScroll } : {})}
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}

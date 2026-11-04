@@ -9,7 +9,7 @@ function viewer(initialItems: ReadonlyArray<string>) {
   return {
     items,
     scrolls,
-    getInstance: () => ({}),
+    getInstance: () => ({ getHeight: () => 500, getScrollHeight: () => 1000 }),
     getItem: (id: string) => (items.has(id) ? {} : undefined),
     scrollTo: (target: CodeViewScrollTarget) => scrolls.push(target),
   };
@@ -52,6 +52,17 @@ describe("createCodeViewFileReveal", () => {
     view.items.add("a");
     reveal.flush();
     expect(view.scrolls).toEqual([{ type: "item", id: "a", align: "start" }]);
+  });
+
+  it("keeps a saved offset through loading remounts until the file is ready", () => {
+    const target = { type: "item" as const, id: "later", align: "start" as const, offset: -3200 };
+    const reveal = createCodeViewFileReveal(target);
+    reveal.attach(viewer([]));
+    reveal.attach(null);
+    const loaded = viewer(["later"]);
+    reveal.attach(loaded);
+    reveal.flush();
+    expect(loaded.scrolls).toEqual([target]);
   });
 
   it("drops a pending reveal when its viewer detaches, and positions the next viewer on request", () => {

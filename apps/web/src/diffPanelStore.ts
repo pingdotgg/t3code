@@ -180,7 +180,15 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
   ),
 );
 
+interface DiffPanelScrollPosition {
+  fileKey: string;
+  filePath: string;
+  offset: number;
+}
+
 interface DiffPanelSessionStoreState {
+  scrollPositionByScopeKey: Record<string, DiffPanelScrollPosition>;
+  saveScrollPosition: (scopeKey: string, position: DiffPanelScrollPosition) => void;
   collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>;
   updateCollapsedFileKeys: (
     scopeKey: string,
@@ -189,9 +197,14 @@ interface DiffPanelSessionStoreState {
   ) => void;
 }
 
-// Session-only so folds survive right-panel switches without changing reload defaults.
+// Session-only so review state survives right-panel switches without changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   collapsedFileKeysByScopeKey: {},
+  scrollPositionByScopeKey: {},
+  saveScrollPosition: (scopeKey, position) =>
+    set((state) => ({
+      scrollPositionByScopeKey: { ...state.scrollPositionByScopeKey, [scopeKey]: position },
+    })),
   updateCollapsedFileKeys: (scopeKey, defaults, update) =>
     set((state) => {
       const current = state.collapsedFileKeysByScopeKey[scopeKey] ?? defaults;
