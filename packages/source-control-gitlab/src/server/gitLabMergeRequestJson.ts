@@ -135,6 +135,13 @@ const RawDiffRefsSchema = Schema.Struct({
   ),
 });
 
+const RawRevertTargetSchema = Schema.Struct({
+  title: Schema.String,
+  target_branch: Schema.String,
+  merge_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
+  squash_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 const RawCommitSchema = Schema.Struct({
   id: TrimmedNonEmptyString,
   title: Schema.optional(Schema.NullOr(Schema.String)),
@@ -366,6 +373,7 @@ const decodeMergeRequestChanges = decodeJsonResult(
 const decodeDiffEntry = Schema.decodeUnknownExit(RawDiffSchema);
 const decodeDiscussionEntry = Schema.decodeUnknownExit(RawDiscussionSchema);
 const decodeDiffRefs = decodeJsonResult(RawDiffRefsSchema);
+const decodeRevertTarget = decodeJsonResult(RawRevertTargetSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
 const decodeProjectMergeSettings = decodeJsonResult(RawProjectMergeSettingsSchema);
 
@@ -580,6 +588,26 @@ export function decodeDiffRefsJson(
   return Result.succeed(
     refs ? { baseSha: refs.base_sha, headSha: refs.head_sha, startSha: refs.start_sha } : null,
   );
+}
+
+export interface GitLabRevertTarget {
+  readonly title: string;
+  readonly targetBranch: string;
+  /** Null for a fast-forward merge without squash, which landed as several commits. */
+  readonly commitSha: string | null;
+}
+
+export function decodeRevertTargetJson(
+  raw: string,
+): Result.Result<GitLabRevertTarget, DecodeFailure> {
+  const decoded = decodeRevertTarget(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const mr = decoded.success;
+  return Result.succeed({
+    title: mr.title,
+    targetBranch: mr.target_branch,
+    commitSha: trimmed(mr.merge_commit_sha) ?? trimmed(mr.squash_commit_sha),
+  });
 }
 
 export function decodeNotesJson(

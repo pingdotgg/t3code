@@ -56,6 +56,7 @@ export const definition = defineSourceControl({
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "revert",
   ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|close)\b/u,

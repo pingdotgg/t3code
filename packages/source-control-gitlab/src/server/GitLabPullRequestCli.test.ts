@@ -466,6 +466,93 @@ layer("GitLabPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect("reverts a merged merge request onto a new branch and opens a merge request", () =>
+    Effect.gen(function* () {
+      const mergeCommit = "dac72fa101758a44b0068a23666559920a74478f";
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                merge_commit_sha: mergeCommit,
+                squash_commit_sha: "cb2d9f660ebe946e5056ae98993db5ea72b9bad1",
+              }),
+            ),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "revert",
+      });
+
+      expect(
+        mockedExecute.mock.calls.map(([input]) => [
+          input.args[1],
+          input.stdin && JSON.parse(input.stdin),
+        ]),
+      ).toEqual([
+        ["projects/acme%2Fweb/merge_requests/7", undefined],
+        ["projects/acme%2Fweb/repository/branches", { branch: "revert-dac72fa1", ref: "main" }],
+        [
+          `projects/acme%2Fweb/repository/commits/${mergeCommit}/revert`,
+          { branch: "revert-dac72fa1" },
+        ],
+        [
+          "projects/acme%2Fweb/merge_requests",
+          {
+            source_branch: "revert-dac72fa1",
+            target_branch: "main",
+            title: 'Revert "Merge request 7"',
+            description: "This reverts merge request !7",
+            remove_source_branch: true,
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("deletes the revert branch when GitLab cannot revert cleanly", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args, cwd }) =>
+        args[1]?.endsWith("/revert")
+          ? Effect.fail(
+              new GitLabCli.GitLabCliCommandError({
+                operation: "execute",
+                command: "glab",
+                cwd,
+                cause: new Error("Merge request revert failed"),
+              }),
+            )
+          : Effect.succeed(
+              output(mergeRequestJson({ merge_commit_sha: null, squash_commit_sha: "abc12345ff" })),
+            ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* Effect.result(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitLabCliCommandError" } });
+      expect(mockedExecute.mock.calls.map(([input]) => input.args.slice(1, 4))).toEqual([
+        ["projects/acme%2Fweb/merge_requests/7"],
+        ["projects/acme%2Fweb/repository/branches", "--method", "POST"],
+        ["projects/acme%2Fweb/repository/commits/abc12345ff/revert", "--method", "POST"],
+        ["projects/acme%2Fweb/repository/branches/revert-abc12345", "--method", "DELETE"],
+      ]);
+    }),
+  );
+
   it.effect("sends a comment body over stdin, never in argv", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
