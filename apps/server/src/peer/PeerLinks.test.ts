@@ -653,7 +653,9 @@ it.effect("linking an address with nothing listening says so, unlike one that is
         serveRaw(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
       );
       const notT3 = yield* serveRaw(() =>
-        Effect.succeed(HttpServerResponse.html("<h1>Not Found</h1>", { status: 404 })),
+        Effect.succeed(
+          HttpServerResponse.text("<h1>Not Found</h1>", { status: 404, contentType: "text/html" }),
+        ),
       );
       const a = yield* makeA(laptop);
       const linking = (url: string) =>
