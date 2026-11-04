@@ -19,9 +19,13 @@
     "bench": "bash scripts/bench.sh"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }
