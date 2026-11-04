@@ -1076,3 +1076,33 @@ it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", ()
     NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
   }),
 );
+
+it.effect("waits for the scan of a cold OpenCode 2 directory that first lists only built-ins", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const reads: Array<OpenCode2Workspace> = [
+      { commands: builtinCommands, skills: builtinSkills },
+      scanned,
+    ];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), reads.shift()!)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.sync(() => (calls.push("loaded"), false)),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["loaded", "read", "scanned", "read"]);
+  }),
+);
+
+it.effect("reads an already loaded OpenCode 2 directory once without waiting for a scan", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), scanned)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.succeed(true),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["read"]);
+  }),
+);
