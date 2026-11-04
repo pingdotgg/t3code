@@ -274,6 +274,16 @@ export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage>
   return toolOutputImageBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
 }
 
+export function mcpToolResultOutput(result: {
+  readonly content?: unknown;
+  readonly structuredContent?: unknown;
+}): unknown {
+  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent: result.structuredContent };
+  }
+  return result.structuredContent ?? result.content;
+}
+
 export function omitToolOutputImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);
