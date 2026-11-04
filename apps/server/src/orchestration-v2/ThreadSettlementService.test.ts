@@ -218,6 +218,14 @@ describe("awaitingAgentWake", () => {
     assert.isFalse(ThreadSettlementService.awaitingAgentWake(done, endedAtMs, endedAtMs + 6_000));
   });
 
+  it("holds a wake run requested just before a sweep saw the work end, past the grace", () => {
+    // The sweep records the end when it looks, which can trail the wake run's request.
+    const queued = shell({ latestRunRequestedAt: at(-50), latestRunCompletedAt: null });
+    assert.isTrue(
+      ThreadSettlementService.awaitingAgentWake(queued, endedAtMs, endedAtMs + 10 * 60 * 1_000),
+    );
+  });
+
   it("ignores a run that finished before the work ended", () => {
     const earlier = shell({ latestRunRequestedAt: at(-60_000), latestRunCompletedAt: at(-30_000) });
     assert.isTrue(ThreadSettlementService.awaitingAgentWake(earlier, endedAtMs, endedAtMs + 1_000));

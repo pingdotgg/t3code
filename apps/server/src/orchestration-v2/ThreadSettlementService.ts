@@ -165,7 +165,8 @@ export function isAutoSettlementCandidate(
 /**
  * Awaited background work wakes its agent when it ends. Settling then detaches the provider
  * session and cancels the queued wake run, so the agent never hears the work finished.
- * Holds until a run requested after the work ended completes, or the grace passes without one.
+ * Holds while the latest run is outstanding: a sweep can see the work end after its wake run
+ * was requested. Otherwise holds until the grace passes, unless a run since the end completed.
  */
 export function awaitingAgentWake(
   thread: Pick<
@@ -177,9 +178,10 @@ export function awaitingAgentWake(
 ): boolean {
   if (heldWorkEndedAtMs === undefined) return false;
   const requestedAtMs = toMillis(thread.latestRunRequestedAt);
-  if (requestedAtMs !== null && requestedAtMs >= heldWorkEndedAtMs) {
+  if (requestedAtMs !== null) {
     const completedAtMs = toMillis(thread.latestRunCompletedAt);
-    return completedAtMs === null || completedAtMs < requestedAtMs;
+    if (completedAtMs === null || completedAtMs < requestedAtMs) return true;
+    if (requestedAtMs >= heldWorkEndedAtMs) return false;
   }
   return nowMs - heldWorkEndedAtMs < AGENT_WAKE_GRACE_MS;
 }
