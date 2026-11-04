@@ -100,6 +100,7 @@ const machine = { version: "1.0.0", auth: { status: "authenticated" }, slashComm
 
 it.effect("starts the CLI again only when a source of its command list changes", () =>
   Effect.gen(function* () {
+    using _release = vi.spyOn(NodeOS, "release").mockReturnValue("6.8.0");
     const { path, write, main, worktree, cwd, config, makeCommands, probes } =
       yield* makeCommandSourcesFixture;
     const commands = yield* makeCommands();
@@ -152,11 +153,16 @@ it.effect("starts the CLI again only when a source of its command list changes",
     yield* write(path.join(config, "plugins", "synced", "account", ".marketplaces.json"));
     yield* commands.get(machine, cwd);
     assert.strictEqual(probes(), beforeUnrelated);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+  ),
 );
 
 it.effect("starts the CLI again when the health check's view of it changes", () =>
   Effect.gen(function* () {
+    using _release = vi.spyOn(NodeOS, "release").mockReturnValue("6.8.0");
     const { cwd, makeCommands, probes } = yield* makeCommandSourcesFixture;
     const commands = yield* makeCommands();
     yield* commands.get(machine, cwd);
@@ -166,11 +172,16 @@ it.effect("starts the CLI again when the health check's view of it changes", () 
     assert.strictEqual(probes(), 3);
     yield* commands.get({ ...machine, slashCommands: [{ name: "upgrade" }] }, cwd);
     assert.strictEqual(probes(), 4);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+  ),
 );
 
 it.effect("keeps folders apart, retries failures, and forgets on invalidate", () =>
   Effect.gen(function* () {
+    using _release = vi.spyOn(NodeOS, "release").mockReturnValue("6.8.0");
     const { cwd, worktree, makeCommands, probes, failNextProbes } =
       yield* makeCommandSourcesFixture;
     const commands = yield* makeCommands();
@@ -187,11 +198,16 @@ it.effect("keeps folders apart, retries failures, and forgets on invalidate", ()
     yield* commands.invalidate;
     yield* commands.get(machine, cwd);
     assert.strictEqual(probes(), 4);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+  ),
 );
 
 it.effect("always starts the CLI when its sources cannot be vouched for", () =>
   Effect.gen(function* () {
+    using _release = vi.spyOn(NodeOS, "release").mockReturnValue("6.8.0");
     const { path, write, root, cwd, config, makeCommands, probes } =
       yield* makeCommandSourcesFixture;
     const probesTwice = (commands: Effect.Success<ReturnType<typeof makeCommands>>) =>
@@ -361,7 +377,11 @@ it.effect("always starts the CLI when its sources cannot be vouched for", () =>
       yield* write(path.join(cwd, ".claude", "skills", `${index}.md`));
     }
     yield* probesTwice(commands);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+  ),
 );
 
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
