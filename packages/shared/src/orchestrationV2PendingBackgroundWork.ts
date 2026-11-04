@@ -279,7 +279,10 @@ export function derivePendingBackgroundWork(input: {
 
   for (const item of [
     ...pendingBackgroundTurnItems(input),
-    ...(input.awaitingWakeTurnItems ?? []),
+    // A finished task has no provider process, so it must not keep the caller's MCP session live.
+    ...(input.awaitingWakeTurnItems ?? []).map(
+      ({ owningProviderInstanceId: _owner, ...item }) => item,
+    ),
   ]) {
     const taskId = nativeTaskIdFromTurnItem(item);
     if (byTaskId.has(taskId)) {
