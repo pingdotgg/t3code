@@ -1004,6 +1004,8 @@ export const MERGE_MESSAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!
 }`;
 
 const RawMergeMessagesSchema = Schema.Struct({
+  // A field that errored reads as null, which must not pass for an absent template.
+  errors: Schema.optionalKey(Schema.Never),
   data: Schema.Struct({
     project: Schema.NullOr(
       Schema.Struct({
