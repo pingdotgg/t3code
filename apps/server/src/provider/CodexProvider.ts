@@ -412,8 +412,9 @@ const CodexModelsCacheEntry = Schema.Struct({
   additional_speed_tiers: Schema.optional(Schema.Array(Schema.String)),
 });
 const decodeCodexModelsCache = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ models: Schema.Array(CodexModelsCacheEntry) })),
+  Schema.fromJsonString(Schema.Struct({ models: Schema.Array(Schema.Unknown) })),
 );
+const decodeCodexModelsCacheEntry = Schema.decodeUnknownOption(CodexModelsCacheEntry);
 
 function codexModelFromCache(entry: typeof CodexModelsCacheEntry.Type): ServerProviderModel {
   const reasoningLevels = entry.supported_reasoning_levels ?? [];
@@ -455,6 +456,7 @@ const readCodexModelsCache = Effect.fn("readCodexModelsCache")(function* (codexH
   return Option.flatMap(text, decodeCodexModelsCache).pipe(
     Option.map((cache): ReadonlyArray<ServerProviderModel> =>
       cache.models
+        .flatMap((model) => Option.toArray(decodeCodexModelsCacheEntry(model)))
         .filter((model) => model.visibility !== "hide" && model.supported_in_api !== false)
         .map(codexModelFromCache),
     ),

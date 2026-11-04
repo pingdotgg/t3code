@@ -46,6 +46,19 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
+const cachedCustomModel = {
+  slug: "deepseek/deepseek-v4.1-flash-1017",
+  display_name: "DeepSeek: DeepSeek V4.1 Flash 1017",
+  description: "DeepSeek's coding model.",
+  supported_reasoning_levels: [
+    { effort: "low", description: "Faster" },
+    { effort: "high", description: "Deeper" },
+  ],
+  default_reasoning_level: "high",
+  visibility: "list",
+  supported_in_api: true,
+};
+
 it.layer(NodeServices.layer, { excludeTestServices: true })(
   "Codex custom provider catalog",
   (it) => {
@@ -65,20 +78,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
               fetched_at: DateTime.formatIso(
                 DateTime.subtract(yield* DateTime.now, { minutes: 10 }),
               ),
-              models: [
-                {
-                  slug: "deepseek/deepseek-v4.1-flash-1017",
-                  display_name: "DeepSeek: DeepSeek V4.1 Flash 1017",
-                  description: "DeepSeek's coding model.",
-                  supported_reasoning_levels: [
-                    { effort: "low", description: "Faster" },
-                    { effort: "high", description: "Deeper" },
-                  ],
-                  default_reasoning_level: "high",
-                  visibility: "list",
-                  supported_in_api: true,
-                },
-              ],
+              models: [cachedCustomModel],
             }),
           );
 
@@ -104,6 +104,36 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
             ["low", "high"],
           );
         }).pipe(Effect.scoped),
+    );
+
+    it.effect("keeps valid cached models beside malformed cache entries", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-catalog-" });
+        const binaryPath = path.join(dir, "codex");
+        yield* fs.writeFileString(binaryPath, FAKE_CODEX_CUSTOM_PROVIDER_APP_SERVER);
+        yield* fs.chmod(binaryPath, 0o755);
+        yield* fs.writeFileString(
+          path.join(dir, "models_cache.json"),
+          JSON.stringify({
+            fetched_at: DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { minutes: 10 })),
+            models: [{ slug: 42 }, cachedCustomModel, null],
+          }),
+        );
+
+        const { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: _ambient, ...environment } = process.env;
+        const provider = yield* checkCodexProviderStatus(
+          decodeCodexSettings({ binaryPath, homePath: dir }),
+          undefined,
+          environment,
+        );
+
+        assert.deepStrictEqual(
+          provider.models.map((model) => model.slug),
+          ["gpt-6.1-sol", "deepseek/deepseek-v4.1-flash-1017"],
+        );
+      }).pipe(Effect.scoped),
     );
   },
 );
