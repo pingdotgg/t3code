@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeZlib from "node:zlib";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -100,7 +102,7 @@ it.effect("answers device calls with T3's handlers over the case's world", () =>
     const elsewhere = yield* tools.call("device_open", { hostId: "local", deviceId: IPHONE });
     assert.isTrue(elsewhere.isError);
     assert.include(elsewhere.text, IPHONE);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("lists the boot state T3 left a device in", () =>
@@ -113,7 +115,7 @@ it.effect("lists the boot state T3 left a device in", () =>
     yield* tools.call("device_open", { hostId: MAC, deviceId: IPHONE });
     const after = json((yield* tools.call("device_list", {})).text);
     assert.isTrue(after.devices.find((d: { id: string }) => d.id === IPHONE).booted);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it("decodes only T3 device errors as injected failures", () => {
@@ -148,7 +150,7 @@ it.effect("rebuilds prior device results with T3, whose sessions reach the measu
     assert.isFalse((yield* tools.call("device_screenshot", {})).isError);
     const mock = deviceFailure(testCase.setup.mocks?.device_screenshot);
     assert.isTrue((yield* tools.call("device_screenshot", {}, mock)).isError);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("gives a native subagent T3's SubagentStart context instead of T3's append", () =>
@@ -204,7 +206,7 @@ it.effect("tells the shell simulator the launchers T3 returned and agent-device'
     // A case without devices keeps the shell prompt every other case has.
     const plain = makeSample(deviceCase({ world: {} }), base);
     assert.notInclude(shellRequest(plain, call, "claude-haiku-5-5").system, "agent-device");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it("prints agent-device's own help for a lone help command on a returned launcher", () => {
@@ -315,7 +317,7 @@ it.effect("answers the returned launcher as agent-device does before and after o
       tools.sessionError(history, `${line("screenshot /tmp/a.png")} 2>&1`),
       NO_SESSION,
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 const shared = (session: string): LauncherTarget => ({
@@ -484,7 +486,7 @@ it.effect("starts sessions the world says prior turns opened, and rejects unknow
     const unknown = { devices, deviceHosts, agentDeviceSessions: { "not-a-device": {} } };
     const exit = yield* Effect.exit(makeDeviceTools(unknown, base.environment));
     assert.isTrue(exit._tag === "Failure");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -522,7 +524,7 @@ it.effect(
       });
       assert.isUndefined(cannedOutput(sample, `${command} screenshot /tmp/a.png${flags}`));
       assert.include(told(), "is open with an app");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it("keeps a redirection's descriptor out of the app an open names, on either launcher", () => {
@@ -631,7 +633,7 @@ it.effect("lists a host whose discovery fails as T3 does: failed, with none of i
       deviceTools({ deviceDiscoveryFailures: { "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee": failure } }),
     );
     assert.isTrue(unlabeled._tag === "Failure");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("denies every device tool with T3's own error when agent device access is off", () =>
@@ -657,7 +659,7 @@ it.effect("denies every device tool with T3's own error when agent device access
     }
     // T3 drops its device text for a thread without the capability, on refs that have it.
     assert.notInclude(t3SystemAppend(model, false), "## T3 Code devices");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("reports an unreadable capture as T3 does: a successful 0×0 screenshot", () =>
@@ -674,7 +676,7 @@ it.effect("reports an unreadable capture as T3 does: a successful 0×0 screensho
     yield* withDevices(sample);
     const told = JSON.stringify(shellRequest(sample, { tool: "Bash", input: {} }, model).messages);
     assert.include(told, "agent-device's own screenshot finds the PNG and is unaffected");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("refuses an open on a device another thread's agent-device session holds", () =>
@@ -742,7 +744,7 @@ it.effect("refuses an open on a device another thread's agent-device session hol
     history.push({ tool: "Bash", input: { command: line("close", owner) }, output: "Closed" });
     assert.equal(answer("open com.acme.app"), "");
     assert.include(describeSessions(tools.sessions(history), tools.owners), "was closed");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("leaves a free device free when another thread holds a different one", () =>
@@ -762,7 +764,7 @@ it.effect("leaves a free device free when another thread holds a different one",
     assert.isFalse(
       (yield* tools.call("device_list", {})).text.includes(`"hostId":"${LOCAL_DEVICE_HOST_ID}"`),
     );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 type Opened = { command: string; targetArgs: Array<string>; session?: string };
@@ -883,7 +885,7 @@ it.effect(
         JSON.stringify(request.messages),
         `${session(own)} (Acme iPhone, ${IPHONE}, on build-mac) has not started`,
       );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it("tells the simulator 0.21.31's --foreground and session list behaviour", () => {

@@ -1,6 +1,6 @@
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -51,9 +51,7 @@ test(
     // The `GREETING` env value from alchemy.run.ts, read via `getEnv` in the
     // dynamic RSC page — proves the Lambda rendered it at request time.
     expect(html).toContain("Hello from Waku on AWS!");
-    expect(html).toContain(
-      "This page is rendered by the server on every request.",
-    );
+    expect(html).toContain("This page is rendered by the server on every request.");
   }),
   { timeout: 180_000 },
 );
