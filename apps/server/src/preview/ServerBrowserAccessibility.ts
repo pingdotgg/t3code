@@ -397,8 +397,16 @@ export class ServerBrowserAccessibility {
       throw cause;
     }
     if (!this.subscribers.has(id)) return;
-    if (this.latest) this.deliver();
-    else await this.refresh();
+    if (this.latest) {
+      this.deliver();
+      return;
+    }
+    try {
+      await this.refresh();
+    } catch (cause) {
+      await this.unsubscribe(id);
+      throw cause;
+    }
   }
 
   /** Resolves once the last subscriber's domain and sessions are released. */
@@ -419,11 +427,11 @@ export class ServerBrowserAccessibility {
     const delay = Math.max(SETTLE_MS, this.lastCaptureAt + MIN_CAPTURE_INTERVAL_MS - Date.now());
     this.settleTimer = setTimeout(() => {
       this.settleTimer = null;
-      void this.refresh();
+      void this.refresh().catch(constVoid);
     }, delay);
   };
 
-  /** Resolves after a capture that started after this call. */
+  /** Settles after a capture that started after this call; rejects when that capture failed. */
   refresh(): Promise<void> {
     if (this.queued) return this.queued;
     const next = this.chain.then(() => {
@@ -487,7 +495,7 @@ export class ServerBrowserAccessibility {
       throw cause;
     }
     // Outside the caller's control queue, so a large page never delays the next input.
-    void this.refresh();
+    void this.refresh().catch(constVoid);
     return null;
   }
 
@@ -575,10 +583,10 @@ export class ServerBrowserAccessibility {
   }
 
   /** Out-of-process frames need their own session; in-process ones are read through their parent's. */
-  private frameSession(frame: Frame) {
+  private frameSession(frame: Frame, run: number) {
+    if (run !== this.run) return Promise.resolve(null);
     let entry = this.frameSessions.get(frame);
     if (!entry) {
-      const run = this.run;
       entry = this.page
         .context()
         .newCDPSession(frame)
@@ -589,9 +597,10 @@ export class ServerBrowserAccessibility {
               return null;
             }
             const key = String(++this.sessionSerial);
+            // Registered first so a stop during enable releases it.
             this.sessions.set(key, session);
             await this.watch(session);
-            return key;
+            return run === this.run ? key : null;
           },
           () => null,
         );
@@ -606,9 +615,10 @@ export class ServerBrowserAccessibility {
     const main = this.main;
     if (!main) return;
     this.lastCaptureAt = Date.now();
-    const captured = await this.capture(main).catch((cause: unknown) => {
+    const captured = await this.capture(main, run).catch((cause: unknown) => {
+      if (run !== this.run) return null;
       this.onError(cause);
-      return null;
+      throw cause;
     });
     if (!captured || run !== this.run || !captured.root) return;
     const targets =
@@ -651,7 +661,7 @@ export class ServerBrowserAccessibility {
     }
   }
 
-  private async capture(main: CDPSession) {
+  private async capture(main: CDPSession, run: number) {
     const documents = new Map<string, FrameDocument>();
     const walk = (tree: FrameTreeNode, key: string, session: CDPSession) => {
       documents.set(tree.frame.id, {
@@ -663,11 +673,11 @@ export class ServerBrowserAccessibility {
       for (const child of tree.childFrames ?? []) walk(child, key, session);
     };
     const { frameTree } = (await main.send("Page.getFrameTree")) as { frameTree: FrameTreeNode };
-    const token = `${this.run}:${frameTree.frame.loaderId}`;
+    const token = `${run}:${frameTree.frame.loaderId}`;
     walk(frameTree, "0", main);
     for (const frame of this.page.frames()) {
       if (frame === this.page.mainFrame()) continue;
-      const key = await this.frameSession(frame);
+      const key = await this.frameSession(frame, run);
       const session = key === null ? undefined : this.sessions.get(key);
       if (!key || !session) continue;
       const own = (await session.send("Page.getFrameTree").catch(() => null)) as {

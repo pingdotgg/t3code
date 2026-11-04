@@ -776,6 +776,7 @@ export function ServerBrowserSurface(props: {
             onClick={() => {
               const next = !accessibleView;
               setAccessibleView(next);
+              setAccessibleNotice(null);
               clientRef.current?.accessibility(next);
             }}
           >

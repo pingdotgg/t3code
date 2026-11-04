@@ -568,3 +568,75 @@ it("refuses actions on a document whose frame navigated until it is read again",
     vi.useRealTimers();
   }
 });
+
+it("rejects the subscription when the first capture fails, so the viewer is told", async () => {
+  let readable = false;
+  const main = fakeSession(
+    () => {
+      if (!readable) throw new Error("Target closed");
+      return [node("1", "RootWebArea", { label: "Page" })];
+    },
+    { id: "main" },
+  );
+  const page = fakePage(main, new Map());
+  const onError = vi.fn();
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page, onError);
+  const offer = vi.fn(() => true);
+  try {
+    await expect(mirror.subscribe("viewer", offer)).rejects.toThrow();
+    expect(offer).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(mirror.active).toBe(false);
+    expect(page.events.eventNames()).toEqual([]);
+    expect(main.detach).toHaveBeenCalledOnce();
+
+    readable = true;
+    await mirror.subscribe("viewer", offer);
+    expect(offer).toHaveBeenCalledWith(
+      expect.objectContaining({ root: { id: "0.1", role: "document", name: "Page" } }),
+    );
+  } finally {
+    await mirror.close();
+  }
+});
+
+it("opens no frame session for a capture that outlived its subscription", async () => {
+  const main = fakeSession(
+    () => [
+      node("1", "RootWebArea", { childIds: ["2"] }),
+      node("2", "Iframe", { backendDOMNodeId: 7 }),
+    ],
+    { id: "main" },
+  );
+  const child = fakeSession(() => [node("1", "RootWebArea", { label: "Ad" })], {
+    id: "child",
+    parentId: "main",
+  });
+  const page = fakePage(main, new Map([[{}, child]]));
+  const reached = Promise.withResolvers<void>();
+  const frameTree = Promise.withResolvers<void>();
+  const send = main.send.getMockImplementation()!;
+  main.send.mockImplementation(async (method, input) => {
+    if (method === "Page.getFrameTree") {
+      reached.resolve();
+      await frameTree.promise;
+    }
+    return send(method, input);
+  });
+  const mirror = new ServerBrowserAccessibility(page as unknown as Page);
+  const offer = vi.fn(() => true);
+  try {
+    const subscribed = mirror.subscribe("viewer", offer);
+    await reached.promise;
+    await mirror.unsubscribe("viewer");
+    frameTree.resolve();
+    await subscribed;
+
+    expect(offer).not.toHaveBeenCalled();
+    expect(child.send).not.toHaveBeenCalledWith("Accessibility.enable");
+    expect(child.events.eventNames()).toEqual([]);
+    expect(main.events.eventNames()).toEqual([]);
+  } finally {
+    await mirror.close();
+  }
+});
