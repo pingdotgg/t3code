@@ -106,6 +106,13 @@ export const AutoSettleFinishedChildrenAfterHours = Schema.Int.check(
 );
 export type AutoSettleFinishedChildrenAfterHours = typeof AutoSettleFinishedChildrenAfterHours.Type;
 export const DEFAULT_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS: AutoSettleFinishedChildrenAfterHours = 12;
+export const MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS = 365;
+/** Days a thread stays settled before it is archived; 0 turns the rule off. */
+export const AutoArchiveSettledAfterDays = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS }),
+);
+export type AutoArchiveSettledAfterDays = typeof AutoArchiveSettledAfterDays.Type;
+export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS: AutoArchiveSettledAfterDays = 10;
 
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
@@ -1397,6 +1404,9 @@ export const ServerSettings = Schema.Struct({
   autoSettleFinishedChildrenAfterHours: AutoSettleFinishedChildrenAfterHours.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS)),
   ),
+  autoArchiveSettledAfterDays: AutoArchiveSettledAfterDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS)),
+  ),
   // Legacy field accepted from deployed clients; settlement now uses only idle age.
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
@@ -1759,6 +1769,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoSettleFinishedChildrenAfterHours: Schema.optionalKey(AutoSettleFinishedChildrenAfterHours),
+  autoArchiveSettledAfterDays: Schema.optionalKey(AutoArchiveSettledAfterDays),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),

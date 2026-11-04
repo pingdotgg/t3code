@@ -5103,8 +5103,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ["archivedAt", DateTime.formatIso(now)],
         ["settledOverride", "settled"],
       ]) {
+        // Projection writes keep the archived_at column in step with the payload.
         yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value})
+          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value}),
+            archived_at = ${field === "archivedAt" ? value : null}
           WHERE thread_id = ${threadId}`;
         assert.isUndefined(
           (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
@@ -5112,7 +5114,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
         yield* sql`UPDATE orchestration_v2_projection_threads
-          SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
+          SET payload_json = ${originalRow!.payload_json}, archived_at = NULL
+          WHERE thread_id = ${threadId}`;
       }
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${threadId}`;
       assert.isUndefined(

@@ -206,6 +206,16 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
+Threads that stay settled for 10 days are archived, just as if you archived them yourself. The
+conversation stays, project files and worktrees are left alone, and it works even if the thread's
+project folder or worktree is no longer on this machine. Pinned, snoozed, and
+auto-settle-disabled threads are never archived automatically. Neither are threads with work in
+progress, pending questions, a watched or open pull request, or child chats that have not
+settled. Find archived threads in **Settings → Archived** and unarchive them there; an unarchived
+thread gets another full period before it can be archived again. Change the days with
+**Auto-archive settled threads** in **Settings → Threads**, or turn it off. This rule applies to
+the whole environment.
+
 Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.

@@ -431,3 +431,55 @@ it.effect.each([["sql", layerSql]] as const)(
       assert.deepEqual(own.latestBackgroundActivityAt, old);
     }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("sql: lists threads settled before the cutoff for auto-archive, oldest first", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const settled = (days: number) => ({
+      settledOverride: "settled" as const,
+      settledAt: DateTime.subtract(now, { days }),
+    });
+    const oldest = yield* createThread("archive-oldest", settled(30));
+    const due = yield* createThread("archive-due", settled(12));
+    yield* createThread("archive-recent", settled(3));
+    yield* createThread("archive-active", { settledOverride: "active" });
+    yield* createThread("archive-archived", { ...settled(30), archivedAt: old });
+    yield* createThread("archive-pinned", { ...settled(30), pinnedAt: old });
+    yield* createThread("archive-opted-out", { ...settled(30), autoSettleDisabledAt: old });
+    yield* createRun(yield* createThread("archive-running", settled(30)), "running");
+    // A parent waits for its child chats to settle; an idle subagent never holds it.
+    const waitingParent = yield* createThread("archive-waiting-parent", settled(30));
+    yield* createThread("archive-open-child", { parentThreadId: waitingParent });
+    const parent = yield* createThread("archive-parent", settled(20));
+    const child = yield* createThread("archive-settled-child", {
+      ...settled(20),
+      parentThreadId: parent,
+    });
+    const subagent = yield* createThread("archive-subagent", {
+      ...settled(30),
+      parentThreadId: parent,
+      lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent: "subagent" },
+    });
+    yield* createRun(subagent, "completed");
+
+    const settledBefore = DateTime.subtract(now, { days: 10 });
+    const candidates = yield* store.getAutoArchiveCandidates({ settledBefore, limit: 10 });
+    assert.deepEqual(
+      candidates.map((thread) => thread.id),
+      [oldest, parent, child, due],
+    );
+    assert.deepEqual(
+      (yield* store.getAutoArchiveCandidates({ settledBefore, limit: 1 })).map(
+        (thread) => thread.id,
+      ),
+      [oldest],
+    );
+    yield* createRun(subagent, "running", 2);
+    assert.notInclude(
+      (yield* store.getAutoArchiveCandidates({ settledBefore, limit: 10 })).map(
+        (thread) => thread.id,
+      ),
+      parent,
+    );
+  }).pipe(Effect.provide(layerSql)),
+);

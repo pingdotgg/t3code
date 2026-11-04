@@ -1,6 +1,9 @@
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { threadShellHasActiveWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadHasPullRequestWatch } from "@t3tools/shared/threadPullRequests";
+import {
+  threadHasPullRequestWatch,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 import type * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -69,6 +72,42 @@ export function isAutoSettlementCandidate(
   if (threadHasPullRequestWatch(thread)) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
+  return !isSnoozed(thread, nowMs);
+}
+
+/**
+ * Whether a settled thread has stayed settled long enough to archive. The clock is the thread's
+ * own settle time, which unarchiving restarts; folders, worktrees and other environments play
+ * no part.
+ */
+export function isAutoArchiveDue(
+  thread: ProjectionStore.ProjectionSettlementCandidate,
+  input: { readonly nowMs: number; readonly afterDays: number },
+): boolean {
+  if (input.afterDays <= 0 || thread.settledAt === null) return false;
+  return (
+    DateTime.toEpochMillis(thread.settledAt) <= input.nowMs - input.afterDays * DAY_MS &&
+    isAutoArchiveCandidate(thread, input.nowMs)
+  );
+}
+
+/** Anything still waiting on the thread, or on the user, keeps it out of the archive. */
+export function isAutoArchiveCandidate(
+  thread: ProjectionStore.ProjectionSettlementCandidate,
+  nowMs: number,
+): boolean {
+  if (thread.archivedAt !== null || thread.settledOverride !== "settled") return false;
+  if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
+  if (thread.pendingRuntimeRequest !== null || (thread.pendingGuestMessageCount ?? 0) > 0)
+    return false;
+  if (threadShellHasActiveWork(thread) || threadHasPullRequestWatch(thread)) return false;
+  // Archiving drops the pull request from every list the user scans for review work.
+  if (
+    visibleThreadPullRequests(thread.pullRequests ?? []).some(
+      (link) => link.snapshot?.state === "open",
+    )
+  )
+    return false;
   return !isSnoozed(thread, nowMs);
 }
 

@@ -47,6 +47,9 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       undefined,
       "threadAutoSettleFinishedChildren",
     ).eligibleEnvironmentIds.length > 0;
+  const hasThreadAutoArchive =
+    getThreadAutoSettlementSearchAvailability(environments, undefined, "threadAutoArchive")
+      .eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -74,6 +77,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
     hasThreadAutoSettleFinishedChildren,
+    hasThreadAutoArchive,
     managedTunnelActive,
     hasPeerLinkHost,
   });

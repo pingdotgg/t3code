@@ -9,6 +9,7 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS,
   DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
@@ -93,6 +94,12 @@ export function AutoSettleSettingsRows(props: {
         target.environment.serverConfig.environment.capabilities
           .threadAutoSettleFinishedChildren === true,
     );
+  const supportsAutoArchive =
+    !projectSelected &&
+    displayTargets.every(
+      (target) =>
+        target.environment.serverConfig.environment.capabilities.threadAutoArchive === true,
+    );
   const { patch: autoSettlePatch, mismatches } = planAutoSettleSettingsSync(
     {
       environmentId: reference.environment.environmentId,
@@ -105,12 +112,16 @@ export function AutoSettleSettingsRows(props: {
       label: target.environment.label,
       settings: target.settings,
     })),
-    { includeFinishedChildren: supportsFinishedChildAutoSettlement },
+    {
+      includeFinishedChildren: supportsFinishedChildAutoSettlement,
+      includeAutoArchive: supportsAutoArchive,
+    },
   );
 
   const disabled = !canWriteSettings || props.pending;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
   const childAfterHours = referenceSettings.autoSettleFinishedChildrenAfterHours;
+  const archiveAfterDays = referenceSettings.autoArchiveSettledAfterDays;
 
   return (
     <View className="gap-6">
@@ -187,6 +198,34 @@ export function AutoSettleSettingsRows(props: {
           </View>
         ) : null}
       </SettingsSection>
+      {supportsAutoArchive ? (
+        <SettingsSection title="Auto-archive">
+          <SettingsSwitchRow
+            icon="archivebox"
+            label="Auto-archive settled threads"
+            subtitle="Archive threads that stay settled this many days. Unarchive brings them back."
+            value={archiveAfterDays > 0}
+            disabled={disabled}
+            onValueChange={(value) =>
+              writeToAll({
+                autoArchiveSettledAfterDays: value ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : 0,
+              })
+            }
+          />
+          {archiveAfterDays > 0 ? (
+            <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+              <View className="w-[22px] android:w-6" />
+              <Text className="flex-1 text-foreground text-lg android:text-base">Settled days</Text>
+              <AutoSettleDurationField
+                unit="archiveDay"
+                value={archiveAfterDays}
+                disabled={disabled}
+                onValueChange={(value) => writeToAll({ autoArchiveSettledAfterDays: value })}
+              />
+            </View>
+          ) : null}
+        </SettingsSection>
+      ) : null}
       {!props.pending && mismatches.length > 0 ? (
         <SettingsSection title="Across environments">
           <View className="gap-3 p-4">

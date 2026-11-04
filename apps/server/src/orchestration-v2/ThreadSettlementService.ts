@@ -19,7 +19,15 @@ import { forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { resolveAutoSettlementAt, resolveFinishedChildSettlementAt } from "./autoSettlement.ts";
+import {
+  isAutoArchiveDue,
+  resolveAutoSettlementAt,
+  resolveFinishedChildSettlementAt,
+} from "./autoSettlement.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+// Bounds the backlog a first sweep archives at once; the rest follow on later sweeps.
+const AUTO_ARCHIVE_BATCH = 100;
 
 export class ThreadSettlementServiceV2 extends Context.Service<
   ThreadSettlementServiceV2,
@@ -32,6 +40,7 @@ export class ThreadSettlementServiceV2 extends Context.Service<
 /** Identity of age settings; unrelated edits do not trigger a sweep. */
 function autoSettlementSettingsKey(settings: import("@t3tools/contracts").ServerSettings): string {
   return JSON.stringify([
+    settings.autoArchiveSettledAfterDays,
     settings.autoSettleFinishedChildrenAfterHours,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,
@@ -62,7 +71,57 @@ export const make = Effect.gen(function* () {
   // so this keeps the settle action to one run per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
 
+  const archiveSweep = Effect.fn("ThreadSettlementServiceV2.archiveSweep")(function* () {
+    const afterDays = (yield* settingsService.getSettings).autoArchiveSettledAfterDays;
+    if (afterDays <= 0) return;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const threads = yield* projections
+      .getAutoArchiveCandidates({
+        settledBefore: DateTime.makeUnsafe(nowMs - afterDays * DAY_MS),
+        limit: AUTO_ARCHIVE_BATCH,
+      })
+      .pipe(NodeSqliteClient.readOnlyBackground);
+    // Serial: each archive is its own command and event, so a backlog trickles to clients.
+    yield* Effect.forEach(
+      threads,
+      (thread) =>
+        Effect.gen(function* () {
+          if (!isAutoArchiveDue(thread, { nowMs, afterDays })) return;
+          if (yield* projections.hasActiveDescendants(thread.id)) return;
+          yield* orchestrator.dispatch({
+            type: "thread.auto-archive",
+            commandId: CommandId.make(
+              `server:auto-archive:${thread.id}:${yield* crypto.randomUUIDv4()}`,
+            ),
+            threadId: thread.id,
+            snapshotAt: thread.updatedAt,
+          });
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("automatic thread archiving skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { discard: true },
+    );
+  });
+
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (threadId?: ThreadId) {
+    // Archiving reads only settled threads, so it runs on the periodic sweep alone.
+    if (threadId === undefined)
+      yield* archiveSweep().pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("automatic thread archiving sweep failed", {
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
     const settings = yield* settingsService.getSettings;
     const enabled = (days: number | null | undefined) => days != null && days > 0;
     if (
