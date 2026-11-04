@@ -28,25 +28,24 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { runBuildChild } from "../core/BuildChild.ts";
 import {
-  NODE_BUNDLE_CONDITIONS,
-  NODE_SERVE_ENTRY_FILE_NAME,
-  relativeClientDirExpression,
-  writeNodeServeEntry,
-} from "../core/NodeServe.ts";
-import {
   DeployTargetError,
   makeDeployTarget,
   readServerModulesFromDisk,
   sortServerModules,
 } from "../core/index.ts";
+import {
+  NODE_BUNDLE_CONDITIONS,
+  NODE_SERVE_ENTRY_FILE_NAME,
+  relativeClientDirExpression,
+  writeNodeServeEntry,
+} from "../core/NodeServe.ts";
 import { make, type OctaneTarget, type OctaneTargetConfig } from "./Octane.ts";
 
 /** The `adapter.name` the Node marker adapter declares. */
 export const ADAPTER_NAME = "node";
 
 /** The optional legacy Node marker adapter module for existing configs. */
-export const ADAPTER_PACKAGE =
-  "@alchemy.run/frontend-frameworks/octane/node-adapter";
+export const ADAPTER_PACKAGE = "@alchemy.run/frontend-frameworks/octane/node-adapter";
 
 /** Octane's emitted node server entry within the server output directory. */
 export const SERVER_ENTRY_FILE_NAME = "entry.js";
@@ -65,18 +64,10 @@ const fail = (message: string, cause?: unknown) =>
  */
 const neutralizeAutoListen = (source: string): string =>
   source
-    .replaceAll(
-      "fileURLToPath(import.meta.url) === resolve(process.argv[1])",
-      "false",
-    )
-    .replaceAll(
-      "fileURLToPath(import.meta.url)===resolve(process.argv[1])",
-      "false",
-    );
+    .replaceAll("fileURLToPath(import.meta.url) === resolve(process.argv[1])", "false")
+    .replaceAll("fileURLToPath(import.meta.url)===resolve(process.argv[1])", "false");
 
-const makeNodeAdapterTarget = (
-  config: OctaneNodeTargetConfig = {},
-): OctaneTarget =>
+const makeNodeAdapterTarget = (config: OctaneNodeTargetConfig = {}): OctaneTarget =>
   makeDeployTarget({
     platform: "node",
     config,
@@ -91,47 +82,31 @@ const makeNodeAdapterTarget = (
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         if (context.entry === undefined) {
-          return yield* Effect.fail(
-            fail("The Octane build produced no on-disk server entry to finish"),
-          );
+          return yield* fail("The Octane build produced no on-disk server entry to finish");
         }
         if (output.clientDirectory === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The Octane build produced no client directory for the Node serve entry",
-            ),
+          return yield* fail(
+            "The Octane build produced no client directory for the Node serve entry",
           );
         }
         const serverDir = path.dirname(context.entry);
         const entrySource = yield* fs
           .readFileString(context.entry)
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to read dist/server/entry.js", error),
-            ),
-          );
+          .pipe(Effect.mapError((error) => fail("Failed to read dist/server/entry.js", error)));
         const neutralized = neutralizeAutoListen(entrySource);
         if (neutralized !== entrySource) {
           yield* fs
             .writeFileString(context.entry, neutralized)
             .pipe(
               Effect.mapError((error) =>
-                fail(
-                  "Failed to disable Octane auto-listen in dist/server/entry.js",
-                  error,
-                ),
+                fail("Failed to disable Octane auto-listen in dist/server/entry.js", error),
               ),
             );
         }
         yield* fs
-          .writeFileString(
-            path.join(serverDir, "package.json"),
-            '{"type":"module"}\n',
-          )
+          .writeFileString(path.join(serverDir, "package.json"), '{"type":"module"}\n')
           .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to write dist/server/package.json", error),
-            ),
+            Effect.mapError((error) => fail("Failed to write dist/server/package.json", error)),
           );
         const servePath = path.join(serverDir, NODE_SERVE_ENTRY_FILE_NAME);
         const serveModuleName = path
@@ -141,10 +116,7 @@ const makeNodeAdapterTarget = (
           output,
           servePath,
           serveModuleName,
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            output.clientDirectory,
-          ),
+          clientDirExpression: relativeClientDirExpression(servePath, output.clientDirectory),
           handler: {
             kind: "fetch",
             imports: `import { handler } from ${JSON.stringify(`./${SERVER_ENTRY_FILE_NAME}`)};`,
@@ -181,9 +153,7 @@ export const buildInChild = (config: OctaneNodeBuildChildConfig) =>
     return yield* framework.build({ root: config.rootDir });
   });
 
-export const makeNodeTarget = (
-  config: OctaneNodeTargetConfig = {},
-): OctaneTarget => ({
+export const makeNodeTarget = (config: OctaneNodeTargetConfig = {}): OctaneTarget => ({
   ...makeNodeAdapterTarget(config),
   build: (context) =>
     runBuildChild({

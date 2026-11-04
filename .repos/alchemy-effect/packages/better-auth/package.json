@@ -1,50 +1,88 @@
 {
   "name": "@alchemy.run/better-auth",
-  "version": "2.0.0-beta.80",
+  "version": "2.0.0-beta.85",
   "description": "Better Auth integration for Alchemy.",
-  "homepage": "https://alchemy.run",
-  "license": "Apache-2.0",
-  "author": "Sam Goodwin <sam@alchemy.run>",
   "keywords": [
     "alchemy",
     "better-auth",
     "effect",
     "infrastructure-as-code"
   ],
-  "type": "module",
+  "homepage": "https://alchemy.run",
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/better-auth"
-  },
-  "bugs": {
-    "url": "https://github.com/alchemy-run/alchemy/issues"
   },
   "files": [
     "lib",
     "src",
     "NOTICE"
   ],
-  "scripts": {
-    "build": "tsc -b && bun ../../scripts/copy-package-files.ts better-auth",
-    "test": "alchemy-test"
-  },
+  "type": "module",
   "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "bun": "./src/index.ts",
-      "worker": "./src/index.ts",
-      "import": "./lib/index.js"
-    },
-    "./*": {
-      "types": "./lib/*.d.ts",
-      "bun": "./src/*.ts",
-      "worker": "./src/*.ts",
-      "import": "./lib/*.js"
-    },
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "worker": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "worker": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test": "alchemy-test"
+  },
+  "dependencies": {
+    "@alchemy.run/sql": "workspace:*"
+  },
+  "devDependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/planetscale": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
+    "@better-auth/drizzle-adapter": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-bun": "catalog:",
+    "@neondatabase/serverless": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/pg": "catalog:",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:",
+    "better-auth-1.6": "npm:better-auth@1.6.25",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "kysely": "catalog:",
+    "mysql2": "catalog:",
+    "pathe": "catalog:",
+    "pg": "catalog:",
+    "typescript": "catalog:"
+  },
   "peerDependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "@better-auth/drizzle-adapter": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@distilled.cloud/aws": "workspace:*",
@@ -58,6 +96,12 @@
     "pg": "catalog:"
   },
   "peerDependenciesMeta": {
+    "@alchemy.run/aws": {
+      "optional": true
+    },
+    "@alchemy.run/cloudflare": {
+      "optional": true
+    },
     "@better-auth/drizzle-adapter": {
       "optional": true
     },
@@ -82,28 +126,5 @@
     "pg": {
       "optional": true
     }
-  },
-  "devDependencies": {
-    "@better-auth/drizzle-adapter": "catalog:",
-    "@cloudflare/workers-types": "catalog:",
-    "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-bun": "catalog:",
-    "@neondatabase/serverless": "catalog:",
-    "@types/bun": "catalog:",
-    "@types/pg": "catalog:",
-    "alchemy": "workspace:*",
-    "alchemy-test": "workspace:*",
-    "better-auth": "catalog:",
-    "better-auth-1.6": "npm:better-auth@1.6.25",
-    "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "kysely": "catalog:",
-    "mysql2": "catalog:",
-    "pathe": "catalog:",
-    "pg": "catalog:",
-    "typescript": "catalog:"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
