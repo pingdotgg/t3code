@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 // Long-running driver for the hmr dev mode, spawned by test/hmr.test.ts:
 // starts `next dev` (Turbopack) with proxied Cloudflare bindings via the
 // Framework service and prints `DEV_URL <url>` when ready. Runs until
@@ -16,7 +17,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -41,9 +41,7 @@ const server = await runtime.runPromise(
 console.log(`DEV_URL ${server.url}`);
 
 const shutdown = async () => {
-  await runtime
-    .runPromise(Scope.close(scope, Exit.void))
-    .catch(() => undefined);
+  await runtime.runPromise(Scope.close(scope, Exit.void)).catch(() => undefined);
   await runtime.dispose().catch(() => undefined);
   process.exit(0);
 };

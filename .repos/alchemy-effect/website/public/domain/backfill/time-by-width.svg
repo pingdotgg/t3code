@@ -1,0 +1,31 @@
+<svg viewBox="0 0 480 320" role="img" aria-label="How long the deploy waits, by number of accounts" xmlns="http://www.w3.org/2000/svg" class="lc"><style>
+.lc{display:block;width:100%;height:auto;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.lc-surface{fill:#fbf6ea}
+.lc-text{fill:#2a2620}
+.lc-muted{fill:#52442e}
+.lc-title{font-size:14px;font-weight:600}
+.lc-small{font-size:11px}
+.lc-grid{stroke:rgba(42,38,32,0.14);stroke-width:1}
+.lc-s1,.lc-s2,.lc-s3{stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.lc-s1{stroke:#2a78d6;fill:#2a78d6}
+.lc-s2{stroke:#eb6834;fill:#eb6834}
+.lc-s3{stroke:#1baf7a;fill:#1baf7a}
+.lc-s1 path[fill=none],.lc-s2 path[fill=none],.lc-s3 path[fill=none]{fill:none}
+.lc-pt>*{stroke:#fbf6ea;stroke-width:2}
+.lc-label{stroke:#fbf6ea;stroke-width:3;paint-order:stroke;stroke-linejoin:round}
+@media (prefers-color-scheme: dark){
+.lc{display:block;width:100%;height:auto;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.lc-surface{fill:#221e18}
+.lc-text{fill:#faf6ec}
+.lc-muted{fill:#c0af89}
+.lc-title{font-size:14px;font-weight:600}
+.lc-small{font-size:11px}
+.lc-grid{stroke:rgba(250,246,236,0.14);stroke-width:1}
+.lc-s1,.lc-s2,.lc-s3{stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.lc-s1{stroke:#3987e5;fill:#3987e5}
+.lc-s2{stroke:#d95926;fill:#d95926}
+.lc-s3{stroke:#199e70;fill:#199e70}
+.lc-s1 path[fill=none],.lc-s2 path[fill=none],.lc-s3 path[fill=none]{fill:none}
+.lc-pt>*{stroke:#221e18;stroke-width:2}
+.lc-label{stroke:#221e18;stroke-width:3;paint-order:stroke;stroke-linejoin:round}
+}</style><rect class="lc-surface" width="480" height="320" rx="8"/><text class="lc-text lc-title" x="16" y="24">How long the deploy waits, by number of accounts</text><g class="lc-s1"><line x1="16" x2="32" y1="46" y2="46"/><circle cx="24" cy="46" r="4.5"/></g><text class="lc-muted lc-small" x="38" y="50">Before: accounts route their own history</text><g class="lc-s2"><line x1="298" x2="314" y1="46" y2="46"/><rect x="302" y="42" width="8" height="8" rx="1"/></g><text class="lc-muted lc-small" x="320" y="50">A run over the directory</text><line class="lc-grid" x1="52" x2="452" y1="272" y2="272"/><text class="lc-muted lc-small" x="44" y="276" text-anchor="end">0</text><line class="lc-grid" x1="52" x2="452" y1="225" y2="225"/><text class="lc-muted lc-small" x="44" y="229" text-anchor="end">300</text><line class="lc-grid" x1="52" x2="452" y1="178" y2="178"/><text class="lc-muted lc-small" x="44" y="182" text-anchor="end">600</text><line class="lc-grid" x1="52" x2="452" y1="131" y2="131"/><text class="lc-muted lc-small" x="44" y="135" text-anchor="end">900</text><line class="lc-grid" x1="52" x2="452" y1="84" y2="84"/><text class="lc-muted lc-small" x="44" y="88" text-anchor="end">1.2k</text><text class="lc-muted lc-small" x="52" y="290" text-anchor="middle">10k</text><text class="lc-muted lc-small" x="252" y="290" text-anchor="middle">100k</text><text class="lc-muted lc-small" x="452" y="290" text-anchor="middle">1M</text><text class="lc-muted lc-small" x="252" y="310" text-anchor="middle">Accounts, 10 deposits each</text><text class="lc-muted lc-small" x="16" y="68">Seconds</text><g class="lc-s1"><path fill="none" d="M52 216.69666666666666L252 107.81333333333333"/><g class="lc-pt"><circle cx="52" cy="216.69666666666666" r="4.5"/><title>Before: accounts route their own history: 10k accounts, 10 deposits each → 353 s</title></g><g class="lc-pt"><circle cx="252" cy="107.81333333333333" r="4.5"/><title>Before: accounts route their own history: 100k accounts, 10 deposits each → 1048 s</title></g></g><g class="lc-s2"><path fill="none" d="M52 269.9633333333333L252 262.91333333333336L452 196.64333333333332"/><g class="lc-pt"><rect x="48" y="265.9633333333333" width="8" height="8" rx="1"/><title>A run over the directory: 10k accounts, 10 deposits each → 13 s</title></g><g class="lc-pt"><rect x="248" y="258.91333333333336" width="8" height="8" rx="1"/><title>A run over the directory: 100k accounts, 10 deposits each → 58 s</title></g><g class="lc-pt"><rect x="448" y="192.64333333333332" width="8" height="8" rx="1"/><title>A run over the directory: 1M accounts, 10 deposits each → 481 s</title></g></g><text class="lc-text lc-small lc-label" x="260" y="97.81333333333333" text-anchor="start">1048 s</text><text class="lc-text lc-small lc-label" x="444" y="186.64333333333332" text-anchor="end">481 s</text></svg>
