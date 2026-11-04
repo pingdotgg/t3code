@@ -1,7 +1,10 @@
 import type { RuntimeContext } from "alchemy";
-import type { Auth } from "better-auth";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { BetterAuthApiError, isAPIErrorLike } from "./Errors.ts";
+
+/** A non-`APIError` throw from an endpoint; immediately turned into a defect. */
+class NonApiThrow extends Data.TaggedError("NonApiThrow")<{ readonly cause: unknown }> {}
 
 /**
  * Every `auth.api.*` endpoint mirrored as an Effect: same arguments, same
@@ -14,9 +17,7 @@ import { BetterAuthApiError, isAPIErrorLike } from "./Errors.ts";
  * endpoints. Use the raw `auth` escape hatch for those.
  */
 export type BetterAuthApi<Api> = {
-  readonly [K in keyof Api]: Api[K] extends (
-    ...args: infer Args
-  ) => Promise<infer A>
+  readonly [K in keyof Api]: Api[K] extends (...args: infer Args) => Promise<infer A>
     ? (...args: Args) => Effect.Effect<A, BetterAuthApiError, RuntimeContext>
     : never;
 };
@@ -31,9 +32,7 @@ export const makeApiProxy = <A extends { api: unknown }>(
 ): BetterAuthApi<A["api"]> => {
   const wrappers = new Map<
     PropertyKey,
-    (
-      ...args: unknown[]
-    ) => Effect.Effect<unknown, BetterAuthApiError, RuntimeContext>
+    (...args: unknown[]) => Effect.Effect<unknown, BetterAuthApiError, RuntimeContext>
   >();
   return new Proxy(
     {},
@@ -48,21 +47,19 @@ export const makeApiProxy = <A extends { api: unknown }>(
         if (wrapper === undefined) {
           wrapper = (...args: unknown[]) =>
             Effect.flatMap(makeAuth, (auth) =>
-              Effect.tryPromise({
-                try: () =>
-                  (
-                    auth.api as Record<
-                      string,
-                      (...args: unknown[]) => Promise<unknown>
-                    >
-                  )[key]!(...args),
-                catch: (error) => error,
-              }).pipe(
-                Effect.catch((error: unknown) =>
-                  isAPIErrorLike(error)
-                    ? Effect.fail(BetterAuthApiError.fromAPIError(error))
-                    : Effect.die(error),
-                ),
+              Effect.catchTag(
+                Effect.tryPromise({
+                  try: () =>
+                    (auth.api as Record<string, (...args: unknown[]) => Promise<unknown>>)[key]!(
+                      ...args,
+                    ),
+                  catch: (error) =>
+                    isAPIErrorLike(error)
+                      ? BetterAuthApiError.fromAPIError(error)
+                      : new NonApiThrow({ cause: error }),
+                }),
+                "NonApiThrow",
+                (error) => Effect.die(error.cause),
               ),
             );
           wrappers.set(key, wrapper);
