@@ -2134,6 +2134,7 @@ function ScheduledTaskEditorForm({
                       className="text-sm text-muted-foreground"
                     >
                       Run only between these hours on the days below. Off means all day, every day.
+                      Time uses the environment's time zone, which may differ from your phone's.
                     </p>
                   </div>
                   <Switch

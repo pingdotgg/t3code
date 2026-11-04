@@ -160,6 +160,7 @@ describe("scheduled task schedule calculation", () => {
     };
     expect(isMissedScheduledRun(schedule, dueAt, local(6, 19, 50))).toBe(false);
     expect(isMissedScheduledRun(schedule, dueAt, local(6, 21, 0))).toBe(true);
+    expect(isMissedScheduledRun(schedule, dueAt, local(7, 10, 30))).toBe(true);
     expect(
       isMissedScheduledRun({ type: "interval", everyMs: 3_600_000 }, dueAt, local(6, 21, 0)),
     ).toBe(false);
