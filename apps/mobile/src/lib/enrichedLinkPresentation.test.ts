@@ -103,4 +103,16 @@ describe("Enriched link presentation", () => {
     ]);
     expect(threadChipTargets(here, "No links here.")).toEqual([]);
   });
+
+  it("finds thread links with angle-bracketed destinations", () => {
+    const here = "env-here" as EnvironmentId;
+    expect(threadChipTargets(here, "See [A](<t3-thread://v2/env-here/thread_a>).")).toEqual([
+      {
+        href: "t3-thread://v2/env-here/thread_a",
+        environmentId: here,
+        threadId: "thread_a",
+        link: true,
+      },
+    ]);
+  });
 });
