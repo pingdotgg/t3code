@@ -946,8 +946,7 @@ function ThreadRouteContent(
       serverOwned: false,
       // A lost delivery reply leaves no outcome, but a run proves the server has it.
       sent:
-        selectedThreadCreation.outcome?.kind === "delivered" ||
-        (selectedThreadDetail?.runs.length ?? 0) > 0,
+        selectedThreadCreation.outcome?.kind === "delivered" || selectedThread?.latestRun != null,
       startedAt: selectedThreadCreation.message.createdAt,
     };
   })();
