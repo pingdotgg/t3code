@@ -1,11 +1,15 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -16,7 +20,10 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
+
 import * as ServerConfig from "../config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -106,6 +113,30 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
+  AnalyticsService.layer.pipe(
+    Layer.provideMerge(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
+    ),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "phc_test_key",
+          T3CODE_POSTHOG_HOST: "http://localhost",
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Architecture, "x64"),
+        Layer.succeed(HttpClient.HttpClient, client),
+        ManagedPolicy.layerTest(policy),
+      ),
+    ),
+  );
+
 /**
  * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
@@ -119,6 +150,7 @@ const sendFor = (
     never,
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
+  policy?: ManagedPolicyDocument,
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -133,27 +165,7 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = AnalyticsService.layer.pipe(
-      Layer.provideMerge(
-        ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
-      ),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
-            T3CODE_POSTHOG_KEY: "phc_test_key",
-            T3CODE_POSTHOG_HOST: "http://localhost",
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(HostProcess.Platform, "win32"),
-          Layer.succeed(HostProcess.Architecture, "x64"),
-          Layer.succeed(HttpClient.HttpClient, client),
-        ),
-      ),
-    );
+    const runtimeLayer = analyticsLayerWith(client, policy);
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -164,7 +176,7 @@ const sendFor = (
     return batches;
   });
 
-it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService test", (it) => {
   it.effect("waits for desktop shell consent and honors a late telemetry opt-out", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
@@ -240,10 +252,43 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
+  it.effect(
+    "sends nothing when a managed policy turns telemetry off, despite the environment",
+    () =>
+      Effect.gen(function* () {
+        const policy = { schemaVersion: 1, organization: "Example Corp" } as const;
+        const allowed = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+          ...policy,
+          limits: { telemetry: true },
+        });
+        assert.equal(allowed.length, 1);
+        const denied = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+          ...policy,
+          limits: { telemetry: false },
+        });
+        assert.deepEqual(denied, []);
+      }),
+  );
+
   it.effect("drops a batch the endpoint rejects without sending it again", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(10, respondWithStatus(400));
       assert.equal(batches.length, 1);
+    }),
+  );
+
+  it.effect("shutdown stops waiting for a telemetry endpoint that never answers", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(
+        analyticsLayerWith(HttpClient.make(() => Effect.never)),
+        scope,
+      );
+      yield* recordTwentyEvents.pipe(Effect.provide(context));
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
     }),
   );
 
@@ -286,6 +331,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
+            ManagedPolicy.layerTest(),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),
@@ -376,6 +422,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           Layer.mergeAll(
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
+            ManagedPolicy.layerTest(),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),

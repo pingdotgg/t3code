@@ -35,10 +35,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       });
     });
 
-    it("hydrates: the theme toggle mutates the document theme", async ({
-      page,
-      server,
-    }) => {
+    it("hydrates: the theme toggle mutates the document theme", async ({ page, server }) => {
       await page.goto(server.url.toString());
       const toggle = page.getByRole("button", { name: /Theme mode/ });
       // The client effect ran (SSR renders "Auto" and hydration keeps it
@@ -56,10 +53,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     });
 
-    it("serves a direct navigation to /about (SSR)", async ({
-      page,
-      server,
-    }) => {
+    it("serves a direct navigation to /about (SSR)", async ({ page, server }) => {
       // Raw fetch: the about copy is server-rendered.
       const raw = await server.fetch("/about");
       expect(raw.status).toBe(200);
@@ -67,13 +61,9 @@ for (const mode of Playwright.SERVER_METHODS) {
 
       // Hard browser navigation straight to the route (no client-side
       // transition from /).
-      const response = await page.goto(
-        new URL("/about", server.url).toString(),
-      );
+      const response = await page.goto(new URL("/about", server.url).toString());
       expect(response?.status()).toBe(200);
-      await expect(page.locator("h1")).toHaveText(
-        "A small starter with room to grow.",
-      );
+      await expect(page.locator("h1")).toHaveText("A small starter with room to grow.");
     });
 
     it("serves static assets", async ({ server }) => {
@@ -90,13 +80,10 @@ for (const mode of Playwright.SERVER_METHODS) {
       expect(response.status).toBe(404);
     });
 
-    // Gated on the `TEST_POSTGRES_URL` secret (wired in ci.yml + turbo.json's
-    // root `test` env list). CI asserts the secret is present, so this can
-    // only skip in local runs without the secret — never silently on CI.
+    // Needs a Postgres database; skipped unless `TEST_POSTGRES_URL` is set.
     const skipIfNoDatabase = process.env.TEST_POSTGRES_URL ? it : it.skip;
     skipIfNoDatabase("fetches database", async ({ server }) => {
-      const response =
-        await server.fetchJson<[{ "?column?": number }]>("/api/db");
+      const response = await server.fetchJson<[{ "?column?": number }]>("/api/db");
       expect(response).toMatchObject([{ "?column?": 1 }]);
     });
 
