@@ -609,6 +609,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
+  // First-party account fields cannot verify custom endpoint credentials.
+  const baseUrl =
+    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
+    resolvedEnvironment.ANTHROPIC_BASE_URL;
+  const endpoint = URL.parse(baseUrl?.trim() ?? "");
+  const customApiEndpoint =
+    endpoint !== null &&
+    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+    endpoint.hostname !== "" &&
+    endpoint.hostname !== "api.anthropic.com";
+
   if (!capabilities) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
@@ -628,20 +639,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
             ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
             : "Claude Agent CLI failed while checking account status."
           : "Could not verify Claude authentication status from initialization result.",
+        ...(customApiEndpoint
+          ? { usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) }
+          : {}),
       },
     });
   }
 
-  // First-party account fields cannot verify custom endpoint credentials.
-  const baseUrl =
-    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
-    resolvedEnvironment.ANTHROPIC_BASE_URL;
-  const endpoint = URL.parse(baseUrl?.trim() ?? "");
-  const customApiEndpoint =
-    endpoint !== null &&
-    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
-    endpoint.hostname !== "" &&
-    endpoint.hostname !== "api.anthropic.com";
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,

@@ -3169,6 +3169,32 @@ it.layer(
     );
 
     it.effect.each([
+      { baseUrl: "https://proxy.example/api", reason: "unsupported" },
+      { baseUrl: "https://api.anthropic.com", reason: undefined },
+    ])(
+      "preserves quota classification when the Claude probe fails: $baseUrl",
+      ({ baseUrl, reason }) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            () => Effect.fail(new Error("probe failed")),
+            { ANTHROPIC_BASE_URL: baseUrl },
+          );
+          assert.strictEqual(status.status, "warning");
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, reason);
+          if (reason) assert.deepStrictEqual(status.usageLimits?.windows, []);
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              if (args.join(" ") === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error("Unexpected command");
+            }),
+          ),
+        ),
+    );
+
+    it.effect.each([
       { source: "inherited HTTPS endpoint", baseUrl: "https://proxy.example/api", overrides: [] },
       {
         source: "instance HTTP endpoint overriding Anthropic",
