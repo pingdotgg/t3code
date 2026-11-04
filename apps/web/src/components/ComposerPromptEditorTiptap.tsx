@@ -1111,6 +1111,9 @@ function ComposerPromptEditorTiptapInner(
         literalText,
       }),
       editable: !disabled,
+      // handlePaste parses pasted markdown itself and tags the insert as a paste for undo grouping, so Tiptap's
+      // paste rules would parse that result a second time and turn literal `*` and `**` into marks.
+      enablePasteRules: false,
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {

@@ -220,6 +220,25 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+it("pastes arithmetic stars verbatim and still styles pasted markdown", async () => {
+  await using screen = await mountEditor("", true, []);
+  const { editor } = screen;
+  const paste = async (text: string) => {
+    await act(async () => {
+      editor.commands.selectAll();
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+    });
+  };
+  const code = "signal = (7 * 2**3 * 5)**4";
+  await paste(code);
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(code);
+  await paste("a **bold** and *soft* word");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** and *soft* word");
+  expect(editor.state.doc.textContent).toBe("a bold and soft word");
+});
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);
