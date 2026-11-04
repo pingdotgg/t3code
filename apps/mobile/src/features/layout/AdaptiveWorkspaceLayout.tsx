@@ -1003,6 +1003,7 @@ function AdaptiveWorkspaceLayoutContent(
         nativeInspectorColumnWidth(viewportWidth, width / viewportWidth) / viewportWidth,
       ),
     composerKeyboardActive,
+    keyboardHoldsSidebar,
     setComposerEditing,
     sidebarByOrientation,
     workspacePageWidth,
