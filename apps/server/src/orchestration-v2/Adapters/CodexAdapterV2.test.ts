@@ -1824,6 +1824,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect(
+    "leaves the turn open and reports a timeout when Codex never completes an interrupted turn",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "unconfirmed-stop-thread";
+        const nativeTurnId = "unconfirmed-stop-turn";
+        const prompt = "Keep working.";
+        const interruptSent = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "unconfirmed-stop",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              {
+                type: "expect_outbound",
+                label: "turn/interrupt",
+                frame: {
+                  id: 4,
+                  method: "turn/interrupt",
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/interrupt",
+                afterMs: 1000,
+                frame: { id: 4, result: {} },
+              },
+            ],
+          }),
+          () => Effect.void,
+          (method) =>
+            method === "turn/interrupt" ? Deferred.succeed(interruptSent, undefined) : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("unconfirmed-stop-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some((event) => event.type === "provider_turn.updated"),
+        );
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId,
+        });
+        const interrupt = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Deferred.await(interruptSent);
+        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("10 seconds");
+        const exit = yield* Fiber.join(interrupt);
+
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          [],
+          "an unconfirmed Stop must not synthesize an interrupted terminal",
+        );
+        assert.isTrue(Exit.isFailure(exit), "an unconfirmed Stop must fail");
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterInterruptTimeoutError);
+        assert.equal(error.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const assistantMessages = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     events.filter(
       (
