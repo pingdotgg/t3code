@@ -3433,6 +3433,10 @@ function piQuestion(
 
 const RPIV_MULTI_SELECT_PLACEHOLDER = "1,3; custom answer";
 
+/** The extension normalizes line terminators in each question field before building the title. */
+const rpivField = (input: unknown, key: string) =>
+  recordString(input, key)?.replace(/\r\n/g, "\n").replace(/\r/g, "");
+
 /**
  * @juicesharp/rpiv-ask-user-question asks a multi-select question over RPC as a text input that
  * takes option numbers. Rebuild the options from the tool call's arguments so they render as one.
@@ -3448,8 +3452,8 @@ function piAskUserMultiSelectQuestion(
     const questions = recordField(args, "questions");
     if (!Array.isArray(questions)) continue;
     for (const question of questions) {
-      const text = recordString(question, "question");
-      const header = recordString(question, "header");
+      const text = rpivField(question, "question");
+      const header = rpivField(question, "header");
       const options = recordField(question, "options");
       if (recordField(question, "multiSelect") !== true || text === undefined) continue;
       if (!Array.isArray(options) || options.length === 0) continue;
@@ -3458,7 +3462,7 @@ function piAskUserMultiSelectQuestion(
         .map(
           (option, index) =>
             // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
-            `${index + 1}. ${recordString(option, "label")} — ${recordString(option, "description")}`,
+            `${index + 1}. ${rpivField(option, "label")} — ${rpivField(option, "description")}`,
         )
         .join("\n");
       if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}\n\n${list}\n\n`)) continue;
@@ -3468,10 +3472,10 @@ function piAskUserMultiSelectQuestion(
         question: text,
         multiSelect: true,
         options: options.map((option, index) => {
-          const label = recordString(option, "label")?.trim() || `Option ${index + 1}`;
+          const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
           return {
             label,
-            description: recordString(option, "description")?.trim() || label,
+            description: rpivField(option, "description")?.trim() || label,
             value: String(index + 1),
           };
         }),

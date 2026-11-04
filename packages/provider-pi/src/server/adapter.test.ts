@@ -3520,11 +3520,23 @@ describe("PiAdapterV2", () => {
         type: "tool_execution_start",
         toolCallId: "call_ask_again",
         toolName: "ask_user_question",
-        args: { questions: [{ ...question, options: reordered }] },
+        // The extension strips stray carriage returns from these fields before building the title.
+        args: {
+          questions: [
+            {
+              ...question,
+              header: "Build\r next",
+              options: [{ ...reordered[0]!, label: "Subscr\riptions" }, reordered[1]!],
+            },
+          ],
+        },
       });
-      const third = yield* ask("ui-multi-again", titleFor(reordered));
+      const third = decodeUserInputQuestions(
+        (yield* ask("ui-multi-again", titleFor(reordered))).questions,
+      )[0];
+      assert.equal(third?.header, "Build next");
       assert.deepEqual(
-        decodeUserInputQuestions(third.questions)[0]?.options.map((option) => option.label),
+        third?.options.map((option) => option.label),
         ["Subscriptions", "Bills"],
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
