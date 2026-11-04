@@ -38,6 +38,12 @@ not listed yet. Refresh the Kiro provider after adding or removing an agent.
 The thread's model still applies when an agent sets its own `model`. An agent that was removed
 leaves the thread on Kiro's current agent.
 
+## MCP Servers
+
+Kiro threads load the MCP servers in your Kiro configuration. To use one that signs in with OAuth,
+sign in to it once with `kiro-cli` on the machine running the T3 Code server (`/mcp`, then
+re-authenticate). Kiro threads in T3 Code reuse that sign-in.
+
 ## Permission Modes
 
 Kiro asks before tool calls such as writes and commands, and T3 Code answers by the permission mode:
