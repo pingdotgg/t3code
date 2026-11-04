@@ -6,11 +6,12 @@
  * README.md for how to run it and add cases.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ComposerContextRecord,
@@ -36,6 +37,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
+import * as Contracts from "@t3tools/contracts";
 import {
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -76,6 +78,13 @@ import {
   launcherHelp,
   makeDeviceTools,
 } from "./devices.ts";
+import {
+  argvForm,
+  gradeSecret,
+  scriptSources,
+  SecretExpect,
+  secretDiagnostics,
+} from "./secret-grading.ts";
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -95,6 +104,10 @@ const PRICES = {
   "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
 };
 type PricedModel = keyof typeof PRICES;
+/** GPT models that can play the shell through CLIProxyAPI, when no Anthropic key is at hand. */
+const PROXY_SHELL_MODELS = ["gpt-6-luna", "gpt-6.1-terra"] as const;
+type ShellModel = PricedModel | (typeof PROXY_SHELL_MODELS)[number];
+const isPricedModel = (model: ShellModel): model is PricedModel => model in PRICES;
 const T3_PREFIX = "mcp__t3-code__";
 const RUNTIME_MARKER = "<runtime_info>";
 const TOOL_LOADED = "Tool loaded.";
@@ -146,7 +159,7 @@ const PriorToolCall = Schema.Struct({
 
 /**
  * One expected call. `args` match partially: `~text` is a case-insensitive substring,
- * `"<=N"` / `">=N"` bound a number, and keys may be dotted paths.
+ * `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
  */
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
@@ -172,17 +185,29 @@ const McpToolUseExpect = Schema.Struct({
   newThreads: Schema.optional(Schema.Array(Schema.Unknown)),
   /** The last step with tool calls includes this tool, then the turn ends. */
   endsTurnAfter: Schema.optional(Schema.String),
-  /** Regexes that no shell command may match. */
+  /**
+   * Regexes that no shell command may match. In a case with `secret` checks, a command also carries
+   * the source of the scripts it runs that the agent wrote earlier in the sample.
+   */
   shellMustNot: Schema.optional(Schema.Array(Schema.String)),
+  /** Regexes that some shell command must match, each. */
+  shellMust: Schema.optional(Schema.Array(Schema.String)),
   /** Case-sensitive regexes on the agent's visible text. */
   textMust: Schema.optional(Schema.Array(Schema.String)),
   textMustNot: Schema.optional(Schema.Array(Schema.String)),
+  /** Case-sensitive regexes on the final answer: the last response's text, once the turn ended. */
+  finalTextMust: Schema.optional(Schema.Array(Schema.String)),
   /** Each entry matches a PR URL linked at the end, as `args` values match. */
   linked: Schema.optional(Schema.Array(Schema.String)),
   /** The PR numbers linked at the end, exactly. */
   linkedNumbers: Schema.optional(Schema.Array(Schema.Number)),
   /** Device manager checks: child briefs, simulator UI over the shell, failures, recordings. */
   device: Schema.optional(DeviceExpect),
+  /**
+   * Secret checks: chat asks in text and question tools, where fixture values went, and how the
+   * files request_secret returned were read. See `SecretExpect` in secret-grading.ts.
+   */
+  secret: Schema.optional(SecretExpect),
 });
 
 /**
@@ -362,6 +387,8 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   shell: "Bash",
   spawn_agent: "Agent",
   apply_patch: "Edit",
+  request_user_input: "AskUserQuestion",
+  request_user_input_async: "AskUserQuestion",
   write_stdin: "write_stdin",
   web__run: "WebFetch",
 };
@@ -418,6 +445,26 @@ const enabledWhen = (predicate: () => boolean) =>
       )
       .map((tool) => `${T3_PREFIX}${tool.name}`),
   );
+// Claude Code loads a tool whose `_meta` sets anthropic/alwaysLoad up front instead of deferring it.
+const alwaysLoaded = new Set(
+  t3SourceTools
+    .filter((tool) => {
+      const meta = Context.getOrUndefined(tool.annotations, Tool.Meta);
+      return meta !== undefined && meta["anthropic/alwaysLoad"] === true;
+    })
+    .map((tool) => `${T3_PREFIX}${tool.name}`),
+);
+// Refs whose request_secret takes `value` save a secret the user already pasted, with no card.
+export const savesPastedSecrets = t3Tools.some(
+  (tool) =>
+    tool.name === `${T3_PREFIX}request_secret` &&
+    isRecord(tool.input_schema) &&
+    isRecord(tool.input_schema.properties) &&
+    "value" in tool.input_schema.properties,
+);
+/** A request_secret call that hands T3 a pasted secret, on a ref that takes one. */
+const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
+  savesPastedSecrets && name === "request_secret" && typeof input.value === "string";
 // T3 does not offer these to a delegated child, so its harness never lists them.
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
@@ -553,7 +600,12 @@ export const buildBase = (
     throw new Error(`The template needs one ${RUNTIME_MARKER} block and a deferred tool list.`);
   }
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
-  const names = [...nativeDeferred, ...t3.map((tool) => tool.name)].toSorted().join("\n");
+  const names = [
+    ...nativeDeferred,
+    ...t3.filter((tool) => !alwaysLoaded.has(tool.name)).map((tool) => tool.name),
+  ]
+    .toSorted()
+    .join("\n");
   const { model } = options;
   const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
@@ -595,7 +647,10 @@ export const buildBase = (
       platform: /Platform: (\w+)/.exec(joined)?.[1] ?? "linux",
       date: /Today's date is ([\d-]+)/.exec(reminders.join("\n"))?.[1],
     },
-    nativeTools: template.tools.filter((tool) => !isT3Name(tool.name)),
+    nativeTools: [
+      ...template.tools.filter((tool) => !isT3Name(tool.name)),
+      ...t3.filter((tool) => alwaysLoaded.has(tool.name)),
+    ],
     /** Tools ToolSearch loads: T3 tools from source, and native tools the template only names. */
     t3,
     deferred: [...t3, ...nativeDeferred.map((name) => ({ name, ...nativeSchema(name) }))],
@@ -756,6 +811,9 @@ type Sample = {
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
   readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
+  /** Files T3's request_secret saved in this sample, in call order. */
+  readonly secretFiles: Array<string>;
+  secretRequests: number;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
   /** T3's results for prior device calls whose case result is "default". */
@@ -801,6 +859,8 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
+    secretFiles: [],
+    secretRequests: 0,
     priorResults: new Map(),
   };
 };
@@ -1114,11 +1174,14 @@ export const t3Default = (
       };
     }
     case "request_secret": {
-      // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
-      const id = "5f0c9e2a7b4d4183a6e1c8d2b9f07a64";
+      // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
+      const id = NodeCrypto.createHash("sha256")
+        .update(`${sample.testCase.id}:${sample.secretRequests++}`)
+        .digest("hex")
+        .slice(0, 32);
       const home =
         /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
-      return input.delivery === "file"
+      return input.delivery === "file" || pastedSecret(name, input)
         ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
         : { status: "saved", secretRef: `secret-ref:${id}` };
     }
@@ -1199,6 +1262,12 @@ export const t3Default = (
 /** The machine the fake threads live on. */
 const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
+// The note T3 adds when a secret card ends unsaved, on refs that have one (looked up by name so
+// the runner still builds on refs without it).
+const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_UNSAVED_NOTE as
+  | Readonly<Record<string, string>>
+  | undefined;
+
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
@@ -1218,6 +1287,10 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
   const listed = (key: string) =>
     Array.isArray(value[key]) ? { ...value, [key]: value[key].map((item) => linked(item)) } : value;
   switch (name) {
+    case "request_secret": {
+      const note = typeof value.status === "string" ? unsavedSecretNote?.[value.status] : undefined;
+      return note === undefined || value.note !== undefined ? value : { ...value, note };
+    }
     case "delegate_task":
     case "task_status": {
       const task = linked(value, "childThreadId") as Record<string, unknown>;
@@ -1307,6 +1380,28 @@ const decodeShellReply = Schema.decodeUnknownOption(Schema.fromJsonString(ShellR
 const callText = ({ tool, input }: Omit<ShellEntry, "output">) =>
   `<call>${tool} ${valueText(input)}</call>`;
 
+/**
+ * Absolute paths the case's context or files name exist, wherever the template's working
+ * directory is. Without this the simulator denies a checkout the agent was told to work in.
+ */
+export const namedPathsLine = ({ setup }: McpToolUseCase) => {
+  const absolute = /(?:^|[\s(`'"])((?:\/home|\/Users|\/tmp)\/[^\s`'",;:)]+)/g;
+  const fromContext = [...(setup.context ?? "").matchAll(absolute)].flatMap(([, path]) =>
+    path ? [path] : [],
+  );
+  const fromFiles = Object.keys(isRecord(setup.world?.files) ? setup.world.files : {}).filter(
+    (path) => path.startsWith("/"),
+  );
+  const paths = [
+    ...new Set([...fromContext, ...fromFiles].map((path) => path.replace(/[.]+$/, ""))),
+  ];
+  return paths.length > 0
+    ? [
+        `These paths exist on this machine, with the contents the world gives: ${paths.join(", ")}. The working directory above is only where the shell starts; the agent may cd into them.`,
+      ]
+    : [];
+};
+
 /** The simulator's request: the machine, this sample's earlier calls, then the new call. */
 export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, model: string) => {
   const { testCase, base, repo, shell, devices } = sample;
@@ -1327,8 +1422,14 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
           "T3's device_screenshot gets each capture with adb screencap's multi-display warning ahead of the PNG, so it reports 0×0. agent-device's own screenshot finds the PNG and is unaffected.",
         ]
       : []),
+    ...(sample.secretFiles.length > 0
+      ? [
+          `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
+        ]
+      : []),
     ...(context ? [`The agent was told: ${context}`] : []),
     `The agent's task: ${testCase.prompt}`,
+    ...namedPathsLine(testCase),
   ];
   const history = shell.map((entry) => `${callText(entry)}\n<output>\n${entry.output}\n</output>`);
   return {
@@ -1348,6 +1449,22 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ],
   };
 };
+
+/** The same simulator request in Responses form, for a GPT shell model through the proxy. */
+export const shellResponsesRequest = (body: ReturnType<typeof shellRequest>) => ({
+  model: body.model,
+  stream: true,
+  store: false,
+  reasoning: { effort: "low" },
+  instructions: body.system,
+  text: {
+    format: { type: "json_schema", name: "shell_reply", schema: SHELL_REPLY_SCHEMA, strict: true },
+  },
+  input: body.messages.map((message) => ({
+    role: message.role,
+    content: message.content.map((block) => ({ type: "input_text", text: block.text })),
+  })),
+});
 
 /** The tool output in the simulator's JSON reply, or its raw text if that is not JSON. */
 export const shellOutput = (content: ReadonlyArray<Block>) => {
@@ -1371,7 +1488,7 @@ type Config = {
   readonly proxy?: { readonly url: string; readonly headers: Readonly<Record<string, string>> };
   readonly effort: string;
   readonly maxSteps: number;
-  readonly shellModel: PricedModel;
+  readonly shellModel: ShellModel;
 };
 
 /**
@@ -1393,11 +1510,9 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
-    const response = yield* callModel(
-      config.apiKey,
-      body,
-      config.apiKey ? undefined : config.proxy,
-    );
+    const response = isPricedModel(config.shellModel)
+      ? yield* callModel(config.apiKey, body, config.apiKey ? undefined : config.proxy)
+      : yield* callCodex(config, shellResponsesRequest(body));
     addUsage(sample.shellUsage, response.usage);
     output = shellOutput(response.content);
   }
@@ -1408,8 +1523,13 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   return output;
 });
 
+/** Tells the shell simulator about a file request_secret saved, so it exists for later commands. */
+const savedSecretFile = (sample: Sample, result: unknown) => {
+  if (isRecord(result) && typeof result.file === "string") sample.secretFiles.push(result.file);
+};
+
 /** The result for one tool call. */
-const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
+export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
   config: Config,
   call: typeof ToolUse.Type,
@@ -1446,19 +1566,23 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
-  if (mock !== undefined && mock !== "default")
+  // A pasted secret is saved without a card, so a mocked card outcome does not apply.
+  if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
+    if (name === "request_secret") savedSecretFile(sample, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
         ? capabilities(sample, mock)
         : withProductFields(name, mock, testCase.setup.role === "delegated-child"),
     );
+  }
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
     }
     const value = t3Default(sample, name, input);
+    if (name === "request_secret") savedSecretFile(sample, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1479,8 +1603,12 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
 });
 
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
-/** Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number. */
+/**
+ * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
+ * matches a missing or null value.
+ */
 const matches = (expected: unknown, actual: unknown): boolean => {
+  if (expected === null) return actual === undefined || actual === null;
   const bound = typeof expected === "string" ? BOUND.exec(expected) : null;
   if (bound !== null) {
     const limit = Number(bound[2]);
@@ -1544,7 +1672,16 @@ const withOptionsObject = (input: unknown) => {
   return { ...input, target: { ...input.target, options } };
 };
 
-export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) => {
+/** What the user wrote in the case's thread: its context, prior user turns and the prompt. */
+export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "setup">) =>
+  [
+    setup.context ?? "",
+    ...(setup.priorTurns ?? []).flatMap((turn) => (turn.role === "user" ? [turn.text ?? ""] : [])),
+    prompt,
+  ].join("\n");
+
+/** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
+export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
@@ -1578,15 +1715,27 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
     const ended = run.stopReason === "end_turn" && last.includes(expect.endsTurnAfter);
     add(`endsTurnAfter ${expect.endsTurnAfter}`, ended);
   }
-  // Bash and Monitor both take a shell `command`.
-  const shell = calls.flatMap((call) =>
-    isRecord(call.input) && typeof call.input.command === "string" ? [call.input.command] : [],
+  // Bash and Monitor both take a shell `command`. Secret cases also check, one by one, the scripts
+  // the agent wrote and a command ran: `node run.mjs signup.mjs` after a Write of signup.mjs.
+  const sources = expect.secret === undefined ? [] : scriptSources(calls);
+  const shell = calls.flatMap((call, i) =>
+    isRecord(call.input) && typeof call.input.command === "string"
+      ? [call.input.command, ...(sources[i] ?? [])]
+      : [],
   );
   const test = (pattern: string, value: string) => new RegExp(pattern).test(value);
   for (const p of expect.shellMustNot ?? [])
     add(`shellMustNot /${p}/`, !shell.some((c) => test(p, c)));
+  // A positive check also reads argv lists as command lines: spawnSync('pnpm', ['exec', …]).
+  for (const p of expect.shellMust ?? [])
+    add(
+      `shellMust /${p}/`,
+      shell.some((c) => test(p, c) || test(p, argvForm(c))),
+    );
   for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
+  for (const p of expect.finalTextMust ?? [])
+    add(`finalTextMust /${p}/`, run.stopReason === "end_turn" && test(p, run.finalText ?? ""));
   const isLinked = (url: string) => (run.linked ?? []).some((at) => matches(url, at));
   for (const url of expect.linked ?? []) add(`linked ${url}`, isLinked(url));
   if (expect.linkedNumbers !== undefined) {
@@ -1595,14 +1744,16 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
     add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
   }
   checks.push(...gradeDevice(expect.device, run));
+  checks.push(...gradeSecret(expect.secret, run, pasted));
   return checks;
 };
 
 // Checks that can only go from pass to fail as a sample goes on.
-const SETTLED = /^(notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) /;
+const SETTLED =
+  /^(?:(?:notCalls|callsMustNot|shellMustNot|maxCalls|textMustNot) |secret\.(?:chatAsk|askTools|values|fileUse|noCardDemand|afterDecline) )/;
 /** True once the sample has failed for good, so the rest of it cannot change the result. */
-export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun) =>
-  gradeSample(expect, run).some((check) => !check.pass && SETTLED.test(check.check));
+export const failedEarly = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") =>
+  gradeSample(expect, run, pasted).some((check) => !check.pass && SETTLED.test(check.check));
 
 const requestBody = ({ base, tools }: Sample, effort: string, messages: unknown) => ({
   model: base.model,
@@ -1863,7 +2014,13 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       finalText = texts.join("\n\n");
       break;
     }
-    if (failedEarly(testCase.expect, { calls, text: said.join("\n\n"), stopReason })) {
+    if (
+      failedEarly(
+        testCase.expect,
+        { calls, text: said.join("\n\n"), stopReason },
+        pastedText(testCase),
+      )
+    ) {
       stopReason = "failed_early";
       break;
     }
@@ -1929,7 +2086,13 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     // Claude Code adds this text after a ToolSearch that loaded tools.
     const loaded = results.some((result) => Array.isArray(result.content));
     messages.push({ role: "user", content: [...results, ...(loaded ? [text(TOOL_LOADED)] : [])] });
-    if (failedEarly(testCase.expect, { calls, text: said.join("\n\n"), stopReason })) {
+    if (
+      failedEarly(
+        testCase.expect,
+        { calls, text: said.join("\n\n"), stopReason },
+        pastedText(testCase),
+      )
+    ) {
       stopReason = "failed_early";
       break;
     }
@@ -1970,9 +2133,9 @@ const groups = <A>(rows: ReadonlyArray<A>, key: (row: A) => string) =>
 
 const USAGE_KEYS = ["input", "output", "cacheWrite", "cacheRead"] as const;
 /** Token totals and their cost in USD at one model's prices. Proxy runs have no price. */
-const spend = (usages: ReadonlyArray<Usage>, model: PricedModel | undefined) => {
+const spend = (usages: ReadonlyArray<Usage>, model: ShellModel | undefined) => {
   const total = (key: keyof Usage) => usages.reduce((sum, usage) => sum + usage[key], 0);
-  const price = (key: keyof Usage) => (model ? PRICES[model][key] : 0);
+  const price = (key: keyof Usage) => (model && isPricedModel(model) ? PRICES[model][key] : 0);
   const cost = USAGE_KEYS.reduce((sum, key) => sum + total(key) * price(key), 0) / 1e6;
   return { cost, tokens: USAGE_KEYS.map((key) => `${key} ${total(key)}`).join(", ") };
 };
@@ -1980,7 +2143,7 @@ const spend = (usages: ReadonlyArray<Usage>, model: PricedModel | undefined) => 
 /** Markdown report. With a baseline, each case shows its earlier pass rate and the change. */
 export const summarize = (
   rows: Array<ResultRow>,
-  options: { readonly header: string; readonly shellModel: PricedModel; readonly model: Model },
+  options: { readonly header: string; readonly shellModel: ShellModel; readonly model: Model },
   before?: Map<string, number>,
 ) => {
   const codex = isCodex(options.model);
@@ -2058,7 +2221,10 @@ const Flags = Schema.Struct({
   concurrency: PositiveInt,
   "max-steps": Schema.optional(PositiveInt),
   effort: Schema.optional(Schema.Literals(EFFORTS)),
-  "shell-model": Schema.Literals(Object.keys(PRICES) as Array<PricedModel>),
+  "shell-model": Schema.Literals([
+    ...(Object.keys(PRICES) as Array<PricedModel>),
+    ...PROXY_SHELL_MODELS,
+  ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
   "dry-run": Schema.Boolean,
   "stop-on-regression": Schema.Boolean,
@@ -2247,7 +2413,7 @@ const main = Effect.gen(function* () {
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex ? { proxy: proxyConfig() } : {}),
+    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],
@@ -2289,8 +2455,16 @@ const main = Effect.gen(function* () {
           ),
         }),
         onSuccess: (sample) => {
-          const checks = gradeSample(testCase.expect, sample);
-          return { ...identity, pass: checks.every((check) => check.pass), checks, ...sample };
+          const checks = gradeSample(testCase.expect, sample, pastedText(testCase));
+          const { secret } = testCase.expect;
+          return {
+            ...identity,
+            pass: checks.every((check) => check.pass),
+            checks,
+            // Not graded: how the agent handled a secret it needed, for a person reading the run.
+            ...(secret ? { secret: secretDiagnostics(sample, secret) } : {}),
+            ...sample,
+          };
         },
       }),
       Effect.tap((row) =>
@@ -2358,7 +2532,9 @@ const main = Effect.gen(function* () {
 
 if (import.meta.main) {
   main.pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, PlatformNodeCrypto.layer, FetchHttpClient.layer),
+    ),
     NodeRuntime.runMain,
   );
 }
