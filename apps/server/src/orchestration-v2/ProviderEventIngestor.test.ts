@@ -74,8 +74,7 @@ const layerGit = GitVcsDriver.layer.pipe(
 );
 
 const layerEmptyInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-  getInstance: () => Effect.succeed(undefined),
+  getInstance: () => Effect.undefined,
 });
 const makeLayerTest = <E>(
   ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
