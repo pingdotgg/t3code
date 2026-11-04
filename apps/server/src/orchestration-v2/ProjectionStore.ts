@@ -6444,7 +6444,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         INNER JOIN orchestration_v2_projection_runs r ON r.run_id = s.run_id
         INNER JOIN orchestration_v2_projection_provider_threads p
           ON p.provider_thread_id = r.provider_thread_id
-        INNER JOIN orchestration_v2_projection_turn_items item
+        -- CROSS JOIN pins the claimed-task index first; unpinned, SQLite walks every turn item.
+        CROSS JOIN orchestration_v2_projection_turn_items item
           ON item.node_id = s.subagent_id AND item.thread_id = s.thread_id AND item.type = 'subagent'
         LEFT JOIN orchestration_v2_projection_provider_threads owner
           ON owner.provider_thread_id = item.provider_thread_id
