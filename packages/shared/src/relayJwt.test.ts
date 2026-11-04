@@ -1,7 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Jwk from "effect/jose/Jwk";
+import * as Jws from "effect/jose/Jws";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -46,6 +48,35 @@ describe("relayJwt", () => {
       const error = yield* Effect.flip(verify);
       expect(RelayJwtError.diagnosticCode(error)).toBe("ClaimValidationFailed.exp.expired");
       expect(error.message).toBe('Failed to verify relay JWT of type "test+jwt".');
+
+      const es256 = yield* Jwk.generateKeyPair({ algorithm: "ES256" });
+      const es256Private = yield* Jwk.importPrivate(es256.privateKey, "ES256");
+      const signWrong = yield* Effect.flip(
+        signRelayJwt({ privateKey: es256Private, typ: "test+jwt", payload: { sub: "user" } }),
+      );
+      expect(RelayJwtError.diagnosticCode(signWrong)).toBe("AlgorithmNotAllowed");
+      const es256Token = yield* Jws.sign(
+        new TextEncoder().encode(
+          JSON.stringify({
+            sub: "user",
+            iss: "relay",
+            aud: "env",
+            iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
+          }),
+        ),
+        es256Private,
+        { typ: "test+jwt" },
+      );
+      const verifyWrong = yield* Effect.flip(
+        verifyRelayJwt(Claims, {
+          publicKey: yield* Jwk.importPublic(es256.publicKey, "ES256"),
+          token: Redacted.value(es256Token),
+          typ: "test+jwt",
+          issuer: "relay",
+          audience: "env",
+        }),
+      );
+      expect(RelayJwtError.diagnosticCode(verifyWrong)).toBe("AlgorithmNotAllowed");
     }).pipe(Effect.provide(NodeCrypto.layerSignature)),
   );
 });

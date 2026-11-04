@@ -25,7 +25,6 @@ import {
   RELAY_HEALTH_RESPONSE_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
-  signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
@@ -37,7 +36,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -48,6 +46,7 @@ import { diagnoseEndpointFailure } from "./endpointFailure.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
 
 function environmentConnectNotAuthorizedReasonMessage(
@@ -376,6 +375,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const random = yield* SecureRandom.SecureRandom;
   const signature = yield* Signature.Signature;
+  const mint = yield* CloudMintSigner.CloudMintSigner;
   const relayIssuer = normalizeRelayIssuer(settings.relayIssuer);
   const makeEnvironmentClient = (httpBaseUrl: string) =>
     makeEnvironmentHttpApiClient(httpBaseUrl).pipe(
@@ -463,21 +463,21 @@ const make = Effect.gen(function* () {
         nonce,
         scope: ["environment:status"],
       } satisfies RelayCloudEnvironmentHealthProofPayload;
-      const proof = yield* signRelayJwt({
-        privateKey: Redacted.value(settings.cloudMintPrivateKey),
-        typ: RELAY_HEALTH_REQUEST_TYP,
-        payload,
-      }).pipe(
-        Effect.provideService(Signature.Signature, signature),
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "status",
-              cause,
-            }),
-        ),
-      );
+      const proof = yield* mint
+        .sign({
+          typ: RELAY_HEALTH_REQUEST_TYP,
+          payload,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "status",
+                cause,
+              }),
+          ),
+        );
       const checkedAt = DateTime.formatIso(now);
       const traceId = yield* currentTraceId;
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
@@ -629,21 +629,21 @@ const make = Effect.gen(function* () {
         nonce,
         scope: ["environment:connect"],
       } satisfies RelayCloudMintCredentialProofPayload;
-      const proof = yield* signRelayJwt({
-        privateKey: Redacted.value(settings.cloudMintPrivateKey),
-        typ: RELAY_MINT_REQUEST_TYP,
-        payload,
-      }).pipe(
-        Effect.provideService(Signature.Signature, signature),
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "connect",
-              cause,
-            }),
-        ),
-      );
+      const proof = yield* mint
+        .sign({
+          typ: RELAY_MINT_REQUEST_TYP,
+          payload,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "connect",
+                cause,
+              }),
+          ),
+        );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
       const decoded = yield* environmentClient.connect
         .t3MintCredential({ payload: { proof } })

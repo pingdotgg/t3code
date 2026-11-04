@@ -62,12 +62,28 @@ function normalizePem(value: string): string {
   return value.replace(/\\n/gu, "\n").trim();
 }
 
+/** Parses a PKCS#8 PEM relay signing key once, for callers that sign repeatedly. */
+export const importRelayPrivateKey = (pem: string) =>
+  Jwk.importPkcs8(Redacted.make(normalizePem(pem)), "EdDSA");
+
+/** Parses an SPKI PEM relay verification key once, for callers that verify repeatedly. */
+export const importRelayPublicKey = (pem: string) => Jwk.importSpki(normalizePem(pem), "EdDSA");
+
+// A parsed key carries its own algorithm; relay JWTs are EdDSA only.
+const requireEdDsa = <K extends Jwk.PrivateKey | Jwk.PublicKey>(key: K) =>
+  key.algorithm === "EdDSA"
+    ? Effect.succeed(key)
+    : Effect.fail(new JoseError.JoseError({ reason: new JoseError.AlgorithmNotAllowed() }));
+
 export const signRelayJwt = Effect.fn("relayJwt.sign")(function* (input: {
-  readonly privateKey: string;
+  readonly privateKey: string | Jwk.PrivateKey;
   readonly typ: string;
   readonly payload: Readonly<Record<string, unknown>>;
 }): Effect.fn.Return<string, RelayJwtError, Signature.Signature> {
-  const token = yield* Jwk.importPkcs8(Redacted.make(normalizePem(input.privateKey)), "EdDSA").pipe(
+  const privateKey = input.privateKey;
+  const token = yield* (
+    typeof privateKey === "string" ? importRelayPrivateKey(privateKey) : requireEdDsa(privateKey)
+  ).pipe(
     Effect.flatMap((key) =>
       Jws.sign(new TextEncoder().encode(JSON.stringify(input.payload)), key, { typ: input.typ }),
     ),
@@ -80,7 +96,7 @@ export const signRelayJwt = Effect.fn("relayJwt.sign")(function* (input: {
 export const verifyRelayJwt = Effect.fn("relayJwt.verify")(function* <A>(
   schema: Schema.ConstraintDecoder<A>,
   input: {
-    readonly publicKey: string;
+    readonly publicKey: string | Jwk.PublicKey;
     readonly token: string;
     readonly typ: string;
     readonly issuer: string;
@@ -88,7 +104,10 @@ export const verifyRelayJwt = Effect.fn("relayJwt.verify")(function* <A>(
     readonly maxTokenAge?: Duration.Input;
   },
 ): Effect.fn.Return<A, RelayJwtError, Signature.Signature> {
-  const verified = yield* Jwk.importSpki(normalizePem(input.publicKey), "EdDSA").pipe(
+  const publicKey = input.publicKey;
+  const verified = yield* (
+    typeof publicKey === "string" ? importRelayPublicKey(publicKey) : requireEdDsa(publicKey)
+  ).pipe(
     Effect.flatMap((key) =>
       Jwt.verify(schema, input.token, key, {
         typ: input.typ,

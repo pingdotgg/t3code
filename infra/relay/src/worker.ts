@@ -28,6 +28,7 @@ import {
   traceRelayHttpRequestWith,
   withoutCapturedParentSpan,
 } from "./http/Api.ts";
+import * as CloudMintSigner from "./auth/CloudMintSigner.ts";
 import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
 import { RelayObservability } from "./observability.ts";
@@ -340,7 +341,7 @@ export const layer = Api.make(
       ),
       Layer.provideMerge(Layer.mergeAll(LiveActivities.layer, T3ChatAccounts.layer)),
       Layer.provideMerge(DeliveryAttempts.layer),
-      Layer.provideMerge(RelayTokens.layer),
+      Layer.provideMerge(RelayTokens.layer.pipe(Layer.provideMerge(CloudMintSigner.layer))),
       Layer.provideMerge(
         RelayDb.RelayTransactions.layer.pipe(
           Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),

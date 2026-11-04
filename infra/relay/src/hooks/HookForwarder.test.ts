@@ -22,6 +22,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
@@ -107,6 +108,7 @@ function makeHarness(options: Harness = {}) {
       ));
   const layerForwarder = HookForwarder.layer.pipe(
     Layer.provideMerge(HeldHooks.layer),
+    Layer.provide(CloudMintSigner.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
