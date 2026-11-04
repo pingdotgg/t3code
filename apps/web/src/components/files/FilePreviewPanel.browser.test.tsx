@@ -164,6 +164,11 @@ describe("rendered Markdown task saves", () => {
 });
 
 describe("rendered Markdown select all", () => {
+  const selectAll = () =>
+    userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+
   it("selects only the rendered file content", async () => {
     using _settings = setup();
     await using screen = await render(
@@ -173,10 +178,22 @@ describe("rendered Markdown select all", () => {
       </>,
     );
     await userEvent.click(screen.getByText("Rendered file body."));
-    const selectAll = isMacPlatform(navigator.platform)
-      ? "{Meta>}a{/Meta}"
-      : "{Control>}a{/Control}";
-    await userEvent.keyboard(selectAll);
+    await selectAll();
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Rendered file body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
+  });
+
+  it("stays scoped to the file after toggling a task checkbox", async () => {
+    using _settings = setup();
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
+      </>,
+    );
+    await userEvent.click(screen.getByRole("checkbox"));
+    await selectAll();
     const selection = window.getSelection()?.toString() ?? "";
     expect(selection).toContain("Rendered file body.");
     expect(selection).not.toContain("Transcript text from the chat thread.");

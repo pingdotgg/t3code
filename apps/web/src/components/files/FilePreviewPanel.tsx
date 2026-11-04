@@ -68,7 +68,6 @@ import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { isEditableFocused } from "~/lib/editableFocus";
 import { cn, isMacPlatform } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
@@ -930,7 +929,14 @@ function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>
     (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
     !event.shiftKey &&
     !event.altKey;
-  if (!selectAll || isEditableFocused(event.target)) return;
+  // React bubbles keys from portaled children (the image dialog) through this surface.
+  if (
+    !selectAll ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  ) {
+    return;
+  }
   event.preventDefault();
   window.getSelection()?.selectAllChildren(event.currentTarget);
 }
