@@ -30,7 +30,7 @@ import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./s
 
 const UNHEALTHY_PROBE_LIMIT = 3;
 
-/** The host bootstrap failed on a host whose login shell reports Windows. */
+/** The host bootstrap failed on a host identified as Windows. */
 export class SshWindowsHostError extends Schema.TaggedError<SshWindowsHostError>()(
   "SshWindowsHostError",
   { cause: Schema.Defect() },
@@ -104,7 +104,7 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
     (cause.exitCode > 254 && cause.exitCode !== 9009)
   )
     return yield* error;
-  const windows = yield* runSshCommand(targetFor(config), {
+  let windows = yield* runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
     remoteCommandArgs: ["echo %OS% $env:OS"],
     timeoutMs: 15_000,
@@ -112,6 +112,17 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
     Effect.map(({ stdout }) => /(?:^|\s)Windows_NT(?:\s|$)/u.test(stdout)),
     Effect.orElseSucceed(() => false),
   );
+  if (!windows) {
+    // Git Bash does not expand Windows shell variables, but its Node still reports win32.
+    windows = yield* runSshCommand(targetFor(config), {
+      preHostArgs: identityArgs(config),
+      remoteCommandArgs: ["node", "-p", "process.platform"],
+      timeoutMs: 15_000,
+    }).pipe(
+      Effect.map(({ stdout }) => stdout.trim() === "win32"),
+      Effect.orElseSucceed(() => false),
+    );
+  }
   if (!windows) return yield* error;
   return yield* new DeviceHost.DeviceHostError({
     hostId: config.id,
