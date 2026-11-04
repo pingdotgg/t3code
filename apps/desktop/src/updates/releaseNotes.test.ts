@@ -92,6 +92,26 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     ]);
   });
 
+  it.each([
+    "**v1.2.4** · 3 changes from 2 contributors\n- **One-time tasks.** Pick a date.\n\n### Plus 2 more bug fixes and performance improvements.",
+    "<p><strong>v1.2.4</strong> · 3 changes from 2 contributors</p><ul><li><strong>One-time tasks.</strong> Pick a date.</li></ul><h3>Plus 2 more bug fixes and performance improvements.</h3>",
+  ])("keeps highlight labels and the remaining change count from the feed", (summary) => {
+    const { releaseNotes } = normalizeDesktopUpdateReleaseNotes(
+      summary + "\n<details><summary>Full changelog</summary>raw list</details>",
+      "1.2.4",
+      "latest",
+    );
+    expect(releaseNotes).toEqual([
+      {
+        version: "1.2.4",
+        stats: "3 changes from 2 contributors",
+        items: ["**One-time tasks.** Pick a date."],
+        totalItems: 1,
+        footer: "Plus 2 more bug fixes and performance improvements.",
+      },
+    ]);
+  });
+
   it("does not count Markdown or HTML section headings as changes", () => {
     const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
     const result = normalizeDesktopUpdateReleaseNotes(
@@ -229,6 +249,47 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     );
     expect(result).toEqual({
       releaseNotes: [{ version: "1.0.0", items: ["Broken entity &#9999999999;"], totalItems: 1 }],
+      omittedReleaseCount: 0,
+    });
+  });
+
+  it("ignores the Full Changelog paragraph that ends GitHub's generated notes", () => {
+    const fullChangelog = (from: string, to: string) =>
+      `<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/pingdotgg/t3code/compare/v${from}...v${to}"><tt>v${from}...v${to}</tt></a></p>`;
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        {
+          version: "0.1.3-nightly.20261024.3604",
+          note: fullChangelog("0.1.3-nightly.20261023.3592", "0.1.3-nightly.20261024.3604"),
+        },
+        {
+          version: "0.1.3-nightly.20261023.3592",
+          note:
+            "<h2>What's Changed</h2>\n<ul>\n" +
+            '<li>fix(web): A by <a href="https://github.com/a">@a</a> in <a href="https://github.com/pingdotgg/t3code/pull/1">#1</a></li>\n' +
+            '<li>fix(web): B by <a href="https://github.com/b">@b</a> in <a href="https://github.com/pingdotgg/t3code/pull/2">#2</a></li>\n' +
+            "<li>Full Changelog: links open in the browser in #3</li>\n" +
+            "</ul>\n" +
+            fullChangelog("0.1.3-nightly.20261023.3579", "0.1.3-nightly.20261023.3592"),
+        },
+      ],
+      "0.1.3-nightly.20261024.3604",
+      "nightly",
+    );
+
+    expect(result).toEqual({
+      releaseNotes: [
+        {
+          version: "0.1.3-nightly.20261023.3592",
+          items: [
+            "Full Changelog: links open in the browser in #3",
+            "fix(web): B by @b in #2",
+            "fix(web): A by @a in #1",
+          ],
+          releasedAt: "2026-10-23",
+          totalItems: 3,
+        },
+      ],
       omittedReleaseCount: 0,
     });
   });

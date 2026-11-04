@@ -1,20 +1,27 @@
-import { type ChangeEvent, type KeyboardEvent, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useRef, useState } from "react";
 
-export function useCommitOnBlur(value: string, onCommit: (next: string) => void) {
+export function useCommitOnBlur(
+  value: string,
+  onCommit: (next: string) => void,
+  normalizeDraft?: (previous: string, next: string) => string,
+) {
   const [draft, setDraft] = useState<string | null>(null);
+  const valueOnFocus = useRef(value);
 
   return {
     value: draft ?? value,
     onChange: (event: ChangeEvent<HTMLInputElement>) => {
-      setDraft(event.target.value);
+      const next = event.target.value;
+      setDraft(normalizeDraft ? normalizeDraft(draft ?? value, next) : next);
     },
     onFocus: () => {
+      valueOnFocus.current = value;
       setDraft(value);
     },
     onBlur: () => {
       const next = draft ?? value;
       setDraft(null);
-      if (next !== value) {
+      if (next !== valueOnFocus.current && next !== value) {
         onCommit(next);
       }
     },

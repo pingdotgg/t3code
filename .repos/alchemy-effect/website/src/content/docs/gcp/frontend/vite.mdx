@@ -1,0 +1,95 @@
+---
+title: Vite
+description: Deploy any client-only Vite app to Cloud Run with GCP.Website.Vite — your own vite.config, a small static file server, and Vite's dev server under alchemy dev.
+sidebar:
+  order: 2
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`GCP.Website.Vite` deploys a client-only [Vite](https://vite.dev) app
+to Cloud Run: a React, Vue, or Solid SPA, or a multi-page `index.html`
+site. Alchemy runs `vite build` with your own `vite.config.*` and
+serves the output from a small file server.
+
+## Install
+
+<PackageManagers dev={devDeps} />
+
+Docker has to be running when you deploy.
+
+## Deploy the site
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Website = GCP.Website.Vite("Website");
+
+export default Alchemy.Stack(
+  "MySite",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+## Deep links
+
+Unknown paths answer with `index.html`, so a client-side route like
+`/settings` loads the app. For a multi-page site, serve your
+`404.html` instead:
+
+```typescript
+export const Website = GCP.Website.Vite("Docs", {
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+## Point the app at an API
+
+`VITE_*` values are inlined into the bundle at build time. Pass a
+service's URL through `env`:
+
+```typescript
+Effect.gen(function* () {
+  const api = yield* Api;
+  const site = yield* GCP.Website.Vite("Website", {
+    env: { VITE_API_URL: api.uri },
+  });
+  return { url: site.url };
+}),
+```
+
+The browser code reads `import.meta.env.VITE_API_URL`.
+
+## Change the output or base path
+
+```typescript
+export const Website = GCP.Website.Vite("Docs", {
+  vite: { outDir: "build", base: "/docs/" },
+});
+```
+
+## Project in a subdirectory
+
+```typescript
+export const Website = GCP.Website.Vite("Website", { rootDir: "./app" });
+```
+
+## Local development
+
+`alchemy dev` runs Vite's dev server with hot reload and creates
+nothing in the cloud.
+
+## Where next
+
+- [React SPA](/gcp/frontend/vite-spa) and [Vue](/gcp/frontend/vue) —
+  framework walkthroughs on the same resource.
+- [Website reference](/providers/gcp/website#vite) — every prop.
