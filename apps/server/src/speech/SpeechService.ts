@@ -193,7 +193,7 @@ const make = Effect.gen(function* () {
   let activeOperation: Promise<unknown> | undefined;
   const operationBusy = () => Boolean(activeOperation || downloading);
   let closing = false;
-  // @effect-diagnostics-next-line abortControllerInEffect:off - Native model work outlives cancelled requests and aborts on service shutdown.
+  // @effect-diagnostics-next-line abortControllerInEffect:off - Cached native workers must also stop on service shutdown.
   const lifetime = new AbortController();
   let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
 
@@ -214,7 +214,6 @@ const make = Effect.gen(function* () {
     model = undefined;
     loadedModelId = undefined;
     loadedAcceleration = undefined;
-    loading = undefined;
   };
   const disposeModel = async () => {
     const target = model;
@@ -356,8 +355,9 @@ const make = Effect.gen(function* () {
     }
     if (loading) return loading;
     await disposeModel();
-    const pending = loadNativeSpeechModel(modelPath, signal, undefined, acceleration)
-      .then(async (loaded) => {
+    signal.throwIfAborted();
+    const pending = loadNativeSpeechModel(modelPath, signal, undefined, acceleration).then(
+      async (loaded) => {
         if (closing || signal.aborted) {
           await loaded.dispose();
           signal.throwIfAborted();
@@ -366,22 +366,27 @@ const make = Effect.gen(function* () {
         model = loaded;
         loadedModelId = definition.id;
         loadedAcceleration = acceleration;
-        loading = undefined;
         scheduleUnload();
         return loaded;
-      })
-      .catch((error: unknown) => {
-        loading = undefined;
-        throw error;
-      });
+      },
+    );
+    const release = () => {
+      if (loading === pending) loading = undefined;
+    };
     loading = pending;
-    return pending;
+    signal.addEventListener("abort", release, { once: true });
+    try {
+      return await pending;
+    } finally {
+      signal.removeEventListener("abort", release);
+      release();
+    }
   };
 
   const speechError = (operation: string, cause: unknown): SpeechError =>
     isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause });
 
-  const attempt = <A>(operation: string, run: () => Promise<A>) =>
+  const attempt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => speechError(operation, cause) });
 
   // The busy slot is released by a finalizer, so interrupting the fiber frees it at
@@ -520,20 +525,21 @@ const make = Effect.gen(function* () {
       exclusive(
         "model preparation",
         requireSupported.pipe(
-          Effect.andThen(
-            // Keep ownership until the native load settles, even if its request is cancelled.
-            installedModelPath(selectedModel(settings)).pipe(
-              Effect.flatMap((modelPath) =>
-                attempt("model preparation", () =>
-                  loadModel(
-                    modelPath,
-                    selectedModel(settings),
-                    lifetime.signal,
-                    settings.speechAcceleration,
-                  ),
-                ),
+          Effect.andThen(installedModelPath(selectedModel(settings))),
+          Effect.flatMap((modelPath) =>
+            attempt("model preparation", (signal) =>
+              loadModel(
+                modelPath,
+                selectedModel(settings),
+                AbortSignal.any([signal, lifetime.signal]),
+                settings.speechAcceleration,
               ),
-              Effect.uninterruptible,
+            ).pipe(
+              Effect.timeout("2 minutes"),
+              Effect.catchTags({
+                TimeoutError: (cause) =>
+                  Effect.fail(new SpeechOperationError({ operation: "model preparation", cause })),
+              }),
             ),
           ),
         ),
@@ -675,8 +681,9 @@ const make = Effect.gen(function* () {
         closed = true;
         if (!finished) {
           const dispose = Effect.promise(async () => {
+            const pending = loading;
             controller.abort();
-            await loading?.catch(() => undefined);
+            await pending?.catch(() => undefined);
             if (loaded) {
               forgetModel(loaded);
               await loaded.dispose();
