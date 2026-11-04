@@ -463,6 +463,48 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// `bun outdated` has no JSON output; its `Latest` column is what `@latest` installs
+// under minimumReleaseAge (marked `*`). `Update` is only the global package.json range.
+function parseBunOutdatedLatestVersion(output: string, packageName: string): string | null {
+  for (const line of output.split("\n")) {
+    const cells = line.split("|").map((cell) => cell.trim());
+    if (cells.length === 6 && cells[1] === packageName) {
+      return nonEmptyString(cells[4]?.replace(/ \*$/, ""));
+    }
+  }
+  return null;
+}
+
+function parseBunListedVersion(output: string, packageName: string): string | null {
+  const prefix = `── ${packageName}@`;
+  for (const line of output.split("\n")) {
+    const index = line.indexOf(prefix);
+    if (index >= 0) return nonEmptyString(line.slice(index + prefix.length));
+  }
+  return null;
+}
+
+// bun rejects an exact pin to a release inside minimumReleaseAge, so the update stays `@latest`.
+const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")(function* (
+  packageName: string,
+  env: NodeJS.ProcessEnv,
+) {
+  // Match the updater's bun and environment.
+  const bunPath = yield* resolveCommandPath("bun", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
+  if (!bunPath) return null;
+  // FORCE_COLOR=1 draws the table with box characters and splits versions with ANSI codes.
+  const probeEnv = { ...env, FORCE_COLOR: "0" };
+  const outdated = yield* runProbe(bunPath, ["outdated", "-g", packageName], probeEnv);
+  if (outdated === null) return null;
+  const latest = parseBunOutdatedLatestVersion(outdated, packageName);
+  if (latest) return latest;
+  // No row means the installed version is still the eligible release.
+  const listed = yield* runProbe(bunPath, ["pm", "ls", "-g"], probeEnv);
+  return listed ? parseBunListedVersion(listed, packageName) : null;
+});
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -560,6 +602,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -567,6 +610,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: ["i", "-g", `${packageName}@latest`],
       updateLockKey: "bun-global",
       env: context.env,
+      lookupLatestVersion: resolveBunGlobalLatestVersion(packageName, context.env).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {

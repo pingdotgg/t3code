@@ -1049,6 +1049,11 @@ it.layer(
       row: "| @example/package-tool | 1.0.0   | 1.0.0 * | 1.0.0 * |",
       expected: "1.0.0",
     },
+    {
+      case: "the installed version when only a similarly named package is outdated",
+      row: "| @example/package-tool-plugin | 1.0.0 | 1.0.0 | 1.3.0 |",
+      expected: "1.0.0",
+    },
   ])(
     "advertises $case for bun-global installs",
     (fixture) =>
