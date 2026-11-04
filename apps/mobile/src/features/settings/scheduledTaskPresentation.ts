@@ -27,7 +27,23 @@ const INTERVAL_UNITS = [
   ],
 ] as const;
 
-export function formatScheduledTaskInterval(everyMs: number, resolve: MessageResolver = m): string {
+export function formatScheduledTaskInterval(
+  everyMs: number,
+  resolve: MessageResolver = m,
+  window?: { readonly start: string; readonly end: string; readonly weekdays?: ReadonlyArray<number> },
+  locale: string = "en",
+): string {
+  const interval = formatInterval(everyMs, resolve);
+  if (!window) return interval;
+  const selected = new Set(window.weekdays ?? []);
+  const days = selected.size === 0 || selected.size === 7
+    ? resolve(msg("every day"))
+    : [1, 2, 3, 4, 5, 6, 0].filter((day) => selected.has(day))
+        .map((day) => new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(Date.UTC(2024, 0, 7 + day))).join(", ");
+  return resolve(msg("{interval}, {days} {start}–{end}", { interval, days, start: window.start, end: window.end }));
+}
+
+function formatInterval(everyMs: number, resolve: MessageResolver): string {
   let remaining = everyMs;
   const parts: string[] = [];
   for (const [size, every, amount] of INTERVAL_UNITS) {

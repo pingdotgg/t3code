@@ -4,6 +4,13 @@ import * as DateTime from "effect/DateTime";
 import { isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
+  function local(day: number, hour: number, minute: number) {
+    return DateTime.makeZonedUnsafe(
+      { year: 2026, month: 7, day, hour, minute, second: 0, millisecond: 0 },
+      { timeZone: "America/Los_Angeles", adjustForTimeZone: true },
+    );
+  }
+
   it("skips to the next matching fixed-time weekday", () => {
     const next = nextScheduledRunAt(
       { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
@@ -26,6 +33,119 @@ describe("scheduled task schedule calculation", () => {
     expect(parts?.minute).toBe(0);
   });
 
+  it.each([
+    {
+      name: "resumes the next morning after an evening run",
+      from: [6, 19, 30] as const,
+      everyMs: 3_600_000,
+      weekdays: undefined,
+      day: 7,
+      hour: 10,
+      weekDay: 2,
+    },
+    {
+      name: "keeps the next interval when it is still inside the window",
+      from: [6, 15, 0] as const,
+      everyMs: 3_600_000,
+      weekdays: undefined,
+      day: 6,
+      hour: 16,
+      weekDay: 1,
+    },
+    {
+      name: "treats the window start as inside",
+      from: [6, 9, 0] as const,
+      everyMs: 3_600_000,
+      weekdays: undefined,
+      day: 6,
+      hour: 10,
+      weekDay: 1,
+    },
+    {
+      name: "waits for the next allowed weekday",
+      from: [5, 23, 0] as const,
+      everyMs: 3_600_000,
+      weekdays: [1, 2, 3, 4, 5],
+      day: 6,
+      hour: 10,
+      weekDay: 1,
+    },
+    {
+      name: "treats the window end as outside",
+      from: [6, 19, 0] as const,
+      everyMs: 3_600_000,
+      weekdays: undefined,
+      day: 7,
+      hour: 10,
+      weekDay: 2,
+    },
+    {
+      name: "starts the open window when the interval lands past it",
+      from: [6, 9, 0] as const,
+      everyMs: 12 * 3_600_000,
+      weekdays: undefined,
+      day: 6,
+      hour: 10,
+      weekDay: 1,
+    },
+    {
+      name: "skips a weekend between windows",
+      from: [3, 19, 30] as const,
+      everyMs: 3_600_000,
+      weekdays: [1, 2, 3, 4, 5],
+      day: 6,
+      hour: 10,
+      weekDay: 1,
+    },
+    {
+      name: "treats an empty weekday list as every day",
+      from: [4, 15, 0] as const,
+      everyMs: 3_600_000,
+      weekdays: [],
+      day: 4,
+      hour: 16,
+      weekDay: 6,
+    },
+  ])("$name", ({ from, everyMs, weekdays, day, hour, weekDay }) => {
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs,
+        window: {
+          start: "10:00",
+          end: "20:00",
+          ...(weekdays === undefined ? {} : { weekdays }),
+        },
+      },
+      local(from[0], from[1], from[2]),
+    );
+    const parts = next ? DateTime.toParts(next) : null;
+    expect(parts && [parts.day, parts.hour, parts.minute, parts.weekDay]).toEqual([
+      day,
+      hour,
+      0,
+      weekDay,
+    ]);
+  });
+
+  it("advances an interval without a window by everyMs", () => {
+    const from = local(6, 15, 0);
+    const next = nextScheduledRunAt({ type: "interval", everyMs: 3_600_000 }, from);
+    expect(next && DateTime.toEpochMillis(next) - DateTime.toEpochMillis(from)).toBe(3_600_000);
+  });
+
+  it("returns null when no window start falls within eight days", () => {
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs: 3_600_000,
+        window: { start: "10:00", end: "20:00", weekdays: [9] },
+      },
+      local(6, 15, 0),
+    );
+    expect(next).toBeNull();
+  });
+
   it("compares schedules structurally", () => {
     expect(
       isSameSchedule(
@@ -38,6 +158,78 @@ describe("scheduled task schedule calculation", () => {
     ).toBe(true);
     expect(
       isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 30_000 }),
+    ).toBe(false);
+    expect(
+      isSameSchedule(
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "09:00", end: "17:30", weekdays: [1, 5] },
+        },
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "9:00", end: "17:30", weekdays: [5, 1, 1] },
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000, window: { start: "9:00", end: "09:30" } },
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "9:30" } },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "09:00", end: "17:00", weekdays: [] },
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "09:00", end: "17:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "18:00" } },
+      ),
+    ).toBe(false);
+    expect(
+      isSameSchedule(
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "09:00", end: "17:00", weekdays: [1, 2] },
+        },
+        {
+          type: "interval",
+          everyMs: 60_000,
+          window: { start: "09:00", end: "17:00", weekdays: [1, 3] },
+        },
+      ),
+    ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000 },
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+      ),
+    ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+        { type: "interval", everyMs: 120_000, window: { start: "09:00", end: "17:00" } },
+      ),
     ).toBe(false);
     expect(
       isSameSchedule(
