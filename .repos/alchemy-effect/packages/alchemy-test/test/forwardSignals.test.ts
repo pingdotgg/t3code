@@ -1,12 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pollUntil } from "../src/DevCli.ts";
@@ -71,6 +65,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
         try {
           process.kill(childPid, "SIGKILL");
         } catch (error) {
+          // oxlint-disable-next-line no-unsafe-finally, TODO: fix
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }
       }

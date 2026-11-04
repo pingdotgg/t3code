@@ -145,7 +145,7 @@ export function shouldShowInstanceBadge(
   entries: Iterable<InstanceGlyphIdentity>,
 ): boolean {
   if (isProviderInstanceInitialsIcon(entry.icon)) return false;
-  if (entry.accentColor || entry.badgeLabel) return true;
+  if (normalizeProviderAccentColor(entry.accentColor) || entry.badgeLabel) return true;
   const glyphKey = instanceGlyphKey(entry);
   let sharedGlyphCount = 0;
   for (const candidate of entries) {
