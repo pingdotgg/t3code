@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
+import delegatedRecoveryIndexes from "../persistence/Migrations/079_DelegatedRecoveryIndexes.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -357,8 +358,28 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
       new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
     );
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    for (const [kind, expected, index] of [
+      ["delegated-completions", [delivery], "runs_delegated_delivery_idx"],
+      ["subagent-results", [], "threads_subagent_result_idx"],
+    ] as const) {
+      const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+      const observe: Statement.Transformer = (statement) => {
+        statements.push(statement.compile());
+        return Effect.succeed(statement);
+      };
+      assert.deepEqual(
+        yield* projections
+          .getRecoveryThreadIds(kind)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, observe)),
+        expected,
+      );
+      const [query, params] = statements[0]!;
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      assert.isTrue(
+        plan.some((row) => row.detail.includes(index)),
+        JSON.stringify(plan),
+      );
+    }
     const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
     assert.deepEqual(
       recoveryState.runs.map((run) => run.id),
@@ -368,6 +389,84 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("maintains delegated candidate indexes across legacy rows and payload transitions", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parent = yield* createThread("index-parent");
+    const child = yield* createThread("index-child");
+    const run = yield* createRun(child, "completed");
+    const rows = yield* sql<{ payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${child}
+    `;
+    const original = JSON.parse(rows[0]!.payload_json);
+    for (const payload of [
+      "{broken",
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        forkedFrom: { type: "provider_thread" },
+      }),
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        forkedFrom: { type: "node", nodeId: "node:index" },
+      }),
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: child, relationshipToParent: "subagent" },
+        forkedFrom: { type: "node", nodeId: "node:index" },
+      }),
+      JSON.stringify(original),
+    ]) {
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload}
+        WHERE thread_id = ${child}`;
+      const expected = payload.includes('"type":"node"') ? [child] : [];
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), expected);
+    }
+    for (const entry of [
+      ["{broken", false],
+      ["{}", false],
+      ['{"delegatedCompletion":{"delivery":null}}', false],
+      ['{"delegatedCompletion":{"delivery":[]}}', false],
+      ['{"delegatedCompletion":{"delivery":{}}}', true],
+      ["{}", false],
+    ] as const) {
+      const [payload, included] = entry;
+      yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = ${payload}
+        WHERE run_id = ${run}`;
+      assert.deepEqual(
+        yield* projections.getRecoveryThreadIds("delegated-completions"),
+        included ? [child] : [],
+      );
+    }
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{broken'
+      WHERE thread_id = ${parent}`;
+    yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      WHERE run_id = ${run}`;
+    const existing = yield* createThread("index-existing", {
+      lineage: { parentThreadId: child, relationshipToParent: "subagent", rootThreadId: parent },
+      forkedFrom: { type: "node", nodeId: NodeId.make("node:index-existing") },
+    });
+    yield* createRun(existing, "completed", {
+      delegatedCompletion: {
+        disposition: "open",
+        nextGeneration: 2,
+        delivery: {
+          generation: 1,
+          messageId: MessageId.make("message:index-existing"),
+          taskIds: [],
+        },
+      },
+    });
+    yield* sql`DROP INDEX orchestration_v2_projection_threads_subagent_result_idx`;
+    yield* sql`DROP INDEX orchestration_v2_projection_runs_delegated_delivery_idx`;
+    yield* delegatedRecoveryIndexes;
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [existing]);
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [existing]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -655,6 +754,106 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([first, second]),
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("bounds streaming recovery reads by candidate runs and preserves message ordering", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("streaming");
+    const other = yield* createThread("streaming-other");
+    const empty = yield* createThread("streaming-empty");
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      if (compiled[0].includes("SELECT message.payload_json")) statements.push(compiled);
+      return Effect.succeed(statement);
+    };
+    const expected: MessageId[] = [];
+    const statuses = [
+      "queued",
+      "preparing",
+      "starting",
+      "running",
+      "waiting",
+      "completed",
+      "interrupted",
+      "rolled_back",
+      "failed",
+      "cancelled",
+    ] as const;
+    for (const [index, status] of statuses.entries()) {
+      const runId = yield* createRun(threadId, status, { ordinal: index + 1 });
+      for (const suffix of ["b", "a", "settled", "wrong-thread"]) {
+        const id = MessageId.make(`message:streaming:${index}:${suffix}`);
+        const streaming = suffix !== "settled";
+        const messageThread = suffix === "wrong-thread" ? other : threadId;
+        const createdAt = DateTime.add(now, { seconds: -index });
+        yield* projections.apply({
+          id: EventId.make(`event:${id}`),
+          type: "message.updated",
+          threadId: messageThread,
+          runId,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId: messageThread,
+            runId,
+            nodeId: null,
+            role: "assistant",
+            text: id,
+            attachments: [],
+            streaming,
+            createdAt,
+            updatedAt: now,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        });
+      }
+      if (index < 5)
+        expected.unshift(
+          MessageId.make(`message:streaming:${index}:a`),
+          MessageId.make(`message:streaming:${index}:b`),
+        );
+    }
+    const foreignRun = yield* createRun(other, "running");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('foreign-run', ${threadId}, ${foreignRun}, 'assistant', 1, '', '', '{}')
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('old-history', ${empty}, NULL, 'assistant', 1, '', '', '{}')
+    `;
+    const projection = yield* projections
+      .getRuntimeRecoveryProjection(threadId)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(
+      projection.messages.map((message) => message.id),
+      expected,
+    );
+    const emptyProjection = yield* projections
+      .getRuntimeRecoveryProjection(empty)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(emptyProjection.messages, []);
+    assert.equal(statements.length, 2);
+    for (const [query, params] of statements) {
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      assert.isTrue(plan[0]?.detail.includes("SEARCH run "), JSON.stringify(plan));
+      assert.isTrue(
+        plan.some((row) => row.detail.includes("messages_run_idx")),
+        JSON.stringify(plan),
+      );
+      assert.isFalse(
+        plan.some((row) => row.detail.includes("messages_thread_created_idx")),
+        JSON.stringify(plan),
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -20,7 +20,5 @@ const app = createApp();
 export const handler = (request: Request) =>
   app.render(request, {
     addCookieHeader: true,
-    clientAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      undefined,
+    clientAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
   });
