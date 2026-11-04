@@ -268,11 +268,14 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
     const contents = yield* readSkill(manifestPath, budget);
     if (contents === undefined) continue;
     const manifest = yield* decodePluginManifest(contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AntigravitySkillsProbeError({ reason: "invalid-config", path: manifestPath, cause }),
-      ),
+      Effect.catchTags({
+        SchemaError: () =>
+          Effect.logWarning("Skipped an Antigravity plugin with an invalid manifest.", {
+            errorTag: "invalid-config",
+          }).pipe(Effect.as(undefined)),
+      }),
     );
+    if (manifest === undefined) continue;
     if (manifest.disabled && enabled !== true) continue;
     const skills = yield* scanSkillDirectories(
       [{ directory: path.join(pluginDirectory, "skills"), scope: "user" }],

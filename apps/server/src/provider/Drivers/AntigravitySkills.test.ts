@@ -103,7 +103,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         const input = yield* makeWorkspace();
         const config = path.join(input.userHome, ".gemini", "config");
         const expected = [];
-        for (const name of ["alpha", "beta", "off", "disabled", "unregistered"]) {
+        for (const name of ["alpha", "beta", "broken", "off", "disabled", "unregistered"]) {
           const plugin = path.join(config, "plugins", name);
           const skillPath = yield* writeSkill(
             path.join(plugin, "skills", "review"),
@@ -112,7 +112,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           if (name !== "unregistered") {
             yield* fileSystem.writeFileString(
               path.join(plugin, "plugin.json"),
-              name === "off"
+              name === "off" || name === "broken"
                 ? "{ invalid"
                 : JSON.stringify({
                     name: `Display ${name}`,
@@ -135,6 +135,17 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(config, "config.json"),
           JSON.stringify({ plugins: { beta: { enabled: true }, off: { enabled: false } } }),
         );
+        for (const [directory, scope] of [
+          [path.join(input.cwd, ".agents", "skills"), "project"],
+          [path.join(input.userHome, ".gemini", "config", "skills"), "user"],
+        ] as const) {
+          const name = `standalone-${scope}`;
+          const skillPath = yield* writeSkill(
+            path.join(directory, name),
+            `---\nname: ${name}\n---\n`,
+          );
+          expected.push({ name, path: skillPath, scope, enabled: true });
+        }
         assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
         const directories = yield* prepareAntigravityPluginSkills({
           userHome: input.userHome,
@@ -159,12 +170,12 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }),
   );
 
-  it.effect("keeps punctuation, case and prefix variants distinct and invocable", () =>
+  it.effect("keeps punctuation and prefix variants distinct and invocable", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const directories = ["foo.bar", "foo_bar", "_alpha", "plugin_alpha", "alpha", "Alpha"];
+      const directories = ["foo.bar", "foo_bar", "_alpha", "plugin_alpha", "alpha"];
       for (const name of directories) {
         const plugin = path.join(input.userHome, ".gemini", "config", "plugins", name);
         yield* writeSkill(path.join(plugin, "skills", "review"), "---\nname: review\n---\n");
@@ -184,6 +195,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("preserves plugin directory case across separate homes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const identifiers = [];
+      for (const name of ["alpha", "Alpha"]) {
+        const input = yield* makeWorkspace();
+        const plugin = path.join(input.userHome, ".gemini", "config", "plugins", name);
+        yield* writeSkill(path.join(plugin, "skills", "review"), "---\nname: review\n---\n");
+        yield* fileSystem.writeFileString(path.join(plugin, "plugin.json"), "{}");
+        identifiers.push(...(yield* discoverAntigravitySkills(input)).map((skill) => skill.name));
+      }
+      assert.deepEqual(identifiers, ["plugin:alpha:review", "plugin:_41_lpha:review"]);
+    }),
+  );
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
