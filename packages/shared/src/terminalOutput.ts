@@ -275,8 +275,9 @@ function escapeLength(input: string, index: number): number {
     cursor += 1;
   }
   if (cursor >= input.length) return -1;
-  // An ESC after intermediates cancels them and starts the next sequence.
-  if (cursor > index + 1 && input[cursor] === ESC) return cursor - index;
+  // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
+  const final = input.charCodeAt(cursor);
+  if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
   return cursor - index + 1;
 }
 

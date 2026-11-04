@@ -136,11 +136,13 @@ describe("appendTerminalOutput under adversarial output", () => {
         expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("ab");
       }
     }
-    const interrupted = "a\u001b#\u001b[31mb";
-    for (let cut = 0; cut < interrupted.length; cut += 1) {
-      expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(
-        feed(["a\u001b[31mb"]).text,
-      );
+    for (const [interrupted, expected] of [
+      ["a\u001b#\u001b[31mb", feed(["a\u001b[31mb"]).text],
+      ["a\u001b#\n8b", "a\n8b"],
+    ] as const) {
+      for (let cut = 0; cut < interrupted.length; cut += 1) {
+        expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(expected);
+      }
     }
   });
 
