@@ -1,7 +1,8 @@
-import type {
-  PreviewAccessibilityAction,
-  PreviewAccessibilityDocument,
-  PreviewAccessibilityNode,
+import {
+  PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS,
+  type PreviewAccessibilityAction,
+  type PreviewAccessibilityDocument,
+  type PreviewAccessibilityNode,
 } from "@t3tools/contracts";
 
 export type AccessibleControl = "activate" | "check" | "edit" | "select";
@@ -212,7 +213,10 @@ export function planAccessibleNode(
   }
   if (FIELD_ROLES.has(node.role) || (node.editable && children.length === 0)) {
     const readOnly = inert || node.readonly === true;
-    const attributes: Record<string, string> = readOnly ? { readonly: "" } : {};
+    const attributes: Record<string, string> = {
+      maxlength: String(PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS),
+      ...(readOnly ? { readonly: "" } : {}),
+    };
     if (!node.multiline) {
       attributes.type = node.protected ? "password" : node.role === "searchbox" ? "search" : "text";
     }
@@ -376,7 +380,13 @@ export function createAccessibleDocumentView(
     ) {
       element.dataset.serverValue = plan.value ?? "";
       // An edit in progress wins over the page until it is committed or cancelled.
-      if (!(element.dataset.dirty && doc.activeElement === element)) {
+      if (
+        !(
+          element.dataset.dirty &&
+          (doc.activeElement === element ||
+            element.value.length > PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS)
+        )
+      ) {
         delete element.dataset.dirty;
         if (element.value !== plan.value) element.value = plan.value ?? "";
       }
@@ -448,6 +458,12 @@ export function createAccessibleDocumentView(
     const hit = nodeOf(element);
     const edited = element.dataset.dirty !== undefined;
     if (!hit || (!submit && !edited)) return;
+    if (edited && element.value.length > PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS) {
+      say(
+        `Shorten this field to ${PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS.toLocaleString("en-US")} characters or fewer, then try again.`,
+      );
+      return;
+    }
     delete element.dataset.dirty;
     act({
       node: hit.node.id,
