@@ -1,3 +1,4 @@
+import { matchInlineSkills } from "@t3tools/shared/inlineSkills";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -111,15 +112,18 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           if (name !== "unregistered") {
             yield* fileSystem.writeFileString(
               path.join(plugin, "plugin.json"),
-              JSON.stringify({
-                name: `Display ${name}`,
-                disabled: name === "beta" || name === "disabled",
-              }),
+              name === "off"
+                ? "{ invalid"
+                : JSON.stringify({
+                    name: `Display ${name}`,
+                    disabled: name === "beta" || name === "disabled",
+                  }),
             );
           }
           if (name === "alpha" || name === "beta") {
             expected.push({
-              name: `${name}:review`,
+              name: `plugin:${name}:review`,
+              displayName: `${name}:review`,
               description: "Review changes.",
               path: skillPath,
               scope: "user",
@@ -142,7 +146,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         });
         assert.deepEqual(
           nativeSkills.map((skill) => skill.name),
-          ["alpha:review", "beta:review"],
+          ["plugin:alpha:review", "plugin:beta:review"],
         );
         for (const [index, skill] of nativeSkills.entries()) {
           assert.include(yield* fileSystem.readFileString(skill.path), expected[index]!.path);
@@ -153,6 +157,31 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           assert.include(yield* fileSystem.readFileString(expected[index]!.path), "name: review\n");
         }
       }),
+  );
+
+  it.effect("keeps punctuation, case and prefix variants distinct and invocable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const directories = ["foo.bar", "foo_bar", "_alpha", "plugin_alpha", "alpha", "Alpha"];
+      for (const name of directories) {
+        const plugin = path.join(input.userHome, ".gemini", "config", "plugins", name);
+        yield* writeSkill(path.join(plugin, "skills", "review"), "---\nname: review\n---\n");
+        yield* fileSystem.writeFileString(path.join(plugin, "plugin.json"), "{}");
+      }
+      const skills = yield* discoverAntigravitySkills(input);
+      assert.lengthOf(skills, directories.length);
+      assert.equal(
+        new Set(skills.map((skill) => skill.name.toLowerCase())).size,
+        directories.length,
+      );
+      for (const skill of skills) {
+        const matches = [...matchInlineSkills("$" + skill.name, skills)];
+        assert.lengthOf(matches, 1);
+        assert.equal(matches[0]?.skill.path, skill.path);
+      }
+    }),
   );
 
   it.effect("uses native root order for duplicate names", () =>

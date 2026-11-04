@@ -255,14 +255,10 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.mapError(
-          (cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "start",
-              detail: "Could not prepare Antigravity plugin skills.",
-              cause,
-            }),
+        Effect.catch((cause) =>
+          Effect.logWarning("Antigravity plugin skills are unavailable.", {
+            errorTag: cause._tag,
+          }).pipe(Effect.as([])),
         ),
       );
       const runtime = yield* makeAntigravityAcpRuntime({

@@ -334,9 +334,8 @@ function requireFutureOnce(
 }
 
 function errorMessage(error: unknown): string {
-  if (Cause.isCause(error)) return Cause.pretty(error);
-  if (error instanceof Error) return error.message;
-  return String(error);
+  const failure = Cause.isCause(error) ? Cause.squash(error) : error;
+  return failure instanceof Error ? failure.message : String(failure);
 }
 
 function webhookPath(taskId: string, token: string): string {

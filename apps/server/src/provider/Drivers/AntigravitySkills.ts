@@ -262,6 +262,8 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
       "Directory"
     )
       continue;
+    const enabled = preferences.plugins?.[entry]?.enabled;
+    if (enabled === false) continue;
     const manifestPath = path.join(pluginDirectory, "plugin.json");
     const contents = yield* readSkill(manifestPath, budget);
     if (contents === undefined) continue;
@@ -271,16 +273,26 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
           new AntigravitySkillsProbeError({ reason: "invalid-config", path: manifestPath, cause }),
       ),
     );
-    if (!(preferences.plugins?.[entry]?.enabled ?? !manifest.disabled)) continue;
+    if (manifest.disabled && enabled !== true) continue;
     const skills = yield* scanSkillDirectories(
       [{ directory: path.join(pluginDirectory, "skills"), scope: "user" }],
       budget,
     );
     if (skills.length === 0) continue;
-    const namespace = /^[a-zA-Z0-9]/.test(entry) ? entry : `plugin${entry}`;
     plugins.push({
       directory: pluginDirectory,
-      skills: skills.map((skill) => ({ ...skill, name: `${namespace}:${skill.name}` })),
+      skills: skills.map((skill) => ({
+        ...skill,
+        name: `plugin:${[entry, skill.name]
+          .map((part) =>
+            part.replace(
+              /[^a-z0-9-]/gu,
+              (character) => `_${Buffer.from(character).toString("hex")}_`,
+            ),
+          )
+          .join(":")}`,
+        displayName: `${entry}:${skill.name}`,
+      })),
     });
   }
   return plugins;
