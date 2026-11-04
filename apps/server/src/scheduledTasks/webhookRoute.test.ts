@@ -1,3 +1,4 @@
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
@@ -66,7 +67,7 @@ const relayProof = Effect.fn("relayProof")(function* (claims: {
       receivedAt: claims.receivedAt,
       hookId: claims.hookId,
     },
-  });
+  }).pipe(Effect.provide(PlatformNodeCrypto.layerSignature));
 });
 
 const handlerFor = (
@@ -101,7 +102,7 @@ const handlerFor = (
           Layer.provideMerge(Etag.layerWeak),
         ),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide([NodeServices.layer, PlatformNodeCrypto.layerSignature]),
     ),
     { disableLogger: true },
   );
