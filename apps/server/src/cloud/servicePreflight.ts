@@ -1,6 +1,7 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import { T3_LEARN_COMMAND, T3_LEARN_REPOSITORY } from "@t3tools/shared/t3LearnIdentity";
 
 export type ServicePreflightResult =
   | {
@@ -24,13 +25,10 @@ export function runServicePreflight(input: {
     return {
       status: "blocked",
       version,
-      // A stale `t3` earlier on PATH (an old npm/nvm global) makes `t3 service install`
-      // reinstall itself and report success, so name the exact install and the path check.
       reason: [
         `The installed service launcher speaks protocol ${input.launcherProtocol}, but t3@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
-        `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
-        `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
-        "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
+        `On the server machine, install this exact version: \`curl -fsSL https://github.com/${T3_LEARN_REPOSITORY}/releases/latest/download/install.sh | T3LEARN_VERSION=${version} sh\`.`,
+        `Check that \`${T3_LEARN_COMMAND} --version\` prints ${version}, then run \`${T3_LEARN_COMMAND} service install\`.`,
       ].join(" "),
     };
   }

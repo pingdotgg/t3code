@@ -119,6 +119,7 @@ import {
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -190,7 +191,7 @@ export class CloudLinkAuthorizationMissingError extends Schema.TaggedError<Cloud
   {},
 ) {
   override get message(): string {
-    return "Run `t3 connect link` to authorize this environment.";
+    return `Run \`${T3_LEARN_COMMAND} connect link\` to authorize this environment.`;
   }
 }
 

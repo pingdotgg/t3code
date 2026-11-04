@@ -20,6 +20,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
 // which names these two hosts on port 7844. QUIC and HTTP/2 both use that port.
@@ -65,14 +66,14 @@ export function classifyReachability(
     fix: string,
     hint: string | null = null,
   ): Unreachable => ({ status: "unreachable", checkedAt, cause, reason, hint, fix });
-  const restart = "Restart T3 Code. If it stays, run `t3 connect` again.";
+  const restart = `Restart T3 Code. If it stays, run \`${T3_LEARN_COMMAND} connect\` again.`;
 
   if (!facts.managedTunnelConfigured) {
     // A running server reads the link `t3 connect` stores only at startup.
     return fail(
       "not_linked",
       "The server has not set up a T3 Connect tunnel.",
-      "Run `t3 connect`, then restart T3 Code so it applies the link.",
+      `Run \`${T3_LEARN_COMMAND} connect\`, then restart T3 Code so it applies the link.`,
     );
   }
   if (connector === null) {

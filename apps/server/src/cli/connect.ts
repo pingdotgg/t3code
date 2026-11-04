@@ -194,11 +194,11 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         ? "pending server startup"
         : "not provisioned";
   const nextStep = !status.authenticated
-    ? "Run `t3 connect link` to authorize and enable T3 Connect."
+    ? `Run \`${T3_LEARN_COMMAND} connect link\` to authorize and enable T3 Connect.`
     : status.revoked
-      ? "Run `t3 connect link` to link this environment again."
+      ? `Run \`${T3_LEARN_COMMAND} connect link\` to link this environment again.`
       : !status.desired
-        ? "Run `t3 connect link` to enable T3 Connect."
+        ? `Run \`${T3_LEARN_COMMAND} connect link\` to enable T3 Connect.`
         : !status.linked
           ? "Start T3 to provision the environment link and launch its managed tunnel."
           : undefined;
@@ -470,11 +470,11 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       yield* Console.warn(
         input.clearAuthorization
           ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
-          : "Could not revoke the relay-side environment record yet.\nRun `t3 connect unlink` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.",
+          : `Could not revoke the relay-side environment record yet.\nRun \`${T3_LEARN_COMMAND} connect unlink\` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.`,
       );
     } else if (input.relayResult.value.status === "not-authenticated") {
       yield* Console.warn(
-        "The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run `t3 connect login` and retry.",
+        `The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run \`${T3_LEARN_COMMAND} connect login\` and retry.`,
       );
     } else if (input.relayResult.value.status === "revoked") {
       yield* Console.log("Revoked the relay-side environment record.");
@@ -761,7 +761,7 @@ const connectPublishCommand = Command.make("publish", {
 
         if (!(yield* tokens.hasCredential)) {
           yield* Console.log(
-            "Run `t3 connect login` first so this environment can be authorized to publish.",
+            `Run \`${T3_LEARN_COMMAND} connect login\` first so this environment can be authorized to publish.`,
           );
           return;
         }

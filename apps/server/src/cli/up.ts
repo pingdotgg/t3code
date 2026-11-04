@@ -143,7 +143,7 @@ const formatSetup = (setup: Setup) => {
             setup.connect
               ? "on · your T3 account"
               : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
+                ? `off · link revoked. Run \`${T3_LEARN_COMMAND} connect\`.`
                 : "off",
           ] as const,
         ]),
