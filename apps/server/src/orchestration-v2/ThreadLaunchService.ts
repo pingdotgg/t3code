@@ -903,7 +903,7 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
+        const allocatedStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
@@ -919,6 +919,12 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
+        const checkoutBranch =
+          allocatedStrategy.type === "root" && allocatedStrategy.branch === undefined
+            ? yield* git.currentBranch(project.workspaceRoot).pipe(Effect.orElseSucceed(() => null))
+            : null;
+        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
+          checkoutBranch === null ? allocatedStrategy : { type: "root", branch: checkoutBranch };
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;

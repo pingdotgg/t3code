@@ -211,6 +211,7 @@ function makeHarness(options: HarnessOptions = {}) {
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
+      currentBranch: () => Effect.succeed(null),
       removeWorktree,
       deleteLocalBranch,
       ...options.git,
@@ -1129,6 +1130,27 @@ it.effect.each(["stable", "upstream/release"])(
       ),
     ),
 );
+
+it.effect("records the checkout's branch on a root launch that names none", () => {
+  const harness = makeHarness({
+    git: {
+      currentBranch: (cwd) => Effect.succeed(cwd === project.workspaceRoot ? "fix/current" : null),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:root-branch",
+        thread: "thread:launch:root-branch",
+        message: "Fix the overflow",
+      }),
+    );
+    const settled = yield* preparationSettled(launched.threadId);
+    assert.equal(settled.thread.branch, "fix/current");
+    assert.isNull(settled.thread.worktreePath);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
