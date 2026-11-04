@@ -127,10 +127,6 @@ function stripClaudeContextWindowSuffix(value: string): string {
   return value.replace(/\[[^\]]*\]$/, "").trim();
 }
 
-/**
- * Models Claude Code reports, such as from a gateway with model discovery on, that neither the
- * catalog nor the user's custom models know. Their effort options are what Claude Code reports.
- */
 export function claudeReportedModels(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
