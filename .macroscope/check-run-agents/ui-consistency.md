@@ -44,7 +44,7 @@ The reference for how this codebase wants UI built is the composer banner system
 
 - `ComposerBanner.tsx` exports one object of small slot components (`Root`, `Row`, `Icon`, `Content`, `Actions`, `Dismiss`, `Children`, and so on). Each slot owns its own Tailwind classes, exposes a `data-slot` attribute, takes `className` and spreads the rest of its props, and uses `cn` so callers can adjust without overriding. Variants and density are props on `Root`, not ad hoc class strings at call sites. Where a slot needs a real control it renders `Button` from `ui/` rather than a styled `<button>`.
 - `ComposerBannerStack.tsx` composes those slots into the ordered stack and owns only stack behavior (priority, expand and collapse, dismiss transitions).
-- Consumers such as `ComposerActivityStatus.tsx`, `ComposerStashBadge.tsx`, and `ComposerPlanFollowUpBanner.tsx` are a few lines of `<ComposerBanner.Row><ComposerBanner.Icon/><ComposerBanner.Content>…` with no styling of their own.
+- Consumers such as `ComposerPlanFollowUpBanner.tsx` are a few lines of `<ComposerBanner.Row><ComposerBanner.Icon/><ComposerBanner.Content>…` and style only their own content.
 
 Hold new and changed UI to that shape:
 
