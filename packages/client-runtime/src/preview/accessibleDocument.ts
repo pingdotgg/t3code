@@ -213,10 +213,7 @@ export function planAccessibleNode(
   }
   if (FIELD_ROLES.has(node.role) || (node.editable && children.length === 0)) {
     const readOnly = inert || node.readonly === true;
-    const attributes: Record<string, string> = {
-      maxlength: String(PREVIEW_ACCESSIBILITY_VALUE_MAX_CHARS),
-      ...(readOnly ? { readonly: "" } : {}),
-    };
+    const attributes: Record<string, string> = readOnly ? { readonly: "" } : {};
     if (!node.multiline) {
       attributes.type = node.protected ? "password" : node.role === "searchbox" ? "search" : "text";
     }
