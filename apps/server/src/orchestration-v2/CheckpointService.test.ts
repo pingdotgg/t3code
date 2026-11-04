@@ -25,6 +25,49 @@ import { checkpointRestoreRefusal } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
+it.effect("fails stale ref cleanup when the repository probe fails", () => {
+  const probeError = new VcsProcessTimeoutError({
+    operation: "test.detect",
+    command: "git",
+    cwd: "/repo/a",
+    timeoutMs: 30000,
+  });
+  const layerTest = CheckpointService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          isGitRepository: () => Effect.fail(probeError),
+        }),
+      ),
+    ),
+    Layer.provideMerge(NodeCrypto.layer),
+  );
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const result = yield* Effect.result(
+      checkpoints.deleteStaleRefs({
+        scope: {
+          id: CheckpointScopeId.make("checkpoint-scope:probe-failure"),
+          threadId: ThreadId.make("thread:probe-failure"),
+          runId: RunId.make("run:probe-failure:1"),
+          nodeId: NodeId.make("node:probe-failure:1"),
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo/a",
+          createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+        },
+        checkpoints: [],
+        fallbackCwd: "/repo/b",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }).pipe(Effect.provide(layerTest));
+});
+
 it.effect(
   "skips unsupported baseline and turn checkpoints without swallowing capture failures",
   () =>

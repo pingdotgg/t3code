@@ -556,9 +556,10 @@ export const layer: Layer.Layer<
     )(
       function* (input) {
         // A recreated workspace gets the same scope id, so a surviving stale ref would become its baseline.
-        const cwd = (yield* isGitCheckpointable(input.scope.cwd))
+        // A probe failure fails cleanup instead of passing for a removed workspace.
+        const cwd = (yield* checkpointStore.isGitRepository(input.scope.cwd))
           ? input.scope.cwd
-          : (yield* isGitCheckpointable(input.fallbackCwd))
+          : (yield* checkpointStore.isGitRepository(input.fallbackCwd))
             ? input.fallbackCwd
             : null;
         if (cwd === null) {
