@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { refreshUsage, refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
-import { remainingPercent } from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, limitsNotice, remainingPercent } from "@t3tools/shared/usageLimits";
 import { summarizeTodayUsage } from "@t3tools/shared/usageToday";
 import type {
   EnvironmentId,
@@ -11,8 +11,11 @@ import type {
   UsageBucket,
   UsageProviderKind,
 } from "@t3tools/contracts";
+import { isProviderAvailable } from "@t3tools/contracts";
 import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runtime/state/presentation";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
@@ -28,31 +31,104 @@ import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 type DriverLimits = {
   readonly driver: ProviderDriverKind;
   readonly kind: UsageProviderKind;
-  readonly windows: NonNullable<ServerProvider["usageLimits"]>["windows"];
-  readonly checkedAt: string;
+  readonly accounts: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly windows: NonNullable<ServerProvider["usageLimits"]>["windows"];
+    readonly notice: string | null;
+    readonly checkedAt: string;
+    readonly accentColor: string | undefined;
+  }>;
+};
+
+type DriverAccount = DriverLimits["accounts"][number];
+
+type DriverGroup = {
+  readonly driver: ProviderDriverKind;
+  readonly kind: UsageProviderKind;
+  readonly accounts: Map<string, DriverAccount>;
 };
 
 function selectedDriverLimits(
   presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
 ): Map<ProviderDriverKind, DriverLimits> {
-  const byDriver = new Map<ProviderDriverKind, DriverLimits>();
+  const byDriver = new Map<ProviderDriverKind, DriverGroup>();
+  const addAccount = (
+    driver: ProviderDriverKind,
+    kind: UsageProviderKind,
+    account: DriverAccount,
+  ) => {
+    const group = byDriver.get(driver) ?? {
+      driver,
+      kind,
+      accounts: new Map<string, DriverAccount>(),
+    };
+    const previous = group.accounts.get(account.key);
+    if (
+      previous === undefined ||
+      Date.parse(account.checkedAt) > Date.parse(previous.checkedAt) ||
+      (previous.windows.length === 0 && account.windows.length > 0)
+    ) {
+      group.accounts.set(account.key, account);
+    }
+    byDriver.set(driver, group);
+  };
+
+  for (const account of collectLimitAccounts(presentations)) {
+    const kind = (Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[]).find(
+      (candidate) => PROVIDER_PRESENTATION[candidate].driverKind === account.driver,
+    );
+    if (kind === undefined) continue;
+    addAccount(account.driver, kind, {
+      key: account.key,
+      label:
+        account.email?.trim() || account.displayName?.trim() || account.sourceLabel || "Account",
+      windows: [...account.limits.windows],
+      notice: null,
+      checkedAt: account.limits.checkedAt,
+      accentColor: account.accentColor,
+    });
+  }
+
   for (const presentation of presentations.values()) {
     for (const provider of presentation.serverConfig?.providers ?? []) {
-      const windows = provider.usageLimits?.windows ?? [];
-      if (windows.length === 0 || byDriver.has(provider.driver)) continue;
+      const limits = provider.usageLimits;
+      if (
+        !provider.enabled ||
+        !provider.installed ||
+        !isProviderAvailable(provider) ||
+        limits === undefined
+      ) {
+        continue;
+      }
       const kind = (Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[]).find(
         (candidate) => PROVIDER_PRESENTATION[candidate].driverKind === provider.driver,
       );
       if (kind === undefined) continue;
-      byDriver.set(provider.driver, {
-        driver: provider.driver,
-        kind,
-        windows: [...windows],
-        checkedAt: provider.usageLimits?.checkedAt ?? "",
+      const notice = limitsNotice(limits);
+      if (notice === null) continue;
+      addAccount(provider.driver, kind, {
+        key: [
+          provider.auth.email?.trim().toLowerCase() ?? provider.instanceId,
+          provider.auth.workspaceId ?? "",
+        ].join(":"),
+        label:
+          provider.auth.email?.trim() ||
+          provider.displayName?.trim() ||
+          presentation.entry.target.label,
+        windows: [],
+        notice,
+        checkedAt: limits.checkedAt,
+        accentColor: provider.accentColor,
       });
     }
   }
-  return byDriver;
+  return new Map(
+    [...byDriver].map(([driver, group]) => [
+      driver,
+      { ...group, accounts: [...group.accounts.values()] },
+    ]),
+  );
 }
 
 export function QuickUsagePopover({
@@ -68,6 +144,8 @@ export function QuickUsagePopover({
   });
   const [selectedProvider, setSelectedProvider] = useState<UsageProviderKind | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
 
   const todayWindow = makeWindow(8, new Date(now));
   const usage = useUsage(todayWindow);
@@ -104,13 +182,15 @@ export function QuickUsagePopover({
   let best: DriverLimits | undefined;
   let bestRemaining = Number.POSITIVE_INFINITY;
   for (const provider of providers) {
-    const remaining = Math.min(...provider.windows.map((window) => remainingPercent(window)));
+    const remaining = Math.min(
+      ...provider.accounts.flatMap((account) => account.windows.map(remainingPercent)),
+    );
     if (remaining < bestRemaining) {
       best = provider;
       bestRemaining = remaining;
     }
   }
-  const defaultProvider = best?.kind ?? null;
+  const defaultProvider = best?.kind ?? providers[0]?.kind ?? null;
 
   const selected =
     (selectedProvider === null
@@ -118,10 +198,13 @@ export function QuickUsagePopover({
       : providers.find((provider) => provider.kind === selectedProvider)) ??
     providers.find((provider) => provider.kind === defaultProvider);
   const latestCheckedAt = providers.reduce<string | null>((latest, provider) => {
-    if (!provider.checkedAt) return latest;
-    return latest === null || Date.parse(provider.checkedAt) > Date.parse(latest)
-      ? provider.checkedAt
-      : latest;
+    for (const account of provider.accounts) {
+      if (!account.checkedAt) continue;
+      if (latest === null || Date.parse(account.checkedAt) > Date.parse(latest)) {
+        latest = account.checkedAt;
+      }
+    }
+    return latest;
   }, null);
   const updated =
     latestCheckedAt === null || !Number.isFinite(Date.parse(latestCheckedAt))
@@ -132,6 +215,9 @@ export function QuickUsagePopover({
         })}`;
 
   const refresh = () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshing(true);
     void settlePromise(() =>
       Promise.all(
         Array.from(presentations, ([environmentId, presentation]) => {
@@ -146,17 +232,20 @@ export function QuickUsagePopover({
         }),
       ),
     )
-      .then(() =>
-        refreshUsage({
+      .then(async (result) => {
+        setNow(Date.now());
+        if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+        await refreshUsage({
           registry: appAtomRegistry,
           server: serverEnvironment,
           presentations: environmentPresentations,
           environmentIds: usage.selectedEnvironments.map(({ environmentId }) => environmentId),
           input: todayWindow,
-        }),
-      )
-      .then(() => {
-        setNow(Date.now());
+        });
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
       });
   };
 
@@ -165,10 +254,10 @@ export function QuickUsagePopover({
       <PopoverTrigger render={<Button variant="ghost" size="sm" aria-label="Usage" />}>
         {trigger ?? "Usage"}
       </PopoverTrigger>
-      <PopoverPopup width="lg">
-        <div className="flex flex-col gap-3">
+      <PopoverPopup width="xl" side="top" align="start" sideOffset={8}>
+        <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
-            <PopoverTitle>Usage</PopoverTitle>
+            <PopoverTitle>Quick usage</PopoverTitle>
             <span className="ms-auto text-xs text-muted-foreground tabular-nums">
               {updated ?? ""}
             </span>
@@ -177,9 +266,11 @@ export function QuickUsagePopover({
               variant="ghost"
               size="icon-xs"
               aria-label="Refresh usage"
+              aria-busy={isRefreshing}
+              disabled={isRefreshing}
               onClick={refresh}
             >
-              <RefreshIcon size="xs" />
+              <RefreshIcon size="xs" refreshing={isRefreshing} />
             </Button>
           </div>
 
@@ -188,47 +279,69 @@ export function QuickUsagePopover({
           ) : (
             <>
               <div className="flex flex-wrap gap-1.5" role="group" aria-label="Providers">
-                {providers.map((provider) => (
-                  <button
-                    key={provider.kind}
-                    type="button"
-                    aria-pressed={selected?.kind === provider.kind}
-                    onClick={() => {
-                      setSelectedProvider(provider.kind);
-                    }}
-                    className="rounded-full border border-input px-2.5 py-1 text-xs font-medium data-pressed:bg-accent"
-                    data-pressed={selected?.kind === provider.kind ? true : undefined}
-                  >
-                    {PROVIDER_PRESENTATION[provider.kind].label}
-                  </button>
+                {providers.map((provider) => {
+                  const isSelected = selected?.kind === provider.kind;
+                  return (
+                    <button
+                      key={provider.kind}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setSelectedProvider(provider.kind);
+                      }}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+                        isSelected
+                          ? "border-primary/40 bg-primary/12 text-primary"
+                          : "border-input bg-muted/50 text-foreground hover:bg-accent"
+                      }`}
+                    >
+                      {PROVIDER_PRESENTATION[provider.kind].label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div aria-label="Usage windows" className="flex flex-col gap-3">
+                {selected?.accounts.map((account) => (
+                  <section key={account.key} className="flex flex-col gap-1.5">
+                    {selected.accounts.length > 1 ? (
+                      <p className="truncate text-xs font-medium text-muted-foreground">
+                        {account.label}
+                      </p>
+                    ) : null}
+                    {account.windows.length > 0 ? (
+                      <LimitWindows
+                        driver={selected.driver}
+                        accentColor={account.accentColor}
+                        windows={account.windows}
+                        now={now}
+                        stacked
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        {account.notice ?? "No usage limits reported yet."}
+                      </p>
+                    )}
+                  </section>
                 ))}
               </div>
 
-              <div aria-label="Usage windows" className="flex flex-col gap-1">
-                {selected ? (
-                  <LimitWindows
-                    driver={selected.driver}
-                    windows={selected.windows}
-                    now={now}
-                    compact
-                  />
-                ) : null}
-              </div>
-
               {todaySummary ? (
-                <p className="text-xs text-muted-foreground tabular-nums">
-                  Spent today: {formatUsd(todaySummary.todayCostUsd)} / pace{" "}
-                  {formatUsd(todaySummary.paceUsd)}
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2">
+                  <div className="min-w-0 text-xs tabular-nums">
+                    <p className="font-medium text-foreground">Spent today</p>
+                    <p className="truncate text-muted-foreground">
+                      {formatUsd(todaySummary.todayCostUsd)} spent ·{" "}
+                      {formatUsd(todaySummary.paceUsd)} pace
+                    </p>
+                  </div>
                   {todaySummary.deltaPercent === null ? null : (
-                    <>
-                      {" "}
-                      ▓▓▓▓▓▓
-                      {todaySummary.deltaPercent <= 0
-                        ? ` (${Math.abs(Math.round(todaySummary.deltaPercent))}% under)`
-                        : ` (${Math.round(todaySummary.deltaPercent)}% over)`}
-                    </>
+                    <span className="shrink-0 rounded-full border border-border px-2 py-1 text-2xs font-medium tabular-nums text-muted-foreground">
+                      {Math.abs(Math.round(todaySummary.deltaPercent))}%{" "}
+                      {todaySummary.deltaPercent <= 0 ? "under" : "over"} pace
+                    </span>
                   )}
-                </p>
+                </div>
               ) : null}
 
               <div className="flex justify-end">

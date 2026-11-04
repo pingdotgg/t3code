@@ -17,6 +17,7 @@ import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runti
 const presentationsState = vi.hoisted(() => ({
   value: new Map() as ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
 }));
+const refreshCommand = vi.hoisted(() => ({ action: vi.fn() }));
 
 vi.mock(import("../../state/presentation"), async (original) => ({
   ...(await original()),
@@ -27,7 +28,7 @@ vi.mock(import("../../state/presentation"), async (original) => ({
 }));
 
 vi.mock(import("../../state/use-atom-command"), () => ({
-  useAtomCommand: (() => Promise.resolve({ _tag: "Success", value: {} })) as never,
+  useAtomCommand: (() => refreshCommand.action) as never,
 }));
 
 const checkedAt = "2026-10-25T16:00:00.000Z";
@@ -73,8 +74,20 @@ function provider(
   } as unknown as ServerProvider;
 }
 
+function unavailableProvider(): ServerProvider {
+  return {
+    ...provider("cursor", { session: 0, weekly: 0 }),
+    usageLimits: {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed", message: "Could not read limits." },
+    },
+  } as unknown as ServerProvider;
+}
+
 function setup(presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>) {
   presentationsState.value = presentations;
+  refreshCommand.action.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   const registry = AtomRegistry.make();
   return { registry };
 }
@@ -113,6 +126,7 @@ describe("QuickUsagePopover", () => {
     const presentations = envPresentations([
       provider("codex", { session: 22, weekly: 42 }),
       provider("claudeAgent", { session: 58, weekly: 47 }),
+      unavailableProvider(),
     ]);
     await using screen = await render(view(presentations));
 
@@ -124,6 +138,9 @@ describe("QuickUsagePopover", () => {
     await expect
       .element(page.getByRole("button", { name: "Claude Code", pressed: true }))
       .toBeVisible();
+    await expect.element(page.getByText("Session", { exact: true })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Cursor" }));
+    await expect.element(page.getByText("Could not read limits.")).toBeVisible();
   });
 
   it("clicking Codex swaps windows to Codex", async () => {
@@ -146,5 +163,30 @@ describe("QuickUsagePopover", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
     await expect.element(page.getByText("No usage limits reported yet.")).toBeVisible();
+  });
+
+  it("shows refresh progress while refreshing connected provider limits", async () => {
+    const presentations = envPresentations([provider("codex", { session: 22, weekly: 42 })]);
+    let finishRefresh: (() => void) | undefined;
+    const element = view(presentations);
+    refreshCommand.action.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = () => resolve({ _tag: "Success", value: {} });
+        }),
+    );
+    await using screen = await render(element);
+
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    const refreshButton = page.getByRole("button", { name: "Refresh usage" });
+    await userEvent.click(refreshButton);
+    await expect.element(refreshButton).toBeDisabled();
+    expect(refreshCommand.action).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: {},
+    });
+
+    finishRefresh?.();
+    await expect.element(refreshButton).not.toBeDisabled();
   });
 });
