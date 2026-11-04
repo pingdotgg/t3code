@@ -28,6 +28,12 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
   "projectScriptOverrides",
 ]);
 
+/**
+ * Startup reads OTLP endpoints from the settings file before the policy loads, and the user's
+ * OTLP environment variables outrank them, so a managed value would look enforced without being.
+ */
+const ENVIRONMENT_OVERRIDDEN_KEYS: ReadonlySet<string> = new Set(["observability"]);
+
 /** Legacy settings the server derives from another on every write; manage that one instead. */
 const DERIVED_FROM: ReadonlyMap<string, string> = new Map([
   ["compactIdleThreads", "idleCompaction"],
@@ -252,6 +258,12 @@ export function makeManagedSettings(
     }
     if (!(head in ServerSettings.fields) || UNMANAGEABLE_KEYS.has(head)) {
       return { _tag: "Invalid", reason: `"${path}" is not a setting this version can manage` };
+    }
+    if (ENVIRONMENT_OVERRIDDEN_KEYS.has(head)) {
+      return {
+        _tag: "Invalid",
+        reason: `"${path}" comes from each user's environment and settings file at startup, which a policy cannot override`,
+      };
     }
     const source = DERIVED_FROM.get(head);
     if (source !== undefined) {
