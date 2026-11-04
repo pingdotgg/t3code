@@ -1,4 +1,6 @@
+import type { CodeViewHandle } from "@pierre/diffs/react";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
@@ -30,26 +32,32 @@ function copy(): string {
 
 describe("StyledDiffCodeView", () => {
   it("copies every line of a file after select all, including rows the virtualizer dropped", async () => {
-    await using screen = await render(
+    const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
+    await using _screen = await render(
       <StyledDiffCodeView
+        viewerRef={viewerRef}
         style={{ height: 300, overflow: "auto" }}
         items={[{ id: "big", type: "diff", fileDiff }]}
       />,
     );
-    const root = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    const root = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element.shadowRoot;
     await vi.waitFor(() => expect(root()?.querySelector("[data-line]")).toBeTruthy());
     const rows = root()!.querySelectorAll("[data-line]");
     expect(rows.length).toBeLessThan(LINE_COUNT);
 
     rows[1]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
     const selectAll = new KeyboardEvent("keydown", {
-      key: "a",
+      key: "ф",
+      code: "KeyA",
       metaKey: true,
       ctrlKey: true,
       bubbles: true,
       cancelable: true,
     });
     document.body.dispatchEvent(selectAll);
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "с", code: "KeyC", metaKey: true, bubbles: true }),
+    );
 
     expect(selectAll.defaultPrevented).toBe(true);
     expect(copy()).toBe(lines.join("\n"));

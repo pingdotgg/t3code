@@ -6,7 +6,7 @@ import { buildDiffFileText } from "~/reviewCommentContext";
 
 function isSelectAll(event: KeyboardEvent): boolean {
   return (
-    event.key.toLowerCase() === "a" &&
+    (event.key.toLowerCase() === "a" || event.code === "KeyA") &&
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
     !event.shiftKey
@@ -14,7 +14,9 @@ function isSelectAll(event: KeyboardEvent): boolean {
 }
 
 function isCopy(event: KeyboardEvent): boolean {
-  return event.key.toLowerCase() === "c" && (event.metaKey || event.ctrlKey);
+  return (
+    (event.key.toLowerCase() === "c" || event.code === "KeyC") && (event.metaKey || event.ctrlKey)
+  );
 }
 
 const MODIFIER_KEYS = new Set(["Meta", "Control", "Shift", "Alt"]);
