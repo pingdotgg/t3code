@@ -13,6 +13,7 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeReferenceCandidatesJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
@@ -1230,5 +1231,101 @@ describe("decodeMergeMessagesJson", () => {
     );
 
     expect(Result.isFailure(decoded)).toBe(true);
+  });
+});
+
+describe("decodeMergeRequestWatchFingerprintJson", () => {
+  const pipeline = (status: string, downstream: string, failed = 0) => ({
+    id: "gid://gitlab/Ci::Pipeline/9",
+    status,
+    succeeded: { count: 3 },
+    failed: { count: failed },
+    stopped: { count: 0 },
+    jobs: {
+      nodes: [
+        {
+          name: "deploy",
+          status,
+          downstreamPipeline: { id: "gid://gitlab/Ci::Pipeline/10", status: downstream },
+        },
+      ],
+    },
+  });
+  const edit = (at: string, resolved = false) => ({
+    lastEditedAt: at,
+    lastEditedBy: { username: "reviewer" },
+    resolved,
+  });
+  const read = (overrides: Record<string, unknown>) =>
+    expectSuccess(
+      decodeMergeRequestWatchFingerprintJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequest: {
+                state: "opened",
+                mergeStatusEnum: "CAN_BE_MERGED",
+                conflicts: false,
+                diffHeadSha: "a".repeat(40),
+                userPermissions: { updateMergeRequest: true },
+                headPipeline: pipeline("RUNNING", "RUNNING"),
+                userNotesCount: 2,
+                notes: {
+                  nodes: [
+                    edit("2026-07-02T00:00:00Z"),
+                    { lastEditedAt: null, lastEditedBy: null, resolved: null },
+                    edit("2026-07-01T00:00:00Z"),
+                  ],
+                },
+                ...overrides,
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+  // A remarks change makes the watch reread every comment, so pipeline progress must not touch it.
+  it("moves pipeline progress into status and comment edits into remarks", () => {
+    const base = read({});
+    const passed = read({ headPipeline: pipeline("SUCCESS", "RUNNING") });
+    const downstreamPassed = read({ headPipeline: pipeline("SUCCESS", "SUCCESS") });
+    const jobFailed = read({ headPipeline: pipeline("RUNNING", "RUNNING", 1) });
+    const edited = read({ notes: { nodes: [edit("2026-07-03T00:00:00Z")] } });
+    // Resolving a thread restamps its notes without an edit, so it must not reread comments.
+    const resolved = read({
+      notes: { nodes: [edit("2026-07-02T00:00:00Z"), edit("2026-07-03T00:00:00Z", true)] },
+    });
+
+    expect(base?.remarks).toBe("2 2026-07-02T00:00:00Z");
+    expect(passed?.status).not.toBe(base?.status);
+    expect(downstreamPassed?.status).not.toBe(passed?.status);
+    expect(jobFailed?.status).not.toBe(base?.status);
+    expect(passed?.remarks).toBe(base?.remarks);
+    expect(edited?.status).toBe(base?.status);
+    expect(edited?.remarks).not.toBe(base?.remarks);
+    expect(resolved?.remarks).toBe(base?.remarks);
+    expect(read({ userNotesCount: 3 })?.remarks).not.toBe(base?.remarks);
+  });
+
+  // Only the REST read asks GitLab to recheck mergeability, and only for viewers who can update.
+  it("covers the detail read once merge status has settled or no read could settle it", () => {
+    expect(read({})?.coversDetail).toBe(true);
+    expect(read({ mergeStatusEnum: "UNCHECKED" })?.coversDetail).toBe(false);
+    expect(read({ mergeStatusEnum: "CHECKING", conflicts: true })?.coversDetail).toBe(true);
+    expect(
+      read({ mergeStatusEnum: "UNCHECKED", userPermissions: { updateMergeRequest: false } })
+        ?.coversDetail,
+    ).toBe(true);
+  });
+
+  it("answers null when GitLab returned no merge request", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestWatchFingerprintJson(
+          JSON.stringify({ data: { project: { mergeRequest: null } } }),
+        ),
+      ),
+    ).toBeNull();
   });
 });

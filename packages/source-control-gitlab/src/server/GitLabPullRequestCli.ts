@@ -56,6 +56,7 @@ import {
   decodeMergeRequestGraphqlListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeMergeRequestStatsJson,
   decodeMutationErrorsJson,
   decodeNotesJson,
@@ -75,6 +76,7 @@ import {
   LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+  MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   LIST_ITEM_GRAPHQL_FIELDS,
@@ -89,6 +91,7 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
+  ProviderChangeRequestWatchFingerprint,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -445,6 +448,13 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<ProviderFileStats, GitLabPullRequestCliError>;
+
+    readonly getMergeRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -2300,6 +2310,19 @@ export const make = Effect.gen(function* () {
         query: MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
         variables: { fullPath: input.repository, iid: String(input.number) },
         decode: decodeMergeRequestFileStatsJson,
+      }),
+    ),
+
+    getMergeRequestWatchFingerprint: Effect.fn(
+      "GitLabPullRequestCli.getMergeRequestWatchFingerprint",
+    )((input) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getMergeRequestWatchFingerprint",
+        query: MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeMergeRequestWatchFingerprintJson,
       }),
     ),
 
