@@ -84,6 +84,8 @@ capture workspace state without adding commits to the user's branch. A revert mu
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
 
+Checkpoints cover only the thread's own workspace. Repository worktrees attached to a thread (`thread.repoWorktrees`) are checkouts of other repositories, possibly shared with other threads or the user, so diffs and restore never read or rewrite them. Storage cleanup treats an attached one as in use and never removes it.
+
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
 and inactivity settings without a connected client. Merge notifications invalidate cached PR state

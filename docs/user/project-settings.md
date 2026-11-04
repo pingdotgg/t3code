@@ -131,6 +131,20 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Repository worktrees
+
+Some projects are a folder that holds several Git repositories, such as a team folder with a service, a client, and shared libraries. Select that project and turn on **Repository worktrees** in **Settings → General** (on mobile, **Settings → New threads**). It is off by default. Threads in the project stay in the folder, and the agent creates or reuses a worktree for each repository the work needs, including ones it discovers partway through a task. The setting applies from the agent's next turn.
+
+Each worktree goes in the worktree location below, named after the repository and branch, such as `~/worktrees/service/feature-login`. If an unrelated folder already sits at that path, the new worktree gets a numbered name instead. When a worktree of the same repository already has the branch checked out, the agent reuses it as it is, uncommitted edits included. A branch that exists without a worktree is continued only when the agent asks for that on purpose, so new work gets its own branch. The branch checked out in your own copy of a repository is never taken over, and that copy is left as it is.
+
+Use **Repository worktree guidance** for anything agents should know, such as which branch each repository's work starts from. T3 Code gives agents the rules and this guidance itself, so no extra skill or instruction file is needed.
+
+The thread's details panel (the Git sheet on mobile) lists its repository worktrees with their branch and path. Detach one there to stop tracking it; the folder, branch, and edits stay. Checkpoints, diffs, and restore cover only the project folder, not repository worktrees, so review and commit those with Git in each worktree. Storage cleanup never removes a repository worktree while a thread has it attached, and keeps a thread's own worktree while another thread works in it. After you detach one or delete its thread, cleanup results list it as a folder no thread uses, for you to remove when you want.
+
+Repository worktrees sit outside the project folder, so in permission modes that limit edits to the workspace, the provider may ask before writing there.
+
+To change a submodule, the agent makes a separate worktree for the submodule's own repository, such as `service/framework`, and commits there. It then points the parent worktree's submodule at that commit on a detached HEAD and stages the change for you or the agent to commit in the parent worktree. Local commits reach the parent worktree's submodule through a local fetch: nothing is pushed and no remote or URL changes. Push the submodule's branch before the parent's so others can fetch the commit.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
