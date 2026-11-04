@@ -1,4 +1,7 @@
-import { usageResponseCheckedAt } from "@t3tools/provider-core/server/usageLimits";
+import {
+  usageResponseCheckedAt,
+  UsageAccountIdentity,
+} from "@t3tools/provider-core/server/usageLimits";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -306,6 +309,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                 sampleTimes.push(sampleAt || DateTime.formatIso(DateTime.makeUnsafe(requestedAt)));
               },
             ).pipe(
+              Effect.provideService(UsageAccountIdentity, `antigravity:${account}`),
               Effect.flatMap((response) => parse(response, requestedAt)),
               Effect.orElseSucceed(() => []),
             );

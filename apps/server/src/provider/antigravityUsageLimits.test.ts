@@ -10,6 +10,8 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+
 import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
 
 const summary = {
@@ -58,6 +60,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
     summaryStatus?: number;
+    usageRetryAfter?: string;
+    rotateAccessToken?: boolean;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
     tokenStatus?: number;
@@ -85,6 +89,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
   const requests: Array<{ url: string; body: string }> = [];
+  let tokenNumber = 0;
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
       const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
@@ -93,16 +98,22 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
       requests.push({ url: request.url, body });
       if (request.url.endsWith("/token")) {
+        tokenNumber++;
         expect(new URLSearchParams(body).get("grant_type")).toBe("refresh_token");
         return HttpClientResponse.fromWeb(
           request,
           Response.json(
-            { access_token: "access-token", expires_in: 3600 },
+            {
+              access_token: options.rotateAccessToken ? `access-${tokenNumber}` : "access-token",
+              expires_in: 3600,
+            },
             { status: options.tokenStatus ?? 200 },
           ),
         );
       }
-      expect(request.headers.authorization).toBe("Bearer access-token");
+      expect(request.headers.authorization).toBe(
+        options.rotateAccessToken ? `Bearer access-${tokenNumber}` : "Bearer access-token",
+      );
       if (request.url.endsWith("/userinfo")) {
         return HttpClientResponse.fromWeb(
           request,
@@ -118,6 +129,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         request.url.endsWith(":retrieveUserQuotaSummary")
           ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
               status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
+              headers: options.usageRetryAfter ? { "retry-after": options.usageRetryAfter } : {},
             })
           : Response.json(options.models ?? { models: {} }),
       );
@@ -132,11 +144,49 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-  }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+  }).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      options.usageRetryAfter ? yield* makeUsageHttpClient(http) : http,
+    ),
+  );
   return { ...usage, requests, writeToken, tokenPath };
 });
 
 describe("Antigravity subscription limits", () => {
+  it.effect("retains account cooldowns when an expiring OAuth access token is renewed", () =>
+    Effect.gen(function* () {
+      const options = {
+        rotateAccessToken: true,
+        usageRetryAfter: "600",
+        summaryStatus: 200,
+        userId: "google-account",
+      };
+      const { probe, requests, writeToken } = yield* fixture(options);
+      yield* probe;
+      yield* TestClock.adjust("55 minutes");
+      options.summaryStatus = 429;
+      yield* probe;
+      const quotaCalls = () => requests.filter(({ url }) => url.includes("/v1internal:")).length;
+      expect(quotaCalls()).toBe(4);
+      yield* TestClock.adjust("5 minutes");
+      yield* probe;
+      expect(requests.filter(({ url }) => url.endsWith("/token"))).toHaveLength(2);
+      expect(quotaCalls()).toBe(4);
+      options.userId = "another-google-account";
+      yield* writeToken("another-refresh-token");
+      yield* probe;
+      expect(quotaCalls()).toBe(6);
+      options.userId = "google-account";
+      yield* writeToken("refresh-a");
+      yield* probe;
+      expect(quotaCalls()).toBe(6);
+      yield* TestClock.adjust("5 minutes");
+      yield* probe;
+      expect(quotaCalls()).toBe(8);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // Oracle: the 10:16 UTC payload and its narrow Workaround rule.
   it.effect("omits rolling resets for untouched summary buckets and keeps used Gemini resets", () =>
     Effect.gen(function* () {

@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
@@ -17,6 +18,11 @@ export function usageResponseCheckedAt(
 ) {
   return sampleTimes.get(response) ?? fallback;
 }
+
+export const UsageAccountIdentity = Context.Reference<string | undefined>(
+  "t3/provider/UsageAccountIdentity",
+  { defaultValue: () => undefined },
+);
 
 const TTL_MS = 5 * 60_000;
 
@@ -69,9 +75,10 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
     const cachedClient = HttpClient.transform(client, (read, request) => {
       if (!isUsageUrl(request.url)) return read;
       return Effect.gen(function* () {
+        const identity = yield* UsageAccountIdentity;
         const accountKey = encodeKey([
           new URL(request.url).origin,
-          request.headers.authorization ?? "",
+          identity === undefined ? (request.headers.authorization ?? "") : ["account", identity],
         ]);
         let account = accounts.get(accountKey);
         if (!account) {
@@ -81,6 +88,7 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
         const state = account;
         const key = encodeKey([
           accountKey,
+          request.headers.authorization ?? "",
           request.method,
           request.url,
           request.urlParams,
