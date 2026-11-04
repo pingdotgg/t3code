@@ -124,6 +124,61 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
     }),
   );
   it.effect.each([
+    { desktopAppUpdate: false, advertised: false },
+    { desktopAppUpdate: true, advertised: true },
+  ])(
+    "advertises desktop app updates only when the desktop can update (desktopAppUpdate: $desktopAppUpdate)",
+    ({ desktopAppUpdate, advertised }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped();
+        const config = yield* makeServerConfig(baseDir);
+        yield* fs.makeDirectory(config.stateDir, { recursive: true });
+        const descriptor = yield* Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(
+                ServerConfig.layer({
+                  ...config,
+                  mode: "desktop",
+                  desktopTelemetryControlFd: 5,
+                  desktopAppUpdate,
+                }),
+              ),
+            ),
+          ),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+        expect(descriptor.capabilities.serverSelfUpdate).toBe("desktop-managed");
+        expect(
+          {
+            desktopAppUpdate: descriptor.capabilities.desktopAppUpdate,
+            desktopAppChannelSwitch: descriptor.capabilities.desktopAppChannelSwitch,
+            serverSelfUpdateProgress: descriptor.capabilities.serverSelfUpdateProgress,
+          },
+          advertised
+            ? "desktop can update but desktopAppUpdate is not advertised"
+            : "advertises desktopAppUpdate although the desktop cannot update",
+        ).toEqual(
+          advertised
+            ? {
+                desktopAppUpdate: true,
+                desktopAppChannelSwitch: true,
+                serverSelfUpdateProgress: true,
+              }
+            : {
+                desktopAppUpdate: undefined,
+                desktopAppChannelSwitch: undefined,
+                serverSelfUpdateProgress: undefined,
+              },
+        );
+      }),
+  );
+  it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },
     { name: "whitespace-only", content: " \t\n" },
