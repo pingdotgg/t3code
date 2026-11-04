@@ -323,6 +323,10 @@
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
     },
+    "./meshFiles": {
+      "types": "./src/meshFiles.ts",
+      "import": "./src/meshFiles.ts"
+    },
     "./imageDimensions": {
       "types": "./src/imageDimensions.ts",
       "import": "./src/imageDimensions.ts"
