@@ -13,6 +13,7 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -37,6 +38,7 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -359,6 +361,52 @@ describe("device setup consent", () => {
         detail: startupError.message,
       });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      name: "a Windows host",
+      stderr: "private diagnostics",
+      expected:
+        "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+    },
+    {
+      name: "missing Node on a Windows host with a POSIX shell",
+      stderr: "private diagnostics\nNode is missing from the non-interactive SSH PATH",
+      expected:
+        "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+    },
+  ])(
+    "reports SSH probe failure on $name through readiness and host status",
+    ({ stderr, expected }) =>
+      Effect.gen(function* () {
+        const failure = new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step: "probe",
+          cause: new SshDeviceHost.SshWindowsHostError({
+            cause: new SshCommandError({
+              command: ["ssh", "private arguments"],
+              exitCode: 1,
+              stderr,
+              message: "private diagnostics",
+            }),
+          }),
+        });
+        const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* readiness.pipe(Effect.flip);
+          expect(error).toMatchObject({ reason: expected, cause: failure });
+          expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+            status: "failed",
+            detail: expected,
+          });
+        }
+      }).pipe(Effect.scoped),
   );
 
   it.effect("listing and provider startup do not start helpers before consent", () =>
