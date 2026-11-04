@@ -27,6 +27,7 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  queuedOnlyDelegatedTaskRuns,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -799,6 +800,21 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
           runId: subagent.runId,
           subagentId: subagent.id,
         }).pipe(Effect.ignore);
+      }
+      const child = yield* getProjection(subagent.childThreadId);
+      // The child's live turn belongs to another task when this one's turns are all queued.
+      const queued = queuedOnlyDelegatedTaskRuns(child.runs, subagent.id);
+      if (queued.length > 0) {
+        let result = { sequence: 0 };
+        for (const run of queued) {
+          result = yield* dispatch({
+            type: "queued-run.cancel",
+            commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+            threadId: subagent.childThreadId,
+            runId: run.id,
+          });
+        }
+        return result;
       }
       threadId = subagent.childThreadId;
     } else {
