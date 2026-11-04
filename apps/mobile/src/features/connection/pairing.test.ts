@@ -29,6 +29,11 @@ describe("extractPairingUrlFromQrPayload", () => {
         "t3code://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
       ),
     ).toBe("https://remote.example.com/pair#token=pairing-token");
+    expect(
+      extractPairingUrlFromQrPayload(
+        "t3learn://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
+      ),
+    ).toBe("https://remote.example.com/pair#token=pairing-token");
   });
 });
 
