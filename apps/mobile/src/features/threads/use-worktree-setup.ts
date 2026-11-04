@@ -9,7 +9,7 @@ export function useWorktreeSetup(input: {
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   preparing: boolean;
-  /** Reads a worktree thread's last snapshot once; only `preparing` reopens after it. */
+  /** Reads a worktree thread's snapshot until one is held; after that only `preparing` reopens it. */
   hasWorktree: boolean;
   turnStarted: boolean;
   followUpSent: boolean;
