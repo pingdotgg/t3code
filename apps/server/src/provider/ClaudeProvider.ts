@@ -49,10 +49,10 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  claudeReportedModels,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
-  withClaudeReportedModels,
 } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -243,7 +243,6 @@ export type ClaudeCapabilitiesProbe = {
   /** OAuth applies only to firstParty; Bedrock uses external AWS credentials and omits subscription/token fields. */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
-  /** Models Claude Code reports, including gateway-discovered ones. */
   readonly models?: ReadonlyArray<ClaudeModelInfo>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
@@ -322,23 +321,16 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Claude Code's default for `CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS`. */
-const CLAUDE_GATEWAY_DISCOVERY_TIMEOUT_MS = 3_000;
-
 /**
- * How long a probe subprocess must outlive initialization so gateway model
- * discovery can finish. Claude Code reports gateway models from its on-disk
- * cache and refreshes that cache in the background after startup, so aborting
- * right after initialization means a cold config dir never learns them.
+ * With gateway model discovery on, Claude Code refreshes its model cache in the background after
+ * initialization, so the probe subprocess outlives init by Claude Code's discovery timeout.
  */
 function claudeGatewayDiscoveryGraceMs(environment: NodeJS.ProcessEnv): number {
-  const enabled = environment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY?.trim();
-  if (!enabled || enabled === "0" || enabled.toLowerCase() === "false") return 0;
+  const enabled = environment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY?.trim().toLowerCase();
+  if (!enabled || enabled === "0" || enabled === "false") return 0;
   if (!environment.ANTHROPIC_BASE_URL?.trim()) return 0;
   const configured = Number(environment.CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : CLAUDE_GATEWAY_DISCOVERY_TIMEOUT_MS;
+  return Number.isFinite(configured) && configured > 0 ? configured : 3_000;
 }
 
 /** A never-yielding prompt allows local initialization IPC without sending an Anthropic request. */
@@ -349,13 +341,11 @@ const probeClaudeCapabilities = (
   includeUsage = true,
 ) => {
   const abort = new AbortController();
-  let abortGraceMs = 0;
   const abortProbe = Effect.sync(() => {
     if (!abort.signal.aborted) abort.abort();
   });
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-    abortGraceMs = claudeGatewayDiscoveryGraceMs(claudeEnvironment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
@@ -376,11 +366,11 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      return { q, init };
+      return { q, init, graceMs: claudeGatewayDiscoveryGraceMs(claudeEnvironment) };
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.flatMap(({ q, init }) =>
+    Effect.flatMap(({ q, init, graceMs }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         // Only the rate limits are read, so skip the local transcript scan that fills
@@ -417,21 +407,15 @@ const probeClaudeCapabilities = (
           ...(init.models?.length ? { models: init.models } : {}),
           ...(usage ? { usage, usageCheckedAt } : {}),
         } satisfies ClaudeCapabilitiesProbe;
-      }),
-    ),
-    // Return the capabilities right away, but let a gateway discovery that is
-    // still in flight write Claude Code's cache so the next probe reports it.
-    Effect.ensuring(
-      Effect.suspend(() =>
-        abortGraceMs > 0
-          ? Effect.sleep(abortGraceMs).pipe(
-              Effect.andThen(abortProbe),
-              Effect.forkDetach,
-              Effect.asVoid,
-            )
-          : abortProbe,
+      }).pipe(
+        Effect.tap(() =>
+          graceMs > 0
+            ? Effect.sleep(graceMs).pipe(Effect.andThen(abortProbe), Effect.forkDetach)
+            : abortProbe,
+        ),
       ),
     ),
+    Effect.onError(() => abortProbe),
     Effect.tapError((error) =>
       Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
     ),
@@ -605,10 +589,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
   const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(
-      withClaudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
-      parsedVersion,
-    ),
+    [
+      ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+      ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
+    ],
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
