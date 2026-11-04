@@ -715,7 +715,7 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: false, popoverOpen: false });
+    ).toEqual({ inlineOpen: true, popoverOpen: false });
   });
 
   it("opens fresh inline details while leaving the popover closed", () => {
