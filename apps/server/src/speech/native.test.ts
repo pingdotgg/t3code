@@ -3,8 +3,8 @@ import { expect, it } from "vite-plus/test";
 
 import { loadNativeSpeechModel } from "./native.ts";
 
-const fixture = (transcribe: string, maxAudioMs = 0) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
+const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
@@ -14,17 +14,17 @@ const fixtureWithUnrelatedIpcMessage = () =>
     };
   `)}`;
 
-const streamingFixture = (feed: string) =>
+const streamingFixture = (feed: string, supportsVocabulary = false) =>
   `data:text/javascript,${encodeURIComponent(`
   export const TranscribeModel = { load: async () => ({
     capabilities: { supportsStreaming: true },
-    supports: () => false,
+    supports: (feature) => feature === "vocabulary" && ${supportsVocabulary},
     createSession: () => ({
       dispose() {},
       stream: async (opts) => ({
         feed: ${feed},
         finalize: async () => {},
-        text: { full: opts.language ?? "hello world", committed: "hello ", tentative: "world" },
+        text: { full: opts.vocabulary?.join(" / ") ?? opts.language ?? "hello world", committed: "hello ", tentative: "world" },
         reset() {},
       }),
     }),
@@ -43,6 +43,28 @@ it("returns transcription from an isolated process and disposes it", async () =>
     ).toEqual({ text: "0.25" });
   } finally {
     await model.dispose();
+  }
+});
+
+it("probes generic vocabulary support and delivers ordered terms to offline inference", async () => {
+  for (const supported of [false, true]) {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      fixture("async (_pcm, options) => ({ text: JSON.stringify(options) })", 0, supported),
+    );
+    try {
+      expect(model.supportsVocabulary).toBe(supported);
+      const options = {
+        timestamps: "none" as const,
+        language: "en",
+        ...(supported ? { vocabulary: ["T3 Code", "GitHub"] } : {}),
+      };
+      const result = await model.transcribe(new Float32Array([0.25]), options);
+      expect(JSON.parse(result.text)).toEqual(options);
+    } finally {
+      await model.dispose();
+    }
   }
 });
 
@@ -84,6 +106,7 @@ it("returns streaming previews and final text from an isolated process", async (
     new AbortController().signal,
     streamingFixture(
       "async () => ({ revision: 1, committedChanged: true, tentativeChanged: true })",
+      true,
     ),
   );
   try {
@@ -98,6 +121,8 @@ it("returns streaming previews and final text from an isolated process", async (
     await model.reset();
     await model.begin("fr");
     expect(await model.finish()).toBe("fr");
+    await model.begin("fr", ["T3 Code", "GitHub"]);
+    expect(await model.finish()).toBe("T3 Code / GitHub");
   } finally {
     await model.dispose();
   }
