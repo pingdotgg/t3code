@@ -392,6 +392,14 @@ export function resolveThreadPanelPullRequestAction(
     : null;
 }
 
+/** Hold Merge until review activity has loaded; empty fallbacks would look like no feedback. */
+export function gateThreadPanelMergeUntilFeedbackKnown(
+  action: ThreadPanelPullRequestAction | null,
+  feedbackKnown: boolean,
+): ThreadPanelPullRequestAction | null {
+  return action === "merge" && !feedbackKnown ? null : action;
+}
+
 export function describeThreadPanelFixAction(input: {
   readonly failingChecks: boolean;
   readonly hasFeedback: boolean;

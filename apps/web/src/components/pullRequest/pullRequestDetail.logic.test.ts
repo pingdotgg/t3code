@@ -27,6 +27,7 @@ import {
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
   describeThreadPanelFixAction,
+  gateThreadPanelMergeUntilFeedbackKnown,
   hasActionablePullRequestFeedback,
   buildPullRequestReferenceContext,
   buildFixChecksHandoff,
@@ -1461,6 +1462,14 @@ describe("the compact row's single action slot", () => {
     ).toBeNull();
     expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
     expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
+  });
+
+  it("holds Merge until review activity has loaded, and leaves every other action alone", () => {
+    expect(gateThreadPanelMergeUntilFeedbackKnown("merge", false)).toBeNull();
+    expect(gateThreadPanelMergeUntilFeedbackKnown("merge", true)).toBe("merge");
+    expect(gateThreadPanelMergeUntilFeedbackKnown("fix", false)).toBe("fix");
+    expect(gateThreadPanelMergeUntilFeedbackKnown("ready", false)).toBe("ready");
+    expect(gateThreadPanelMergeUntilFeedbackKnown(null, false)).toBeNull();
   });
 });
 

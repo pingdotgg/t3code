@@ -39,6 +39,7 @@ import {
   classifyPullRequestChecks,
   describePullRequestChecks,
   describeThreadPanelFixAction,
+  gateThreadPanelMergeUntilFeedbackKnown,
   hasActionablePullRequestFeedback,
   isPullRequestConflicting,
   resolvePullRequestMergeMethod,
@@ -192,7 +193,10 @@ export function ThreadDetailsPrRow({
   );
   const [confirmingMerge, setConfirmingMerge] = useState(false);
 
-  const rowAction = resolveThreadPanelPullRequestAction(detail, feedback);
+  const rowAction = gateThreadPanelMergeUntilFeedbackKnown(
+    resolveThreadPanelPullRequestAction(detail, feedback),
+    activity !== null,
+  );
   if (confirmingMerge && rowAction !== "merge") {
     setConfirmingMerge(false);
   }
