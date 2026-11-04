@@ -133,7 +133,10 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
     const sessionDirArg = config === undefined ? undefined : piLaunchSessionDir(config.launchArgs);
-    const launchDir = sessionDirArg === undefined ? undefined : expandHomePath(sessionDirArg, home);
+    const launchDir =
+      sessionDirArg === undefined
+        ? undefined
+        : expandHomePath(sessionDirArg, environment.HOME || home);
     // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.
     return [
       ...(launchDir !== undefined && path.isAbsolute(launchDir)

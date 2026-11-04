@@ -1269,12 +1269,19 @@ describe("UsageService", () => {
   it.live("discovers Pi history in its default home and directory overrides", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
-      for (const [agentDir, sessionDir, relativeDir, launchArgs] of [
+      for (const [agentDir, sessionDir, relativeDir, launchArgs, instanceHome] of [
         [undefined, undefined, ".pi/agent/sessions", undefined],
         ["~/custom-pi", undefined, "custom-pi/sessions", undefined],
         ["~/ignored-pi", "~/custom-sessions", "custom-sessions", undefined],
         ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions", undefined],
         ["~/ignored-pi", undefined, "launch-sessions", "--session-dir ~/launch-sessions"],
+        [
+          "~/ignored-pi",
+          undefined,
+          "instance-home /launch-sessions",
+          "--session-dir ~/launch-sessions",
+          "instance-home ",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1323,6 +1330,16 @@ describe("UsageService", () => {
                         [ProviderInstanceId.make("pi")]: {
                           driver: ProviderDriverKind.make("pi"),
                           config: { launchArgs },
+                          environment:
+                            instanceHome === undefined
+                              ? []
+                              : [
+                                  {
+                                    name: "HOME",
+                                    value: NodePath.join(home, instanceHome),
+                                    sensitive: false,
+                                  },
+                                ],
                         },
                       },
                     },
