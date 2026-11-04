@@ -238,6 +238,85 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
   next.scrollIntoView({ block: "nearest" });
 }
 
+function ReasoningSlider({
+  descriptor,
+  value,
+  disabled,
+  onValueChange,
+}: {
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>;
+  value: string;
+  disabled: boolean;
+  onValueChange: (value: string) => void;
+}) {
+  const options = disabled ? descriptor.options : selectableProviderOptionChoices(descriptor);
+  const index = options.findIndex((option) => option.id === value);
+  const option = options[index];
+
+  return (
+    <div className="grid gap-1 px-2 pt-1.5 pb-2">
+      <div className="flex min-h-5 items-center justify-between gap-3">
+        <span className="font-medium text-muted-foreground text-xs">{descriptor.label}</span>
+        <span className="flex items-center gap-1 text-sm">
+          <span>{option?.label ?? value}</span>
+          {option?.isDefault ? (
+            <span className="text-muted-foreground text-xs">Default</span>
+          ) : null}
+        </span>
+      </div>
+      <div
+        className={cn(
+          "relative flex h-7 items-center rounded-full bg-input/55 px-1",
+          disabled && "opacity-64",
+        )}
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-1 left-1 rounded-full bg-ring/40"
+          style={{ width: `calc(1rem + (100% - 1.5rem) * ${index / (options.length - 1)})` }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-3 flex justify-between"
+        >
+          {options.map((choice) => (
+            <span key={choice.id} className="z-1 size-1 rounded-full bg-foreground/40" />
+          ))}
+        </div>
+        <input
+          data-effort-row
+          data-effort-level
+          type="range"
+          role="slider"
+          aria-label={descriptor.label}
+          aria-valuetext={`${option?.label ?? value}${option?.isDefault ? " (default)" : ""}`}
+          disabled={disabled}
+          min={0}
+          max={options.length - 1}
+          step={1}
+          value={Math.max(0, index)}
+          onChange={(event) => {
+            const next = options[event.currentTarget.valueAsNumber];
+            if (next) onValueChange(next.id);
+          }}
+          onKeyDown={(event) => {
+            if (["ArrowUp", "ArrowDown"].includes(event.key)) event.preventDefault();
+            if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+              event.stopPropagation();
+            }
+          }}
+          className="relative m-0 h-7 w-full cursor-pointer appearance-none rounded-full bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed [&::-moz-range-thumb]:relative [&::-moz-range-thumb]:z-2 [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-foreground [&::-moz-range-track]:h-7 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-7 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:relative [&::-webkit-slider-thumb]:z-2 [&::-webkit-slider-thumb]:mt-1.5 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-foreground"
+        />
+      </div>
+      {option?.description ? (
+        <div className="max-w-64 text-pretty text-muted-foreground/80 text-xs">
+          {option.description}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function EffortLevels(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
   const { effort, others } = columnControls(
@@ -300,23 +379,29 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
-    return (
-      <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
-        {([true, false] as const).map((value) => (
-          <ColumnRow
-            key={String(value)}
-            label={value ? "On" : "Off"}
-            selected={(control.descriptor.currentValue === true) === value}
-            tabStop={(control.descriptor.currentValue === true) === value}
-            onPick={() => traits.changeBoolean(descriptor.id, value)}
-          />
-        ))}
-      </div>
-    );
+    return <OptionSwitchRow descriptor={control.descriptor} traits={traits} tabStop level />;
   }
   const { locked } = props;
   const value = traits.selectValue(control.descriptor);
   const choices = selectableProviderOptionChoices(control.descriptor);
+  const sliderChoices = locked ? control.descriptor.options : choices;
+  if (sliderChoices.length > 1 && sliderChoices.some((option) => option.id === value)) {
+    return (
+      <>
+        {locked ? (
+          <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+            {ULTRATHINK_IN_BODY_NOTE}
+          </div>
+        ) : null}
+        <ReasoningSlider
+          descriptor={control.descriptor}
+          value={value}
+          disabled={locked}
+          onValueChange={(next) => traits.changeSelect(control.descriptor, next)}
+        />
+      </>
+    );
+  }
   // An "Ultrathink:" prefix selects a level the column does not offer.
   const shown = choices.some((option) => option.id === value);
   return (
@@ -462,6 +547,7 @@ function OptionSwitchRow(props: {
   descriptor: BooleanDescriptor;
   traits: TraitsSelection;
   tabStop: boolean;
+  level?: boolean;
 }) {
   const { descriptor, traits } = props;
   const checked = descriptor.currentValue === true;
@@ -474,6 +560,7 @@ function OptionSwitchRow(props: {
         onCheckedChange={(next) => traits.changeBoolean(descriptor.id, next)}
         aria-label={descriptor.label}
         data-effort-row
+        data-effort-level={props.level || undefined}
         tabIndex={props.tabStop ? 0 : -1}
       />
     </label>
