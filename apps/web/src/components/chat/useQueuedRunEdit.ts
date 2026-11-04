@@ -41,6 +41,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { buildMessageContext } from "../../lib/composerContextRecords";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -240,7 +241,8 @@ export function useQueuedRunEdit(input: {
     const context = serverProjection?.messages.find(
       (message) => message.id === request.messageId,
     )?.context;
-    const records = context?.records ?? [];
+    const referenced = new Set(collectInlineContextIds(text));
+    const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, text);
