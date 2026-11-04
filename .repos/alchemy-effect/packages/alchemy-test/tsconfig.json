@@ -10,5 +10,10 @@
     "moduleResolution": "Bundler",
     "target": "ESNext",
     "lib": ["ESNext"]
-  }
+  },
+  "references": [
+    {
+      "path": "../alchemy/tsconfig.json"
+    }
+  ]
 }
