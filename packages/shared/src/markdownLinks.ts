@@ -37,6 +37,7 @@ const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+const ELIDED_SEGMENT_PATTERN = /^(?:\.{3,}|\u2026)$/;
 
 const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
@@ -179,12 +180,21 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
 
+  const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+  // Agents elide segments (`/tmp/.../notes.md`); that names no file the user can open.
+  if (
+    withoutPosition
+      .split(PATH_SEPARATOR_PATTERN)
+      .some((segment) => ELIDED_SEGMENT_PATTERN.test(segment))
+  ) {
+    return null;
+  }
+
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
     candidate.startsWith("/") ||
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
-    const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
     // Markdown destinations accept `patches/`. Inline code still needs a
     // file-shaped final segment, so a trailing slash stays plain code.
     if (withoutPosition.endsWith("/")) return null;
