@@ -2948,6 +2948,223 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+  describe("the model of a scheduled task", () => {
+    const projectId = ProjectId.make("project:scheduled-model");
+    const existing: ScheduledTask = {
+      id: ScheduledTaskId.make("scheduled-task:model"),
+      title: "Nightly",
+      prompt: "Check the build",
+      enabled: false,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+      projectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: {
+        instanceId: codexInstanceId,
+        model: "gpt-5",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    };
+    const client: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:scheduled-model"),
+      requestNamespace: "client:scheduled-model",
+      thread: undefined,
+      client: { sessionId: "scheduled-model", label: "Claude Code", access: "approval-required" },
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    const codex: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+      }),
+      models: ["gpt-5", "gpt-5-mini"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+            {
+              id: "serviceTier",
+              label: "Speed",
+              type: "select",
+              options: [
+                { id: "default", label: "Default" },
+                { id: "priority", label: "Fast" },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+    const service = (saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>) =>
+      OrchestratorMcpService.layer.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            resolveDefaultBranchName: () => Effect.succeed("main"),
+            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            ServerSettings.layerTest(),
+            providerRegistryLayer([codex]),
+            adapterRegistryLayer([codexInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({
+                  id: projectId,
+                  workspaceRoot: "/repo/scheduled-model",
+                  defaultModelSelection: existing.modelSelection,
+                } as never),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+              list: () => Effect.succeed({ tasks: [existing] }),
+              upsert: (input) =>
+                Ref.update(saved, (selections) => [...selections, input.modelSelection]).pipe(
+                  Effect.as({ task: { ...existing, modelSelection: input.modelSelection } }),
+                ),
+            }),
+          ),
+        ),
+      );
+    const savedSelections = <E>(
+      run: (mcp: OrchestratorMcpService.OrchestratorMcpServiceShape) => Effect.Effect<unknown, E>,
+    ) =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+        );
+        yield* run(mcp);
+        return yield* Ref.get(saved);
+      });
+
+    it.effect("saves a new task with the target's model and options", () =>
+      Effect.gen(function* () {
+        const saved = yield* savedSelections((mcp) =>
+          mcp.scheduleTask(client, {
+            projectId,
+            prompt: "Check the build",
+            schedule: { type: "interval", everyMs: 3_600_000 },
+            enabled: false,
+            target: {
+              model: "gpt-5-mini",
+              options: [{ id: "serviceTier", value: "priority" }],
+            },
+          }),
+        );
+        assert.deepEqual(saved, [
+          {
+            instanceId: codexInstanceId,
+            model: "gpt-5-mini",
+            options: [{ id: "serviceTier", value: "priority" }],
+          },
+        ]);
+      }),
+    );
+
+    it.effect("merges an update's options into the stored selection", () =>
+      Effect.gen(function* () {
+        const saved = yield* savedSelections((mcp) =>
+          mcp.updateScheduledTask(client, {
+            scheduledTaskId: existing.id,
+            target: { options: [{ id: "serviceTier", value: "priority" }] },
+          }),
+        );
+        assert.deepEqual(saved, [
+          {
+            instanceId: codexInstanceId,
+            model: "gpt-5",
+            options: [
+              { id: "reasoningEffort", value: "low" },
+              { id: "serviceTier", value: "priority" },
+            ],
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps the stored selection when an update has no target", () =>
+      Effect.gen(function* () {
+        const saved = yield* savedSelections((mcp) =>
+          mcp.updateScheduledTask(client, { scheduledTaskId: existing.id, prompt: "Check again" }),
+        );
+        assert.deepEqual(saved, [existing.modelSelection]);
+      }),
+    );
+
+    it.effect("reports the saved model and options", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+        );
+        const listed = yield* mcp.listScheduledTasks(client, { projectId });
+        assert.deepEqual(listed.tasks[0]?.target, {
+          providerInstanceId: codexInstanceId,
+          model: "gpt-5",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        });
+      }),
+    );
+
+    it.effect.each([
+      { name: "an unknown model", target: { model: "gpt-0" }, code: "model_unavailable" },
+      {
+        name: "an unknown option value",
+        target: { options: [{ id: "serviceTier", value: "turbo" }] },
+        code: "invalid_request",
+      },
+    ] as const)("refuses $name and saves nothing", ({ target, code }) =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved)),
+        );
+        const created = yield* mcp
+          .scheduleTask(client, {
+            projectId,
+            prompt: "Check the build",
+            schedule: { type: "interval", everyMs: 3_600_000 },
+            target,
+          })
+          .pipe(Effect.flip);
+        const updated = yield* mcp
+          .updateScheduledTask(client, { scheduledTaskId: existing.id, target })
+          .pipe(Effect.flip);
+        assert.deepEqual([created.code, updated.code], [code, code]);
+        assert.deepEqual(yield* Ref.get(saved), []);
+      }),
+    );
+  });
   it.effect(
     "reports the child run's selection after a restart and the thread selection before launch",
     () =>
