@@ -2346,6 +2346,11 @@ describe("parseAgentSessionTranscript", () => {
           sessionId: "claude-session",
           message: { role: "user", content: `${notification}\nCompare with\n${notification}` },
         }),
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content: "<task-notification>" },
+        }),
       ].join("\n"),
       source: "claudeAgent",
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
@@ -2362,6 +2367,7 @@ describe("parseAgentSessionTranscript", () => {
         { role: "assistant", text: "All tests passed" },
         { role: "user", text: "Why does <task-notification> show up in logs?" },
         { role: "user", text: `${notification}\nCompare with\n${notification}` },
+        { role: "user", text: "<task-notification>" },
       ],
     });
   });

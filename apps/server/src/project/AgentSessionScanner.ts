@@ -293,6 +293,7 @@ function isClaudeTaskNotification(record: DecodedTranscriptRecord): boolean {
   const closingTag = "</task-notification>";
   return (
     text.startsWith("<task-notification>") &&
+    text.endsWith(closingTag) &&
     text.indexOf(closingTag) === text.length - closingTag.length
   );
 }
