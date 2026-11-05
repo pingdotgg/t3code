@@ -124,9 +124,8 @@ function PendingSecretRequestForm(props: {
         <div className="min-w-0 flex-1">
           <Input
             id={inputId}
-            // Password fields prompt to save credentials; this secret is not a login.
-            type="text"
-            className="[-webkit-text-security:disc]"
+            // A CSS-masked text field still exposes its value to screen readers.
+            type="password"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
