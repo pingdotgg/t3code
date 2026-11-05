@@ -34,6 +34,13 @@ it.each([
   {
     type: "message.dispatch",
     text: "!ls",
+    createdBy: "agent",
+    creationSource: "web",
+    terminal: true,
+  },
+  {
+    type: "message.dispatch",
+    text: "!ls",
     createdBy: "user",
     creationSource: "web",
     scheduledTaskId: "task",

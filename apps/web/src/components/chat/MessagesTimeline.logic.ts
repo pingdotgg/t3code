@@ -1529,6 +1529,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
         entry.entry.questionAnswer !== undefined ||
+        workEntryUserShellCommand(entry.entry) !== null ||
         isPendingApproval(entry.entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||

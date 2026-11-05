@@ -370,6 +370,17 @@ export const layer: Layer.Layer<
           .filter((transfer) => transfer.type === "subagent_result")
           .map((transfer) => transfer.id),
       );
+      // A `!` run that settled without a provider turn leaves its history and fork to the next turn.
+      const isSettledShellRun = (runId: RunId | null) =>
+        projection.runs.some(
+          (source) =>
+            source.id === runId &&
+            source.status === "completed" &&
+            projection.messages.some(
+              (message) =>
+                message.id === source.userMessageId && userShellCommand(message) !== null,
+            ),
+        );
       const isPendingForRun = (handoff: OrchestrationV2ContextHandoff, anyProviderThread = false) =>
         handoff.status === "ready" &&
         (handoff.targetRunId === run.id ||
@@ -383,11 +394,12 @@ export const layer: Layer.Layer<
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
-                    projection.messages.some(
+                    (projection.messages.some(
                       (message) =>
                         message.id === source.userMessageId &&
                         (isCompactionCommandMessage(message) || parseGoalCommand(message) !== null),
-                    ))),
+                    ) ||
+                      isSettledShellRun(source.id)))),
             )));
       const isSideChatHandoff = (handoff: OrchestrationV2ContextHandoff) =>
         projection.thread.lineage.sideChat === true &&
@@ -409,7 +421,7 @@ export const layer: Layer.Layer<
         (transfer) =>
           transfer.type === "fork" &&
           transfer.targetThreadId === input.threadId &&
-          transfer.targetRunId === run.id &&
+          (transfer.targetRunId === run.id || isSettledShellRun(transfer.targetRunId)) &&
           transfer.status === "pending" &&
           transfer.resolution === null,
       );
@@ -1644,7 +1656,9 @@ export const layer: Layer.Layer<
         });
       });
       const pendingShells =
-        goalCommand || isCompactionCommandMessage(message)
+        goalCommand ||
+        isCompactionCommandMessage(message) ||
+        (run.restartContinuationOfRunId !== undefined && !noteContinuation)
           ? []
           : yield* shells.pending(input.threadId);
       const shellContext = pendingShells.map(ShellCommandService.shellCommandContext).join("\n\n");

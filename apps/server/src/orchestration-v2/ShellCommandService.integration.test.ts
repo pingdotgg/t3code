@@ -28,6 +28,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ShellCommands from "./ShellCommandService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
@@ -375,8 +376,10 @@ it.effect.each([false, true])(
           status: "running",
           userShell: { backgrounded: true, delivery: "pending" },
         });
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const finished = yield* orchestrator.streamDomainEvents.pipe(
+        const sink = yield* EventSink.EventSinkV2;
+        const afterSequence = yield* sink.latestSequence();
+        const finished = yield* sink.stream({ afterSequence }).pipe(
+          Stream.map((stored) => stored.event),
           Stream.filter((event) =>
             respond
               ? event.type === "message.updated" && event.payload.creationSource === "server"

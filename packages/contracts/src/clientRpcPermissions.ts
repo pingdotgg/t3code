@@ -103,7 +103,7 @@ export function clientRpcRequiredScopes(
       payload.type === "shell-command.stop" ||
       (payload.type === "queued-run.edit" && parseShellCommand(payload.text ?? "") !== null) ||
       (payload.type === "message.dispatch" &&
-        userShellCommand({ ...payload, text: payload.text ?? "" }) !== null)
+        userShellCommand({ ...payload, createdBy: "user", text: payload.text ?? "" }) !== null)
     ) {
       return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
     }

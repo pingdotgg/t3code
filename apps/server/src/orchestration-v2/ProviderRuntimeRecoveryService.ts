@@ -293,9 +293,7 @@ export const make = Effect.gen(function* () {
       const events: Array<OrchestrationV2DomainEvent> = [];
       const respondToShellCommands = yield* settings.getSettings.pipe(
         Effect.map((value) => value.respondToShellCommands),
-        Effect.mapError(
-          (cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
-        ),
+        Effect.orElseSucceed(() => false),
       );
       const cancelledBackgroundWork = new Map<
         ProviderThreadId,

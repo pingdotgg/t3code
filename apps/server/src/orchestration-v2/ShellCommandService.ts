@@ -26,6 +26,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { createTerminalSpawnEnv } from "../terminal/Manager.ts";
 import { defaultShellResolver, resolveShellCandidates } from "../terminal/shell.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
@@ -51,11 +52,10 @@ export function shellCommandContext(item: ShellItem): string {
       stopped = "Stopped before completion.\n";
 
     let output = item.output ?? "";
-    if (
-      (shell.outputTruncated && item.exitCode === 0) ||
-      (item.output === undefined && shell.outputFile !== undefined)
-    ) {
-      output = `Output file: ${shell.outputFile}\n${output.slice(0, 2000)}`;
+    if (shell.outputTruncated || (item.output === undefined && shell.outputFile !== undefined)) {
+      output = `Output file: ${shell.outputFile}\n${
+        shell.outputTruncated && item.exitCode !== 0 ? output : output.slice(0, 2000)
+      }`;
     }
     const duration = (shell.durationSeconds ?? 0).toFixed(4);
     result = `${stopped}Exit code: ${item.exitCode ?? "unknown"}\nDuration: ${duration} seconds\nOutput:\n${output}`;
@@ -99,6 +99,7 @@ const make = Effect.gen(function* () {
   const scope = yield* Scope.Scope;
   const processPlatform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const home = yield* HostProcess.HomeDirectory;
   const commands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -199,7 +200,12 @@ const make = Effect.gen(function* () {
                     ? ["/d", "/s", "/c", item.input]
                     : ["-NoLogo", "-NonInteractive", "-Command", item.input]
                   : ["-lc", item.input],
-                { cwd: item.userShell.cwd, stdin: "ignore", forceKillAfter: "2 seconds" },
+                {
+                  cwd: item.userShell.cwd,
+                  env: createTerminalSpawnEnv(environment, null, processPlatform, home),
+                  stdin: "ignore",
+                  forceKillAfter: "2 seconds",
+                },
               ),
             ),
           ),
