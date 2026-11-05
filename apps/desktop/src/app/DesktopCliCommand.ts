@@ -3,7 +3,6 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -63,17 +62,12 @@ export class DesktopCliCommand extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
-/** @public */
-const WindowsRootConfig = Config.String("SystemRoot").pipe(
-  Config.orElse(() => Config.String("WINDIR")),
-  Config.option,
-);
-
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // Shell discovery patches PATH into the live env after startup; a Config read would be stale.
+  // Read the live env: shell discovery patches PATH after startup, and Windows variable
+  // names are case-insensitive only on process.env, not on Config's copy of it.
   const env = yield* HostProcess.Environment;
   const path = environment.path;
   const windows = environment.platform === "win32";
@@ -114,15 +108,15 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
 
-  const powershell = (env: Record<string, string>) =>
+  const powershell = (overrides: Record<string, string>) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const root = Option.getOrUndefined(yield* WindowsRootConfig);
+        const root = env.SystemRoot ?? env.WINDIR;
         const handle = yield* spawner.spawn(
           ChildProcess.make(
             root ? `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : "powershell.exe",
             ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_USER_PATH_SCRIPT],
-            { stdin: "ignore", stderr: "ignore", env, extendEnv: true },
+            { stdin: "ignore", stderr: "ignore", env: overrides, extendEnv: true },
           ),
         );
         const [stdout, exitCode] = yield* Effect.all(

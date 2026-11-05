@@ -30,7 +30,6 @@ import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Config from "effect/Config";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
@@ -769,9 +768,8 @@ export const make = Effect.gen(function* () {
   const captureDirectory = path.join(environment.stateDir, "snap-shots");
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
   const home = yield* HostProcess.HomeDirectory;
-  const xdgCurrentDesktop = yield* Config.String("XDG_CURRENT_DESKTOP").pipe(
-    Config.withDefault(""),
-  );
+  // Shell discovery can replace XDG_CURRENT_DESKTOP after startup, so read the live env per state.
+  const hostEnv = yield* HostProcess.Environment;
   let shortcutVerified = false;
   const gnomeSetupPaths = {
     bundle: environment.isPackaged
@@ -1625,7 +1623,7 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const linuxDesktop =
             state.mode === "portal"
-              ? xdgCurrentDesktop
+              ? (hostEnv.XDG_CURRENT_DESKTOP ?? "")
                   .toLowerCase()
                   .split(":")
                   .find(

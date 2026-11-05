@@ -7,7 +7,6 @@ import {
   type DesktopSnapShotEvent,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -1922,13 +1921,7 @@ it.effect(
         linuxBackendMock.mockResolvedValue(backend);
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const service = yield* DesktopSnapShot.make.pipe(
-              Effect.provide(
-                ConfigProvider.layer(
-                  ConfigProvider.fromEnv({ env: { XDG_CURRENT_DESKTOP: desktop } }),
-                ),
-              ),
-            );
+            const service = yield* DesktopSnapShot.make;
             yield* service.initialize;
             const state = yield* service.state;
             assert.equal(state.linuxDesktop, desktop.toLowerCase());
