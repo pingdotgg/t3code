@@ -1,3 +1,66 @@
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
+index cdbd633..41a72bc 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
+@@ -25,6 +25,12 @@ public extension KeyboardMovementObserver {
+       name: UIResponder.keyboardWillShowNotification,
+       object: nil
+     )
++    NotificationCenter.default.addObserver(
++      self,
++      selector: #selector(keyboardWillChangeFrame),
++      name: UIResponder.keyboardWillChangeFrameNotification,
++      object: nil
++    )
+   }
+ 
+   @objc func unmount() {
+diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
+index 545a5b2..2e60b85 100644
+--- a/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
++++ b/ios/observers/movement/observer/KeyboardMovementObserver+Listeners.swift
+@@ -9,6 +9,11 @@ extension KeyboardMovementObserver {
+   @objc func keyboardWillAppear(_ notification: Notification) {
+     guard !UIResponder.isKeyboardPreloading else { return }
+ 
++    if isFloatingKeyboard(notification) {
++      hideIfKeyboardShown(notification)
++      return
++    }
++
+     let (duration, frame) = notification.keyboardMetaData()
+     if let keyboardFrame = frame {
+       tag = UIResponder.current.reactViewTag
+@@ -36,6 +41,29 @@ extension KeyboardMovementObserver {
+     }
+   }
+ 
++  @objc func keyboardWillChangeFrame(_ notification: Notification) {
++    guard !UIResponder.isKeyboardPreloading, isFloatingKeyboard(notification) else { return }
++    // runs after a willShow/willHide posted with this notification, so hide events fire once
++    DispatchQueue.main.async { [weak self] in
++      self?.hideIfKeyboardShown(notification)
++    }
++  }
++
++  // iPadOS floating keyboards (and the collapsed shortcuts bar) cover no app content and are narrower
++  // than the screen; UIKit often undocks without willHide, so they must count as hidden.
++  private func isFloatingKeyboard(_ notification: Notification) -> Bool {
++    guard let frame = notification.keyboardMetaData().1?.cgRectValue, !frame.isEmpty else { return false }
++    let screen = notification.object as? UIScreen ?? UIScreen.main
++    return frame.width.rounded() < screen.bounds.width.rounded()
++  }
++
++  private func hideIfKeyboardShown(_ notification: Notification) {
++    let targetHeight = self.notification?.keyboardMetaData().1?.cgRectValue.height ?? 0
++    if targetHeight > 0 {
++      keyboardWillDisappear(notification)
++    }
++  }
++
+   @objc func keyboardWillDisappear(_ notification: Notification) {
+     guard !UIResponder.isKeyboardPreloading else { return }
+     let (duration, _) = notification.keyboardMetaData()
 diff --git a/lib/commonjs/components/KeyboardChatScrollView/index.js b/lib/commonjs/components/KeyboardChatScrollView/index.js
 index 0b78ff3..98b3b6c 100644
 --- a/lib/commonjs/components/KeyboardChatScrollView/index.js
