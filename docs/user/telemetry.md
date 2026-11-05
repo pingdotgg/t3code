@@ -25,6 +25,16 @@ a [managed policy](./managed-policy.md#other-capabilities).
 The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
 
+## Local resource monitoring
+
+To stop the native resource monitor, set `T3CODE_RESOURCE_MONITOR_ENABLED=false` in the server's
+environment before starting it. Remove the variable or set it to `true` and restart to re-enable
+monitoring. It is enabled by default. This also takes precedence over a custom resource-monitor path.
+
+Native process resource readings become unavailable while the monitor is disabled. Terminal
+subprocess discovery keeps its existing fallback, which can still run PowerShell on Windows.
+This setting is separate from product event collection controlled by `T3CODE_TELEMETRY_ENABLED`.
+
 ## Mobile app crash reports
 
 When the iOS or Android app crashes or hits an error, it sends a report to T3 Code: the error
