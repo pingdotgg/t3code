@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { AppBarAction } from "./AppBar.types";
+import type { AppBarAction, AppBarMenu } from "./AppBar.types";
 
 type SheetDismissAction =
   | { readonly onCancel: () => void; readonly onClose?: never }
@@ -21,6 +21,7 @@ export type SheetHeaderProps = SheetDismissAction & {
   readonly confirm?: SheetConfirmation;
   readonly presentation?: "native" | "inline";
   readonly actions?: ReadonlyArray<AppBarAction>;
+  readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly trailing?: ReactNode;
 };
 
