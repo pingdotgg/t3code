@@ -13,7 +13,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { macosProfile, windowsAdml, windowsAdmx } from "../policy/policyTemplates.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { isProcessAlive, readServerRuntimeStateFile } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type InstalledPolicy = Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>;
@@ -52,7 +52,14 @@ export const readRunningServer = Effect.fn("cli.policy.readRunningServer")(funct
   statePath: string,
   installed: InstalledPolicy,
 ) {
-  const state = yield* readPersistedServerRuntimeState(statePath);
+  const state = yield* readServerRuntimeStateFile(statePath).pipe(
+    Effect.catchTags({
+      ServerRuntimeStateError: (error) =>
+        Effect.logWarning(error.message).pipe(Effect.as("unreadable" as const)),
+    }),
+  );
+  // A live server keeps running after its state file goes bad, so this says nothing either way.
+  if (state === "unreadable") return { status: "unknown" } as const;
   if (Option.isNone(state) || !isProcessAlive(state.value.pid)) {
     return { status: "not-running" } as const;
   }
@@ -67,6 +74,9 @@ export const describeRunningServer = (
 ) => {
   if (server.status === "not-running") {
     return "No T3 Code server is running from this T3 home. The installed policy applies when one starts.";
+  }
+  if (!("pid" in server)) {
+    return "Could not read this T3 home's server state, so a running server may not have this policy.";
   }
   const running = `The running server (pid ${server.pid}, started ${server.startedAt})`;
   if (server.status === "unknown") {

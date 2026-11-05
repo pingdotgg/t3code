@@ -102,8 +102,8 @@ and each locked control shows **Managed by**.
 For a device compliance script, run `t3 policy show --json`. Compare `installed.fingerprint` with the
 fingerprint `t3 policy check` printed for your policy. `installed` is `null` when the machine has no
 policy, and `server.status` is `current`, `restart-required`, `not-running`, or `unknown` for a
-server too old to report what it loaded. A policy T3 Code cannot use exits non-zero and prints no
-JSON, so check the exit code first.
+server too old to report what it loaded or when its state can't be read. A policy T3 Code cannot
+use exits non-zero and prints no JSON, so check the exit code first.
 
 ## Change or remove a policy
 

@@ -90,7 +90,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
 
       const lines = yield* TestConsole.logLines;
       assert.lengthOf(lines, 1);
-      assert.doesNotThrow(() => JSON.parse(String(lines[0])));
+      const report = JSON.parse(String(lines[0]));
+      assert.hasAllKeys(report, ["installed", "document", "server"]);
+      assert.equal(report.server.status, "unknown");
     }).pipe(Effect.provide(Layer.mergeAll(NetService.layer, TestConsole.layer))),
   );
 });
