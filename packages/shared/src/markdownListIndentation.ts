@@ -95,26 +95,29 @@ function blocksFromIndentedCode(
   const value = typeof node.value === "string" ? node.value.trim() : "";
   const recovered = parseRecoveredMarkdown(value, parser);
   // Reparsed children must still point into the authored file for source-aware transforms.
-  const offsets = new Map<number, number>();
+  const points = new Map<number, { offset: number; line: number; column: number }>();
   let originalOffset = node.position?.start?.offset ?? 0;
+  let scanned = originalOffset;
+  let lineNumber = node.position?.start?.line ?? 1;
   let recoveredOffset = INLINE_PARSE_PREFIX.length;
   for (const line of value.split("\n")) {
     const start = markdown.indexOf(line, originalOffset);
     if (start === -1) break;
+    for (; scanned < start; scanned += 1) if (markdown[scanned] === "\n") lineNumber += 1;
+    const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
     for (let index = 0; index <= line.length; index += 1)
-      offsets.set(recoveredOffset + index, start + index);
+      points.set(recoveredOffset + index, {
+        offset: start + index,
+        line: lineNumber,
+        column: start + index - lineStart + 1,
+      });
     originalOffset = start + line.length + 1;
     recoveredOffset += line.length + 1;
   }
-  const point = (position: NonNullable<MarkdownPosition["start"]>) => {
-    const offset =
-      position.offset === undefined
-        ? undefined
-        : offsets.get(Math.max(INLINE_PARSE_PREFIX.length, position.offset));
-    if (offset === undefined) return position;
-    const lines = markdown.slice(0, offset).split("\n");
-    return { offset, line: lines.length, column: lines.at(-1)!.length + 1 };
-  };
+  const point = (position: NonNullable<MarkdownPosition["start"]>) =>
+    (position.offset === undefined
+      ? undefined
+      : points.get(Math.max(INLINE_PARSE_PREFIX.length, position.offset))) ?? position;
   const restorePositions = (child: MarkdownAstNode) => {
     if (child.position)
       Object.assign(child, {
