@@ -25,10 +25,11 @@ function loadLocale(locale: string): Promise<void> {
   if (locale in loadedTranslations) return Promise.resolve();
   let load = pendingLoads.get(locale);
   if (!load) {
-    // A failed load resolves without an entry, so the locale renders the English source.
+    // A failed load resolves without an entry: English renders now and the next request retries.
     load = getTranslationsSnapshot(locale).then((loaded) => {
-      loadedTranslations[locale] = loaded[locale] ?? {};
       pendingLoads.delete(locale);
+      const translations = loaded[locale];
+      if (translations) loadedTranslations[locale] = translations;
     });
     pendingLoads.set(locale, load);
   }
