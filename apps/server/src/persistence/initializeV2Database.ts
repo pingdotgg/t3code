@@ -58,13 +58,16 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
       prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
-    yield* Effect.tryPromise(async () => {
-      const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
-      try {
-        await NodeSqlite.backup(database, snapshotPath);
-      } finally {
-        database.close();
-      }
+    yield* Effect.tryPromise({
+      try: async () => {
+        const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+        try {
+          await NodeSqlite.backup(database, snapshotPath);
+        } finally {
+          database.close();
+        }
+      },
+      catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
     });
     // Publish only a complete snapshot, without replacing an existing V2 database.
     yield* fs.link(snapshotPath, destinationPath).pipe(

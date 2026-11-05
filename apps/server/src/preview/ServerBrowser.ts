@@ -147,6 +147,15 @@ const isHostSetupError = Schema.is(
   ]),
 );
 
+class ServerBrowserDownloadsCleanupError extends Schema.TaggedError<ServerBrowserDownloadsCleanupError>()(
+  "ServerBrowserDownloadsCleanupError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "The server preview could not clear earlier downloads.";
+  }
+}
+
 export class ServerBrowserLaunchError extends Schema.TaggedError<ServerBrowserLaunchError>()(
   "ServerBrowserLaunchError",
   { cause: Schema.Defect() },
@@ -1034,7 +1043,10 @@ const make = Effect.gen(function* () {
 
   const downloadsRoot = NodePath.join(config.stateDir, "server-browser", "downloads");
   // Saved downloads are indexed in memory, so an earlier run's files can never be opened again.
-  yield* Effect.tryPromise(() => NodeFSP.rm(downloadsRoot, { recursive: true, force: true })).pipe(
+  yield* Effect.tryPromise({
+    try: () => NodeFSP.rm(downloadsRoot, { recursive: true, force: true }),
+    catch: (cause) => new ServerBrowserDownloadsCleanupError({ cause }),
+  }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("server preview could not clear earlier downloads", { cause }),
     ),

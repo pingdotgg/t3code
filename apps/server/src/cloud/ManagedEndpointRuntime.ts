@@ -1,5 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
@@ -252,15 +252,17 @@ export const make = Effect.gen(function* () {
   // Synchronous appends avoid a flush timer for this low-volume log.
   const fallbackLoggers = yield* Effect.service(Logger.CurrentLoggers);
   let writeFailureReported = false;
-  const relayClientLog = yield* Effect.try(
-    () =>
+  const relayClientLog = yield* Effect.try({
+    try: () =>
       new RotatingFileSink({
         filePath: relayClientLogPath,
         maxBytes: 1024 * 1024,
         maxFiles: 2,
         throwOnError: true,
       }),
-  ).pipe(
+    catch: (cause) =>
+      new RotatingFileSinkError({ operation: "initialize", filePath: relayClientLogPath, cause }),
+  }).pipe(
     Effect.map((sink) =>
       Logger.make((options) => {
         try {
