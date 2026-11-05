@@ -39,7 +39,6 @@ export interface VcsProcessInput {
   readonly maxOutputBytes?: number;
   readonly outputMode?: ProcessRunner.ProcessRunInput["outputMode"];
   readonly appendTruncationMarker?: boolean;
-  readonly windowsAnsiOutput?: boolean | undefined;
   readonly classifyFailure?: SourceControlProcessInput["classifyFailure"];
   readonly notFoundDetail?: string;
   readonly concurrency?: SourceControlProcessInput["concurrency"];
@@ -215,7 +214,6 @@ export const make = Effect.gen(function* () {
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
-        windowsAnsiOutput: input.windowsAnsiOutput,
         timeoutBehavior: "error",
       })
       .pipe(

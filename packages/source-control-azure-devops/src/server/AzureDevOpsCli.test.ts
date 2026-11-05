@@ -312,17 +312,16 @@ describe("azureCliInvocation", () => {
     }),
   );
 
-  it.effect("keeps the launcher, and claims ANSI output, when the install is not recognized", () =>
+  it.effect("keeps the launcher when the install is not recognized", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* invocationFor(undefined), {
         command: "az",
         args: [],
-        windowsAnsiOutput: true,
       });
     }),
   );
 
-  it.effect("spawns az directly, with no claim about its encoding, off Windows", () =>
+  it.effect("spawns az directly off Windows", () =>
     Effect.gen(function* () {
       const invocation = yield* AzureDevOpsCli.azureCliInvocation().pipe(
         Effect.provideService(HostProcess.Platform, "linux"),

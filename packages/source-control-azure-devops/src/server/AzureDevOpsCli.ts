@@ -370,8 +370,6 @@ export interface AzureCliInvocation {
   /** Arguments `az` needs before the caller's, to run the CLI in UTF-8 mode. */
   readonly args: ReadonlyArray<string>;
   readonly env?: NodeJS.ProcessEnv;
-  /** The launcher could not run in UTF-8 mode, so its piped output may be the ANSI code page. */
-  readonly windowsAnsiOutput?: boolean;
 }
 
 /**
@@ -389,7 +387,7 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
     yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
   return install === undefined
-    ? ({ command: "az", args: [], windowsAnsiOutput: true } satisfies AzureCliInvocation)
+    ? ({ command: "az", args: [] } satisfies AzureCliInvocation)
     : ({
         command: install.interpreter,
         args: ["-X", "utf8", "-IBm", "azure.cli"],
@@ -410,9 +408,6 @@ export const make = Effect.gen(function* () {
         args: [...invocation.args, ...input.args],
         cwd: input.cwd,
         ...(invocation.env === undefined ? {} : { env: invocation.env }),
-        ...(invocation.windowsAnsiOutput === undefined
-          ? {}
-          : { windowsAnsiOutput: invocation.windowsAnsiOutput }),
         classifyFailure: classifyAzFailure,
         notFoundDetail: "Pull request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
