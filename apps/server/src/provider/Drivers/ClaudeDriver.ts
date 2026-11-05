@@ -51,6 +51,7 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
@@ -133,7 +134,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
     const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
     const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
-      effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
+      (yield* makeClaudeEnvironment(effectiveConfig, processEnv)).CLAUDE_CONFIG_DIR?.trim()
         ? configDir
         : undefined,
     );
