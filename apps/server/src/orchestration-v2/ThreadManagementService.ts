@@ -993,8 +993,6 @@ const make = Effect.gen(function* () {
           [
             "run.updated",
             "thread.deleted",
-            // Stop's marker declines a pending compaction recovery without updating any run.
-            "turn-item.updated",
             // What delegated work reads besides runs: tasks and their
             // deliveries, and a provider thread's background tasks.
             ...(untilDelegatedWorkSettled
@@ -1011,14 +1009,13 @@ const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       ).pipe(
         Stream.mapError(loadError),
-        Stream.filter(({ event }) =>
-          event.type === "turn-item.updated"
-            ? event.payload.type === "run_interrupt_request"
-            : untilDelegatedWorkSettled ||
-              event.type !== "run.updated" ||
-              event.payload.id === selectedRun.id ||
-              event.payload.restartContinuationOfRunId !== undefined ||
-              event.payload.compactionRecoveryOfRunId !== undefined,
+        Stream.filter(
+          (stored) =>
+            untilDelegatedWorkSettled ||
+            stored.event.type !== "run.updated" ||
+            stored.event.payload.id === selectedRun.id ||
+            stored.event.payload.restartContinuationOfRunId !== undefined ||
+            stored.event.payload.compactionRecoveryOfRunId !== undefined,
         ),
       ),
       initial.pending

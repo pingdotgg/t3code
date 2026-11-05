@@ -341,64 +341,6 @@ it.effect("waitForThread follows compaction recovery to the continuation's resul
   }),
 );
 
-it.effect("waitForThread returns the full run once Stop declines its compaction recovery", () =>
-  Effect.gen(function* () {
-    const projectId = ProjectId.make("project:thread-management:wait-compaction-stop");
-    const threadId = ThreadId.make("thread:thread-management:wait-compaction-stop");
-    const runId = RunId.make("run:thread-management:wait-compaction-stop");
-    const subscribed = yield* Deferred.make<void>();
-    const turnItems = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-    let pending = true;
-    const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
-      Layer.provide(
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadEventSequence: () => Effect.succeed(0),
-          restartContinuationPending: () => Effect.succeed(false),
-          compactionRecoveryPending: () => Effect.sync(() => pending),
-          awaitRestartContinuation: () => Effect.never,
-          streamStoredEventsFrom: (input) =>
-            input?.eventType === "run.updated"
-              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
-                  Stream.drain,
-                  Stream.concat(Stream.never),
-                )
-              : input?.eventType === "turn-item.updated"
-                ? Stream.fromQueue(turnItems)
-                : Stream.never,
-          getThreadRecords: () =>
-            Effect.succeed({
-              thread: { id: threadId, projectId, deletedAt: null },
-              runs: [{ id: runId, status: "failed" }],
-            } as unknown as OrchestrationV2ThreadProjection),
-        }),
-      ),
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
-    );
-    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-      Effect.provide(layerTest),
-    );
-    const fiber = yield* service
-      .waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 })
-      .pipe(Effect.forkChild);
-    yield* Deferred.await(subscribed);
-    // Stop records only its marker on the ended run, so no run update follows.
-    pending = false;
-    yield* Queue.offer(turnItems, {
-      sequence: 1,
-      event: {
-        type: "turn-item.updated",
-        threadId,
-        payload: { type: "run_interrupt_request", runId },
-      },
-    } as unknown as OrchestrationV2StoredEvent);
-    const result = yield* Fiber.join(fiber);
-
-    expect(result).toMatchObject({ timedOut: false, run: { id: runId, status: "failed" } });
-  }),
-);
-
 it.effect("waitForThread can wait past an ended run for the thread's delegated work", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-delegated");
