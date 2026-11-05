@@ -66,7 +66,8 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+    // A nil URL is still resolving in JS and arrives later through updateFile.
+    AsyncFunction("presentFiles") { (urls: [URL?], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
       guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
         urls.indices.contains(selectedIndex)
       else {
@@ -79,6 +80,11 @@ public final class T3NativeControlsModule: Module {
         return
       }
       file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+    }.runOnQueue(.main)
+
+    // A nil URL marks the item as one that could not be resolved.
+    AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
+      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
     }.runOnQueue(.main)
 
     OnDestroy {
