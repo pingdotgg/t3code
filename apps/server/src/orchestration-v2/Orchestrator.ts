@@ -4014,6 +4014,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
+                  pullRequests: thread.pullRequests?.map(withoutSnoozeWatch),
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&

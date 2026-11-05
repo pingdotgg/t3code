@@ -8490,6 +8490,40 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
       const snooze = scenario === "wake" || scenario === "cancel-resume-keep-snooze";
       const autoResume = scenario !== "wake";
+      const pullRequest = { host: "github.com", repository: "pingdotgg/t3code", number: 16 };
+      if (scenario === "wake") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("recovery:pr-link"),
+          threadId,
+          ...pullRequest,
+          url: "https://github.com/pingdotgg/t3code/pull/16",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make("recovery:pr-link-sync"),
+          threadId,
+          ...pullRequest,
+          snapshot: {
+            state: "open",
+            title: "Snoozed PR",
+            headBranch: "feature/pr",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-13T12:00:00.000Z",
+          },
+          stack: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("recovery:pr-snooze"),
+          threadId,
+          snoozedUntil: "2030-01-01T00:00:00.000Z",
+          wakeOnPullRequest: true,
+        });
+      }
       const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);
       assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
       const automaticArm = {
@@ -8565,6 +8599,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
+      if (scenario === "wake") {
+        const { thread } = yield* orchestrator.getThreadProjection(threadId);
+        assert.isUndefined(thread.pullRequests?.[0]?.snoozeWatch);
+      }
       if (scenario === "cancel-resume-keep-snooze") {
         yield* TestClock.adjust("10 seconds");
         yield* orchestrator.dispatch({
