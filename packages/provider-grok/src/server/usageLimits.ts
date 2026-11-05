@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { parse as parseToml } from "smol-toml";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
@@ -24,6 +25,10 @@ const GrokCredentials = Schema.Record(
   }),
 );
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(GrokCredentials));
+class GrokQuotaConfigurationError extends Schema.TaggedError<
+  GrokQuotaConfigurationError,
+  { readonly brand: unique symbol }
+>()("GrokQuotaConfigurationError", { cause: Schema.Defect() }) {}
 const GrokUsageResponse = Schema.Struct({
   config: Schema.optional(
     Schema.Struct({
@@ -137,8 +142,24 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
           error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
       }),
     );
-    // These sections can change the selected account or endpoint. Leave custom deployments to the CLI.
-    if (/^\s*(?:\[\[?\s*)?["']?(?:auth|grok_com_config|endpoints)["']?\s*[.\]=]/m.test(config)) {
+    const deployment = yield* Effect.try({
+      try: () => parseToml(config),
+      catch: (cause) => new GrokQuotaConfigurationError({ cause }),
+    });
+    const grokCom = deployment.grok_com_config;
+    // Requiring OAuth does not change its account or endpoint; unknown overrides still refuse.
+    if (
+      Object.hasOwn(deployment, "auth") ||
+      Object.hasOwn(deployment, "endpoints") ||
+      (grokCom !== undefined &&
+        (typeof grokCom !== "object" ||
+          grokCom === null ||
+          Array.isArray(grokCom) ||
+          grokCom instanceof Date ||
+          Object.entries(grokCom).some(
+            ([key, value]) => key !== "disable_api_key_auth" || typeof value !== "boolean",
+          )))
+    ) {
       return undefined;
     }
   }
