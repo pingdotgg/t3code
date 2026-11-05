@@ -589,6 +589,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "hub_rejected",
     ]),
     exitCode: Schema.optional(Schema.Number),
+    diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
     cause: Schema.Defect(),
   },
 ) {
@@ -600,7 +601,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
     }[this.reason];
-    return `Device ${this.operation} failed: ${explanation}`;
+    const summary = `Device ${this.operation} failed: ${explanation}`;
+    return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;
   }
 }
 
