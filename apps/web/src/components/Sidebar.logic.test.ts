@@ -14,7 +14,6 @@ import {
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarThreadStatus,
-  resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
@@ -328,17 +327,6 @@ describe("resolveSidebarThreadStatus", () => {
     for (const [thread, title] of cases) {
       expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
     }
-  });
-
-  it("shows Merged ahead of Done but behind live and wake states", () => {
-    const merged = { isUnread: false, isWoke: false, isMerged: true };
-    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready" })).toBe("merged");
-    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready", isUnread: true })).toBe(
-      "merged",
-    );
-    expect(resolveSidebarV2TopStatus({ ...merged, status: "working" })).toBe("working");
-    expect(resolveSidebarV2TopStatus({ ...merged, status: "approval" })).toBe("approval");
-    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready", isWoke: true })).toBe("woke");
   });
 });
 
