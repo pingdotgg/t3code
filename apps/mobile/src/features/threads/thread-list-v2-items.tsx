@@ -3,7 +3,7 @@ import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
-  THREAD_LIST_V2_ROW_DIVIDER_INSET_CLASS_NAME,
+  THREAD_LIST_V2_ROW_DIVIDER_INSET,
   THREAD_LIST_V2_ROW_DIVIDERS,
   selectedThreadRowColors,
   getThreadListV2NewBranchMenuTitle,
@@ -1490,7 +1490,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
           {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
             <View
-              className={cn(THREAD_LIST_V2_ROW_DIVIDER_INSET_CLASS_NAME, "h-px bg-border-subtle")}
+              className="h-px bg-border-subtle"
+              style={{ marginLeft: THREAD_LIST_V2_ROW_DIVIDER_INSET + projectIconSize }}
             />
           ) : null}
         </View>
