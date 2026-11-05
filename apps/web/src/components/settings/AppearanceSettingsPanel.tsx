@@ -218,7 +218,7 @@ export function AppearanceSettingsPanel() {
                 value={settings.appearanceContrast}
               />
               <output
-                className="min-w-12 text-right text-caption tabular-nums text-muted-foreground"
+                className="min-w-16 text-right text-meta tabular-nums text-muted-foreground"
                 htmlFor="appearance-contrast"
               >
                 {settings.appearanceContrast === DEFAULT_UNIFIED_SETTINGS.appearanceContrast
@@ -362,7 +362,7 @@ export function AppearanceSettingsPanel() {
                 <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
                 <div className="flex w-full items-center gap-3">
                   <output
-                    className="min-w-16 rounded-control surface-card px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                    className="min-w-16 text-right text-meta tabular-nums text-muted-foreground"
                     htmlFor="panel-animation-duration"
                   >
                     {settings.panelAnimationDurationMs} ms
