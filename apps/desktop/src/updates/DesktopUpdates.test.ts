@@ -62,6 +62,13 @@ describe("DesktopUpdates", () => {
           assert.equal(resumed.status, "downloaded");
           assert.equal(resumed.downloadedVersion, "1.2.4");
           assert.equal(resumed.downloadPercent, 100);
+
+          const { changes: progressChanges } = yield* updates.subscribe;
+          harness.emit("download-progress", { percent: 80 });
+          const afterProgress = Option.getOrThrow(yield* Stream.runHead(progressChanges));
+          assert.equal(afterProgress.status, "downloaded");
+          assert.equal(afterProgress.downloadedVersion, "1.2.4");
+          assert.equal(afterProgress.downloadPercent, 100);
         }),
       ).pipe(Effect.provide(harness.layer));
     }),

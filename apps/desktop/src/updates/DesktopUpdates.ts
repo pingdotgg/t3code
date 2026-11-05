@@ -1036,7 +1036,9 @@ export const make = Effect.gen(function* () {
           const percent = Math.floor(progress.percent);
           if (shouldBroadcastDownloadProgress(state, progress.percent) || state.message !== null) {
             yield* updateState((current) =>
-              reduceDesktopUpdateStateOnDownloadProgress(current, progress.percent),
+              current.status === "downloaded"
+                ? current
+                : reduceDesktopUpdateStateOnDownloadProgress(current, progress.percent),
             );
           }
           const milestone = percent - (percent % 10);
