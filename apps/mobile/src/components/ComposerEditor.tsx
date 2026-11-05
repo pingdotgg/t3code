@@ -21,6 +21,7 @@ import {
   setComposerDraftContext,
   setComposerContextImporting,
   useComposerDraft,
+  useComposerDraftResetGeneration,
 } from "../state/use-composer-drafts";
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
 import { startComposerDraftOperation } from "../state/composerDraftOperations";
@@ -59,6 +60,7 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const draft = useComposerDraft(draftKey ?? null);
+  const readResetGeneration = useComposerDraftResetGeneration(draftKey ?? null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const preferredEnterBehavior = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.composerEnterBehavior
@@ -178,11 +180,12 @@ export function ComposerEditor({
     <>
       {/* Reset revision history with the recreated iOS view without aborting context imports. */}
       <NativeComposerEditor
-        key={hidden ? "hidden" : "visible"}
+        key={`${hidden ? "hidden" : "visible"}:${draftKey ?? "no-draft"}`}
         {...props}
         models={models}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
+        readResetGeneration={readResetGeneration}
         readOnly={props.readOnly || importing}
         onSubmit={importing ? undefined : props.onSubmit}
         clipboardFragment={clipboardFragment ?? undefined}

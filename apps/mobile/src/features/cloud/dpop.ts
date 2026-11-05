@@ -60,7 +60,9 @@ export const layer = Layer.mergeAll(
     Digest.Digest,
     Digest.Digest.of({
       digest,
-      digestHex: (algorithm, data) => Effect.map(digest(algorithm, data), Hex.encode),
+      digestHex: Effect.fn("Digest.Digest.digestHex")((algorithm, data) =>
+        Effect.map(digest(algorithm, data), Hex.encode),
+      ),
     }),
   ),
 );
