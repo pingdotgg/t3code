@@ -80,6 +80,24 @@ describe("applyUsageLimitsUpdate", () => {
       resetCredits,
     });
   });
+
+  it("keeps the limits group and notices a window that stops blocking the model", () => {
+    const group = { id: "acpRegistry:zai", label: "Z.ai" };
+    const previous = {
+      ...published,
+      group,
+      windows: [{ ...session, blocksModel: false }, weekly],
+    };
+    const next = applyUsageLimitsUpdate({
+      previous,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session }] },
+    });
+
+    expect(next?.group).toEqual(group);
+    expect(next).not.toBe(previous);
+    expect(next?.windows[0]?.blocksModel).toBeUndefined();
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {

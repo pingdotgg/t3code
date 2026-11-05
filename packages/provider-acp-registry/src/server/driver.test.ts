@@ -1,4 +1,8 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AcpRegistryOperationError,
+  ProviderInstanceId,
+  type ServerProviderUsageLimits,
+} from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,12 +10,16 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import type { AcpRegistryConfigurationProbeInput } from "./probe.ts";
+import type { GlmUsageRead } from "./zaiUsageLimits.ts";
 import {
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
+  checkAcpRegistryProvider,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  scopedGlmUsageLimitsReader,
 } from "./driver.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -429,6 +437,113 @@ describe("acpRegistrySnapshotReadiness", () => {
         auth: { status: "unknown" },
         message: "Checking ACP authentication, models, and commands in the background...",
       });
+    }),
+  );
+
+  it.effect("attaches GLM usage limits only to a ready registry glm-acp-agent instance", () =>
+    Effect.gen(function* () {
+      const readCwds: string[] = [];
+      const glmLimits: ServerProviderUsageLimits = {
+        checkedAt: "2026-11-05T22:29:01.960Z",
+        windows: [
+          {
+            id: "tokens_limit-3-5",
+            kind: "session",
+            label: "5-hour Model quota",
+            usedPercent: 27,
+            windowDurationMins: 300,
+          },
+        ],
+      };
+      const readUsageLimits = (input: AcpRegistryConfigurationProbeInput) =>
+        Effect.sync(() => {
+          readCwds.push(input.cwd);
+          return glmLimits;
+        });
+      const readyCatalog = catalogWithInspection({
+        status: "ready",
+        agentId: "glm-acp-agent",
+        version: "1.17.0",
+        distribution: "npx",
+      });
+      const unpreparedCatalog = catalogWithInspection({
+        status: "unprepared",
+        agentId: "glm-acp-agent",
+        version: "1.17.0",
+        distribution: "binary",
+      });
+      const check = (settings: ReturnType<typeof decodeSettings>, catalog = readyCatalog) =>
+        checkAcpRegistryProvider({
+          ...identity,
+          settings,
+          cwd: "/worktree",
+          environment: {},
+          readUsageLimits,
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+      const glm = yield* check(decodeSettings({ agentId: "glm-acp-agent" }));
+      expect(glm.usageLimits).toEqual(glmLimits);
+
+      const kimi = yield* check(decodeSettings({ agentId: "kimi-acp" }));
+      expect(kimi.usageLimits).toBeUndefined();
+
+      const local = yield* check(decodeSettings({ source: "local", commandPath: "glm-acp-agent" }));
+      expect(local.usageLimits).toBeUndefined();
+
+      const disabled = yield* check(decodeSettings({ agentId: "glm-acp-agent", enabled: false }));
+      expect(disabled.usageLimits).toBeUndefined();
+
+      const unprepared = yield* check(
+        decodeSettings({ agentId: "glm-acp-agent" }),
+        unpreparedCatalog,
+      );
+      expect(unprepared.usageLimits).toBeUndefined();
+
+      expect(readCwds).toEqual(["/worktree"]);
+    }),
+  );
+
+  it.effect("scopes GLM limits to the instance and sets sign-in from the agent's reply", () =>
+    Effect.gen(function* () {
+      const signIns: boolean[] = [];
+      const read = (result: GlmUsageRead) =>
+        scopedGlmUsageLimitsReader({
+          instanceId: identity.instanceId,
+          displayName: "  Z.ai  ",
+          setAuthentication: (confirmed) => Effect.sync(() => signIns.push(confirmed)),
+          read: () => Effect.succeed(result),
+        })({
+          instanceId: identity.instanceId,
+          settings: decodeSettings({ agentId: "glm-acp-agent" }),
+          cwd: "/worktree",
+          environment: {},
+        });
+      const group = { id: "acpRegistry:acpRegistry_test", label: "Z.ai" };
+      const checkedAt = "2026-11-05T22:29:01.960Z";
+
+      const usable = yield* read({
+        limits: {
+          checkedAt,
+          windows: [
+            {
+              id: "tokens_limit-3-5",
+              kind: "session",
+              label: "5-hour Model quota",
+              usedPercent: 27,
+            },
+          ],
+        },
+        signedIn: true,
+      });
+      const failed = yield* read({
+        limits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+      });
+      const signedOut = yield* read({
+        limits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+        signedIn: false,
+      });
+      expect([usable.group, failed.group, signedOut.group]).toEqual([group, group, group]);
+      expect(signIns).toEqual([true, false]);
     }),
   );
 });

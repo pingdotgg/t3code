@@ -450,8 +450,14 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
 
+      const unprepared = yield* resolver
+        .resolve(settings(), "/workspace", toolchain.environment, { install: false })
+        .pipe(Effect.flip);
+      expect(unprepared.reason).toBe("runner_unavailable");
       const first = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
-      const second = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+      const second = yield* resolver.resolve(settings(), "/workspace", toolchain.environment, {
+        install: false,
+      });
 
       expect(first.spawn).toMatchObject({
         command: toolchain.executablePath,
