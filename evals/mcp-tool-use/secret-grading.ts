@@ -1529,15 +1529,26 @@ export const classifyFileUse = (
       for (const name of saved[i]!) vars.add(name);
     });
   };
-  // A program that names the secrets directory and joins a quoted id to it, as in
-  // `(Path('…/secrets/files') / 'id').read_text()`, names that file.
-  const joinsDir = ids.length > 0 && /\/\.t3\/userdata\/secrets\/files\b/.test(command);
+  // A program that joins a quoted id to the secrets directory, as in
+  // `(Path('…/secrets/files') / 'id').read_text()` or `os.path.join(d, 'id')` for such a `d`.
+  const SECRETS_DIR = `(?:pathlib\\.)?Path\\(\\s*['"][^'"\\n]*/\\.t3/userdata/secrets/files/?['"]\\s*\\)|['"][^'"\\n]*/\\.t3/userdata/secrets/files/?['"]`;
+  const dirNames = [
+    ...command.matchAll(new RegExp(`(?<![\\w.])([A-Za-z_]\\w*)\\s*=\\s*(?:${SECRETS_DIR})`, "g")),
+  ].map((match) => match[1]!);
+  const dirExpr = [SECRETS_DIR, ...dirNames.map((name) => `(?<![\\w.])${name}(?!\\w)`)].join("|");
+  const joins =
+    ids.length > 0
+      ? [
+          `(?:${dirExpr})\\s*/\\s*['"](?:${ids})['"]`,
+          `os\\.path\\.join\\(\\s*(?:${dirExpr})\\s*,\\s*['"](?:${ids})['"]`,
+        ]
+      : [];
   const fileRef = () =>
     [
       ...files.map(escape),
       ...[...fileVars].map((v) => `\\$\\{?${v}\\b\\}?`),
       ...[...dirVars].map((v) => `\\$\\{?${v}\\b\\}?/(?:${ids})\\b`),
-      ...(joinsDir ? [`['"](?:${ids})['"]`] : []),
+      ...joins,
     ].join("|") || "(?!)";
   const read = () => `(?:cat\\s+|<\\s*)["']?(?:${fileRef()})["']?`;
   const usesSecretVar = (text: string) =>

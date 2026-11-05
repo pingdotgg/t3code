@@ -1049,6 +1049,16 @@ it.each<[string, Run["calls"], boolean]>([
   ],
   ["a path variable", [saved(), bash(`f=${F}; adb pair 192.168.1.42:37099 < "$f"`)], true],
   [
+    "a file outside the secrets directory that shares the id",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport pathlib, subprocess\nd = pathlib.Path('/home/user/.t3/userdata/secrets/files')\ncode = pathlib.Path('/tmp/${F.slice(-32)}').read_text()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
     "a Python join of the secrets directory and the file's id",
     [
       saved(),
