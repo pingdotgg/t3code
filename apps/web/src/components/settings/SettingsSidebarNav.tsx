@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { resolveEventKeys } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -129,7 +130,9 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
-  const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
+  const gt = useGT();
+  const m = useMessages();
+  const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
@@ -285,8 +288,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 onBlur={() => {
                   if (!isSearching) setCompactSearchOpen(false);
                 }}
-                placeholder="Search"
-                aria-label="Search settings"
+                placeholder={gt("Search")}
+                aria-label={gt("Search settings")}
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={isSearching && hasResults}
@@ -304,7 +307,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear settings search"
+                  aria-label={gt("Clear settings search")}
                   onClick={() => {
                     clearSearch();
                     searchInputRef.current?.focus();
@@ -321,14 +324,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No settings found
+                <T>No settings found</T>
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? gt("Settings search results") : undefined}
               >
                 {results.map((item, index) => (
                   <SidebarMenuItem
@@ -353,7 +356,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {item.title}
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {m(SETTINGS_SECTION_LABELS[item.to])}
                         </span>
                       </span>
                     </SidebarMenuButton>
@@ -366,7 +369,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
-                        aria-label="Search settings"
+                        aria-label={gt("Search settings")}
                         onClick={() => setCompactSearchOpen(true)}
                       >
                         <SearchIcon />
@@ -388,7 +391,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                             !compactSearchOpen && "max-md:sr-only",
                           )}
                         >
-                          {group.heading}
+                          {m(group.heading)}
                         </h3>
                       ) : null}
                       {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
@@ -415,7 +418,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                       !compactSearchOpen && "max-md:sr-only",
                                     )}
                                   >
-                                    {SETTINGS_SECTION_LABELS[to]}
+                                    {m(SETTINGS_SECTION_LABELS[to])}
                                   </span>
                                 </SidebarMenuButton>
                               </SidebarMenuItem>
