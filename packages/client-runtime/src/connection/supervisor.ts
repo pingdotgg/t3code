@@ -266,6 +266,12 @@ export class EnvironmentSupervisor extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {}
 
+const entryWithLabel = (entry: ConnectionCatalogEntry, label: string) =>
+  entryWithRoutes(
+    entry,
+    connectionRoutes(entry).map((route) => routeWithLabel(route, label)),
+  );
+
 /** What the registry holds. Sessions only ever see the service. */
 export type ManagedEnvironmentSupervisor = EnvironmentSupervisor["Service"] & {
   readonly setLabel: (label: string) => Effect.Effect<void>;
@@ -361,7 +367,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         Effect.gen(function* () {
           const updated = yield* learn({ activeRoute, reported });
           if (Option.isSome(updated)) {
-            yield* Ref.set(currentEntry, updated.value);
+            // A rename can land after the registry built this entry.
+            yield* Ref.update(currentEntry, (current) =>
+              entryWithLabel(updated.value, current.target.label),
+            );
             yield* requestBetterRouteCheck(lease);
           }
         }),
@@ -1247,12 +1256,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
 
   const setLabel = (label: string) =>
-    Ref.update(currentEntry, (current) =>
-      entryWithRoutes(
-        current,
-        connectionRoutes(current).map((route) => routeWithLabel(route, label)),
-      ),
-    );
+    Ref.update(currentEntry, (current) => entryWithLabel(current, label));
 
   return {
     ...EnvironmentSupervisor.of({

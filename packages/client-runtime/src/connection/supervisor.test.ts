@@ -2002,4 +2002,40 @@ describe("EnvironmentSupervisor routes", () => {
         ]);
       }),
   );
+
+  it.effect("keeps a rename that lands while route learning finishes", () =>
+    Effect.gen(function* () {
+      const learned = yield* Deferred.make<void>();
+      const preparedLabels = yield* Ref.make<ReadonlyArray<string>>([]);
+      const harness = yield* makeHarness({
+        configEvents: Stream.make({
+          version: 1 as const,
+          type: "snapshot" as const,
+          config: { directEndpoints: [] } as unknown as ServerConfig,
+        }).pipe(Stream.ensuring(Deferred.succeed(learned, undefined))),
+        prepare: (_attempt, target) =>
+          Ref.update(preparedLabels, (labels) => [...labels, target.label]).pipe(
+            Effect.as(preparedFor(target)),
+          ),
+      });
+      const entry: ConnectionCatalogEntry = {
+        target: RELAY_TARGET,
+        profile: Option.none(),
+        enabled: true,
+      };
+      const supervisor: EnvironmentSupervisor.ManagedEnvironmentSupervisor =
+        yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+          learnRoutes: () => supervisor.setLabel("Studio").pipe(Effect.as(Option.some(entry))),
+        }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(learned);
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase !== "connected");
+      yield* supervisor.connect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect((yield* Ref.get(preparedLabels)).at(-1)).toBe("Studio");
+    }),
+  );
 });

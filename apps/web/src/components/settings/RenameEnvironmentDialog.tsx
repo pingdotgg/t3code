@@ -1,3 +1,7 @@
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 
@@ -15,6 +19,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 
 // The popup unmounts when closed, so each open starts from the current label.
 function RenameEnvironmentForm({
@@ -33,7 +38,19 @@ function RenameEnvironmentForm({
   const save = async () => {
     if (!canSave) return;
     const result = await setEnvironmentLabel({ environmentId, label });
-    if (result._tag === "Success") onDone();
+    if (result._tag === "Success") {
+      onDone();
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not rename environment",
+        description: error instanceof Error ? error.message : "The label was not saved.",
+      }),
+    );
   };
 
   return (
