@@ -45,6 +45,7 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { TriageSettingsSection } from "./components/TriageSettingsSection";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -563,6 +564,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     </View>
                   </SettingsSection>
+                  <TriageSettingsSection targets={selectedTargets} />
                 </>
               ) : null}
             </>

@@ -352,7 +352,6 @@ export function CommandPalette(props: {
         key: "triage",
         kind: "action",
         title: "Triage an issue",
-        // Mobile has no triage hero, so name the machine before it starts.
         detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
         searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
         run: () => void startTriage(triageEnvironmentId),

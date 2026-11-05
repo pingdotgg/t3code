@@ -26,6 +26,7 @@ import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
 import IconBrain from "@tabler/icons-react-native/IconBrain";
+import IconBug from "@tabler/icons-react-native/IconBug";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconCar from "@tabler/icons-react-native/IconCar";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
@@ -219,6 +220,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   iphone: IconDeviceMobile,
   keyboard: IconKeyboard,
   laptopcomputer: IconDeviceLaptop,
+  ladybug: IconBug,
   link: IconLink,
   "list.number": IconListNumbers,
   "line.3.horizontal": IconMenu2,
