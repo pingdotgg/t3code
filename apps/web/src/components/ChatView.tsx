@@ -2655,7 +2655,9 @@ export default function ChatView(props: ChatViewProps) {
     if (activeThreadRef && !embedded) return focusTerminalOnThreadEnter(activeThreadRef);
   }, [activeThreadRef, embedded]);
 
+  const messageAreaRef = useRef<HTMLDivElement | null>(null);
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
+    messageAreaFocus: document.activeElement === messageAreaRef.current,
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
     previewFocus: isPreviewFocused(),
@@ -2687,6 +2689,7 @@ export default function ChatView(props: ChatViewProps) {
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
     composerElement: composerOverlayElement,
+    messageAreaRef,
     keybindings,
     scriptKeybindings,
     getShortcutContext,
@@ -2704,6 +2707,7 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
+      "chat.scrollToEnd": () => scrollToEnd(true),
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
@@ -3383,6 +3387,21 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
+              ref={messageAreaRef}
+              tabIndex={0}
+              aria-label="Conversation messages"
+              onClick={(event) => {
+                const target = event.target;
+                if (
+                  !(target instanceof Element) ||
+                  target.closest(
+                    'a, button, input, textarea, select, [contenteditable], [role="button"], [role="textbox"], [tabindex]',
+                  ) !== event.currentTarget ||
+                  !window.getSelection()?.isCollapsed
+                )
+                  return;
+                event.currentTarget.focus({ preventScroll: true });
+              }}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>

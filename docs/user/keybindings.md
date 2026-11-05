@@ -3,6 +3,18 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+## Scroll to the end
+
+Press `End` with the conversation message area or chat input focused to jump to the
+bottom and resume following a streaming response. This works in main conversations
+and side chats, even when already at the bottom. Click plain message text or empty
+space to focus the message area. Other editable fields and the terminal retain
+normal End behavior.
+
+Change **Chat: Scroll To End** (`chat.scrollToEnd`) in **Settings → Keybindings**.
+Custom mappings remain restricted to the message area or chat input and leave
+pickers, dialogs, and embedded browsers alone.
+
 ## Composer controls
 
 In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
@@ -114,7 +126,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`messageAreaFocus`, `draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
 `rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
 open; the default `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
