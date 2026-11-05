@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - tests inject swaps at the native open boundary.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
@@ -24,6 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
 
+import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -118,8 +120,10 @@ const layerTest = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
-  ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
-).pipe(Layer.provideMerge(NodeServices.layer));
+  AssetSigner.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(layerConfig))),
+  ),
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {
   describe("readMcpAppHtml", () => {
@@ -135,7 +139,7 @@ describe("AssetAccess", () => {
         const bytes = yield* readMcpAppHtml(file);
         expect(bytes?.byteLength).toBe(limit);
         expect(bytes?.every((byte) => byte === 120)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
 
     it.effect("rejects snapshots one byte past the limit and much larger files", () =>
@@ -149,7 +153,7 @@ describe("AssetAccess", () => {
           yield* fileSystem.writeFile(file, new Uint8Array(size).fill(120));
           expect(yield* readMcpAppHtml(file)).toBeNull();
         }
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
 
     it.effect("preserves UTF-8 bytes across stream chunks and accepts empty snapshots", () =>
@@ -165,7 +169,7 @@ describe("AssetAccess", () => {
           expect(bytes?.byteLength).toBe(expected.byteLength);
           expect(bytes && new TextDecoder().decode(bytes)).toBe(html);
         }
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
 
     // regression: #17026 apply host color scheme to saved MCP apps
@@ -177,7 +181,7 @@ describe("AssetAccess", () => {
         const error = yield* readMcpAppHtml(path.join(directory, "missing.html")).pipe(Effect.flip);
         expect(error._tag).toBe("PlatformError");
         expect(error.reason._tag).toBe("NotFound");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
   });
 
@@ -642,6 +646,51 @@ describe("AssetAccess", () => {
         }).pipe(Effect.flip);
         expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("does not issue URLs for server state files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const stateFile = path.join(config.secretsDir, "example.bin");
+      yield* fs.makeDirectory(config.secretsDir, { recursive: true });
+      yield* fs.writeFile(stateFile, new Uint8Array(32).fill(7));
+      yield* fs.writeFileString(config.dbPath, "SQLite format 3");
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-state-" });
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(stateFile, alias);
+      const threadId = ThreadId.make("thread-1");
+      for (const resource of [
+        { _tag: "media-file", threadId, path: stateFile, disposition: "attachment" },
+        { _tag: "media-file", threadId, path: alias, disposition: "attachment" },
+        {
+          _tag: "media-file",
+          threadId,
+          path: path.join(config.secretsDir, "..", "secrets", "example.bin"),
+          disposition: "attachment",
+        },
+        { _tag: "media-file", threadId, path: config.dbPath },
+        { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+      ] as const) {
+        const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+
+      const icon = path.join(config.baseDir, "icon.png");
+      yield* fs.symlink(stateFile, icon);
+      yield* fs.writeFileString(path.join(config.baseDir, "page.html"), '<img src="icon.png">');
+      const page = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: config.baseDir, path: "page.html" },
+      });
+      const pageToken = page.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(pageToken, "icon.png")).toBeNull();
+      const faviconError = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+        projectFaviconPath: icon,
+      }).pipe(Effect.flip);
+      expect(faviconError._tag).toBe("AssetProjectFaviconNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!symlinksSupported)(

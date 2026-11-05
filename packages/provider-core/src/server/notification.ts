@@ -217,6 +217,7 @@ export function notificationTurnItem(
     createdBy: _createdBy,
     creationSource: _creationSource,
     scheduledTaskId: _scheduledTaskId,
+    modelSwitch: _modelSwitch,
     ...base
   } = item;
   return { ...base, type: "notification", ...notification };

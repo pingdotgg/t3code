@@ -1,6 +1,6 @@
 import { Action, Stack, type Output } from "alchemy";
-import { sha256Object } from "alchemy/Util/sha256";
 import { CurrentRuntimeContext, sanitizeKey } from "alchemy/RuntimeContext";
+import { sha256Object } from "alchemy/Util/sha256";
 import type { BetterAuthOptions } from "better-auth";
 import { getSchema } from "better-auth/db";
 import * as Effect from "effect/Effect";
@@ -124,10 +124,7 @@ export const registerMigration = ({
 export const applyMigrations = (
   support: NonNullable<DatabaseService["migrate"]>,
   options: BetterAuthOptions,
-) =>
-  Effect.flatMap(support.connect, (acquire) =>
-    runMigrationWith(acquire, options),
-  );
+) => Effect.flatMap(support.connect, (acquire) => runMigrationWith(acquire, options));
 
 const runMigrationWith = (
   acquire: Effect.Effect<
@@ -192,9 +189,7 @@ const runMigrationWith = (
  * Changing the schema changes the fingerprint, which changes the
  * migration Action's input and re-runs it on the next deploy.
  */
-export const schemaFingerprint = (
-  options: BetterAuthOptions,
-): Effect.Effect<string> =>
+export const schemaFingerprint = (options: BetterAuthOptions): Effect.Effect<string> =>
   Effect.suspend(() => {
     const schema = getSchema(options);
     // Reduce to the migration-relevant field and index attributes;
