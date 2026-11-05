@@ -12,7 +12,7 @@ export function parseJiraBrowseUrl(value: string): {
   readonly key: string;
   readonly url: string;
 } | null {
-  const match = /https?:\/\/([a-z0-9-]+\.)?atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\b/iu.exec(
+  const match = /^https?:\/\/([a-z0-9-]+\.)?atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\b/iu.exec(
     value.trim(),
   );
   if (!match) return null;
@@ -26,7 +26,7 @@ export function parseFigmaDesignUrl(value: string): {
   readonly nodeId?: string;
 } | null {
   const match =
-    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^\s?#]*))?(?:\?([^\s#]*))?(?:#([^\s]*))?/iu.exec(
+    /^https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^\s?#]*))?(?:\?([^\s#]*))?(?:#([^\s]*))?/iu.exec(
       trimTrailingProsePunctuation(value.trim()),
     );
   if (!match) return null;

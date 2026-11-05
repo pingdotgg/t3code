@@ -580,8 +580,15 @@ export function projectComposerContextForProvider(input: {
   const entries: string[] = [];
   for (const occurrence of occurrences) {
     if (seen.has(occurrence.contextId)) continue;
-    seen.add(occurrence.contextId);
     const record = lookupRecord(occurrence);
+    if (
+      record === undefined &&
+      occurrence.url !== undefined &&
+      !recordsById.has(occurrence.contextId)
+    ) {
+      continue;
+    }
+    seen.add(occurrence.contextId);
     const entry = formatEnvelopeEntry(
       record?.kind ?? occurrence.kind,
       occurrence.contextId,

@@ -898,10 +898,9 @@ export function useComposerCommandMenu({
       )
         return;
       const record = pullRequestComposerContext(item.pullRequest, uuidv4());
-      if (
-        (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
-        COMPOSER_CONTEXT_MAX_RECORDS
-      ) {
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
         Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
@@ -912,11 +911,13 @@ export function useComposerCommandMenu({
         `${formatComposerContextReference(record)} `,
       );
       onChangeDraftMessage(result.text);
-      const draft = getComposerDraftSnapshot(ownerKey);
-      setComposerDraftContext(ownerKey, {
-        version: 1,
-        records: [...(draft.context?.records ?? []), record],
-      });
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
       setSelection({ start: result.cursor, end: result.cursor });
       return;
     }

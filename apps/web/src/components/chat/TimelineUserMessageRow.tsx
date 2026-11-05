@@ -545,9 +545,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
-  const plainText = replaceComposerContextReferences(
-    resolvedContext.text,
-    (reference) => reference.label,
+  const plainText = replaceComposerContextReferences(resolvedContext.text, (reference) =>
+    reference.url === undefined ? reference.label : reference.source,
   );
   const promptLink = promptLinkFor(plainText);
   const foldSummary =
