@@ -10,17 +10,30 @@ import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as ManimRender from "../../../animation/ManimRender.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as ServerConfig from "../../../config.ts";
+import * as CourseService from "../../../course/CourseService.ts";
+import { CourseId } from "../course/tools.ts";
 
 const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
   description:
-    "Render a short ManimCE clip and show it inline in this thread. `code` is a full Python file with `class Lesson(Scene)`, 10 to 25 s, 3Blue1Brown style, no external files or sound. Use only when motion teaches something; if Manim is missing or rendering fails twice, skip the clip.",
+    "Render a short ManimCE clip and show it inline in this thread. `code` is a full Python file with `class Lesson(Scene)`, 10 to 25 s, 3Blue1Brown style, no external files or sound. Use only when motion teaches something; if Manim is missing or rendering fails twice, skip the clip. In a course lesson, first check `course_read`'s `cachedConcepts`: pass a fitting `concept` with no `code` to show that prepared clip at once; pass `concept` with `code` to save a new one.",
   parameters: Schema.Struct({
-    code: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64 * 1024)),
+    code: Schema.optional(
+      Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64 * 1024)),
+    ),
+    concept: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    courseId: Schema.optional(CourseId),
     title: Schema.String.check(
       Schema.isMinLength(1),
       Schema.isMaxLength(HTML_RENDER_MAX_TITLE_LENGTH),
     ),
-  }),
+  }).check(
+    Schema.makeFilter((input) => input.code !== undefined || input.concept !== undefined, {
+      expected: "code or concept",
+    }),
+  ),
   success: Schema.Struct({
     htmlRender: Schema.Struct({
       attachmentId: Schema.String,
@@ -37,6 +50,10 @@ const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
     ThreadManagementService.ThreadManagementService,
     HtmlRender.HtmlRender,
     ManimRender.ManimRender,
+    FileSystem.FileSystem,
+    Path.Path,
+    ServerConfig.ServerConfig,
+    CourseService.CourseService,
   ],
 })
   .annotate(Tool.Title, "Render animation")

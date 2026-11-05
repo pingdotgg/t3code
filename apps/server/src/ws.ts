@@ -190,6 +190,7 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as ChatSync from "./chatSync.ts";
 import * as KnowledgeMap from "./knowledgeMap.ts";
+import * as CourseService from "./course/CourseService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -1479,6 +1480,9 @@ export const layerWsRpc = (
       const knowledgeMap = yield* Effect.serviceOption(KnowledgeMap.KnowledgeMap).pipe(
         Effect.map((service) => Option.getOrElse(service, () => KnowledgeMap.unavailable)),
       );
+      const courses = yield* Effect.serviceOption(CourseService.CourseService).pipe(
+        Effect.map((service) => Option.getOrElse(service, () => CourseService.unavailable)),
+      );
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
@@ -2653,6 +2657,9 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetChatSyncStatus]: () => chatSync.status,
         [WS_METHODS.knowledgeList]: () => knowledgeMap.list,
         [WS_METHODS.knowledgeRemove]: (input) => knowledgeMap.remove(input.topic),
+        [WS_METHODS.coursesList]: () => courses.list,
+        [WS_METHODS.coursesRemove]: (input) => courses.remove(input.id),
+        [WS_METHODS.visualsClear]: () => courses.clearCachedClips,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),

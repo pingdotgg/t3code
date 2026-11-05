@@ -101,3 +101,12 @@ it.effect("creates a lesson with persisted answers, opening text, and source con
     );
   }),
 );
+
+it("asks to follow a course when the topic is a link", () => {
+  const opening = LessonModule.buildLessonOpening({
+    topic: "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/",
+    depth: "working",
+    purpose: "prerequisite",
+  } as Parameters<typeof LessonModule.buildLessonOpening>[0]);
+  assert.match(opening, /^I'd like to follow this course: https:\/\/ocw\.mit\.edu/);
+});

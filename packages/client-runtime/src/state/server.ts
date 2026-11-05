@@ -1211,6 +1211,21 @@ export function createServerEnvironmentAtoms<R, E>(
     onSuccess: ({ environmentId }, registry) =>
       Effect.sync(() => registry.refresh(knowledgeMap({ environmentId, input: {} }))),
   });
+  const courses = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:courses",
+    tag: WS_METHODS.coursesList,
+    staleTimeMs: 0,
+  });
+  const removeCourse = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:course-remove",
+    tag: WS_METHODS.coursesRemove,
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => registry.refresh(courses({ environmentId, input: {} }))),
+  });
+  const clearVisuals = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:server:visuals-clear",
+    tag: WS_METHODS.visualsClear,
+  });
 
   const chatSyncStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:chat-sync-status",
@@ -1243,6 +1258,9 @@ export function createServerEnvironmentAtoms<R, E>(
     chatSyncStatus,
     knowledgeMap,
     removeKnowledge,
+    courses,
+    removeCourse,
+    clearVisuals,
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,

@@ -73,6 +73,7 @@ export interface SettingsSearchItem {
   readonly requiresSideChats?: boolean;
   readonly requiresChatSync?: boolean;
   readonly requiresKnowledgeMap?: boolean;
+  readonly requiresCourses?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -87,6 +88,7 @@ export interface SettingsSearchAvailability {
   readonly hasSideChats?: boolean;
   readonly hasChatSync?: boolean;
   readonly hasKnowledgeMap?: boolean;
+  readonly hasCourses?: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -281,6 +283,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["knowledge map topics explained back prerequisites"],
     environmentOnly: true,
     requiresKnowledgeMap: true,
+  },
+  {
+    id: "courses",
+    title: "Courses",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["follow course lectures yt-dlp"],
+    environmentOnly: true,
+    requiresCourses: true,
   },
   {
     id: "project-defaults",
@@ -1414,6 +1425,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresSideChats || availability.hasSideChats) &&
       (!item.requiresChatSync || availability.hasChatSync === true) &&
       (!item.requiresKnowledgeMap || availability.hasKnowledgeMap === true) &&
+      (!item.requiresCourses || availability.hasCourses === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

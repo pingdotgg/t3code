@@ -2178,6 +2178,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             const before = yield* orchestrator.getThreadProjection(child.threadId);
             assert.deepEqual(before.runs[0]?.modelSelection, selection);
             assert.equal(before.messages.length, 1);
+            // Created threads are not subagents, so their turns never wake or message the parent.
+            assert.equal(before.thread.lineage.relationshipToParent, null);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).messages.length,
+              1,
+            );
             const empty = yield* service.createThreads(scope, {
               ...request,
               clientRequestId: "empty",
