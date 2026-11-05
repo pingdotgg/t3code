@@ -1,9 +1,14 @@
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import type * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 
 import {
   acceptsPrivateNetworkConnection,
+  closeNonPrivateNetworkConnections,
   resolveHeadlessConnectionString,
 } from "./startupAccess.ts";
 
@@ -72,4 +77,30 @@ describe("acceptsPrivateNetworkConnection", () => {
     expect(accepts("169.254.10.1", "169.254.10.2")).toBe(false);
     expect(accepts(undefined, "192.168.1.31")).toBe(false);
   });
+});
+
+describe("closeNonPrivateNetworkConnections", () => {
+  it.effect("logs the local and remote address of each connection it closes", () =>
+    Effect.gen(function* () {
+      const warnings: Array<Logger.Options<unknown>> = [];
+      const server = NodeHttp.createServer();
+      yield* closeNonPrivateNetworkConnections(server).pipe(
+        Effect.provide(
+          Logger.layer([Logger.make((entry) => warnings.push(entry))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+
+      // An unconnected socket: Node reports neither address.
+      const socket = new NodeNet.Socket();
+      server.emit("connection", socket);
+
+      expect(socket.destroyed).toBe(true);
+      expect(warnings.map((entry) => entry.logLevel)).toEqual(["Warn"]);
+      const line = Logger.formatLogFmt.log(warnings[0]!);
+      expect(line).toMatch(/local\w*\W+undefined/i);
+      expect(line).toMatch(/remote\w*\W+undefined/i);
+    }),
+  );
 });
