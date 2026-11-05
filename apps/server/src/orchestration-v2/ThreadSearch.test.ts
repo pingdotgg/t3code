@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -24,6 +25,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
+import { findThreadReferences } from "./ThreadReferences.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
@@ -1162,4 +1164,79 @@ it.effect("searches on the reader worker while the writer is busy", () =>
       );
     }).pipe(Effect.provide(layerFile));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("thread reference lookup includes streaming subagent messages and ignores code", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const project = ProjectId.make("project:references");
+    const target = ThreadId.make("thread:target");
+    const child = ThreadId.make("thread:child");
+    const source = ThreadId.make("thread:source");
+    const env = EnvironmentId.make("local");
+    yield* createProject(project);
+    yield* Effect.forEach(
+      [
+        thread(target, project),
+        thread(source, project),
+        thread(child, project, { subagentOf: source }),
+        message(
+          child,
+          "child-mention",
+          "assistant",
+          "[target](t3-thread://v2/local/thread:target)",
+          { streaming: true },
+        ),
+        message(source, "code-only", "assistant", "`[target](t3-thread://v2/local/thread:target)`"),
+      ],
+      projections.apply,
+      { discard: true },
+    );
+    yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json) VALUES ('run:wait', ${source}, 1, 'dev', 'running', '2026-01-01', '{}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('item:wait', ${source}, 'run:wait', 1, 'dynamic_tool', 'running', '2026-01-01', ${JSON.stringify({ runId: "run:wait", type: "dynamic_tool", status: "running", toolName: "mcp__t3_code__t3_thread_wait", input: { threadId: target } })})`;
+    yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, role, streaming, created_at, updated_at, payload_json) VALUES ('context:reference', ${source}, 'user', 0, '2026-01-01', '2026-01-01', ${JSON.stringify({ text: "[Target](t3-context://v1/thread/ctx_one)", context: { version: 1, records: [{ kind: "thread", contextId: "ctx_one", environmentId: env, threadId: target }] } })})`;
+    const result = yield* findThreadReferences({
+      sql,
+      sourceEnvironmentId: env,
+      target: { environmentId: env, threadId: target },
+      knownThreads: [],
+    });
+    assert.deepEqual(new Set(result.mentions), new Set([child, source]));
+    assert.deepEqual(result.waits, [source]);
+    yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed' WHERE turn_item_id = 'item:wait'`;
+    const after = yield* findThreadReferences({
+      sql,
+      sourceEnvironmentId: env,
+      target: { environmentId: env, threadId: target },
+      knownThreads: [],
+    });
+    assert.deepEqual(new Set(after.mentions), new Set([child, source]));
+    assert.deepEqual(after.waits, []);
+    yield* sql`INSERT INTO orchestration_v2_projection_subagents (subagent_id, thread_id, run_id, parent_node_id, provider, child_thread_id, origin, status, updated_at, payload_json) VALUES ('delegate:wait', ${source}, 'run:wait', 'node:parent', 'dev', ${target}, 'app_owned', 'running', '2026-01-01', '{"completionWake":"settled_only"}')`;
+    const delegated = yield* findThreadReferences({
+      sql,
+      sourceEnvironmentId: env,
+      target: { environmentId: env, threadId: target },
+      knownThreads: [],
+    });
+    assert.deepEqual(delegated.waits, [source]);
+    yield* sql`UPDATE orchestration_v2_projection_subagents SET payload_json = '{"completionWake":"always"}' WHERE subagent_id = 'delegate:wait'`;
+    const asynchronous = yield* findThreadReferences({
+      sql,
+      sourceEnvironmentId: env,
+      target: { environmentId: env, threadId: target },
+      knownThreads: [],
+    });
+    assert.deepEqual(asynchronous.waits, []);
+    yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_set(payload_json, '$.text', 'No references now') WHERE message_id = 'child-mention'`;
+    yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_remove(payload_json, '$.context') WHERE message_id = 'context:reference'`;
+    const removed = yield* findThreadReferences({
+      sql,
+      sourceEnvironmentId: env,
+      target: { environmentId: env, threadId: target },
+      knownThreads: [],
+    });
+    assert.deepEqual(removed, { mentions: [], waits: [] });
+  }).pipe(Effect.provide(layerTest)),
 );

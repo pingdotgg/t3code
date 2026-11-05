@@ -271,6 +271,10 @@
       "types": "./src/promptLinks.ts",
       "import": "./src/promptLinks.ts"
     },
+    "./threadReferenceRelationships": {
+      "types": "./src/threadReferenceRelationships.ts",
+      "import": "./src/threadReferenceRelationships.ts"
+    },
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"

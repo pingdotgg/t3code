@@ -1,3 +1,8 @@
+import {
+  useReferenceHighlighted,
+  useReferenceInfo,
+  useThreadReferenceHighlight,
+} from "../../threadReferenceHighlight";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -259,6 +264,9 @@ function SidebarThreadTooltip({
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
 }) {
+  const referenceInfo = useReferenceInfo(
+    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+  );
   const driverKind = providerEntry?.driverKind ?? null;
   const previousProviderNames = thread.providerInstanceHistory
     .filter((instanceId) => instanceId !== modelInstanceId)
@@ -276,6 +284,18 @@ function SidebarThreadTooltip({
           ) : null
         }
       >
+        {referenceInfo &&
+        (!referenceInfo.pending || referenceInfo.mentions > 0 || referenceInfo.waits > 0) ? (
+          <div>
+            {referenceInfo.mentions} {referenceInfo.mentions === 1 ? "mention" : "mentions"} ·{" "}
+            {referenceInfo.waits} waiting
+            {referenceInfo.unavailable
+              ? " · some machines unavailable"
+              : referenceInfo.pending
+                ? " · checking"
+                : ""}
+          </div>
+        ) : null}
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
             {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
@@ -665,6 +685,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
+  const isReferenceHighlighted = useReferenceHighlighted(threadKey);
+  const enterReference = useThreadReferenceHighlight((state) => state.enter);
+  const leaveReference = useThreadReferenceHighlight((state) => state.leave);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -965,6 +988,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     shouldRecede &&
       (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
+    isReferenceHighlighted && "ring-1 ring-inset ring-primary/60 bg-sidebar-row-hover",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&
@@ -1229,6 +1253,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   // Lines titles up with the folder name, past its chevron and icon.
                   inFolder && "ps-9",
                 )}
+                onPointerEnter={() => enterReference(threadRef)}
+                onPointerLeave={(event) => {
+                  if (!event.currentTarget.matches(":focus-within")) leaveReference(threadRef);
+                }}
+                onFocus={() => enterReference(threadRef)}
+                onBlur={(event) => {
+                  if (!event.currentTarget.matches(":hover")) leaveReference(threadRef);
+                }}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1418,6 +1450,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              onPointerEnter={() => enterReference(threadRef)}
+              onPointerLeave={(event) => {
+                if (!event.currentTarget.matches(":focus-within")) leaveReference(threadRef);
+              }}
+              onFocus={() => enterReference(threadRef)}
+              onBlur={(event) => {
+                if (!event.currentTarget.matches(":hover")) leaveReference(threadRef);
+              }}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}

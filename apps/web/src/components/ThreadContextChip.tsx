@@ -1,3 +1,4 @@
+import { useThreadReferenceHighlight } from "../threadReferenceHighlight";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -15,6 +16,8 @@ export function ThreadContextChip(props: {
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
+  const enter = useThreadReferenceHighlight((state) => state.enter);
+  const leave = useThreadReferenceHighlight((state) => state.leave);
   const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
   const title = shell?.title?.trim() || props.record.title;
   return (
@@ -23,6 +26,14 @@ export function ThreadContextChip(props: {
         render={
           <ContextChip
             kind="thread"
+            onPointerEnter={() => enter({ environmentId, threadId })}
+            onPointerLeave={(event) => {
+              if (!event.currentTarget.matches(":focus-within")) leave({ environmentId, threadId });
+            }}
+            onFocus={() => enter({ environmentId, threadId })}
+            onBlur={(event) => {
+              if (!event.currentTarget.matches(":hover")) leave({ environmentId, threadId });
+            }}
             {...(props.unreadable ? { state: "invalid" as const } : {})}
             render={<Link to="/$environmentId/$threadId" params={{ environmentId, threadId }} />}
             aria-label={`Thread, ${title}`}

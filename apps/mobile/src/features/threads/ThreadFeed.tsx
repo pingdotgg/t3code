@@ -1,3 +1,10 @@
+import { createEnvironmentQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { request as environmentRequest } from "@t3tools/client-runtime/rpc";
+import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import { environmentCatalog } from "../../connection/catalog";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2430,6 +2437,9 @@ function UserMessageContent(props: UserMessageContentProps) {
               title: record?.label ?? "Context unavailable",
               actions: [
                 { id: "open-context", title: "Open context" },
+                ...(record?.kind === "thread" && "threadId" in record
+                  ? [{ id: "show-thread-references", title: "Show references" }]
+                  : []),
                 { id: "copy-context", title: "Copy context", disabled: !record },
               ],
             };
@@ -2441,6 +2451,20 @@ function UserMessageContent(props: UserMessageContentProps) {
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
             );
+            if (
+              actionId === "show-thread-references" &&
+              record?.kind === "thread" &&
+              "threadId" in record
+            ) {
+              props.linkHandlers.onFileContextMenuAction(
+                hostedThreadLink({
+                  environmentId: record.environmentId,
+                  threadId: record.threadId,
+                }),
+                actionId,
+              );
+              return;
+            }
             if (actionId === "copy-context" && record) {
               void writeComposerContextClipboard(
                 formatComposerContextReference({
@@ -2654,6 +2678,19 @@ function DisclosureRow(props: {
   );
 }
 
+const mobileThreadReferences = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
+  label: "mobile-thread-references",
+  staleTimeMs: 0,
+  idleTtlMs: 10_000,
+  execute: Effect.fn("MobileThreadReferences.read")(function* (input: {
+    sourceEnvironmentId: EnvironmentId;
+    target: ScopedThreadRef;
+    knownThreads: ReadonlyArray<ScopedThreadRef>;
+  }) {
+    return yield* environmentRequest(ORCHESTRATION_V2_WS_METHODS.getThreadReferences, input);
+  }),
+});
+
 export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
@@ -2666,6 +2703,62 @@ export const ThreadFeed = memo(function ThreadFeed({
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  const showThreadReferences = async (target: ScopedThreadRef) => {
+    const knownThreads = appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
+    const environments = [
+      ...enabledEnvironmentIds(appAtomRegistry.get(environmentCatalog.catalogValueAtom)),
+    ];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const results = await Promise.all(
+      environments.map(async (environmentId) => ({
+        environmentId,
+        result: await executeAtomQuery(
+          appAtomRegistry,
+          mobileThreadReferences({
+            environmentId,
+            input: { sourceEnvironmentId: environmentId, target, knownThreads },
+          }),
+          { signal: controller.signal, reportFailure: false, reportDefect: false, refresh: true },
+        ),
+      })),
+    );
+    clearTimeout(timer);
+    const mentions = new Map<string, string>();
+    const waits = new Map<string, string>();
+    const titleFor = (environmentId: EnvironmentId, threadId: ThreadId) =>
+      appAtomRegistry.get(environmentThreadShells.threadShellAtom({ environmentId, threadId }))
+        ?.title ?? threadId;
+    let unavailable = false;
+    for (const { environmentId, result } of results) {
+      if (result._tag !== "Success") {
+        unavailable = true;
+        continue;
+      }
+      for (const id of result.value.mentions)
+        mentions.set(JSON.stringify([environmentId, id]), titleFor(environmentId, id));
+      for (const id of result.value.waits)
+        waits.set(JSON.stringify([environmentId, id]), titleFor(environmentId, id));
+    }
+    for (const thread of appAtomRegistry.get(environmentThreadShells.threadShellsAtom)) {
+      if (
+        thread.environmentId === target.environmentId &&
+        thread.pendingBackgroundTasks?.some(
+          (task) => task.kind === "subagent" && task.childThreadId === target.threadId,
+        )
+      )
+        waits.set(JSON.stringify([thread.environmentId, thread.id]), thread.title);
+    }
+    const sections = [
+      mentions.size ? `Mentioned by:\n${[...mentions.values()].join("\n")}` : "No mentions",
+      waits.size
+        ? `Waiting on this thread:\n${[...waits.values()].join("\n")}`
+        : "No threads waiting",
+      ...(unavailable ? ["Some machines could not be reached."] : []),
+    ];
+    Dialog.alert("Thread references", sections.join("\n\n"));
+  };
+
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
       setReviewSelectedSectionId(
@@ -3042,6 +3135,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
           actions: [
             { id: "open-thread", title: "Open thread" },
+            { id: "show-thread-references", title: "Show references" },
             { id: "copy-thread-link", title: "Copy link" },
           ],
         };
@@ -3060,6 +3154,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       const thread = resolveLinkedThread(href);
       if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
+        else if (actionId === "show-thread-references") void showThreadReferences(thread);
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }

@@ -3580,6 +3580,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   searchThreadStream: "orchestration.searchThreadStream",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
+  getThreadReferences: "orchestration.getThreadReferences",
   getThreadTitles: "orchestration.getThreadTitles",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
@@ -4233,6 +4234,16 @@ export const OrchestrationV2RpcSchemas = {
   getThreadFamily: {
     input: OrchestrationV2GetThreadFamilyInput,
     output: OrchestrationV2ThreadFamily,
+  },
+  getThreadReferences: {
+    input: Schema.Struct({
+      sourceEnvironmentId: EnvironmentId,
+      target: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+      knownThreads: Schema.Array(
+        Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+      ),
+    }),
+    output: Schema.Struct({ mentions: Schema.Array(ThreadId), waits: Schema.Array(ThreadId) }),
   },
   getThreadTitles: {
     input: OrchestrationV2GetThreadTitlesInput,
