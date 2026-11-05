@@ -449,11 +449,16 @@ describe("config reads", () => {
   type TestError = GitCommandError | PlatformError.PlatformError;
   interface ConfigChange {
     readonly name: string;
-    // Prepares the repository at `cwd` and returns the directory to read from.
-    readonly setup: (cwd: string) => Effect.Effect<string, TestError, Scope.Scope | TestServices>;
+    // Prepares the repository at `cwd` and returns the directory to read from. `env` is the
+    // environment the test runs Git in, which setup and change may extend.
+    readonly setup: (
+      cwd: string,
+      env: NodeJS.ProcessEnv,
+    ) => Effect.Effect<string, TestError, Scope.Scope | TestServices>;
     readonly change: (
       cwd: string,
       readCwd: string,
+      env: NodeJS.ProcessEnv,
     ) => Effect.Effect<void, TestError, Scope.Scope | TestServices>;
     readonly read: (
       driver: GitVcsDriver.GitVcsDriver["Service"],
@@ -468,39 +473,26 @@ describe("config reads", () => {
     driver.readConfigValue(cwd, key);
   const readPrimaryRemote = (driver: GitVcsDriver.GitVcsDriver["Service"], cwd: string) =>
     driver.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
-  const setEnv = (name: string, value: string) =>
+  // An empty safe.directory drops any configured exception, so Git checks owners.
+  const trustNoOtherOwner = (env: NodeJS.ProcessEnv) =>
+    Effect.sync(() => {
+      Object.assign(env, {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "safe.directory",
+        GIT_CONFIG_VALUE_0: "",
+      });
+    });
+  const changeOwner = (env: NodeJS.ProcessEnv) => (file: string) =>
     Effect.acquireRelease(
       Effect.sync(() => {
-        const previous = process.env[name];
-        process.env[name] = value;
-        return previous;
+        statOwner.path = file;
+        env.GIT_TEST_ASSUME_DIFFERENT_OWNER = "1";
       }),
-      (previous) =>
+      () =>
         Effect.sync(() => {
-          if (previous === undefined) Reflect.deleteProperty(process.env, name);
-          else process.env[name] = previous;
+          statOwner.path = null;
         }),
     );
-  const setGlobalConfig = (file: string) => setEnv("GIT_CONFIG_GLOBAL", file);
-  // An empty safe.directory drops any configured exception, so Git checks owners.
-  const trustNoOtherOwner = Effect.all([
-    setEnv("GIT_CONFIG_COUNT", "1"),
-    setEnv("GIT_CONFIG_KEY_0", "safe.directory"),
-    setEnv("GIT_CONFIG_VALUE_0", ""),
-  ]);
-  const changeOwner = (file: string) =>
-    Effect.all([
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          statOwner.path = file;
-        }),
-        () =>
-          Effect.sync(() => {
-            statOwner.path = null;
-          }),
-      ),
-      setEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"),
-    ]).pipe(Effect.asVoid);
   const writeInclude = (file: string, value: string) =>
     Effect.sync(() => NodeFS.writeFileSync(file, `[t3]\n\tvalue = ${value}\n`));
   const changes: ReadonlyArray<ConfigChange> = [
@@ -596,14 +588,14 @@ describe("config reads", () => {
     },
     {
       name: "an edit to the global config",
-      setup: (cwd) =>
+      setup: (cwd, env) =>
         Effect.gen(function* () {
           const global = NodePath.join(yield* makeTmpDir("git-global-"), "gitconfig");
           yield* writeInclude(global, "first");
-          yield* setGlobalConfig(global);
+          env.GIT_CONFIG_GLOBAL = global;
           return cwd;
         }),
-      change: () => writeInclude(process.env.GIT_CONFIG_GLOBAL!, "second"),
+      change: (_cwd, _readCwd, env) => writeInclude(env.GIT_CONFIG_GLOBAL!, "second"),
       read: readValue("t3.value"),
       before: "first",
       after: "second",
@@ -679,15 +671,15 @@ describe("config reads", () => {
         }))),
     {
       name: "a new owner of the top level above the directory read from",
-      setup: (cwd) =>
+      setup: (cwd, env) =>
         Effect.gen(function* () {
           yield* git(cwd, ["config", "t3.value", "first"]);
-          yield* trustNoOtherOwner;
+          yield* trustNoOtherOwner(env);
           NodeFS.mkdirSync(NodePath.join(cwd, "sub"));
           return NodePath.join(cwd, "sub");
         }),
-      change: (_cwd, sub) =>
-        git(sub, ["rev-parse", "--show-toplevel"]).pipe(Effect.flatMap(changeOwner)),
+      change: (_cwd, sub, env) =>
+        git(sub, ["rev-parse", "--show-toplevel"]).pipe(Effect.flatMap(changeOwner(env))),
       read: readValue("t3.value"),
       before: "first",
       after: null,
@@ -695,16 +687,16 @@ describe("config reads", () => {
     },
     {
       name: "a new owner of a linked worktree's git dir",
-      setup: (cwd) =>
+      setup: (cwd, env) =>
         Effect.gen(function* () {
           const worktree = NodePath.join(yield* makeTmpDir("git-worktrees-"), "linked");
           yield* git(cwd, ["config", "t3.value", "first"]);
           yield* git(cwd, ["worktree", "add", "-b", "linked", worktree]);
-          yield* trustNoOtherOwner;
+          yield* trustNoOtherOwner(env);
           return worktree;
         }),
-      change: (_cwd, worktree) =>
-        git(worktree, ["rev-parse", "--absolute-git-dir"]).pipe(Effect.flatMap(changeOwner)),
+      change: (_cwd, worktree, env) =>
+        git(worktree, ["rev-parse", "--absolute-git-dir"]).pipe(Effect.flatMap(changeOwner(env))),
       read: readValue("t3.value"),
       before: "first",
       after: null,
@@ -758,23 +750,26 @@ describe("config reads", () => {
   ];
 
   it.effect.each(changes)("sees $name on the next read", (change) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { driver, spawned } = yield* makeCountingDriver;
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const readCwd = yield* change.setup(cwd);
-        assert.equal(yield* change.read(driver, readCwd), change.before);
-        assert.equal(yield* change.read(driver, readCwd), change.before);
-        spawned.length = 0;
-        assert.equal(yield* change.read(driver, readCwd), change.before);
-        assert.equal(spawned.filter(readsOnlyConfig).length === 0, change.reused);
+    Effect.flatMap(HostProcess.Environment, (hostEnv) => {
+      const env = { ...hostEnv };
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const { driver, spawned } = yield* makeCountingDriver;
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const readCwd = yield* change.setup(cwd, env);
+          assert.equal(yield* change.read(driver, readCwd), change.before);
+          assert.equal(yield* change.read(driver, readCwd), change.before);
+          spawned.length = 0;
+          assert.equal(yield* change.read(driver, readCwd), change.before);
+          assert.equal(spawned.filter(readsOnlyConfig).length === 0, change.reused);
 
-        yield* change.change(cwd, readCwd);
+          yield* change.change(cwd, readCwd, env);
 
-        assert.equal(yield* change.read(driver, readCwd), change.after);
-      }),
-    ).pipe(Effect.provide(layerTest)),
+          assert.equal(yield* change.read(driver, readCwd), change.after);
+        }),
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.skipIf(!caseInsensitiveFileSystem)(
@@ -810,18 +805,11 @@ describe("config reads", () => {
         const sub = NodePath.join(cwd, "sub");
         NodeFS.mkdirSync(sub);
         const workTree = yield* makeTmpDir("git-work-tree-");
-        const readWithWorkTree = Effect.acquireUseRelease(
-          Effect.sync(() => {
-            const previous = process.env.GIT_WORK_TREE;
-            process.env.GIT_WORK_TREE = workTree;
-            return previous;
+        const readWithWorkTree = driver.readConfigValue(sub, "t3.value").pipe(
+          Effect.provideService(HostProcess.Environment, {
+            ...(yield* HostProcess.Environment),
+            GIT_WORK_TREE: workTree,
           }),
-          () => driver.readConfigValue(sub, "t3.value"),
-          (previous) =>
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env.GIT_WORK_TREE;
-              else process.env.GIT_WORK_TREE = previous;
-            }),
         );
         assert.equal(yield* readWithWorkTree, "parent");
         assert.equal(yield* readWithWorkTree, "parent");
@@ -830,6 +818,38 @@ describe("config reads", () => {
         yield* git(sub, ["config", "t3.value", "nested"]);
 
         assert.equal(yield* readWithWorkTree, "nested");
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("answers each read from the config of the environment it runs in", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { driver, spawned } = yield* makeCountingDriver;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const hostEnv = yield* HostProcess.Environment;
+        const readWithGlobal = Effect.fnUntraced(function* (value: string) {
+          const global = NodePath.join(yield* makeTmpDir("git-global-"), "gitconfig");
+          yield* writeInclude(global, value);
+          return driver.readConfigValue(cwd, "t3.value").pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...hostEnv,
+              GIT_CONFIG_GLOBAL: global,
+            }),
+          );
+        });
+        const readFirst = yield* readWithGlobal("first");
+        const readSecond = yield* readWithGlobal("second");
+        for (const _ of [1, 2]) {
+          assert.equal(yield* readFirst, "first");
+          assert.equal(yield* readSecond, "second");
+        }
+        spawned.length = 0;
+
+        assert.equal(yield* readFirst, "first");
+        assert.equal(yield* readSecond, "second");
+        assert.deepStrictEqual(spawned.filter(readsOnlyConfig), []);
       }),
     ).pipe(Effect.provide(layerTest)),
   );

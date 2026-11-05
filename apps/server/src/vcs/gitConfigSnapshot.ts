@@ -227,7 +227,6 @@ export interface GitConfigSnapshot {
 }
 
 interface CachedGitConfigSnapshot {
-  readonly environment: string;
   readonly dependencies: ReadonlyArray<GitConfigDependency>;
   readonly fingerprint: string;
   // null: a value may depend on something the dependencies miss, so every read runs Git.
@@ -239,6 +238,10 @@ type RunGit = (
   cwd: string,
   args: ReadonlyArray<string>,
 ) => Effect.Effect<GitVcsDriver.ExecuteGitResult, GitCommandError>;
+
+// Snapshots are per directory and config environment, so a read never sees another environment's
+// config. JSON escapes NUL and a path cannot hold one, so the key splits at its first NUL.
+const snapshotKey = (cwd: string, environment: string) => `${environment}\0${cwd}`;
 
 const CONFIG_SNAPSHOT_CACHE_CAPACITY = 2_048;
 const CONFIG_SNAPSHOT_RETRY_TTL = Duration.seconds(1);
@@ -271,9 +274,9 @@ const REPOSITORY_PATH_ARGS = [
 ] as const;
 
 /**
- * Per-directory snapshots of `git config --list`, reused while the files that chose and supplied
- * those values keep the same stat. Every dependency is stat'ed before the read that depends on it,
- * so a write during a load leaves the snapshot stale rather than wrong.
+ * Snapshots of `git config --list` per directory and config environment, reused while the files
+ * that chose and supplied those values keep the same stat. Every dependency is stat'ed before the
+ * read that depends on it, so a write during a load leaves the snapshot stale rather than wrong.
  */
 export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(function* (
   runGit: RunGit,
@@ -326,6 +329,7 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
   const readConfigState = Effect.fn("GitVcsDriver.configSnapshot.read")(function* (
     cwd: string,
     environment: string,
+    home: string | undefined,
   ) {
     const pathsResult = yield* runGit(
       "GitVcsDriver.configSnapshot.paths",
@@ -419,7 +423,7 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
       snapshotSupported = false;
     } else {
       const listed = gitConfigListDependencies(entries, {
-        home: process.env.HOME,
+        home,
         windows,
         isAbsolute: path.isAbsolute,
       });
@@ -433,14 +437,18 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
   });
 
   const load = Effect.fn("GitVcsDriver.configSnapshot.load")(
-    function* (cwd: string) {
-      const environment = gitConfigEnvironmentSignature(process.env);
-      if (environment === null) return null;
-      let dependencies = reloadDependencies.get(cwd) ?? [];
-      reloadDependencies.delete(cwd);
+    function* (key: string) {
+      const separator = key.indexOf("\0");
+      const environment = key.slice(0, separator);
+      const cwd = key.slice(separator + 1);
+      // Git runs in the environment of the read that started the load, which the key names.
+      const env = yield* HostProcess.Environment;
+      if (gitConfigEnvironmentSignature(env) !== environment) return null;
+      let dependencies = reloadDependencies.get(key) ?? [];
+      reloadDependencies.delete(key);
       for (let attempt = 0; attempt < CONFIG_SNAPSHOT_LOAD_ATTEMPTS; attempt++) {
         const fingerprints = yield* fingerprintDependencies(dependencies);
-        const state = yield* readConfigState(cwd, environment);
+        const state = yield* readConfigState(cwd, environment, env.HOME);
         if (state === null) return null;
         const fingerprintByKey = new Map(
           dependencies.map((dependency, index) => [
@@ -462,7 +470,6 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
               dependency.kind !== "absent" || fingerprint[index]!.startsWith("!"),
           );
           return {
-            environment,
             dependencies: unique,
             fingerprint: fingerprint.join("\n"),
             snapshot:
@@ -486,37 +493,38 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
   });
 
   const isCurrent = (cached: CachedGitConfigSnapshot) =>
-    cached.environment === gitConfigEnvironmentSignature(process.env)
-      ? fingerprintDependencies(cached.dependencies).pipe(
-          Effect.map((fingerprints) => fingerprints.join("\n") === cached.fingerprint),
-        )
-      : Effect.succeed(false);
+    fingerprintDependencies(cached.dependencies).pipe(
+      Effect.map((fingerprints) => fingerprints.join("\n") === cached.fingerprint),
+    );
 
   // A one-off read runs one command; a directory read again, such as on every refresh, is loaded.
-  const isReadAgain = (cwd: string) => {
-    if (readOnce.has(cwd)) return true;
+  const isReadAgain = (key: string) => {
+    if (readOnce.has(key)) return true;
     if (readOnce.size >= CONFIG_SNAPSHOT_CACHE_CAPACITY) {
       readOnce.delete(readOnce.values().next().value!);
     }
-    readOnce.add(cwd);
+    readOnce.add(key);
     return false;
   };
 
   /**
-   * The current snapshot for `cwd`, or null when this read must run Git. Untraced: it runs on every
-   * config read, several per status refresh; loads keep their spans.
+   * The current snapshot for `cwd` in this read's environment, or null when this read must run Git.
+   * Untraced: it runs on every config read, several per status refresh; loads keep their spans.
    */
   const read = Effect.fnUntraced(function* (cwd: string) {
     if (!supported) return null;
-    if (!(yield* Cache.has(snapshots, cwd)) && !isReadAgain(cwd)) return null;
-    const cached = yield* Cache.get(snapshots, cwd);
+    const environment = gitConfigEnvironmentSignature(yield* HostProcess.Environment);
+    if (environment === null) return null;
+    const key = snapshotKey(cwd, environment);
+    if (!(yield* Cache.has(snapshots, key)) && !isReadAgain(key)) return null;
+    const cached = yield* Cache.get(snapshots, key);
     if (cached === null) return null;
     if (yield* isCurrent(cached)) return cached.snapshot;
-    reloadDependencies.set(cwd, cached.dependencies);
-    yield* Cache.invalidateWhen(snapshots, cwd, (current) => current === cached);
+    reloadDependencies.set(key, cached.dependencies);
+    yield* Cache.invalidateWhen(snapshots, key, (current) => current === cached);
     // Whatever replaces the stale entry loaded after this read began, so it needs no check.
-    const reloaded = yield* Cache.get(snapshots, cwd);
-    reloadDependencies.delete(cwd);
+    const reloaded = yield* Cache.get(snapshots, key);
+    reloadDependencies.delete(key);
     return reloaded?.snapshot ?? null;
   });
 
