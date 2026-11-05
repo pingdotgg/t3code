@@ -1,4 +1,7 @@
-import { execFileSync } from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodeFS from "node:fs";
 import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
 
@@ -64,10 +67,28 @@ const packExecutableTargets = packExecutableTarget
     ]
   : undefined;
 
-// tsc keeps its incremental state here, so a typecheck after an edit re-checks only the files the
-// edit can reach. The task below keeps the file out of its own inputs and outputs: tsc reads and
-// rewrites it on every run, which would otherwise make Vite+ refuse to cache the task.
-const TYPECHECK_BUILD_INFO = `node_modules/.cache/tsc/typecheck-${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()}.tsbuildinfo`;
+// Incremental state lets an edit re-check only the files it can reach. It is keyed by HEAD and
+// stale files are dropped, since state from another revision can hide Effect-rule diagnostics.
+// The task keeps it out of its cache inputs and outputs because every run rewrites it.
+const TYPECHECK_BUILD_INFO_DIR = "node_modules/.cache/tsc";
+const typecheckRevision = (() => {
+  try {
+    return NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: import.meta.dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "no-git";
+  }
+})();
+const TYPECHECK_BUILD_INFO = `${TYPECHECK_BUILD_INFO_DIR}/typecheck-${typecheckRevision}.tsbuildinfo`;
+if (!NodeFS.existsSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO}`)) {
+  NodeFS.rmSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}`, {
+    recursive: true,
+    force: true,
+  });
+}
 
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
