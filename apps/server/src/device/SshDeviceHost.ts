@@ -1,5 +1,6 @@
 import {
   type DeviceHostSummary,
+  type DevicePlatform,
   DevicePlatformAvailability,
   DeviceToolVersions,
   deviceToolInstallMessage,
@@ -321,20 +322,19 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         http,
         run,
         // Keep probing negative reports so an SDK installed after connecting is still found.
-        iosAvailable: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "ios" && p.available)
-            ? Effect.succeed(true)
-            : platformAvailability("ios").pipe(
-                Effect.map((availability) => availability.available),
-              ),
-        ),
-        androidAvailable: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "android" && p.available)
-            ? Effect.succeed(true)
-            : platformAvailability("android").pipe(
-                Effect.map((availability) => availability.available),
-              ),
-        ),
+        availablePlatforms: Effect.gen(function* () {
+          const isAvailable = (platform: DevicePlatform) =>
+            summary.platforms.some(
+              (candidate) => candidate.platform === platform && candidate.available,
+            );
+          if (!isAvailable("ios") || !isAvailable("android")) {
+            const refreshed = yield* provide(probe(config, owner)).pipe(Effect.result);
+            if (refreshed._tag === "Success") {
+              summary = { ...summary, platforms: refreshed.success.platforms };
+            }
+          }
+          return { ios: isAvailable("ios"), android: isAvailable("android") };
+        }),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&

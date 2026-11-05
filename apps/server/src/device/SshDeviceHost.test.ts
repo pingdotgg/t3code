@@ -203,6 +203,7 @@ it.effect.each(["ios", "android"] as const)(
       const home = yield* fs.makeTempDirectoryScoped();
       const modes: string[] = [];
       let platformInstalled = false;
+      let otherPlatformInstalled = true;
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -231,10 +232,14 @@ it.effect.each(["ios", "android"] as const)(
                 : JSON.stringify({
                     nodePath: "/node",
                     platforms: [
-                      { platform: "ios", available: platform === "ios" ? platformInstalled : true },
+                      {
+                        platform: "ios",
+                        available: platform === "ios" ? platformInstalled : otherPlatformInstalled,
+                      },
                       {
                         platform: "android",
-                        available: platform === "android" ? platformInstalled : true,
+                        available:
+                          platform === "android" ? platformInstalled : otherPlatformInstalled,
                       },
                     ],
                     hubPort: 1234,
@@ -330,6 +335,19 @@ it.effect.each(["ios", "android"] as const)(
       expect(observedModes()).toEqual(["probe"]);
       expect(yield* platformNames).toEqual(names);
       expect(observedModes()).toEqual(enumerationModes);
+
+      platformInstalled = false;
+      otherPlatformInstalled = false;
+      yield* host.inspect;
+      modes.splice(0);
+      expect(yield* platformNames).toEqual([]);
+      expect(observedModes()).toEqual(["probe"]);
+      expect(yield* platformNames).toEqual([]);
+      expect(observedModes()).toEqual(["probe"]);
+
+      platformInstalled = true;
+      expect(yield* platformNames).toEqual(names);
+      expect(observedModes()).toEqual(["probe", ...enumerationModes]);
       yield* host.stop;
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

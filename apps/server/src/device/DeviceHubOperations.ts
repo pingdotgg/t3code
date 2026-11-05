@@ -73,9 +73,7 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  readonly iosAvailable: Effect.Effect<boolean>;
-  /** Whether to list AVDs, which the hub does not report until they boot. */
-  readonly androidAvailable: Effect.Effect<boolean>;
+  readonly availablePlatforms: Effect.Effect<{ readonly ios: boolean; readonly android: boolean }>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -123,11 +121,11 @@ export const makeDeviceHubOperations = (options: {
       "list",
     );
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.androidAvailable;
+    const available = yield* options.availablePlatforms;
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
-        !(!androidAvailable && error.message.startsWith("[android-utils] ")) &&
+        !(!available.android && error.message.startsWith("[android-utils] ")) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -140,7 +138,7 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
-    if (yield* options.iosAvailable) {
+    if (available.ios) {
       // The hub's recent-device list excludes never-used simulators; its grid includes them
       // and retains the hub's availability and single-device session filters.
       const grid = yield* hubJson(
@@ -175,7 +173,7 @@ export const makeDeviceHubOperations = (options: {
       }
     }
     let androidDiscoveryIncomplete = false;
-    if (androidAvailable) {
+    if (available.android) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {

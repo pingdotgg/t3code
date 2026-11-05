@@ -50,8 +50,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         origin: "http://device.test",
         http,
         run: () => Effect.die("iOS discovery uses the hub"),
-        iosAvailable: Effect.succeed(true),
-        androidAvailable: Effect.succeed(false),
+        availablePlatforms: Effect.succeed({ ios: true, android: false }),
       });
       const listed = yield* operations.list;
       expect(listed.devices).toEqual([
@@ -112,8 +111,7 @@ it.effect.each(["unavailable", "http-error", "invalid-json"])(
           }),
         ),
         run: () => Effect.die("Discovery must not run a command"),
-        iosAvailable: Effect.succeed(scenario !== "unavailable"),
-        androidAvailable: Effect.succeed(false),
+        availablePlatforms: Effect.succeed({ ios: scenario !== "unavailable", android: false }),
       });
       const listed = yield* operations.list;
       expect(listed.devices).toEqual([used]);
