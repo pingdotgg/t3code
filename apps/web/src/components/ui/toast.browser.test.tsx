@@ -20,13 +20,11 @@ describe("toastManager", () => {
       </ToastProvider>,
     );
 
-    const anchoredViewport = await vi.waitFor(() => {
-      const viewport = document.querySelector('[data-slot="toast-viewport-anchored"]');
-      expect(viewport).not.toBeNull();
-      return viewport!;
+    await vi.waitFor(() => {
+      const anchoredViewport = document.querySelector('[data-slot="toast-viewport-anchored"]');
+      expect(anchoredViewport?.getAttribute("aria-live")).toBe("polite");
+      expect(anchoredViewport?.getAttribute("role")).toBeNull();
+      expect(page.getByRole("region", { name: "Notifications" }).elements()).toHaveLength(1);
     });
-
-    expect(anchoredViewport.getAttribute("aria-live")).toBe("polite");
-    expect(page.getByRole("region", { name: "Notifications" }).elements()).toHaveLength(1);
   });
 });
