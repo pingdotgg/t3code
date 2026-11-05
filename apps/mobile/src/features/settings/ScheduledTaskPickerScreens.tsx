@@ -232,7 +232,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
         thread,
       })),
   ];
-  const selectedKey = threadId ?? "new-thread";
+  const selectedKey = threadId ?? (editor.draft.threadMode === "new_thread" ? "new-thread" : null);
 
   return (
     <SettingsScreen title="Destination">
@@ -318,7 +318,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
                         ...current,
                         draft: item.thread
                           ? moveDraftToThread(current.draft, item.thread)
-                          : unbindDraftFromThread(current.draft),
+                          : { ...unbindDraftFromThread(current.draft), threadMode: "new_thread" },
                       }
                     : current,
                 );

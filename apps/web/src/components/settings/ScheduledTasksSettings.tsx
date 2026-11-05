@@ -22,6 +22,7 @@ import type {
   ScheduledTask,
   ScheduledTaskId,
   ScheduledTaskSchedule,
+  ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
@@ -167,6 +168,7 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
+  threadMode: "new_thread",
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -1159,18 +1161,29 @@ function ScheduledTaskEditorDialog({
   );
 }
 
+const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
+  new_thread: "New thread each run",
+  continue: "One thread, continuing the conversation",
+  fresh_session: "One thread, fresh session each run",
+};
+
 function ScheduledTaskDestination({
   environmentId,
   projectId,
   threadId,
+  threadMode,
   disabled,
   onSelect,
+  onThreadModeChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly threadId: ThreadId | null;
+  readonly threadMode: ScheduledTaskThreadMode;
   readonly disabled: boolean;
   readonly onSelect: (thread: { id: ThreadId; projectId: ProjectId } | null) => void;
+  /** Absent on servers that predate thread modes. */
+  readonly onThreadModeChange: ((mode: ScheduledTaskThreadMode) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1182,7 +1195,11 @@ function ScheduledTaskDestination({
   );
   const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
   const currentLabel =
-    ref === null ? "New thread each run" : thread?.title.trim() || `Thread ${ref.threadId}`;
+    ref !== null
+      ? thread?.title.trim() || `Thread ${ref.threadId}`
+      : threadMode === "new_thread"
+        ? "New thread each run"
+        : "Started by the first run";
   const shells = useVisibleThreadShells(open);
   // Mounts older settled threads matching the query, which shells may leave out.
   useThreadSearch(open && projectId ? [environmentId] : [], query, {
@@ -1205,61 +1222,96 @@ function ScheduledTaskDestination({
     setOpen(next);
     if (!next) setQuery("");
   };
+  const detail =
+    threadMode === "new_thread"
+      ? "Each run starts a new thread with the workspace and model below."
+      : ref === null
+        ? threadMode === "continue"
+          ? "The first run starts a thread with the workspace and model below. Later runs continue that conversation."
+          : "The first run starts a thread with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context."
+        : threadMode === "continue"
+          ? "Each run continues this conversation, in its workspace and with its current model."
+          : "Each run starts a fresh session in this thread, without earlier runs' context.";
   return (
     <Field label="Destination" htmlFor="scheduled-task-destination">
-      <Combobox
-        items={items}
-        filteredItems={items}
-        filter={null}
-        autoHighlight
-        open={open && !disabled}
-        onOpenChange={handleOpenChange}
-        value={threadId ?? NEW_THREAD_DESTINATION}
-        onValueChange={(value) => {
-          if (value === NEW_THREAD_DESTINATION) onSelect(null);
-          const picked = threads.find((row) => row.id === value);
-          if (picked) onSelect(picked);
-          handleOpenChange(false);
-        }}
-      >
-        <ComboboxTrigger
-          id="scheduled-task-destination"
-          disabled={disabled}
-          render={<Button variant="outline" size="sm" />}
-          className="w-full justify-between"
+      {onThreadModeChange ? (
+        <Select
+          value={threadMode}
+          onValueChange={(value) => onThreadModeChange(value as ScheduledTaskThreadMode)}
         >
-          <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
-          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        </ComboboxTrigger>
-        <ComboboxPopup align="start" side="bottom" className="w-80">
-          <ComboboxSearchInput
-            aria-label="Search threads"
-            placeholder="Search all threads..."
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <ComboboxEmpty>No threads found.</ComboboxEmpty>
-          <ComboboxList className="max-h-72">
-            {items.map((value, index) => (
-              <ComboboxItem key={value} index={index} value={value}>
-                <span className="block truncate">
-                  {value === NEW_THREAD_DESTINATION
-                    ? "New thread each run"
-                    : value === threadId
-                      ? currentLabel
-                      : threads.find((row) => row.id === value)?.title || "Untitled thread"}
-                </span>
-              </ComboboxItem>
+          <SelectTrigger size="sm" id="scheduled-task-destination">
+            <SelectValue>{THREAD_MODE_LABELS[threadMode]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {THREAD_MODE_LABELS[mode]}
+              </SelectItem>
             ))}
-          </ComboboxList>
-        </ComboboxPopup>
-      </Combobox>
-      <p className="text-sm text-muted-foreground">
-        {ref === null
-          ? "Each run starts a new thread with the workspace and model below."
-          : "Each run continues this conversation, in its workspace and with its current model."}
-      </p>
+          </SelectPopup>
+        </Select>
+      ) : null}
+      {!onThreadModeChange || threadMode !== "new_thread" ? (
+        <Combobox
+          items={items}
+          filteredItems={items}
+          filter={null}
+          autoHighlight
+          open={open && !disabled}
+          onOpenChange={handleOpenChange}
+          value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
+          onValueChange={(value) => {
+            if (value === NEW_THREAD_DESTINATION) onSelect(null);
+            const picked = threads.find((row) => row.id === value);
+            if (picked) onSelect(picked);
+            handleOpenChange(false);
+          }}
+        >
+          <ComboboxTrigger
+            id={
+              onThreadModeChange
+                ? "scheduled-task-destination-thread"
+                : "scheduled-task-destination"
+            }
+            aria-label={onThreadModeChange ? "Destination thread" : undefined}
+            disabled={disabled}
+            render={<Button variant="outline" size="sm" />}
+            className="w-full justify-between"
+          >
+            <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
+            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          </ComboboxTrigger>
+          <ComboboxPopup align="start" side="bottom" className="w-80">
+            <ComboboxSearchInput
+              aria-label="Search threads"
+              placeholder="Search all threads..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <ComboboxEmpty>No threads found.</ComboboxEmpty>
+            <ComboboxList className="max-h-72">
+              {items.map((value, index) => (
+                <ComboboxItem key={value} index={index} value={value}>
+                  <span className="block truncate">
+                    {value === NEW_THREAD_DESTINATION
+                      ? "New thread each run"
+                      : value === threadId
+                        ? currentLabel
+                        : threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                  </span>
+                </ComboboxItem>
+              ))}
+            </ComboboxList>
+          </ComboboxPopup>
+        </Combobox>
+      ) : null}
+      <div className="space-y-1 text-sm">
+        <p className="text-muted-foreground">{detail}</p>
+        {threadMode !== "new_thread" ? (
+          <p className="text-muted-foreground">Deleting the thread also deletes this task.</p>
+        ) : null}
+      </div>
     </Field>
   );
 }
@@ -1284,6 +1336,8 @@ function ScheduledTaskEditorForm({
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
     task?.schedule.type === "once";
+  const offersThreadModes =
+    environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1447,6 +1501,7 @@ function ScheduledTaskEditorForm({
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+      ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -1574,13 +1629,23 @@ function ScheduledTaskEditorForm({
             environmentId={environmentId}
             projectId={selectedProjectId}
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+            threadMode={draft.threadMode}
             disabled={saving || !connected}
             onSelect={(thread) =>
               setDraft((current) =>
                 thread === null
-                  ? unbindDraftFromThread(current)
+                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
                   : moveDraftToThread(current, thread),
               )
+            }
+            onThreadModeChange={
+              offersThreadModes
+                ? (threadMode) =>
+                    setDraft((current) => ({
+                      ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
+                      threadMode,
+                    }))
+                : undefined
             }
           />
 

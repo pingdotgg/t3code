@@ -189,6 +189,13 @@ describe("scheduled task destination", () => {
       projectId: ProjectId.make("project:elsewhere"),
     });
     expect(moved).toMatchObject({ threadId: "thread:elsewhere", projectId: "project:elsewhere" });
+    const fromNewThreads = { ...rootBound, threadId: "", threadMode: "new_thread" as const };
+    expect(
+      moveDraftToThread(fromNewThreads, {
+        id: ThreadId.make("thread:elsewhere"),
+        projectId: ProjectId.make("project:elsewhere"),
+      }).threadMode,
+    ).toBe("continue");
   });
 
   it("unbinding leaves the shared checkout for a new worktree from the remote", () => {

@@ -5,7 +5,9 @@ import {
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
+  type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertSchedule,
+  scheduledTaskThreadMode,
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
@@ -72,6 +74,7 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
+  readonly threadMode: ScheduledTaskThreadMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -256,6 +259,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
+    threadMode: scheduledTaskThreadMode(task),
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:
@@ -298,10 +302,15 @@ export function moveDraftToThread(
   draft: DraftState,
   thread: { readonly id: ThreadId; readonly projectId: ProjectId },
 ): DraftState {
-  return { ...draft, threadId: thread.id, projectId: thread.projectId };
+  return {
+    ...draft,
+    threadId: thread.id,
+    projectId: thread.projectId,
+    threadMode: draft.threadMode === "new_thread" ? "continue" : draft.threadMode,
+  };
 }
 
-/** Matches MCP: an unbound task must not start new threads in the shared checkout. */
+/** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
 export function unbindDraftFromThread(draft: DraftState): DraftState {
   if (!draft.threadId) return draft;
   return {
