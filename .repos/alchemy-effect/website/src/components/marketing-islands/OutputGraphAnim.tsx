@@ -1,23 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { tint } from "../marketing/diagrams/_colors";
 
-const ACCENT = "var(--alc-accent-deep)";
 const ACCENT_TINT = tint("#B88A4A", 0.18);
 
 const tok =
   (color: string) =>
-  ({ children }: { children: ReactNode }) => (
-    <span style={{ color }}>{children}</span>
-  );
+  ({ children }: { children: ReactNode }) => <span style={{ color }}>{children}</span>;
 const K = tok("var(--alc-code-keyword)");
 const S = tok("var(--alc-code-string)");
 const F = tok("var(--alc-code-fn)");
 const V = tok("var(--alc-code-var)");
-const T = tok("var(--alc-code-type)");
 const C = ({ children }: { children: ReactNode }) => (
-  <span style={{ color: "var(--alc-code-comment)", fontStyle: "italic" }}>
-    {children}
-  </span>
+  <span style={{ color: "var(--alc-code-comment)", fontStyle: "italic" }}>{children}</span>
 );
 
 interface Step {
@@ -29,8 +23,8 @@ const STEPS: Step[] = [
   {
     annotation: (
       <>
-        A resource produces typed <strong>Output</strong> attributes — lazy
-        references that resolve after deploy.
+        A resource produces typed <strong>Output</strong> attributes — lazy references that resolve
+        after deploy.
       </>
     ),
     show: { distribution: false, map: false, interpolate: false },
@@ -38,8 +32,8 @@ const STEPS: Step[] = [
   {
     annotation: (
       <>
-        Pass an Output as input to another resource. Alchemy draws the
-        dependency edge and deploys <strong>Photos</strong> first.
+        Pass an Output as input to another resource. Alchemy draws the dependency edge and deploys{" "}
+        <strong>Photos</strong> first.
       </>
     ),
     show: { distribution: true, map: false, interpolate: false },
@@ -47,8 +41,8 @@ const STEPS: Step[] = [
   {
     annotation: (
       <>
-        <code>Output.map</code> composes lazily — the function runs only when
-        the upstream Output resolves.
+        <code>Output.map</code> composes lazily — the function runs only when the upstream Output
+        resolves.
       </>
     ),
     show: { distribution: true, map: true, interpolate: false },
@@ -56,8 +50,8 @@ const STEPS: Step[] = [
   {
     annotation: (
       <>
-        <code>Output.interpolate</code> splices Outputs into template strings —
-        same lazy graph, ergonomic syntax.
+        <code>Output.interpolate</code> splices Outputs into template strings — same lazy graph,
+        ergonomic syntax.
       </>
     ),
     show: { distribution: true, map: true, interpolate: true },
@@ -73,9 +67,7 @@ export default function OutputGraphAnim() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
-    const reduced = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const tick = (i: number) => {
       if (cancelled) return;
@@ -109,13 +101,7 @@ export default function OutputGraphAnim() {
   const s = STEPS[step]!;
 
   // Highlight wrapper for code spans active in the current step.
-  const Hl = ({
-    active,
-    children,
-  }: {
-    active: boolean;
-    children: ReactNode;
-  }) => (
+  const Hl = ({ active, children }: { active: boolean; children: ReactNode }) => (
     <span
       style={{
         background: active ? ACCENT_TINT : "transparent",
@@ -135,14 +121,8 @@ export default function OutputGraphAnim() {
       {/* LEFT — code panel with progressive highlight */}
       <div className="alc-code-block">
         <div className="alc-code-block__header">
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-danger)" }}
-          />
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-warn)" }}
-          />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
           <span
             className="alc-code-block__dot"
             style={{ background: "var(--alc-accent-bright)" }}
@@ -151,15 +131,14 @@ export default function OutputGraphAnim() {
         </div>
         <pre className="alc-code-block__pre">
           <Hl active={step === 0}>
-            <K>const</K> bucket = <K>yield</K>* <V>Cloudflare</V>.<F>Bucket</F>(
-            <S>"Photos"</S>);
+            <K>const</K> bucket = <K>yield</K>* <V>Cloudflare</V>.<F>Bucket</F>(<S>"Photos"</S>);
             {"\n"}
             bucket.<V>bucketName</V>; <C>{"// Output<string>"}</C>
           </Hl>
           {"\n\n"}
           <Hl active={step === 1}>
-            <K>const</K> dist = <K>yield</K>* <V>CloudFront</V>.
-            <F>Distribution</F>(<S>"CDN"</S>, {"{"}
+            <K>const</K> dist = <K>yield</K>* <V>CloudFront</V>.<F>Distribution</F>(<S>"CDN"</S>,{" "}
+            {"{"}
             {"\n  "}
             <V>origin</V>: bucket.<V>bucketName</V>,{"\n"}
             {"});"}
@@ -225,10 +204,7 @@ export default function OutputGraphAnim() {
 
         <div className="output-anim-steps" aria-hidden>
           {STEPS.map((_, i) => (
-            <span
-              key={i}
-              className={`output-anim-steps__dot${i === step ? " is-active" : ""}`}
-            />
+            <span key={i} className={`output-anim-steps__dot${i === step ? " is-active" : ""}`} />
           ))}
         </div>
 
@@ -238,19 +214,9 @@ export default function OutputGraphAnim() {
   );
 }
 
-function Edge({
-  dir,
-  visible,
-  label,
-}: {
-  dir: "h" | "v";
-  visible: boolean;
-  label: string;
-}) {
+function Edge({ dir, visible, label }: { dir: "h" | "v"; visible: boolean; label: string }) {
   return (
-    <div
-      className={`output-anim-edge output-anim-edge--${dir}${visible ? " is-on" : ""}`}
-    >
+    <div className={`output-anim-edge output-anim-edge--${dir}${visible ? " is-on" : ""}`}>
       <span className="output-anim-edge__label">{label}</span>
     </div>
   );

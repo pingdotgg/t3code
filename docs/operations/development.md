@@ -220,9 +220,11 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
-`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
-refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
+TypeScript workspaces typecheck with `effect-tsgo tsrs --noEmit` from `@effect/tsgo`: the
+[tsrs](https://github.com/oxc-project/tsrs) checker with Effect diagnostics, quick fixes, and
+refactors built in. Only `apps/marketing` installs `typescript`, for Astro. VS Code's TypeScript 7
+extension starts the same checker through `.vscode/tsdk/tsgo` (`js/ts.tsdk.path`), a POSIX
+script, so on Windows open the workspace through WSL.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
@@ -263,18 +265,20 @@ options.
 
 ### Prepared server bytecode
 
-Native desktop artifact builds generate server bytecode with the packaged Electron executable,
-after ASAR creation and before signing. Cross-platform and cross-architecture builds skip this
-step explicitly. CLI, SEA and WSL runtimes keep their existing behavior; only desktop backend
-imports covered by generation receive prepared bytecode. Worker-only modules compile normally.
+Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
+Electron executable, after ASAR creation and before signing. Linux builds skip generation until
+native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
+hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
+cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
+existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
+Worker-only modules compile normally.
 
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
 installed module paths. Node replaces files atomically, so regeneration cannot write through those
 links into signed resources. Windows uses hard links and falls back to normal caching when volumes
 differ or resource permissions prevent linking. Protected installations therefore may not reuse
-prepared bytecode. No cache bytes are copied during startup. AppImage backends discard their links
-on normal exit because each mount changes module paths.
+prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
 packaged engine produced the expected CLI entry and fails the build if that format changes.

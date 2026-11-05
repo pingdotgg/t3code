@@ -13,6 +13,7 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
@@ -24,7 +25,13 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentLabel,
+  getProviderOptionStatedValue,
+  resolveSelectableModel,
+  withLegacyUltracodeEffort,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -164,21 +171,45 @@ export function formatModelSelectionEffort(
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
+  const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
+  const current = options ? { ...selection, options } : selection;
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, selection, reportedSelection);
+    const value = getProviderOptionStatedValue(id, current, reportedSelection);
     if (value === undefined && id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
       { ...descriptor, currentValue: value },
-      selection,
+      current,
       reportedSelection,
     );
     if (label) return label;
   }
   return null;
+}
+
+/** A reported model the picker catalog does not know, such as `claude-opus-5[1m]`, keeps its raw effort. */
+export function formatSubagentEffort(input: {
+  readonly modelSlug: string | null;
+  readonly modelSelection: ModelSelection | undefined;
+  readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
+}): string | null {
+  const { modelSlug, modelSelection: selection, provider } = input;
+  if (!provider || !selection || !modelSlug) return null;
+  const selectionSlug =
+    resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+    selection.model.trim();
+  if (selectionSlug !== modelSlug) return null;
+  if (provider.models.some((model) => model.slug === modelSlug)) {
+    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+  }
+  return (
+    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+      Boolean,
+    ) ?? null
+  );
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
@@ -378,6 +409,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+// The Claude adapter forces a stuck query closed after 10 seconds.
+export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
+
+export interface BackgroundWorkStopRequest {
+  readonly threadKey: string;
+  readonly taskIds: ReadonlyArray<string>;
+  readonly retryAt: number | null;
+}
+
+/** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
+export function isBackgroundWorkStopPending(
+  request: BackgroundWorkStopRequest | null,
+  threadKey: string,
+  tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  retryExpired: boolean,
+): boolean {
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
@@ -413,12 +464,10 @@ export function presentPendingBackgroundWork(
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
-    const title = waiting
-      ? named
-        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running: ${only.label}`
+    const title = named
+      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      : waiting
+        ? `Waiting on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }

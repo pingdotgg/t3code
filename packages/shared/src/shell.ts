@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -17,6 +18,9 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_SHELL_PROBE_TIMEOUT_MS = 5000;
+// A shell stuck in the kernel survives the kill and holds stdout, so execFile's callback never fires.
+const WINDOWS_SHELL_PROBE_DEADLINE = Duration.millis(WINDOWS_SHELL_PROBE_TIMEOUT_MS + 1000);
 
 type ExecFileSyncLike = (
   file: string,
@@ -24,6 +28,7 @@ type ExecFileSyncLike = (
   options: {
     encoding: "utf8";
     timeout: number;
+    killSignal?: NodeJS.Signals | number;
     detached?: true;
     stdio?: ["ignore", "pipe", "ignore"];
   },
@@ -302,6 +307,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)], {
     encoding: "utf8",
     timeout: 5000,
+    killSignal: "SIGKILL",
     detached: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -358,6 +364,9 @@ const execWindowsEnvironmentProbe = (
     }
     return Effect.sync(() => {
       child.kill();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
     });
   });
 
@@ -378,7 +387,10 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
       command,
     ];
     for (const shell of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = yield* execFile(shell, args, {
+        encoding: "utf8",
+        timeout: WINDOWS_SHELL_PROBE_TIMEOUT_MS,
+      }).pipe(Effect.timeoutOption(WINDOWS_SHELL_PROBE_DEADLINE), Effect.map(Option.flatten));
       if (Option.isNone(output)) continue;
 
       const environment: Partial<Record<string, string>> = {};
