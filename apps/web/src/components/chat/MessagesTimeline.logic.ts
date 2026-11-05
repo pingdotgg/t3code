@@ -34,7 +34,6 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
-  formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
@@ -80,6 +79,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { formatWorkingDuration } from "./TimelineWorkGroupRows.logic";
 import {
   EMPTY_SLASH_COMMAND_CATALOG,
   parseSlashCommandMessage,
@@ -1428,7 +1428,7 @@ function deriveTurnFolds(input: {
 }
 
 function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string {
-  const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+  const duration = elapsedMs !== null ? formatWorkingDuration(elapsedMs) : null;
   switch (ending) {
     case "stopped":
       return duration ? `Stopped at ${duration}` : "Stopped";
