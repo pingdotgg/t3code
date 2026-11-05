@@ -65,6 +65,7 @@ import {
 import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
+  MuseSdkError,
   museApprovalMode,
   museCanonicalPath,
   musePermissionProfile,
@@ -397,7 +398,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         status: OrchestrationV2ProviderSession["status"],
         lastError: string | null = null,
       ) {
-        session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
+        session = {
+          ...session,
+          status,
+          // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
+          lastError:
+            lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
         yield* emit({
           type: "provider_session.updated",
           driver: MUSE_PROVIDER,
@@ -1064,7 +1072,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
-        yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
+        yield* Effect.tryPromise({
+          try: () => failed.close(),
+          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+        }).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
@@ -1723,11 +1734,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
               // keep its close promise pending. Stop waiting then; the scope unit,
               // when there is one, reaps those holders.
-              yield* Effect.tryPromise(() => created.close()).pipe(
-                Effect.interruptible,
-                Effect.timeoutOption("13 seconds"),
-                Effect.ignore,
-              );
+              yield* Effect.tryPromise({
+                try: () => created.close(),
+                catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+              }).pipe(Effect.interruptible, Effect.timeoutOption("13 seconds"), Effect.ignore);
             }),
           { interruptible: true },
         ).pipe(Effect.provideService(Scope.Scope, owned));
@@ -1826,10 +1836,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         return yield* Effect.gen(function* () {
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
           const mcpSession = yield* mcpSessions.read(args.threadId);
-          if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
-            return yield* protocolError(
-              "Update Muse Code to a version that supports session MCP servers",
-            );
           const config = mcpSession
             ? {
                 mcpServers: {
@@ -1846,6 +1852,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
           const open = Effect.gen(function* () {
+            if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
+              return yield* protocolError(
+                "Update Muse Code to a version that supports session MCP servers",
+              );
             const result = yield* request(
               requestedId ? "session/resume" : "session/start",
               requestedId
@@ -2284,10 +2294,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   hostEpoch++;
-                  yield* Effect.tryPromise(() => host.close()).pipe(
-                    Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
-                    Effect.onError(failHost),
-                  );
+                  yield* Effect.tryPromise({
+                    try: () => host.close(),
+                    catch: (cause) => protocolError("Cannot stop Muse compaction", cause),
+                  }).pipe(Effect.onError(failHost));
                   broken = true;
                   yield* finish(turn, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");

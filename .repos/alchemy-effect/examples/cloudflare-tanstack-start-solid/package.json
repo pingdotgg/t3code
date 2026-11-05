@@ -18,6 +18,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
     "@tanstack/solid-router": "catalog:",
     "@tanstack/solid-start": "catalog:",
     "alchemy": "workspace:*",
@@ -25,6 +26,7 @@
     "solid-js": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@types/bun": "catalog:",
     "typescript": "catalog:",
