@@ -2257,13 +2257,9 @@ export default function ChatView(props: ChatViewProps) {
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;
-    const speechTray = composerOverlayElement?.querySelector<HTMLElement>(
-      '[data-chat-composer-speech="true"]',
-    );
-    const timelineInset = Math.ceil(height - (speechTray?.getBoundingClientRect().height ?? 0));
-    if (composerTimelineInsetRef.current !== timelineInset) {
-      composerTimelineInsetRef.current = timelineInset;
-      setComposerTimelineInset(timelineInset);
+    if (composerTimelineInsetRef.current !== nextHeight) {
+      composerTimelineInsetRef.current = nextHeight;
+      setComposerTimelineInset(nextHeight);
     }
     // Reserve the expanded composer height for the terminal drawer and empty placeholder.
     // Keep it while the mobile strip collapses, but allow growth from approvals or tasks.
