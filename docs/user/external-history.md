@@ -1,6 +1,6 @@
 # Search conversations outside T3
 
-Open **Settings → Threads → External history** and turn on **Allow external history search** for the selected environment. The same interface is available from conversation summaries. Web, desktop and mobile use the selected T3 server's sources.
+Open **Settings → Labs → Zack → External history** and turn on **Allow external history search** for the selected environment. The same interface is available from conversation summaries. Web, desktop and mobile use the selected T3 server's sources.
 
 External search reads existing source text. It does not import a conversation as a runnable T3 thread, resume it, generate summaries, or store a second raw transcript. Connected agents can use `t3_external_history` to discover sources, search them, and verify the original text behind a match. Delegated subagents cannot use it.
 

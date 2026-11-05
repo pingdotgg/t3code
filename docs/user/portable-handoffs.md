@@ -29,7 +29,7 @@ labelled as model-written and names the messages and tool evidence it was writte
 agent can open the exact originals. Long messages and command output are covered in sections,
 including the text at the end.
 
-Turn on **Summarize older messages** in **Settings → Threads**, for one project or every project,
+Turn on **Summarize older messages** in **Settings → Labs → Zack**, for one project or every project,
 or from **Conversation summaries** in a thread's details on web and desktop. It is off by default
 because each summary costs one call to your text generation model. After a turn completes, T3 Code
 summarizes settled older history in small batches and continues in the background until it catches
@@ -52,7 +52,7 @@ text of long sources. Search is available when the server supports it. Older cli
 message summaries, but may report that summaries could not be read when an update is needed.
 
 To search conversations created outside T3, open **External history** from this view or from
-**Settings → Threads**. [External history](./external-history.md) can read the selected server's
+**Settings → Labs → Zack**. [External history](./external-history.md) can read the selected server's
 Codex conversations and configured ChatGPT exports without importing another transcript copy.
 
 ## Context limits

@@ -52,7 +52,7 @@ import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as TurnItemPositionStore from "../../orchestration-v2/TurnItemPositionStore.ts";
 import { deliveryScrubEffect } from "./deliveryScrubSchedule.ts";
-import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectKnowledge from "./ProjectKnowledge.ts";
@@ -68,7 +68,7 @@ const knowledgeTestLayer = (scoring: typeof HolographicMemory.layer = Holographi
         ProjectStore.layer,
         ProjectionStore.layer,
         ThreadSearch.layer,
-        ProjectionMaintenance.layer.pipe(
+        ProjectionReplay.layer.pipe(
           Layer.provideMerge(EventStore.layer),
           Layer.provide(ProjectionStore.layer),
         ),
@@ -1621,7 +1621,7 @@ it.effect.each(["rolled", "edited", "deleted", "project-deleted", "archive"] as 
           [],
         );
       if (removal === "edited" || removal === "deleted") return;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       yield* maintenance.rebuild;
       assert.deepEqual(
         (yield* search.search({ projectId, query: "tenant IDs in cache keys" })).matches,

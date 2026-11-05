@@ -402,6 +402,7 @@ export interface ThreadManagementServiceShape {
     ProjectionRecords<K>,
     ThreadManagementProjectionLoadError | ThreadManagementThreadNotFoundError
   >;
+  readonly getAgentAwarenessSnapshot: Orchestrator.OrchestratorV2["Service"]["getAgentAwarenessSnapshot"];
   readonly getShellSnapshot: (
     options?: Pick<
       ShellSnapshotOptions,
@@ -1520,6 +1521,7 @@ const make = Effect.gen(function* () {
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
+    getAgentAwarenessSnapshot: orchestrator.getAgentAwarenessSnapshot,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,

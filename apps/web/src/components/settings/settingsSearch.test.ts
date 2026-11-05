@@ -361,6 +361,12 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
     expect(movedSettingsPath("/settings/beta", "")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/threads", "assisted-learning")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/chat", "pstack")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/providers", "skills-library")).toBe("/settings/labs");
+    expect(movedSettingsPath("/settings/source-control", "agent-github-reads")).toBe(
+      "/settings/labs",
+    );
   });
 
   it("leaves current pages alone", () => {
@@ -368,5 +374,7 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
+    expect(movedSettingsPath("/settings/threads", "default-model")).toBeNull();
+    expect(movedSettingsPath("/settings/providers", "")).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import {
 import {
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
+  COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
 } from "@t3tools/contracts";
 import type {
   ComposerContextId,
@@ -53,7 +54,11 @@ const TRUNCATION_MARKER = "\n… truncated …";
 
 function clampContextText(value: string, max: number): string {
   if (value.length <= max) return value;
-  return `${value.slice(0, Math.max(0, max - TRUNCATION_MARKER.length))}${TRUNCATION_MARKER}`;
+  let end = Math.max(0, max - TRUNCATION_MARKER.length);
+  // Never end on a lone high surrogate.
+  const last = value.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${value.slice(0, end)}${TRUNCATION_MARKER}`;
 }
 
 type ReviewCommentPresentation = ReviewCommentContext | ReviewCommentContextRecord;
@@ -188,7 +193,10 @@ export function terminalContextRecord(context: TerminalContextDraft): TerminalCo
     terminalLabel: context.terminalLabel,
     lineStart: context.lineStart,
     lineEnd: context.lineEnd,
-    text: normalizeTerminalContextText(context.text),
+    text: clampContextText(
+      normalizeTerminalContextText(context.text),
+      COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
+    ),
   };
 }
 

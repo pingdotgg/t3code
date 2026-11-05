@@ -9,9 +9,9 @@ import {
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
-  type PeerLinkStatus,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -277,12 +277,13 @@ const make = Effect.gen(function* () {
 
   const readRows = sql<PeerLinkRow>`
     SELECT * FROM peer_environment_links ORDER BY label, environment_id
-  `.pipe(Effect.catch(failStorage));
+  `.pipe(NodeSqliteClient.readOnly, Effect.catch(failStorage));
 
   const readRow = (environmentId: EnvironmentId) =>
     sql<PeerLinkRow>`
       SELECT * FROM peer_environment_links WHERE environment_id = ${environmentId}
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.catch(failStorage),
       Effect.map((rows) => Option.fromNullishOr(rows[0])),
     );
@@ -560,30 +561,43 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none()),
     );
 
-  const statusOf = (link: PeerLink, now: DateTime.Utc) =>
-    DateTime.isLessThanOrEqualTo(link.expiresAt, now)
-      ? Effect.succeed<PeerLinkStatus>("expired")
-      : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
-            Effect.orElseSucceed(() => Option.none()),
-            Effect.map(
-              (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
-            ),
-          ),
-        ).pipe(
-          Effect.map((answered): PeerLinkStatus =>
-            Option.isSome(answered) ? "reachable" : "unreachable",
-          ),
-        );
+  /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
+  const withLabel = (link: PeerLink, label: string) =>
+    label === link.label
+      ? Effect.succeed(link)
+      : sql`
+          UPDATE peer_environment_links SET label = ${label}
+          WHERE environment_id = ${link.environmentId}
+        `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
+
+  const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
+    link: PeerLink,
+    now: DateTime.Utc,
+  ): Effect.fn.Return<PeerLinkSummary> {
+    if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
+    let label = link.label;
+    const answered = yield* Effect.findFirst(link.urls, (url) =>
+      describe(url).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+        Effect.map((found) => {
+          if (Option.isNone(found) || found.value.environmentId !== link.environmentId) {
+            return false;
+          }
+          label = found.value.label;
+          return true;
+        }),
+      ),
+    );
+    if (Option.isNone(answered)) return { ...link, status: "unreachable" };
+    return { ...(yield* withLabel(link, label)), status: "reachable" };
+  });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
     const links = yield* Effect.forEach(yield* readRows, toLink);
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(
-      links,
-      (link) => statusOf(link, now).pipe(Effect.map((status) => ({ ...link, status }))),
-      { concurrency: "unbounded" },
-    );
+    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
+      concurrency: "unbounded",
+    });
   });
 
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
@@ -654,6 +668,7 @@ const make = Effect.gen(function* () {
       // reused LAN address or a moved hostname never receives it.
       let fenced = true;
       let resolvedUrl = "";
+      let label = link.label;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
         httpOrigin(candidate).pipe(
           Effect.flatMap((origin) =>
@@ -664,6 +679,7 @@ const make = Effect.gen(function* () {
             if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
             fenced = linkLimitsHold(found.value);
             resolvedUrl = origin;
+            label = found.value.label;
             return true;
           }),
         ),
@@ -682,7 +698,11 @@ const make = Effect.gen(function* () {
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
-      return { link, url: resolvedUrl, token: new TextDecoder().decode(stored.value) };
+      return {
+        link: yield* withLabel(link, label),
+        url: resolvedUrl,
+        token: new TextDecoder().decode(stored.value),
+      };
     },
   );
 

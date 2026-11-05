@@ -2,18 +2,15 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useState, type ReactNode } from "react";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  type SourceControlDiscoveryResult,
-  type SourceControlProviderAuth,
-  type SourceControlProviderDiscoveryItem,
-  type VcsDriverKind,
-  type VcsDiscoveryItem,
+import type {
+  SourceControlDiscoveryResult,
+  SourceControlProviderAuth,
+  SourceControlProviderDiscoveryItem,
+  VcsDriverKind,
+  VcsDiscoveryItem,
 } from "@t3tools/contracts";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { ScopedSwitch } from "./ScopedSwitch";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -40,9 +37,7 @@ import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
-  SettingResetButton,
   SettingsPageContainer,
-  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -371,40 +366,6 @@ function EmptySourceControlDiscovery({
   );
 }
 
-function AgentGitHubReadGateSetting() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-
-  return (
-    <SettingsRow
-      serverScoped
-      settingKeys={["enableAgentGitHubReadGate"]}
-      {...searchableSetting("agent-github-reads")}
-      description="T3 sends supported gh reads from local agent sessions to its shared PR tools. Turn this off to allow direct reads. The change applies when an agent session next starts."
-      resetAction={
-        settings.enableAgentGitHubReadGate !== DEFAULT_SERVER_SETTINGS.enableAgentGitHubReadGate ? (
-          <SettingResetButton
-            label="default GitHub read gate"
-            onClick={() =>
-              updateSettings({
-                enableAgentGitHubReadGate: DEFAULT_SERVER_SETTINGS.enableAgentGitHubReadGate,
-              })
-            }
-          />
-        ) : null
-      }
-      control={
-        <ScopedSwitch
-          settingKeys={["enableAgentGitHubReadGate"]}
-          aria-label="Send agents' GitHub reads through T3"
-          checked={settings.enableAgentGitHubReadGate}
-          onCheckedChange={(enabled) => updateSettings({ enableAgentGitHubReadGate: enabled })}
-        />
-      }
-    />
-  );
-}
-
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
 
@@ -506,9 +467,6 @@ export function SourceControlSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
-      <SettingsSection id="source-control-agents" title="Agents">
-        <AgentGitHubReadGateSetting />
-      </SettingsSection>
       {environmentId === null ? (
         <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
           <p className="px-4 py-3 text-sm text-muted-foreground">

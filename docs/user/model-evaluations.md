@@ -1,6 +1,6 @@
 # Model evaluations
 
-Open **Settings → Labs → Model evaluations** and enable **Blind model evaluations** for the
+Open **Settings → Labs → Zack · Model evaluations** and enable **Blind model evaluations** for the
 environment where your agents run. It starts off because evaluating a task uses an additional
 model call. Use **Judge model** to select the provider and model that scores tasks, independently
 of the model doing the work. **Use default** returns it to the environment's text generation model.

@@ -13,6 +13,7 @@ import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } fr
 import * as NetAddress from "effect/net/NetAddress";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -161,7 +162,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.provide(CloudLink.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))),
+        Effect.provide(
+          CloudLink.layer.pipe(
+            Layer.provide(EnvironmentKeys.layer),
+            Layer.provide(ManagedPolicy.layerTest()),
+          ),
+        ),
         Effect.provideService(
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({

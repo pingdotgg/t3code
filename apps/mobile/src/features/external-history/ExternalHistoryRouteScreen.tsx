@@ -61,7 +61,7 @@ export function ExternalHistoryRouteScreen(
   const supported = config?.environment.capabilities.externalHistory === 1;
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <AppBar title="External history" sidebar={false} onBack={() => navigation.goBack()} />
+      <AppBar title="External history" onBack={() => navigation.goBack()} />
       <ScreenContent>
         {supported && focused && config ? (
           <ScrollView

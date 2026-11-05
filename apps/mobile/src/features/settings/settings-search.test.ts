@@ -25,6 +25,7 @@ const SECTIONS = [
       { id: "SettingsEnvironmentSourceControl", label: "Source control" },
     ],
   },
+  { title: "More", rows: [{ id: "SettingsLabs", label: "Labs" }] },
 ];
 
 function visible(query: string) {
@@ -48,7 +49,8 @@ describe("filterSettingsSections", () => {
     { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
-    { query: "skills library", expected: [["Server settings", ["Provider accounts"]]] },
+    { query: "skills library", expected: [["More", ["Labs"]]] },
+    { query: "zack", expected: [["More", ["Labs"]]] },
     {
       query: "server settings",
       expected: [["Server settings", ["Provider accounts", "Source control"]]],

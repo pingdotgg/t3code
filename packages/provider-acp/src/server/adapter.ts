@@ -40,7 +40,11 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
-import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  htmlRenderFromToolItem,
+  mcpToolResultOutput,
+} from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -928,8 +932,7 @@ function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   if (record === undefined) return rawOutput;
   if (!("result" in record) && !("error" in record)) return rawOutput;
   const result = unknownRecord(record.result);
-  const resultOutput =
-    result === undefined ? undefined : (result.structuredContent ?? result.content ?? undefined);
+  const resultOutput = result === undefined ? undefined : mcpToolResultOutput(result);
   const errorMessage = unknownRecord(record.error)?.message;
   if (typeof errorMessage !== "string") {
     return resultOutput ?? rawOutput;
@@ -1100,7 +1103,7 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
     const diff = unknownRecord(entry);
     return diff?.type === "diff" ? [diff] : [];
   });
-  for (const diff of diffs) {
+  const patches = diffs.flatMap((diff): ReadonlyArray<{ text: string; path?: string }> => {
     const patch = unknownRecord(diff.patch);
     if (typeof patch?.text === "string") {
       const change =
@@ -1116,15 +1119,17 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         const before = change.operation === "add" ? "/dev/null" : JSON.stringify(`a/${oldPath}`);
         const after =
           change.operation === "delete" ? "/dev/null" : JSON.stringify(`b/${change.path}`);
-        return `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`;
+        return [
+          {
+            text: `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`,
+          },
+        ];
       }
-      return patch.text;
+      return [{ text: patch.text }];
     }
-  }
-  const v1Patches = diffs.flatMap((diff) => {
     if (typeof diff.path !== "string" || typeof diff.newText !== "string") return [];
     const oldText = typeof diff.oldText === "string" ? diff.oldText : undefined;
-    const patch = structuredPatch(
+    const structured = structuredPatch(
       oldText === undefined ? "/dev/null" : diff.path,
       diff.path,
       oldText ?? "",
@@ -1136,9 +1141,21 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         maxEditLength: oldText && diff.newText ? ACP_V1_DIFF_MAX_EDITS : Number.POSITIVE_INFINITY,
       },
     );
-    return patch === undefined || patch.hunks.length === 0 ? [] : [patch];
+    return structured === undefined || structured.hunks.length === 0
+      ? []
+      : [{ text: formatPatch(structured, FILE_HEADERS_ONLY), path: diff.path }];
   });
-  return v1Patches.length === 0 ? undefined : formatPatch(v1Patches, FILE_HEADERS_ONLY);
+  // Diff parsers split at Git headers once one exists, so every section then needs its own.
+  const hasGitHeader = patches.some(({ text }) => /^diff --git /m.test(text));
+  return patches.length === 0
+    ? undefined
+    : patches
+        .map(({ text, path }) =>
+          hasGitHeader && path !== undefined
+            ? `diff --git ${JSON.stringify(`a/${path}`)} ${JSON.stringify(`b/${path}`)}\n${text}`
+            : text,
+        )
+        .join("\n");
 }
 
 function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
@@ -1261,13 +1278,13 @@ function selectPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
-  const kind =
-    decision === "acceptForSession"
-      ? "allow_always"
-      : decision === "accept"
-        ? "allow_once"
-        : "reject_once";
-  return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
+    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  if (decision === "acceptForSession") {
+    // Agents may offer only allow_once, and answering "cancelled" would stop the turn the user approved.
+    return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
+  }
+  return optionIdOfKind(decision === "accept" ? "allow_once" : "reject_once");
 }
 
 // Prefer allow-once; allow-always can persist beyond the session.
@@ -6310,6 +6327,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly sessionUpdates?: boolean;
             readonly terminals?: boolean;
             readonly mcp?: boolean;
+            readonly scope?: Scope.Scope;
           } = {},
         ) {
           yield* targetRuntime.getEvents().pipe(
@@ -6322,7 +6340,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.onSessionEvent?.(event) ?? Effect.void,
               ).pipe(Effect.asVoid);
             }),
-            Effect.forkIn(runtimeScope ?? sessionScope),
+            Effect.forkIn(handlerOptions.scope ?? runtimeScope ?? sessionScope),
           );
           const requestUserInput = (
             request: AcpAdapterV2UserInputRequest,
@@ -6890,7 +6908,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* wireAcpRuntimeHandlers(
                     replacementExit.value.replacementRuntime,
                     replacementGeneration,
-                    { sessionUpdates: false, terminals: false, mcp: false },
+                    {
+                      sessionUpdates: false,
+                      terminals: false,
+                      mcp: false,
+                      scope: replacementScope,
+                    },
                   );
                   const lifecycle = yield* Ref.modify(
                     candidateLifecycle,

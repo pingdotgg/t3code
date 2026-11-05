@@ -1,3 +1,4 @@
+import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -14,7 +15,9 @@ import {
   type OrchestrationV2StoredEvent,
   type ProviderPoolSettings,
   type ServerProvider,
+  ClaudeSettings,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,9 +27,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ClaudeProviderCapabilitiesV2, makeClaudeAdapterV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -40,7 +46,9 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import { withProviderPools } from "../provider/providerPoolSnapshot.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const driver = ProviderDriverKind.make("claudeAgent");
 const first = ProviderInstanceId.make("claudeAgent");
@@ -59,20 +67,33 @@ interface PoolAdapterState {
     readonly attemptId: string;
     readonly prompt: string;
   }>;
+  /** Every session reports running background work; only the probes read this. */
+  readonly backgroundWork?: boolean;
+  readonly closedSessions?: ReadonlyArray<string>;
 }
 
 function makePoolAdapter(
   instanceId: ProviderInstanceId,
   state: Ref.Ref<PoolAdapterState>,
+  capabilities: OrchestrationV2ProviderSession["capabilities"] = CodexProviderCapabilitiesV2,
 ): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId,
     driver,
-    getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+    getCapabilities: () => Effect.succeed(capabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* Effect.addFinalizer(() =>
+          Ref.update(state, (current) => ({
+            ...current,
+            closedSessions: [...(current.closedSessions ?? []), sessionInput.providerSessionId],
+          })),
+        );
+        const hasBackgroundWork = Ref.get(state).pipe(
+          Effect.map((current) => current.backgroundWork === true),
+        );
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -81,7 +102,7 @@ function makePoolAdapter(
           status: "ready",
           cwd: sessionInput.runtimePolicy.cwd ?? "/fallback",
           model: sessionInput.modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities,
           createdAt: now,
           updatedAt: now,
           lastError: null,
@@ -92,6 +113,8 @@ function makePoolAdapter(
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromQueue(events),
+          hasPendingBackgroundWork: hasBackgroundWork,
+          hasPendingBackgroundWorkForThread: () => hasBackgroundWork,
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
@@ -278,10 +301,11 @@ const makeRegistry = (
   keys: { readonly first: string; readonly second: string },
   state: Ref.Ref<PoolAdapterState>,
   missingInstanceId?: ProviderInstanceId,
+  capabilities?: OrchestrationV2ProviderSession["capabilities"],
 ) => {
   const instances = [
-    makeInstance(makePoolAdapter(first, state), keys.first),
-    makeInstance(makePoolAdapter(second, state), keys.second),
+    makeInstance(makePoolAdapter(first, state, capabilities), keys.first),
+    makeInstance(makePoolAdapter(second, state, capabilities), keys.second),
   ].filter((instance) => instance.instanceId !== missingInstanceId);
   return ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
     Layer.provide(
@@ -542,6 +566,481 @@ it.live("moves a limited shared-home turn to the other account with a native res
       assert.equal(
         resumed?.nativeThreadRef?.nativeId,
         `native-thread:${attempts[0]?.providerInstanceId}:${threadId}`,
+      );
+    }),
+  ),
+);
+
+it.live.each([
+  [
+    "hands a busy session off without closing it",
+    { background: true, sharedHome: false, sharedSession: false },
+  ],
+  [
+    "hands a busy shared session off without detaching it",
+    { background: true, sharedHome: false, sharedSession: true },
+  ],
+  [
+    "closes an idle session it hands off",
+    { background: false, sharedHome: false, sharedSession: false },
+  ],
+  [
+    "fails rather than resume a busy session's native thread",
+    { background: true, sharedHome: true, sharedSession: false },
+  ],
+] as const)("%s", ([, { background, sharedHome, sharedSession }]) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("pool-failover-background");
+      const label = `${background}-${sharedHome}-${sharedSession}`;
+      const threadId = ThreadId.make(`thread:pool-failover-background-${label}`);
+      const resetAt = DateTime.formatIso(
+        DateTime.makeUnsafe(DateTime.toEpochMillis(yield* DateTime.now) + minutes(30)),
+      );
+      const state = yield* Ref.make<PoolAdapterState>({
+        failNextStart: null,
+        holdTurn: null,
+        started: [],
+      });
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+        makeProvider(first, "Claude", "claude:home:first"),
+        makeProvider(second, "Claude - Work", "claude:home:second"),
+      ]);
+      const keys = sharedHome
+        ? { first: "claude:home:shared", second: "claude:home:shared" }
+        : { first: "claude:home:first", second: "claude:home:second" };
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* createThread(threadId, cwd, poolId);
+        const warmed = yield* awaitRunStatus(threadId, "completed");
+        yield* sendMessage(threadId, "warm");
+        yield* Fiber.join(warmed);
+        yield* worker.drain();
+        const limitedSessionId = (yield* orchestrator.getThreadProjection(threadId))
+          .providerSessions[0]!.id;
+        yield* Ref.update(state, (current) => ({
+          ...current,
+          failNextStart: resetAt,
+          backgroundWork: background,
+        }));
+        const settled = yield* awaitEvent(
+          threadId,
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.ordinal === 2 &&
+            (event.payload.status === "failed" || event.payload.status === "completed"),
+        );
+        yield* sendMessage(threadId, "limited");
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        const limited = yield* orchestrator.getThreadProjection(threadId);
+        const limitedAttempts = limited.attempts.filter(
+          (attempt) => attempt.runId === limited.runs[1]?.id,
+        );
+        const { closedSessions = [] } = yield* Ref.get(state);
+        // A failed attempt's thread settles like any failed run's; failover must not skip it.
+        assert.equal(
+          limited.providerThreads.find(
+            (candidate) => candidate.providerInstanceId === limitedAttempts[0]?.providerInstanceId,
+          )?.status,
+          "idle",
+        );
+
+        if (!background) {
+          assert.equal(limited.runs[1]?.status, "completed");
+          assert.deepEqual(closedSessions, [limitedSessionId]);
+          return;
+        }
+        assert.deepEqual(closedSessions, []);
+        assert.equal(
+          limited.providerSessions.find((session) => session.id === limitedSessionId)?.status,
+          "ready",
+        );
+        if (!sharedHome) {
+          assert.equal(limited.runs[1]?.status, "completed");
+          assert.deepEqual(
+            limitedAttempts.map((attempt) => attempt.status),
+            ["failed", "completed"],
+          );
+          assert.notEqual(
+            limitedAttempts[0]?.providerInstanceId,
+            limitedAttempts[1]?.providerInstanceId,
+          );
+          return;
+        }
+
+        // Resuming the native thread beside the busy session would fork its history.
+        assert.equal(limited.runs[1]?.status, "failed");
+        assert.deepEqual(
+          limitedAttempts.map((attempt) => attempt.status),
+          ["failed"],
+        );
+        assert.lengthOf((yield* Ref.get(state)).started, 2);
+        const limitError = limited.turnItems.find((item) => item.type === "error");
+        assert.equal(limitError?.type === "error" ? limitError.failure.class : null, "usage_limit");
+
+        const refused = yield* sendMessage(threadId, "too-soon").pipe(Effect.flip);
+        assert.equal(refused._tag, "OrchestratorDispatchError");
+        assert.include(
+          refused._tag === "OrchestratorDispatchError" ? String(refused.cause) : "",
+          "still running background agents or commands",
+        );
+        assert.deepEqual((yield* Ref.get(state)).closedSessions ?? [], []);
+
+        yield* Ref.update(state, (current) => ({ ...current, backgroundWork: false }));
+        const continued = yield* awaitEvent(
+          threadId,
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.ordinal === 3 &&
+            event.payload.status === "completed",
+        );
+        yield* sendMessage(threadId, "continue");
+        yield* Fiber.join(continued);
+        yield* worker.drain();
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        const resumedRun = resumed.runs[2];
+        assert.notEqual(resumedRun?.providerInstanceId, limited.runs[1]?.providerInstanceId);
+        assert.equal(
+          resumed.providerThreads.find((candidate) => candidate.id === resumedRun?.providerThreadId)
+            ?.nativeThreadRef?.nativeId,
+          `native-thread:${limited.runs[1]?.providerInstanceId}:${threadId}`,
+        );
+        assert.deepEqual((yield* Ref.get(state)).closedSessions, [limitedSessionId]);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: `pool-failover-background-${label}` },
+            makeRegistry(
+              keys,
+              state,
+              undefined,
+              sharedSession ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2,
+            ),
+            { settings, poolCatalog: makeCatalog(providers) },
+          ),
+        ),
+      );
+    }),
+  ),
+);
+
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const claudeSessionId = "pool-claude-native-session";
+const claudeFrame = (frame: Record<string, unknown>) =>
+  ({ session_id: claudeSessionId, ...frame }) as unknown as SDKMessage;
+const claudeResult = (uuid: string, overrides: Record<string, unknown> = {}) =>
+  claudeFrame({
+    type: "result",
+    subtype: "success",
+    uuid,
+    duration_ms: 1,
+    duration_api_ms: 1,
+    is_error: false,
+    num_turns: 1,
+    result: "done",
+    stop_reason: "end_turn",
+    terminal_reason: "completed",
+    total_cost_usd: 0,
+    usage: { input_tokens: 1, output_tokens: 1 },
+    modelUsage: {},
+    permission_denials: [],
+    ...overrides,
+  });
+
+interface ClaudeMemberScript {
+  readonly frames: Queue.Queue<SDKMessage>;
+  readonly offers: Array<SDKUserMessage>;
+  readonly resumes: Array<string | undefined>;
+}
+
+/** Real Claude adapters over scripted SDK streams, so the wake buffer and its probe are the real ones. */
+const makeClaudeMemberRegistry = (scripts: ReadonlyMap<ProviderInstanceId, ClaudeMemberScript>) =>
+  ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+    Layer.provide(
+      Layer.effect(
+        ProviderInstanceRegistry.ProviderInstanceRegistry,
+        Effect.gen(function* () {
+          const continuationRequests =
+            yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const instances = yield* Effect.forEach([...scripts], ([instanceId, script]) =>
+            Effect.gen(function* () {
+              const adapter = yield* makeClaudeAdapterV2({
+                instanceId,
+                settings: decodeClaudeSettings({}),
+                environment: {},
+                attachmentsDir: "/tmp",
+                fileSystem: yield* FileSystem.FileSystem,
+                path: yield* Path.Path,
+                random: yield* SecureRandom.SecureRandom,
+                idAllocator: yield* IdAllocator.IdAllocatorV2,
+                continuationRequests,
+                queryRunner: {
+                  allocateSessionId: Effect.succeed(claudeSessionId),
+                  open: (input) =>
+                    Effect.sync(() => {
+                      script.resumes.push(input.options.resume);
+                      return {
+                        messages: Stream.fromQueue(script.frames),
+                        offer: (message: SDKUserMessage) =>
+                          Effect.sync(() => {
+                            script.offers.push(message);
+                          }),
+                        setModel: () => Effect.void,
+                        applyFlagSettings: () => Effect.void,
+                        setPermissionMode: () => Effect.void,
+                        backgroundTasks: () => Effect.succeed(false),
+                        stopTask: () => Effect.void,
+                        interrupt: Effect.void,
+                        close: Effect.void,
+                      };
+                    }),
+                  forkSession: () => Effect.die("unused forkSession"),
+                  subagentLaunchToolUseId: () => Effect.succeed(null),
+                  assertComplete: Effect.void,
+                },
+              });
+              return makeInstance(adapter, "claude:home:shared");
+            }),
+          );
+          return {
+            getInstance: (instanceId: ProviderInstanceId) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.never,
+          } as unknown as ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+        }),
+      ),
+    ),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, IdAllocator.layer)),
+  );
+
+it.live("drains a refused failover's Claude wake on its own account, then moves the thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("pool-failover-claude-wake");
+      const threadId = ThreadId.make("thread:pool-failover-claude-wake");
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const scripts = new Map<ProviderInstanceId, ClaudeMemberScript>();
+      for (const instanceId of [first, second]) {
+        scripts.set(instanceId, {
+          frames: yield* Queue.unbounded<SDKMessage>(),
+          offers: [],
+          resumes: [],
+        });
+      }
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+        makeProvider(first, "Claude", "claude:home:shared"),
+        makeProvider(second, "Claude - Work", "claude:home:shared"),
+      ]);
+      const offeredText = (script: ClaudeMemberScript | undefined) =>
+        (script?.offers ?? []).flatMap((message) =>
+          typeof message.message.content === "string"
+            ? [message.message.content]
+            : message.message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+        );
+      const runSettled = (threadRunOrdinal: number, status: "completed" | "failed") =>
+        awaitEvent(
+          threadId,
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.ordinal === threadRunOrdinal &&
+            event.payload.status === status,
+        );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        yield* createThread(threadId, cwd, poolId);
+        const running = yield* awaitProviderTurnRunning(threadId);
+        const limitedRun = yield* runSettled(1, "failed");
+        yield* sendMessage(threadId, "limited");
+        yield* Fiber.join(running);
+        const limitedId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!
+          .providerInstanceId;
+        const siblingId = limitedId === first ? second : first;
+        const limited = scripts.get(limitedId)!;
+        const sibling = scripts.get(siblingId)!;
+
+        yield* Queue.offerAll(limited.frames, [
+          claudeFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "bg-task",
+            tool_use_id: "bg-tool",
+            description: "Background agent",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000a01",
+          }),
+          claudeFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt: Math.floor((nowMs + minutes(30)) / 1000),
+            },
+            uuid: "00000000-0000-4000-8000-000000000a02",
+          }),
+          claudeResult("00000000-0000-4000-8000-000000000a03", {
+            is_error: true,
+            result: "Usage limit reached.",
+            api_error_status: 429,
+            terminal_reason: "api_error",
+          }),
+        ]);
+        yield* Fiber.join(limitedRun);
+        const refused = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(refused.thread.providerInstanceId, limitedId);
+        assert.lengthOf(sibling.resumes, 0);
+
+        // The CLI wakes on its own once the task ends; the adapter buffers it and asks for a run.
+        const drained = yield* runSettled(2, "completed");
+        yield* Queue.offerAll(limited.frames, [
+          claudeFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "bg-task",
+            tool_use_id: "bg-tool",
+            status: "completed",
+            output_file: "/tmp/bg-task.output",
+            summary: "Background agent completed",
+            uuid: "00000000-0000-4000-8000-000000000a04",
+          }),
+          claudeFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000a05",
+          }),
+          claudeResult("00000000-0000-4000-8000-000000000a06", {
+            result: "WAKE_DONE",
+            origin: { kind: "task-notification" },
+          }),
+        ]);
+        yield* Fiber.join(drained);
+        const afterWake = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(afterWake.runs[1]?.providerInstanceId, limitedId);
+        assert.lengthOf(limited.offers, 1, "a drain must not prompt the cooling account");
+        assert.lengthOf(sibling.resumes, 0);
+
+        const moved = yield* runSettled(3, "completed");
+        const movedTurnRunning = yield* awaitProviderTurnRunning(threadId);
+        yield* sendMessage(threadId, "next");
+        yield* Fiber.join(movedTurnRunning);
+        yield* Queue.offer(sibling.frames, claudeResult("00000000-0000-4000-8000-000000000a07"));
+        yield* Fiber.join(moved);
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(resumed.runs[2]?.providerInstanceId, siblingId);
+        assert.deepEqual(sibling.resumes, [claudeSessionId]);
+        assert.include(offeredText(sibling).join("\n"), "next");
+        assert.lengthOf(limited.offers, 1);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "pool-failover-claude-wake" },
+            makeClaudeMemberRegistry(scripts),
+            { settings, poolCatalog: makeCatalog(providers), runContinuationWorker: true },
+          ),
+        ),
+      );
+    }),
+  ),
+);
+
+it.live("keeps a wake queued behind another wake on the cooling account", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("pool-failover-queued-wake");
+      const threadId = ThreadId.make("thread:pool-failover-queued-wake");
+      const resetAt = DateTime.formatIso(
+        DateTime.makeUnsafe(DateTime.toEpochMillis(yield* DateTime.now) + minutes(30)),
+      );
+      const hold = yield* Deferred.make<void>();
+      const state = yield* Ref.make<PoolAdapterState>({
+        failNextStart: null,
+        holdTurn: null,
+        started: [],
+      });
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+        makeProvider(first, "Claude", "claude:home:shared"),
+        makeProvider(second, "Claude - Work", "claude:home:shared"),
+      ]);
+      const sendWake = (key: string) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "provider",
+            commandId: CommandId.make(`${threadId}:${key}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${key}:message`),
+            text: "Background task completed.",
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* createThread(threadId, cwd, poolId);
+        const warmed = yield* awaitRunStatus(threadId, "completed");
+        yield* sendMessage(threadId, "warm");
+        yield* Fiber.join(warmed);
+        yield* worker.drain();
+        yield* Ref.update(state, (current) => ({
+          ...current,
+          failNextStart: resetAt,
+          backgroundWork: true,
+        }));
+        const refused = yield* awaitRunStatus(threadId, "failed");
+        yield* sendMessage(threadId, "limited");
+        yield* Fiber.join(refused);
+        yield* worker.drain();
+
+        yield* Ref.update(state, (current) => ({ ...current, holdTurn: hold }));
+        const draining = yield* awaitProviderTurnRunning(threadId);
+        yield* sendWake("first-wake");
+        yield* Fiber.join(draining);
+        const queuedDrained = yield* awaitEvent(
+          threadId,
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.ordinal === 4 &&
+            event.payload.status === "completed",
+        );
+        yield* sendWake("second-wake");
+        yield* Deferred.succeed(hold, undefined);
+        yield* Fiber.join(queuedDrained);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const limitedInstance = projection.runs[1]?.providerInstanceId;
+        assert.deepEqual(
+          projection.runs.slice(2).map((run) => [run.status, run.providerInstanceId]),
+          [
+            ["completed", limitedInstance],
+            ["completed", limitedInstance],
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "pool-failover-queued-wake" },
+            makeRegistry(
+              { first: "claude:home:shared", second: "claude:home:shared" },
+              state,
+              undefined,
+              ClaudeProviderCapabilitiesV2,
+            ),
+            { settings, poolCatalog: makeCatalog(providers) },
+          ),
+        ),
       );
     }),
   ),

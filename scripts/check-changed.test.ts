@@ -18,6 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   afterBuild,
   comparisonBase,
+  checkInputFiles,
   defaultConcurrency,
   docReaderTests,
   gitLines,
@@ -47,6 +48,19 @@ describe("check:changed", () => {
       "apps/server/src/cloud/ConnectReachability.test.ts",
     ]);
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
+    assert.deepStrictEqual(
+      checkInputFiles([
+        ".repos/effect/src/Effect.ts",
+        "apps/server/src/server.ts",
+        "native/project-memory/kernel.test.mjs",
+        "scripts/sync-reference-repos.ts",
+      ]),
+      [
+        "apps/server/src/server.ts",
+        "native/project-memory/kernel.test.mjs",
+        "scripts/sync-reference-repos.ts",
+      ],
+    );
   });
 
   it.effect(

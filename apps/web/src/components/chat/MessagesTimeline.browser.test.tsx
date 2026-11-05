@@ -236,7 +236,9 @@ describe("MessagesTimeline work rows", () => {
       { container },
     );
     const heading = screen.getByRole("button", { name: /^Worked for/ });
-    await expect.element(heading).toBeVisible();
+    // LegendList keeps rows click-through until its initial scroll settles on animation
+    // frames, which the fake clock below would freeze.
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
     const viewport = props.listRef.current!.getScrollableNode()!;
     await vi.waitFor(() => {
       // LegendList hides its initial layout with opacity, which toBeVisible does not check.

@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { signPayload } from "./utils.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 
 export class LanDiscoveryProof extends Context.Service<
   LanDiscoveryProof,
@@ -29,6 +29,7 @@ const make = Effect.gen(function* () {
   const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* identity.getEnvironmentId;
   const secret = yield* secretStore.getOrCreateRandom(SessionStore.SIGNING_SECRET_NAME, 32);
+  const signer = yield* PayloadSigner.fromSecret(secret);
 
   const prove = Effect.fn("LanDiscoveryProof.prove")(function* (input: {
     readonly payload: string;
@@ -51,7 +52,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* new SessionStore.MalformedSessionTokenError({});
     }
-    const signature = signPayload(input.payload, secret);
+    const signature = yield* signer.sign(input.payload);
     const session = yield* sessions.verify(`${input.payload}.${signature}`);
     if (session.method !== "bearer-access-token" && session.method !== "dpop-access-token") {
       return yield* new SessionStore.MalformedSessionTokenError({});

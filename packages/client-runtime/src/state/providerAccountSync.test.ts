@@ -115,6 +115,7 @@ const makeHarness = Effect.fn("makeProviderAccountSyncHarness")(function* (
     supervisors.set(
       environmentId,
       EnvironmentSupervisor.EnvironmentSupervisor.of({
+        // @effect-diagnostics-next-line schemaClassObjectLiteral:off -- The sync command reads only the environment identity from this supervisor fixture.
         target: { environmentId },
         session: yield* SubscriptionRef.make(
           environment.connected === false

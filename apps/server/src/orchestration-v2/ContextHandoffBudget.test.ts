@@ -140,6 +140,23 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    const fileChange = {
+      ...base,
+      type: "file_change",
+      fileName: "src/a.ts",
+      changes: [
+        { operation: "update", path: "src/a.ts" },
+        { operation: "add", path: "src/b.ts" },
+        { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+      ],
+    } satisfies OrchestrationV2TurnItem;
+    for (const path of ["src/a.ts", "src/b.ts", "src/new.ts"]) {
+      assert.include(historicalMessage(fileChange)!.text, path);
+    }
+    assert.equal(
+      historicalMessage({ ...fileChange, status: "running" })?.text,
+      "File change: src/a.ts, src/b.ts, src/new.ts",
+    );
     const evidence = [
       {
         item: {

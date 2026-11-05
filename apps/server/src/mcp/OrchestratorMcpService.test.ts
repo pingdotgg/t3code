@@ -1437,6 +1437,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const disabledAntigravityInstanceId = ProviderInstanceId.make("antigravity-alt");
         const disabledWithoutAdapterInstanceId = ProviderInstanceId.make("codex-without-adapter");
+        const projectDisabledInstanceId = ProviderInstanceId.make("codex-project-off");
         const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");
         const forkShadow = yield* buildUnavailableProviderSnapshot({
           driverKind: "forkOnly",
@@ -1482,6 +1483,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             model: "gpt-5.4",
             enabled: false,
           }),
+          providerSnapshot({
+            instanceId: projectDisabledInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
           forkShadow,
         ];
         const layerDependencies = Layer.mergeAll(
@@ -1497,12 +1503,18 @@ describe("OrchestratorMcpService provider resolution", () => {
                 { driver: provider.driver, enabled: provider.enabled, config: {} },
               ]),
             ),
+            projectSettingsOverrides: {
+              [projectId]: {
+                providerInstances: { [projectDisabledInstanceId]: { enabled: false } },
+              },
+            },
           }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getPublishedProviders: Effect.sync(() => providers),
           }),
           adapterRegistryLayer([
             codexInstanceId,
+            projectDisabledInstanceId,
             ProviderInstanceId.make("claudeAgent"),
             ProviderInstanceId.make("pi"),
             ProviderInstanceId.make("acpRegistry"),
@@ -1521,7 +1533,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           const byId = new Map(
             capabilities.providers.map((provider) => [provider.providerInstanceId, provider]),
           );
-          for (const provider of providers.filter((provider) => provider.enabled)) {
+          for (const provider of providers.filter(
+            (provider) => provider.enabled && provider.instanceId !== projectDisabledInstanceId,
+          )) {
             assert.deepEqual(
               byId.get(provider.instanceId)?.models.map((model) => model.id),
               provider.models.map((model) => model.slug),
@@ -1541,7 +1555,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             ],
           }));
           const refreshed = yield* service.capabilities(scope);
-          for (const provider of providers.filter((provider) => provider.enabled)) {
+          for (const provider of providers.filter(
+            (provider) => provider.enabled && provider.instanceId !== projectDisabledInstanceId,
+          )) {
             assert.deepEqual(
               refreshed.providers
                 .find((entry) => entry.providerInstanceId === provider.instanceId)
@@ -1570,6 +1586,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.isUndefined(byId.get(disabledAntigravityInstanceId));
           assert.isUndefined(byId.get(disabledWithoutAdapterInstanceId));
           assert.isUndefined(byId.get(forkOnlyInstanceId));
+          assert.isUndefined(byId.get(projectDisabledInstanceId));
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );

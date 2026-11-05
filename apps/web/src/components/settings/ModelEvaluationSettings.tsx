@@ -110,7 +110,7 @@ export function ModelEvaluationSettings() {
       : [target.label];
   });
   return (
-    <SettingsSection id="model-evaluations" title="Model evaluations">
+    <SettingsSection id="model-evaluations" title="Zack · Model evaluations">
       <SettingsRow
         serverScoped
         settingKeys={["enableModelEvaluations"]}

@@ -253,7 +253,8 @@ const make = Effect.gen(function* () {
       UNION
       SELECT thread_id FROM orchestration_v2_projection_threads
       WHERE project_id = ${projectId} AND updated_at < ${window.from}
-        AND json_array_length(payload_json, '$.pullRequests') > 0
+        AND CASE WHEN json_valid(payload_json)
+          THEN json_array_length(payload_json, '$.pullRequests') > 0 ELSE 0 END
     )
     SELECT ${laneColumns}
     FROM candidate CROSS JOIN orchestration_v2_projection_threads t

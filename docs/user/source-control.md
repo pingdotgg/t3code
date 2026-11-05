@@ -327,8 +327,8 @@ reuse the app's cached data and watches. T3 redirects supported `gh` reads from 
 sessions, including Claude and Codex, to these tools. Writes and unsupported reads still use
 `gh`. For a read the tools cannot answer, prefix the command with `T3_GH_DIRECT=1`.
 
-To allow direct reads, turn off **Send agents' GitHub reads through T3** in **Settings → Source
-control**. The change applies when an agent session next starts. The setting covers ordinary
+To allow direct reads, turn off **Send agents' GitHub reads through T3** in **Settings → Labs →
+Zack**. The change applies when an agent session next starts. The setting covers ordinary
 `gh` commands found on the agent's PATH; shell overrides, absolute executable paths, and
 externally hosted providers can run outside it.
 

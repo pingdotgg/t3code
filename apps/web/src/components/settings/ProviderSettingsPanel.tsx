@@ -107,7 +107,6 @@ import { providerClients } from "./providerDriverMeta";
 import { resolveProviderPoolName } from "./ProviderPoolsSettings.logic";
 import { searchableSetting } from "./settingsSearch";
 import { CompactIdleThreadsRow } from "./SettingsPanels";
-import { SkillsLibraryRow } from "./SkillsLibrarySettings";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -1183,7 +1182,6 @@ export function EnvironmentProviderSettings({
           }
         />
         <CompactIdleThreadsRow />
-        <SkillsLibraryRow environmentId={environmentId} />
       </SettingsSection>
 
       {isAddInstanceDialogOpen && !readOnly ? (

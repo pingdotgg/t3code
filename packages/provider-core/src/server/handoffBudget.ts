@@ -258,7 +258,9 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = summaryToolText(item) ?? `File change: ${item.fileName}`;
+      text =
+        summaryToolText(item) ??
+        `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;

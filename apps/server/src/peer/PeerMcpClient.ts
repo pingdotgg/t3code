@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Sse from "effect/encoding/Sse";
@@ -256,22 +257,32 @@ const make = Effect.gen(function* () {
         });
       }
       const body = yield* readResponse(response, requestId);
-      if (body.error !== undefined || body.result === undefined) {
+      if (body.error !== undefined) {
+        return Result.fail(
+          new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
+        );
+      }
+      if (body.result === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: body.error?.message ?? "The linked environment returned no result.",
+          message: "The linked environment returned no result.",
         });
       }
       const text = body.result.content.map((part) => part.text ?? "").join("");
       if (body.result.isError === true) {
         // A refusal keeps the peer's own code, so the agent sees why it was refused.
         const refused = decodeFailure(text);
-        return yield* refused._tag === "Some"
-          ? new OrchestratorMcpFailure({ code: refused.value.code, message: refused.value.message })
-          : new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: text || "The linked environment refused the call.",
-            });
+        return Result.fail(
+          refused._tag === "Some"
+            ? new OrchestratorMcpFailure({
+                code: refused.value.code,
+                message: refused.value.message,
+              })
+            : new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: text || "The linked environment refused the call.",
+              }),
+        );
       }
       const decoded =
         body.result.structuredContent === undefined
@@ -280,6 +291,7 @@ const make = Effect.gen(function* () {
           : // oxlint-disable-next-line t3code/no-inline-schema-compile -- Each caller supplies its tool's result schema.
             Schema.decodeEffect(input.success)(body.result.structuredContent);
       return yield* decoded.pipe(
+        Effect.map(Result.succeed),
         Effect.mapError(
           () =>
             new OrchestratorMcpFailure({
@@ -295,6 +307,7 @@ const make = Effect.gen(function* () {
         Effect.tapError((error) =>
           links.recordOutcome(input.environmentId, { error: error.message }),
         ),
+        // A refusal is still an answer: the link works, so only this call fails.
         Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
         // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
@@ -306,6 +319,7 @@ const make = Effect.gen(function* () {
               }),
             ),
         }),
+        Effect.flatMap(Effect.fromResult),
       ),
   );
 

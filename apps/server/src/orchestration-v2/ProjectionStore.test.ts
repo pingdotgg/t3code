@@ -28,13 +28,18 @@ import {
   TurnItemId,
   type ThreadPullRequestLink,
   isLiveSubagentShell,
+  isListedThreadLineage,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -50,6 +55,8 @@ import {
 } from "./threadHistoryPaging.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
+import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
+
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
   SqlitePersistence.layerMemory,
@@ -64,6 +71,7 @@ const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.U
 
 const traceSqlStatements = () => {
   const statements: Array<string> = [];
+  const queryTransactions: Array<string | null> = [];
   const tracer = Tracer.make({
     span(options) {
       const span = new Tracer.NativeSpan(options);
@@ -71,19 +79,58 @@ const traceSqlStatements = () => {
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const query = span.attributes.get("db.query.text");
-        if (typeof query === "string") statements.push(query);
+        if (typeof query === "string") {
+          statements.push(query);
+          let parent = Option.getOrUndefined(span.parent);
+          while (parent?._tag === "Span" && parent.name !== "sql.transaction") {
+            parent = Option.getOrUndefined(parent.parent);
+          }
+          queryTransactions.push(parent?._tag === "Span" ? parent.spanId : null);
+        }
       };
       return span;
     },
   });
-  return { statements, tracer };
+  return { statements, tracer, queryTransactions };
 };
 
 /** The shell index flags every live shell and matches its shells on the fields subscriber trims read. */
 const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
-  const shells = (yield* store.getShellSnapshot({ location: "active" })).threads;
+  const snapshot = yield* store.getShellSnapshot();
+  const shells = snapshot.threads;
   const index = yield* store.listActiveShellIndex();
+  const { tracer, statements, queryTransactions } = traceSqlStatements();
+  const activity = yield* store.getAgentAwarenessSnapshot().pipe(Effect.withTracer(tracer));
+  assert.equal(activity.snapshotSequence, snapshot.snapshotSequence);
+  const awareness = (thread: Parameters<typeof projectThreadAwarenessV2>[0]["thread"]) =>
+    projectThreadAwarenessV2({
+      environmentId: EnvironmentId.make("test"),
+      project: { title: "Test" },
+      thread,
+    });
+  assert.deepEqual(
+    activity.threads.map(awareness),
+    shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(awareness),
+  );
+  assert.deepEqual(
+    activity.threads.map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+    shells
+      .filter((thread) => isListedThreadLineage(thread.lineage))
+      .map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+  );
+  assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
+  assert.isTrue(queryTransactions.every((transaction) => transaction !== null));
+  assert.equal(new Set(queryTransactions).size, 1);
+  for (const shell of [...shells, ...snapshot.archivedThreads]) {
+    const targeted = yield* store
+      .getAgentAwarenessSnapshot(shell.id)
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(targeted.threads.map(awareness), [awareness(shell)]);
+    assert.deepEqual(targeted.threads[0]?.archivedAt, shell.archivedAt);
+  }
+  assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
+
   const iso = (value: DateTime.Utc | null | undefined) =>
     value == null ? null : DateTime.formatIso(value);
   const trimmed = (
@@ -217,6 +264,134 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("routes full projection reads to readers and retains uncommitted writer state", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentId = yield* addRolledBackRecoveryCandidate("reader-routing");
+    const parent = yield* store.getThreadProjection(parentId);
+    const threadId = ThreadId.make("thread:reader-routing:fork");
+    yield* store.apply({
+      id: EventId.make("event:reader-routing:fork"),
+      type: "thread.created",
+      threadId,
+      occurredAt: parent.thread.createdAt,
+      payload: {
+        ...parent.thread,
+        id: threadId,
+        forkedFrom: { type: "run", threadId: parentId, runId: parent.runs[0]!.id },
+      },
+    });
+    const messageId = MessageId.make("message:reader-routing");
+    yield* store.apply({
+      id: EventId.make("event:reader-routing:message"),
+      type: "message.updated",
+      threadId,
+      occurredAt: parent.thread.createdAt,
+      payload: {
+        id: messageId,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "user",
+        text: "Committed message",
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: parent.thread.createdAt,
+        updatedAt: parent.thread.createdAt,
+      },
+    });
+    const { queries, trace } = traceSqlRouting();
+    yield* store.getAgentAwarenessSnapshot().pipe(trace);
+    const projection = yield* store.getThreadProjection(threadId).pipe(trace);
+    assert.equal(projection.thread.id, threadId);
+    assert.deepEqual(
+      projection.visibleTurnItems
+        .filter((row) => row.visibility === "inherited")
+        .map((row) => row.sourceItemId),
+      parent.turnItems.map((item) => item.id),
+    );
+    assert.equal(
+      (yield* store.getMessagesById(threadId, [messageId]).pipe(trace)).get(messageId)?.text,
+      "Committed message",
+    );
+    assert.isAbove(queries.length, 1);
+    assert.deepEqual([...new Set(queries.map((row) => row.connection))], ["reader"]);
+    const commitRequested = yield* Deferred.make<void>();
+    const writer = yield* Deferred.await(commitRequested).pipe(
+      Effect.andThen(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.title', 'Committed title')
+          WHERE thread_id = ${threadId}
+        `;
+            yield* sql`
+          UPDATE orchestration_v2_projection_turn_items
+          SET payload_json = json_set(payload_json, '$.title', 'Committed command')
+          WHERE thread_id = ${parentId}
+        `;
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    let commitInjected = false;
+    const duringCommit = yield* store.getThreadProjection(threadId).pipe(
+      Effect.provideService(Statement.CurrentTransformer, (statement) => {
+        const [query] = statement.compile();
+        if (!commitInjected && query.includes("FROM orchestration_v2_projection_turn_items")) {
+          commitInjected = true;
+          return Deferred.succeed(commitRequested, undefined).pipe(
+            Effect.andThen(Fiber.join(writer).pipe(Effect.orDie)),
+            Effect.as(statement),
+          );
+        }
+        return Effect.succeed(statement);
+      }),
+    );
+    assert.isTrue(commitInjected);
+    assert.deepEqual(duringCommit, projection);
+    const afterCommit = yield* store.getThreadProjection(threadId);
+    assert.equal(afterCommit.thread.title, "Committed title");
+    assert.equal(
+      afterCommit.visibleTurnItems.find((row) => row.visibility === "inherited")?.item.title,
+      "Committed command",
+    );
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.title', 'Uncommitted title')
+        WHERE thread_id = ${threadId}
+      `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_messages
+          SET payload_json = json_set(payload_json, '$.text', 'Uncommitted message')
+          WHERE message_id = ${messageId}
+        `;
+        assert.equal(
+          (yield* store.getMessagesById(threadId, [messageId])).get(messageId)?.text,
+          "Uncommitted message",
+        );
+        assert.equal(
+          (yield* store.getAgentAwarenessSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          )?.title,
+          "Uncommitted title",
+        );
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).thread.title,
+          "Uncommitted title",
+        );
+      }),
+    );
+  }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(layerReaderDatabase)))),
+);
+
 it.effect("record reads restrict provider histories to delivery identities", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -322,6 +497,8 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       [2, "completed"],
       [3, "completed"],
       [4, "failed"],
+      // A removed or steered queued message.
+      [5, "cancelled"],
     ] as const) {
       const runId = RunId.make(`run:idle-compaction:${ordinal}`);
       yield* store.apply({
@@ -345,7 +522,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
           activeAttemptId: null,
           status,
           requestedAt: now,
-          startedAt: now,
+          startedAt: status === "cancelled" ? null : now,
           completedAt: now,
           checkpointId: null,
           contextHandoffId: null,
@@ -446,7 +623,8 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         contextTransferStatuses: ["pending"],
       },
     );
-    // The failed latest run stays, so a completed earlier run is not mistaken for the latest.
+    // The failed latest run stays, so a completed earlier run is not mistaken for the latest,
+    // and a cancelled queued run never counts as the latest.
     assert.deepEqual(
       records.runs.map((run) => run.id),
       ["run:idle-compaction:rolled-back", "run:idle-compaction:4"],
@@ -2494,10 +2672,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* insertMessageItem("null-id", threadId, -2, null);
       yield* insertMessageItem("missing-id", threadId, -3, undefined);
+      const absentMessageId = MessageId.make("message:bounded-sql-history:absent");
+      const messageReadTrace = traceSqlStatements();
+      const selected = yield* projectionStore
+        .getMessagesById(threadId, [firstMessageId, lastMessageId, firstMessageId, absentMessageId])
+        .pipe(Effect.withTracer(messageReadTrace.tracer));
+      assert.isFalse(messageReadTrace.statements.some((query) => query.includes("turn_items")));
+      assert.equal(selected.size, 2);
+      assert.equal(selected.get(firstMessageId)?.id, firstMessageId);
+      assert.equal(selected.get(lastMessageId)?.id, lastMessageId);
+      assert.isFalse(selected.has(absentMessageId));
+      assert.equal((yield* projectionStore.getMessagesById(threadId, [])).size, 0);
+      assert.equal(
+        (yield* projectionStore.getMessagesById(ThreadId.make("other-thread"), [firstMessageId]))
+          .size,
+        0,
+      );
       const readMessageIds = (filter?: ProjectionStore.ProjectionRecordFilter) =>
         projectionStore
           .getThreadRecords(threadId, ["messages"], filter)
           .pipe(Effect.map(({ messages }) => messages.map((message) => message.id)));
+      const canonical = yield* projectionStore.getThreadRecords(threadId, ["messages"]);
+      for (const message of canonical.messages) assert.deepEqual(selected.get(message.id), message);
       assert.deepEqual(yield* readMessageIds(), [lastMessageId, firstMessageId]);
       assert.deepEqual(yield* readMessageIds({ messageRoles: ["user", "assistant"] }), [
         lastMessageId,
@@ -3790,6 +3986,76 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .filter((id) => id === readThreadId || id === laterThreadId);
 
       yield* createThread(readThreadId);
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.linkedPullRequest', json(${JSON.stringify({
+          projectId: "project:shell-read",
+          repository: "acme/project",
+          number: 42,
+          url: "https://github.com/acme/project/pull/42",
+        })})) WHERE thread_id = ${readThreadId}`;
+      const trace = traceSqlStatements();
+      const discovery = yield* projectionStore
+        .getPullRequestSnapshot({})
+        .pipe(Effect.withTracer(trace.tracer));
+      assert.deepEqual(
+        discovery.threads
+          .map((thread) => thread.id)
+          .filter((id) => id === readThreadId || id === laterThreadId),
+        [readThreadId],
+      );
+      assert.strictEqual(discovery.snapshotSequence, 0);
+      assert.strictEqual(trace.queryTransactions.length, 2);
+      assert.isNotNull(trace.queryTransactions[0]);
+      assert.strictEqual(new Set(trace.queryTransactions).size, 1);
+      assert.isFalse(
+        trace.statements.some((query) =>
+          /orchestration_v2_projection_(runs|messages|turn_items|provider_threads)/.test(query),
+        ),
+      );
+      const fullShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === readThreadId,
+      )!;
+      const metadata = discovery.threads.find((thread) => thread.id === readThreadId)!;
+      for (const key of Object.keys(metadata) as Array<keyof typeof metadata>) {
+        assert.deepEqual(metadata[key], fullShell[key]);
+      }
+      const narrow = yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId });
+      assert.deepEqual(
+        narrow.threads,
+        discovery.threads.filter((thread) => thread.id === readThreadId),
+      );
+      const settledPayload = (settledAt: string | null, archivedAt: string | null) => sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt})
+        WHERE thread_id = ${readThreadId}
+      `;
+      yield* settledPayload(DateTime.formatIso(now), null);
+      assert.isFalse(
+        (yield* projectionStore.getPullRequestSnapshot({ unsettledOnly: true })).threads.some(
+          (thread) => thread.id === readThreadId,
+        ),
+      );
+      assert.strictEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads.length,
+        1,
+      );
+      yield* settledPayload(null, DateTime.formatIso(now));
+      assert.isFalse(
+        (yield* projectionStore.getPullRequestSnapshot({})).threads.some(
+          (thread) => thread.id === readThreadId,
+        ),
+      );
+      assert.strictEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads.length,
+        1,
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-11-03T00:00:00.000Z' WHERE thread_id = ${readThreadId}`;
+      assert.deepEqual(
+        (yield* projectionStore.getPullRequestSnapshot({ threadId: readThreadId })).threads,
+        [],
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${readThreadId}`;
+      yield* settledPayload(null, null);
       const decode = yield* sql.withTransaction(projectionStore.readShellSnapshot());
       yield* createThread(laterThreadId);
 
@@ -7839,6 +8105,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const project = { title: "Project" };
       const environmentId = EnvironmentId.make("environment:held-completion");
+      yield* assertShellIndexCoversShells();
       const held = yield* store.getThreadShell(threadId);
       assert.equal(
         held && projectThreadAwarenessV2({ environmentId, project, thread: held })?.phase,
@@ -7854,6 +8121,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         occurredAt: releasedAt,
         payload: { ...providerThread, pendingBackgroundTasks: [], updatedAt: releasedAt },
       });
+      yield* assertShellIndexCoversShells();
       const released = yield* store.getThreadShell(threadId);
       const state =
         released && projectThreadAwarenessV2({ environmentId, project, thread: released });

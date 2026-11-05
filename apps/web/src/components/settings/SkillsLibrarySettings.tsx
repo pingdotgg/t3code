@@ -8,22 +8,45 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ScopedSwitch } from "./ScopedSwitch";
-import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
-export function SkillsLibraryRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const supported = useAtomValue(
-    serverEnvironment.configValueAtom(environmentId),
-    (config) => config?.environment.capabilities.skillsLibrary === true,
+/**
+ * Status and refresh belong to one environment, so each gets its own row, narrowed the way the
+ * single-environment settings pages are.
+ */
+export function SkillsLibraryRows() {
+  const { search, connectedEnvironments, selectScope } = useSettingsScope();
+  const supported = connectedEnvironments.filter(
+    (environment) => environment.serverConfig?.environment.capabilities.skillsLibrary === true,
   );
-  return useOptionalSettingsScope() === null || !supported ? null : (
-    <ScopedSkillsLibraryRow environmentId={environmentId} />
-  );
+  return supported.map((environment, index) => (
+    <SettingsScopeProvider
+      key={environment.environmentId}
+      search={{ ...search, machine: environment.environmentId }}
+      singleEnvironment
+      onChange={selectScope}
+    >
+      <SkillsLibraryRow
+        environmentId={environment.environmentId}
+        label={supported.length > 1 ? environment.label : null}
+        isSearchTarget={index === 0}
+      />
+    </SettingsScopeProvider>
+  ));
 }
 
-function ScopedSkillsLibraryRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function SkillsLibraryRow({
+  environmentId,
+  label,
+  isSearchTarget,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string | null;
+  readonly isSearchTarget: boolean;
+}) {
   const enabled = useScopedSettings((settings) => settings.skillsLibraryEnabled);
   const updateSettings = useUpdateScopedSettings();
   const canRefresh = useAtomValue(
@@ -51,13 +74,15 @@ function ScopedSkillsLibraryRow({ environmentId }: { readonly environmentId: Env
     refreshStatus();
   };
 
+  const searchable = searchableSetting("skills-library");
   const conflicts = status.data?.conflicts ?? [];
   const mismatches = status.data?.nameMismatches ?? [];
   return (
     <SettingsRow
       serverScoped
       settingKeys={["skillsLibraryEnabled"]}
-      {...searchableSetting("skills-library")}
+      {...(isSearchTarget ? { id: searchable.id } : {})}
+      title={label ? `${searchable.title} on ${label}` : searchable.title}
       description="Keeps your skills in ~/.agents/skills and links them into Claude's and Antigravity's skill folders, so every harness and every account sees the same set. Codex, Cursor, OpenCode and the others read that folder directly."
       status={
         conflicts.length > 0 || mismatches.length > 0 ? (
@@ -118,7 +143,7 @@ function ScopedSkillsLibraryRow({ environmentId }: { readonly environmentId: Env
             onCheckedChange={(checked) =>
               updateSettings({ skillsLibraryEnabled: Boolean(checked) })
             }
-            aria-label="Skills library"
+            aria-label={label ? `Skills library on ${label}` : "Skills library"}
           />
         </>
       }
