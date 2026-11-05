@@ -39,6 +39,7 @@ import {
   pullLayoutPane,
   replaceLayoutTabContent,
   resizeLayoutColumn,
+  resizeLayoutColumnEdge,
   resizeLayoutPane,
   type LayoutCompanionKind,
   type LayoutDirection,
@@ -298,7 +299,12 @@ interface LayoutStoreState {
   closeTabsWhere: (predicate: (tab: LayoutTab) => boolean) => void;
   focusAdjacentTab: (delta: 1 | -1) => void;
   /** Resize a column measured in shares of `unitWidth`, and arrange its workspace there. */
-  resizeColumnEdge: (columnId: string, width: number, unitWidth: number) => void;
+  resizeColumnEdge: (
+    columnId: string,
+    width: number,
+    unitWidth: number,
+    drawnUnitWidth?: number,
+  ) => void;
   moveTab: (tabId: string, destination: LayoutTabDestination) => void;
   /** Move the tab showing this content to the destination, or open one there. */
   placeContent: (content: LayoutTabContent, destination: LayoutTabDestination) => void;
@@ -467,14 +473,9 @@ export const useLayoutStore = create<LayoutStoreState>()(
         closeTab: (tabId) => apply((layout) => closeLayoutTab(layout, tabId)),
         closeTabsWhere: (predicate) => apply((layout) => closeLayoutTabsWhere(layout, predicate)),
         focusAdjacentTab: (delta) => apply((layout) => focusAdjacentLayoutTab(layout, delta)),
-        resizeColumnEdge: (columnId, width, unitWidth) =>
+        resizeColumnEdge: (columnId, width, unitWidth, drawnUnitWidth) =>
           apply(
-            (layout) =>
-              arrangeLayoutWorkspaces(
-                layout,
-                resizeLayoutColumn(layout, columnId, width),
-                unitWidth,
-              ),
+            (layout) => resizeLayoutColumnEdge(layout, columnId, width, unitWidth, drawnUnitWidth),
             true,
           ),
         moveTab: (tabId, destination) =>
