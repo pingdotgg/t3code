@@ -216,9 +216,9 @@ function SecretRequestField({
         />
         {input.secret ? (
           <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={revealed ? `Hide ${input.label}` : `Show ${input.label}`}
-            accessibilityState={{ selected: revealed }}
+            accessibilityRole="togglebutton"
+            accessibilityLabel={`Show ${input.label}`}
+            accessibilityState={{ checked: revealed }}
             hitSlop={8}
             className="absolute right-1 size-11 items-center justify-center active:opacity-70"
             onPress={() => setRevealed((current) => !current)}

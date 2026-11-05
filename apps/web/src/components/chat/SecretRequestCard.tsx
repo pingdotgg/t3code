@@ -228,7 +228,7 @@ function SecretRequestField(props: {
             type="button"
             size="icon-xs"
             variant="ghost"
-            aria-label={revealed ? `Hide ${input.label}` : `Show ${input.label}`}
+            aria-label={`Show ${input.label}`}
             aria-pressed={revealed}
             disabled={props.disabled}
             // Keep focus, and the caret, in the input.
