@@ -10,19 +10,22 @@ import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
+import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import { listNativeSpeechGpuDevices } from "./native.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import * as SpeechService from "./SpeechService.ts";
+import { SILERO_VAD } from "./silero.ts";
 
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
   supportsStreaming: true,
+  supportsLongForm: false,
   supportsTranslation: true,
   supportsVocabulary: false,
-  begin: vi.fn(async (_language?: string, _vocabulary?: readonly string[]) => {}),
+  begin: vi.fn(async (_options?: unknown, _filterSilence?: boolean, _vadPath?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
     text: { committed: "", tentative: "hello" },
@@ -66,13 +69,13 @@ const modelDefinitions = vi.hoisted(() => [
     name: "fallback",
     description: "fallback",
     size: 8,
-    languages: ["en"],
+    languages: ["en", "fr"],
     accuracy: 2,
     speed: 2,
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: false,
-    supportsTranslation: false,
+    supportsTranslation: true,
   },
 ]);
 vi.mock("./native.ts", () => ({
@@ -112,8 +115,10 @@ const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 beforeEach(() => {
   vi.clearAllMocks();
   loadNative.mockReset();
+  native.finish.mockReset();
   native.backend = "Vulkan0";
   native.supportsVocabulary = false;
+  native.supportsStreaming = true;
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
@@ -146,6 +151,21 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
     yield* speech.prepareModel;
     expect(loadNative).toHaveBeenCalledTimes(1);
     expect(native.transcribe).not.toHaveBeenCalled();
+    native.supportsStreaming = false;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+        speechTranslateToEnglish: true,
+        speechSilenceFiltering: false,
+      });
+      expect(native.begin).toHaveBeenLastCalledWith(
+        { timestamps: "none", language: "fr", task: "translate", targetLanguage: "en" },
+        false,
+        "test.gguf",
+      );
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped);
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     expect(loadNative).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(layer)),
@@ -223,25 +243,109 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
     const speech = yield* SpeechService.SpeechService;
     const started = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
-    download.mockImplementationOnce(() =>
-      Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Deferred.await(finish)),
-        Effect.as("test.gguf"),
-      ),
-    );
+    const helperStarted = yield* Deferred.make<void>();
+    let helperStartedDuringInstall = false;
+    let helperInterrupted = false;
+    download
+      .mockImplementationOnce(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(finish)),
+          Effect.as("test.gguf"),
+        ),
+      )
+      .mockImplementationOnce(() =>
+        Deferred.isDone(finish).pipe(
+          Effect.tap((done) =>
+            Effect.sync(() => {
+              helperStartedDuringInstall = !done;
+            }),
+          ),
+          Effect.andThen(Deferred.succeed(helperStarted, undefined)),
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              helperInterrupted = true;
+            }),
+          ),
+        ),
+      );
     const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
     yield* Deferred.await(started);
+    yield* Deferred.await(helperStarted);
     yield* Fiber.interrupt(request);
+    yield* Deferred.succeed(finish, undefined);
+    yield* TestClock.adjust("16 seconds");
+    expect(helperInterrupted).toBe(false);
     const removed = yield* Effect.result(speech.removeModel("test-model"));
     expect(Result.isFailure(removed) && removed.failure).toMatchObject({ _tag: "SpeechBusyError" });
     const join = yield* speech
       .downloadModel("test-model")
       .pipe(Effect.forkChild({ startImmediately: true }));
-    yield* Deferred.succeed(finish, undefined);
+    yield* TestClock.adjust("2 minutes");
+    expect(helperInterrupted).toBe(true);
     yield* Fiber.join(join);
-    expect(download).toHaveBeenCalledTimes(1);
+    expect(download.mock.calls.map(([model]) => model.id)).toEqual(["test-model", SILERO_VAD.id]);
+    expect(helperStartedDuringInstall).toBe(true);
     yield* speech.removeModel("test-model");
     expect(readyModels.has("test-model")).toBe(false);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("bounds missing Silero recovery during recording and continues with raw audio", () =>
+  Effect.gen(function* () {
+    const helperStarted = yield* Deferred.make<void>();
+    const helperInterrupted = yield* Deferred.make<void>();
+    download.mockImplementationOnce(() =>
+      Deferred.succeed(helperStarted, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(helperInterrupted, undefined)),
+      ),
+    );
+    const speech = yield* SpeechService.SpeechService;
+    const recording = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(helperStarted);
+    yield* TestClock.adjust("14999 millis");
+    expect(native.begin).not.toHaveBeenCalled();
+    yield* TestClock.adjust("1 millis");
+    yield* Deferred.await(helperInterrupted);
+    const stream = yield* Fiber.join(recording);
+    expect(native.begin).toHaveBeenLastCalledWith(expect.anything(), true, undefined);
+    yield* stream.feed(pcm());
+    expect(yield* stream.finish).toBe("hello");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("keeps the installed speech model usable when optional Silero acquisition fails", () =>
+  Effect.gen(function* () {
+    download
+      .mockImplementationOnce(() => Effect.succeed("test.gguf"))
+      .mockImplementationOnce(() =>
+        Effect.fail(
+          new PlatformError.PlatformError(
+            new PlatformError.SystemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "open",
+            }),
+          ),
+        ),
+      );
+    const speech = yield* SpeechService.SpeechService;
+    const installed = yield* speech.downloadModel("test-model");
+    expect(installed.models.find((model) => model.id === "test-model")?.state).toBe("installed");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+        expect(yield* stream.finish).toBe("hello");
+      }),
+    );
+    expect(download).toHaveBeenCalledTimes(2);
+    yield* TestClock.adjust("10 minutes");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+    expect(download).toHaveBeenCalledTimes(3);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -333,7 +437,11 @@ it.effect("uses vocabulary only for supported transcription and always applies a
             text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
           });
           expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
-          expect(native.begin.mock.lastCall).toEqual(["fr", vocabulary]);
+          expect(native.begin.mock.lastCall).toEqual([
+            { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
+            true,
+            "test.gguf",
+          ]);
         }).pipe(Effect.scoped, Effect.provide(layer));
       }
     }
@@ -352,6 +460,58 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
     yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([
+  { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
+  {
+    cue: "uh no",
+    remove: true,
+    text: "Make it red, uh no, blue.",
+    expected: "Make it red, uh no, blue.",
+  },
+  {
+    cue: "uh no",
+    remove: true,
+    text: "Uh, Make it red, UH  NO, blue. Uh nope.",
+    expected: "Make it red, UH NO, blue. nope.",
+  },
+  {
+    cue: " UM ",
+    remove: true,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Make it red, um, blue.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Make it red, blue.",
+  },
+  {
+    cue: "um",
+    remove: false,
+    text: "Uh, Make it red, um, blue.",
+    expected: "Uh, Make it red, um, blue.",
+  },
+])(
+  "preserves only an explicit correction cue during batch and stream filler removal: $cue / $remove",
+  ({ cue, remove, text, expected }) =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const options = {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "en",
+        speechRemoveFillerWords: remove,
+        speechCustomWords: [{ term: "um", aliases: [] }],
+        ...(cue === undefined ? {} : { speechCorrectionWord: cue }),
+      };
+      native.transcribe.mockResolvedValueOnce({ text });
+      native.finish.mockResolvedValueOnce(text);
+      expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
+      const stream = yield* speech.startStream(options);
+      expect(yield* stream.finish).toBe(expected);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.effect("holds model ownership until the stream scope closes and preserves silence", () =>
@@ -560,9 +720,13 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         };
         expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text: recovered });
         expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
-        expect(native.begin.mock.calls.slice(-2)).toEqual([
-          ["en", ["GitHub", "Bob"]],
-          ["en", cpuSupportsVocabulary ? ["GitHub", "Bob"] : undefined],
+        expect(native.begin.mock.calls.slice(-2).map(([options]) => options)).toEqual([
+          { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
+          {
+            timestamps: "none",
+            language: "en",
+            ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}),
+          },
         ]);
         expect(native.feed).toHaveBeenCalledTimes(feedCalls + 4);
         expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text: recovered });
@@ -583,7 +747,7 @@ it.effect.each([false, true])(
       const cpu = {
         ...native,
         backend: "CPU",
-        begin: vi.fn(async (_language?: string) => {}),
+        begin: vi.fn(async (_options?: unknown) => {}),
         feed: vi.fn(async (_pcm: Float32Array) => ({
           revision: 1,
           text: { committed: "", tentative: "" },
@@ -611,7 +775,11 @@ it.effect.each([false, true])(
         expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
           chunks.map((chunk) => [...chunk]),
         );
-        expect(cpu.begin).toHaveBeenCalledWith("fr", undefined);
+        expect(cpu.begin).toHaveBeenCalledWith(
+          { timestamps: "none", language: "fr" },
+          true,
+          "test.gguf",
+        );
         expect(gpu.dispose).toHaveBeenCalledOnce();
         expect(cpu.dispose).not.toHaveBeenCalled();
         const busy = yield* Effect.result(speech.selectModel("fallback-model"));
