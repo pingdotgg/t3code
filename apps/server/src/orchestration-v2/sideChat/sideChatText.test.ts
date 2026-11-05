@@ -46,9 +46,15 @@ it.each([
   },
   {
     name: "heading before the anchor offset counts",
-    messages: [lessonMessage("a1", "assistant", "## Lesson 2: before\n## Lesson 3: after")],
-    anchor: { messageId: MessageId.make("message:a1"), start: 20 },
+    messages: [lessonMessage("a1", "assistant", "## Lesson 2: before\nbody\n## Lesson 3: after")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 21 },
     expected: "Lesson 2: before",
+  },
+  {
+    name: "a highlight inside a heading keeps the whole heading",
+    messages: [lessonMessage("a1", "assistant", "## S1T: design a whole board\nbody")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 10 },
+    expected: "S1T: design a whole board",
   },
   {
     name: "code heading counts",
@@ -83,7 +89,7 @@ it.each([
 it("backfills lesson sections and nested chats inherit them", () => {
   const result = backfillSideChatSections({
     lessons: new Map([
-      ["lesson", [{ id: "a1", role: "assistant", text: "## Lesson 1: basics\nAnswer" }]],
+      ["lesson", [{ id: "a1", role: "assistant", text: "Intro\n## Lesson 1: basics\nAnswer" }]],
     ]),
     sideChats: [
       {

@@ -161,7 +161,7 @@ describe("runMigrations", () => {
       yield* sideChat("child", "2026-01-01T00:00:02Z", "parent");
       for (const [id, text] of [
         ["reply-1", "## Lesson 2: Ohm's law\nV = IR"],
-        ["reply-2", "## Lesson 3: later"],
+        ["reply-2", "Intro\n## Lesson 3: later"],
       ] as const) {
         yield* sql`
           INSERT INTO orchestration_v2_projection_messages

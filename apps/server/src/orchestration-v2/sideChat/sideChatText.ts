@@ -41,8 +41,12 @@ export function lessonSectionAt(
   let section: string | undefined;
   for (const message of messages) {
     if (message.role === "assistant") {
+      // A heading counts when its line starts before the highlight, even if the highlight is inside it.
+      const lineEnd = message.text.indexOf("\n", anchor.start);
       const text =
-        message.id === anchor.messageId ? message.text.slice(0, anchor.start) : message.text;
+        message.id === anchor.messageId && lineEnd !== -1
+          ? message.text.slice(0, lineEnd)
+          : message.text;
       for (const line of text.split("\n")) {
         if (LESSON_SECTION_HEADING.test(line) || CODE_SECTION_HEADING.test(line)) {
           section = truncateGraphemes(
