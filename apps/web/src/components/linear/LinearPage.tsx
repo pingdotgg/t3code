@@ -165,10 +165,20 @@ function LinearConnected({
     const saved = getLinearListScroll(listKey);
     if (saved !== undefined && scrollRef.current !== null) scrollRef.current.scrollTop = saved;
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- levels without a loaded issue list have their content on first paint
+  // The milestone list restores through `onListReady`; other levels once their data has arrived,
+  // since restoring over skeletons clamps the saved position.
+  const levelContentReady =
+    level === "team"
+      ? isSettled(projects)
+      : level === "project"
+        ? isSettled(milestones)
+        : level === "workspace" &&
+          isSettled(activity) &&
+          (jumpBackInIds.length === 0 || isSettled(jumpBackIn));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the DOM scroll position once the level's content is on screen
   useEffect(() => {
-    if (level !== "milestone") restoreScroll();
-  }, [level, restoreScroll]);
+    if (levelContentReady) restoreScroll();
+  }, [levelContentReady, restoreScroll]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remembers the location in localStorage; a location restored from another Linear organization is reset instead
   useEffect(() => {
     if (isStaleLocationForOrganization(readStoredLinearLocation(), organizationId, search)) {
@@ -457,6 +467,9 @@ function ListPlaceholder({ error, onRetry }: { error: string | null; onRetry: ()
     </div>
   );
 }
+
+const isSettled = (query: { readonly data: unknown; readonly error: unknown }) =>
+  query.data !== null || query.error !== null;
 
 export function LinearPage() {
   // A per-mount focus key stops the palette's area focus from reviving the last-focused filter

@@ -4,7 +4,7 @@ import {
 } from "@t3tools/client-runtime/linear/activity";
 import type { EnvironmentId, LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
 import { memo, useState } from "react";
-import { blockedByTitle, isLinearIssueBlocked } from "@t3tools/shared/linearBlocked";
+import { blockedByTitle, isLinearIssueBlocked } from "@t3tools/shared/linearRelations";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";

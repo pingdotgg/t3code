@@ -1,6 +1,5 @@
 import {
   parseStoredLinearLocation,
-  resolveStoredLinearSearch,
   serializeLinearLocation,
   type StoredLinearLocation,
 } from "@t3tools/client-runtime/linear/location";
@@ -23,7 +22,7 @@ export function readStoredLinearLocation(storage?: LocationStorage): StoredLinea
 
 /** The search the Linear entry points open with; the organization is checked once the page loads. */
 export function readStoredLinearSearch(storage?: LocationStorage): LinearSearch {
-  return resolveStoredLinearSearch(readStoredLinearLocation(storage), null);
+  return readStoredLinearLocation(storage)?.search ?? {};
 }
 
 export function writeStoredLinearLocation(

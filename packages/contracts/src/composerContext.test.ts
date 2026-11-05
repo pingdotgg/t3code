@@ -5,11 +5,13 @@ import * as Schema from "effect/Schema";
 import {
   COMPOSER_CONTEXT_KINDS,
   ComposerContextRecord,
+  LinearIssueContextRecord,
   OrchestrationMessageContext,
 } from "./composerContext.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+const isLinearIssueContextRecord = Schema.is(LinearIssueContextRecord);
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -257,6 +259,13 @@ describe("OrchestrationMessageContext", () => {
 });
 
 describe("linear-issue context record", () => {
+  it("accepts records saved before blockedBy existed, including through Schema.is", () => {
+    const legacy = knownRecords["linear-issue"];
+    expect("blockedBy" in legacy).toBe(false);
+    expect(isLinearIssueContextRecord(legacy)).toBe(true);
+    expect(Option.isSome(decodeRecord(legacy))).toBe(true);
+  });
+
   it("rejects over-long comment bodies and too many sub-issues", () => {
     const record = knownRecords["linear-issue"];
     expect(

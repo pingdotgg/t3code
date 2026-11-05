@@ -153,6 +153,8 @@ export function LinearMilestoneView({
       ) : (
         <>
           <LinearIssueList
+            // Rows read their expanded state from this list's memory when they mount.
+            key={rowContext.listKey}
             issues={result.issues}
             groupBy={search.group ?? DEFAULT_LINEAR_GROUP}
             statePositions={statePositions}

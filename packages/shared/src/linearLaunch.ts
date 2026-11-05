@@ -13,7 +13,7 @@ import {
   sanitizeComposerContextLabel,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
-import { isLinearIssueBlocked } from "./linearBlocked.ts";
+import { isLinearIssueBlocked, sortBlockers } from "./linearRelations.ts";
 import { isStateMoveEligible } from "./linearWriteBack.ts";
 import { formatLinearIssueMarkdown, type LinearIssueSnapshot } from "./linearIssueMarkdown.ts";
 
@@ -181,11 +181,13 @@ function buildLinearIssueSnapshot(
       LINEAR_CONTEXT_DESCRIPTION_MAX_CHARS,
       DESCRIPTION_TRUNCATION_MARKER,
     ),
-    blockedBy: issue.blockedBy.slice(0, LINEAR_CONTEXT_BLOCKERS_MAX).map((blocker) => ({
-      identifier: clipShort(blocker.identifier),
-      title: clipShort(blocker.title),
-      stateType: blocker.state.type,
-    })),
+    blockedBy: sortBlockers(issue.blockedBy)
+      .slice(0, LINEAR_CONTEXT_BLOCKERS_MAX)
+      .map((blocker) => ({
+        identifier: clipShort(blocker.identifier),
+        title: clipShort(blocker.title),
+        stateType: blocker.state.type,
+      })),
     subIssues: include.subIssues
       ? detail.subIssues.slice(0, LINEAR_CONTEXT_SUB_ISSUES_MAX).map((sub) => ({
           identifier: clipShort(sub.identifier),

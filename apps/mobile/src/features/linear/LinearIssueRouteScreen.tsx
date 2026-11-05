@@ -13,7 +13,6 @@ import {
   ThreadId,
   type LinearActivityItem,
   type LinearComment,
-  type LinearDuplicateRef,
   type LinearIssue,
   type LinearIssueDetail,
   type LinearIssueRef,
@@ -41,8 +40,9 @@ import {
   blockedBySummary,
   isLinearIssueBlocked,
   isLinearRefOpen,
-  sortBlockers,
-} from "@t3tools/shared/linearBlocked";
+  linearRelationGroups,
+  openBlockers,
+} from "@t3tools/shared/linearRelations";
 import { LinearBlockedBadge } from "./LinearBlockedBadge";
 import { LinearActivityPill } from "./LinearIssueRow";
 import { useOpenLinearIssueLink } from "./useOpenLinearIssueLink";
@@ -230,7 +230,6 @@ function SubIssueRow(props: {
 
 function RelationRow(props: {
   readonly issue: LinearIssueRef;
-  readonly muted?: boolean;
   readonly onSelect: (issueId: string) => void;
 }) {
   const { issue } = props;
@@ -241,7 +240,7 @@ function RelationRow(props: {
       onPress={() => props.onSelect(issue.id)}
       className={cn(
         "min-h-11 flex-row items-center gap-2.5 border-b border-border-subtle px-3.5 active:bg-row-hover",
-        props.muted && "opacity-60",
+        !isLinearRefOpen(issue) && "opacity-60",
       )}
     >
       <LinearStateIcon type={issue.state.type} color={issue.state.color} size={16} />
@@ -253,68 +252,29 @@ function RelationRow(props: {
   );
 }
 
-function RelationGroup(props: { readonly title: string; readonly children: ReactNode }) {
-  return (
-    <View className="gap-1">
-      <Text className="text-2xs font-t3-medium text-foreground-muted">{props.title}</Text>
-      <Card>{props.children}</Card>
-    </View>
-  );
-}
-
-const DUPLICATE_LABEL: Record<LinearDuplicateRef["direction"], string> = {
-  duplicateOf: "Duplicate of",
-  duplicatedBy: "Duplicated by",
-};
-
 function RelationsSection(props: {
   readonly detail: LinearIssueDetail;
   readonly onSelect: (issueId: string) => void;
 }) {
-  const { blockedBy, blocks } = props.detail.issue;
-  const { relatedIssues, duplicates } = props.detail;
-  if (blockedBy.length + blocks.length + relatedIssues.length + duplicates.length === 0) {
-    return null;
-  }
+  const groups = linearRelationGroups(props.detail);
+  if (groups.length === 0) return null;
   return (
-    <View className="gap-2">
-      <SectionHeader>Relations</SectionHeader>
-      {blockedBy.length > 0 ? (
-        <RelationGroup title="Blocked by">
-          {sortBlockers(blockedBy).map((ref) => (
-            <RelationRow
-              key={ref.id}
-              issue={ref}
-              muted={!isLinearRefOpen(ref)}
-              onSelect={props.onSelect}
-            />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {blocks.length > 0 ? (
-        <RelationGroup title="Blocking">
-          {blocks.map((ref) => (
-            <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {relatedIssues.length > 0 ? (
-        <RelationGroup title="Related">
-          {relatedIssues.map((ref) => (
-            <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {(["duplicateOf", "duplicatedBy"] as const).map((direction) => {
-        const group = duplicates.filter((ref) => ref.direction === direction);
-        return group.length === 0 ? null : (
-          <RelationGroup key={direction} title={DUPLICATE_LABEL[direction]}>
-            {group.map((ref) => (
-              <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
-            ))}
-          </RelationGroup>
-        );
-      })}
+    <View>
+      <SectionHeader count={groups.reduce((total, group) => total + group.refs.length, 0)}>
+        Relations
+      </SectionHeader>
+      <View className="gap-2">
+        {groups.map((group) => (
+          <View key={group.title} className="gap-1">
+            <Text className="text-2xs font-t3-medium text-foreground-muted">{group.title}</Text>
+            <Card>
+              {group.refs.map((ref) => (
+                <RelationRow key={ref.id} issue={ref} onSelect={props.onSelect} />
+              ))}
+            </Card>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -327,6 +287,9 @@ function DetailBody(props: {
   const { detail, viewer, environmentId } = props;
   const { issue } = detail;
   const linearNavigation = useLinearNavigation(environmentId, {});
+  // One open blocker opens directly; several are listed under Relations below.
+  const open = openBlockers(issue);
+  const loneBlocker = open.length === 1 ? open[0] : undefined;
   const launch = useLinearLaunch(environmentId);
   const openThread = useOpenLinearThread();
   const navigateToPullRequest = useNavigateToPullRequest();
@@ -381,16 +344,21 @@ function DetailBody(props: {
           </Pressable>
         ) : null}
         {isLinearIssueBlocked(issue) ? (
-          <View className="flex-row items-center gap-1 self-start">
+          <Pressable
+            accessibilityRole={loneBlocker ? "button" : "text"}
+            disabled={!loneBlocker}
+            onPress={() => loneBlocker && linearNavigation.openIssue(loneBlocker.id)}
+            className="min-h-11 flex-row items-center gap-1 self-start active:opacity-60"
+          >
             <SymbolView
-              name="exclamationmark.circle"
+              name="slash.circle"
               size={12}
-              tintColorClassName="accent-icon-muted"
+              tintColorClassName="accent-warning-foreground"
             />
             <Text className="text-xs font-t3-medium text-warning-foreground">
               {blockedBySummary(issue)}
             </Text>
-          </View>
+          </Pressable>
         ) : null}
       </View>
 

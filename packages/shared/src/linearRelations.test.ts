@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { LinearIssue, LinearIssueRef } from "@t3tools/contracts";
 
-import {
-  blockedBySummary,
-  blockedByTitle,
-  isLinearIssueBlocked,
-  openBlockers,
-} from "./linearBlocked.ts";
+import { blockedBySummary, isLinearIssueBlocked, linearRelationGroups } from "./linearRelations.ts";
 
 type StateType = LinearIssueRef["state"]["type"];
 const ref = (n: number, type: StateType): LinearIssueRef => ({
@@ -39,14 +34,33 @@ describe("isLinearIssueBlocked", () => {
   });
 });
 
-describe("blocker text", () => {
-  const blocked = issue([ref(12, "started"), ref(13, "completed"), ref(15, "backlog")]);
-  it("lists only open blockers", () => {
-    expect(openBlockers(blocked).map((r) => r.identifier)).toEqual(["ATT-12", "ATT-15"]);
-    expect(blockedByTitle(blocked)).toBe("Blocked by ATT-12, ATT-15");
+describe("blockedBySummary", () => {
+  it("names one open blocker and counts several, ignoring done ones", () => {
+    expect(blockedBySummary(issue([ref(12, "started"), ref(13, "completed")]))).toBe(
+      "Blocked by ATT-12",
+    );
+    expect(blockedBySummary(issue([ref(12, "started"), ref(15, "backlog")]))).toBe(
+      "Blocked by 2 issues",
+    );
   });
-  it("summarises one or many", () => {
-    expect(blockedBySummary(issue([ref(12, "started")]))).toBe("Blocked by ATT-12");
-    expect(blockedBySummary(blocked)).toBe("Blocked by 2 issues");
+});
+
+describe("linearRelationGroups", () => {
+  it("orders groups, puts open blockers first and leaves out empty groups", () => {
+    const groups = linearRelationGroups({
+      issue: { blockedBy: [ref(1, "completed"), ref(2, "started")] },
+      blocks: [],
+      relatedIssues: [ref(3, "started")],
+      duplicates: [
+        { ...ref(4, "started"), direction: "duplicatedBy" },
+        { ...ref(5, "started"), direction: "duplicateOf" },
+      ],
+    });
+    expect(groups.map((group) => [group.title, group.refs.map((r) => r.identifier)])).toEqual([
+      ["Blocked by", ["ATT-2", "ATT-1"]],
+      ["Related", ["ATT-3"]],
+      ["Duplicate of", ["ATT-5"]],
+      ["Duplicated by", ["ATT-4"]],
+    ]);
   });
 });

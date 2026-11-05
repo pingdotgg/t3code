@@ -4,7 +4,6 @@ import {
   isStaleLocationForOrganization,
   linearListKey,
   parseStoredLinearLocation,
-  resolveStoredLinearSearch,
   serializeLinearLocation,
 } from "./location.ts";
 
@@ -32,19 +31,8 @@ describe("stored Linear location", () => {
     "falls back for %j",
     (raw: string | null | undefined) => {
       expect(parseStoredLinearLocation(raw)).toBeNull();
-      expect(resolveStoredLinearSearch(parseStoredLinearLocation(raw), "org-1")).toEqual({});
     },
   );
-
-  it("ignores a location saved for another organization", () => {
-    const stored = { organizationId: "org-1", search: { team: "t1" } };
-    expect(resolveStoredLinearSearch(stored, "org-2")).toEqual({});
-    expect(resolveStoredLinearSearch(stored, "org-1")).toEqual({ team: "t1" });
-    expect(resolveStoredLinearSearch(stored, null)).toEqual({ team: "t1" });
-    expect(resolveStoredLinearSearch({ ...stored, organizationId: null }, "org-2")).toEqual({
-      team: "t1",
-    });
-  });
 });
 
 describe("isStaleLocationForOrganization", () => {

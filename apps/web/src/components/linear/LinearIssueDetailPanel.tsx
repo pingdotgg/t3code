@@ -2,12 +2,12 @@ import type {
   LinearActivityItem,
   LinearComment,
   LinearIssue,
-  LinearDuplicateRef,
   LinearIssueDetail,
   LinearIssueRef,
   LinearViewer,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { useRef } from "react";
 import {
   BanIcon,
   CheckIcon,
@@ -62,8 +62,9 @@ import {
   blockedBySummary,
   isLinearIssueBlocked,
   isLinearRefOpen,
-  sortBlockers,
-} from "@t3tools/shared/linearBlocked";
+  linearRelationGroups,
+  openBlockers,
+} from "@t3tools/shared/linearRelations";
 import { LinearBlockedBadge } from "./LinearBlockedBadge";
 import { useLinearLaunchActions } from "./linearLaunchTypes";
 import {
@@ -221,13 +222,9 @@ function SubIssueRow({
 
 function RelationRow({
   issue,
-  label,
-  muted,
   onSelect,
 }: {
   issue: LinearIssueRef;
-  label?: string;
-  muted?: boolean;
   onSelect: (issueId: string) => void;
 }) {
   return (
@@ -236,82 +233,42 @@ function RelationRow({
       onClick={() => onSelect(issue.id)}
       className={cn(
         "flex min-h-8 w-full cursor-pointer items-center gap-2 border-b border-border px-2.5 text-left text-sm last:border-b-0 hover:bg-accent/60",
-        muted && "text-muted-foreground",
+        !isLinearRefOpen(issue) && "text-muted-foreground",
       )}
     >
       <LinearStateIcon type={issue.state.type} color={issue.state.color} />
       <span className="shrink-0 font-mono text-2xs text-muted-foreground">{issue.identifier}</span>
       <span className="min-w-0 flex-1 truncate">{issue.title}</span>
-      {label ? <span className="shrink-0 text-2xs text-muted-foreground">{label}</span> : null}
     </button>
   );
 }
 
-function RelationGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-2xs font-medium text-muted-foreground">{title}</span>
-      <div className="overflow-hidden rounded-lg border border-border bg-card">{children}</div>
-    </div>
-  );
-}
-
-const DUPLICATE_LABEL: Record<LinearDuplicateRef["direction"], string> = {
-  duplicateOf: "Duplicate of",
-  duplicatedBy: "Duplicated by",
-};
-
 function RelationsSection({
   detail,
   onSelect,
+  ref,
 }: {
   detail: LinearIssueDetail;
   onSelect: (issueId: string) => void;
+  ref: React.Ref<HTMLElement>;
 }) {
-  const { blockedBy, blocks } = detail.issue;
-  const { relatedIssues, duplicates } = detail;
-  if (blockedBy.length + blocks.length + relatedIssues.length + duplicates.length === 0) {
-    return null;
-  }
+  const groups = linearRelationGroups(detail);
+  if (groups.length === 0) return null;
   return (
-    <section id="linear-relations" className="flex flex-col gap-2">
-      <SectionHeader>Relations</SectionHeader>
-      {blockedBy.length > 0 ? (
-        <RelationGroup title="Blocked by">
-          {sortBlockers(blockedBy).map((ref) => (
-            <RelationRow
-              key={ref.id}
-              issue={ref}
-              muted={!isLinearRefOpen(ref)}
-              onSelect={onSelect}
-            />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {blocks.length > 0 ? (
-        <RelationGroup title="Blocking">
-          {blocks.map((ref) => (
-            <RelationRow key={ref.id} issue={ref} onSelect={onSelect} />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {relatedIssues.length > 0 ? (
-        <RelationGroup title="Related">
-          {relatedIssues.map((ref) => (
-            <RelationRow key={ref.id} issue={ref} onSelect={onSelect} />
-          ))}
-        </RelationGroup>
-      ) : null}
-      {(["duplicateOf", "duplicatedBy"] as const).map((direction) => {
-        const group = duplicates.filter((ref) => ref.direction === direction);
-        return group.length === 0 ? null : (
-          <RelationGroup key={direction} title={DUPLICATE_LABEL[direction]}>
-            {group.map((ref) => (
+    <section ref={ref} className="flex scroll-mt-3 flex-col gap-1.5">
+      <SectionHeader count={groups.reduce((total, group) => total + group.refs.length, 0)}>
+        Relations
+      </SectionHeader>
+      {groups.map((group) => (
+        <div key={group.title} className="flex flex-col gap-1">
+          <span className="text-2xs font-medium text-muted-foreground">{group.title}</span>
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            {group.refs.map((ref) => (
               <RelationRow key={ref.id} issue={ref} onSelect={onSelect} />
             ))}
-          </RelationGroup>
-        );
-      })}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -401,6 +358,7 @@ function DetailBody({
 }) {
   const { issue } = detail;
   const navigate = useNavigate();
+  const relationsRef = useRef<HTMLElement>(null);
   const environmentId = useLinearEnvironmentId();
   const openPullRequest = useOpenPrLink();
   const activityQuery = useLinearActivity();
@@ -449,9 +407,11 @@ function DetailBody({
         {isLinearIssueBlocked(issue) ? (
           <button
             type="button"
-            onClick={() =>
-              document.getElementById("linear-relations")?.scrollIntoView({ block: "nearest" })
-            }
+            onClick={() => {
+              const open = openBlockers(issue);
+              if (open.length === 1 && open[0]) onSelectIssue(open[0].id);
+              else relationsRef.current?.scrollIntoView({ block: "start" });
+            }}
             className="inline-flex w-fit cursor-pointer items-center gap-1 text-xs font-medium text-warning-foreground hover:underline"
           >
             <BanIcon aria-hidden className="size-3" />
@@ -548,7 +508,7 @@ function DetailBody({
         </section>
       ) : null}
 
-      <RelationsSection detail={detail} onSelect={onSelectIssue} />
+      <RelationsSection ref={relationsRef} detail={detail} onSelect={onSelectIssue} />
 
       {issue.linkedPullRequests.length > 0 ? (
         <section className="flex flex-col gap-1.5">

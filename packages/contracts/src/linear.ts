@@ -226,8 +226,6 @@ export const LinearIssue = Schema.Struct({
   parent: Schema.NullOr(Schema.Struct({ id: LinearId, identifier: Schema.String })),
   /** Issues that block this one. Defaults to empty when an older server omits the field. */
   blockedBy: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /** Issues this one blocks. */
-  blocks: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   subIssueCount: NonNegativeInt,
   completedSubIssueCount: NonNegativeInt,
   branchName: Schema.String,
@@ -266,6 +264,8 @@ export const LinearIssueDetail = Schema.Struct({
   subIssues: Schema.Array(LinearIssue),
   /** Sub-issues could not be loaded; `subIssues` is empty but the rest of the detail is valid. */
   subIssuesFailed: Schema.Boolean,
+  /** Issues this one blocks. Detail only: list rows need just `issue.blockedBy`. */
+  blocks: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   relatedIssues: Schema.Array(LinearIssueRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   duplicates: Schema.Array(LinearDuplicateRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Last 20, oldest → newest. */

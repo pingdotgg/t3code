@@ -1,5 +1,5 @@
 import type { LinearIssue } from "@t3tools/contracts";
-import { blockedByTitle, isLinearIssueBlocked } from "@t3tools/shared/linearBlocked";
+import { blockedByTitle, isLinearIssueBlocked } from "@t3tools/shared/linearRelations";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -15,7 +15,7 @@ export function LinearBlockedBadge(props: {
       accessibilityLabel={blockedByTitle(props.issue)}
       className="flex-row items-center gap-0.5"
     >
-      <SymbolView name="exclamationmark.circle" size={11} tintColorClassName="accent-icon-muted" />
+      <SymbolView name="slash.circle" size={11} tintColorClassName="accent-warning-foreground" />
       <Text className="text-2xs font-t3-medium text-warning-foreground">Blocked</Text>
     </View>
   );

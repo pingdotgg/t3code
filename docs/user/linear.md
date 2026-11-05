@@ -36,13 +36,14 @@ state. A pipeline keeps one comment up to date as its steps finish.
 ## Blocked issues and relations
 
 Issues that another issue blocks show a **Blocked** label in lists and in the sub-issue list of
-their parent, so you can see which sub-issues you can start now. Hover it (on the computer) to see
+their parent, so you can see which sub-issues you can start now. On desktop and web, hover it to see
 the blocking issues. Only direct "blocked by" relations count, and an issue stops showing as blocked
 once every blocker is completed or canceled; a blocked parent does not block its sub-issues.
 
 An open issue lists its **Relations** (blocked by, blocking, related, duplicates) below its
 sub-issues, and each one opens that issue. Relations are read-only here; change them in Linear. The
-agent sees the issues that block the one you launch from.
+agent sees the issues that block the one you launch from. In a saved view, an issue with many
+relations may not show its Blocked label; open the issue to see all of its blockers.
 
 ## Choosing the machine
 
@@ -77,9 +78,9 @@ The mobile app has a Linear tab. Browse teams, projects, milestones and issues, 
 
 - The Linear page remembers where you were: the team, project and milestone, filters, and the
   selected issue. Opening Linear again, from the sidebar or the command palette, returns there, even
-  after a restart. Scroll position and expanded sub-issues are kept until you close the app. On
-  mobile, returning to the Linear tab reopens the screens you had open. Switching to a different
-  Linear workspace starts from the top.
+  after a restart. Expanded sub-issues, and on desktop and web the list's scroll position, are kept
+  until you close the app. On mobile, returning to the Linear tab reopens the Linear screens you last
+  had open. Switching to a different Linear workspace starts from the top.
 
 - Links to issues in your connected Linear workspace open in the Linear page, or the issue screen
   on mobile, instead of the browser. Command/Ctrl+Click opens them in your browser.

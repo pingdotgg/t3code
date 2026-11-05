@@ -1,4 +1,3 @@
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -246,12 +245,15 @@ export const LinearIssueContextRecord = Schema.Struct({
   labels: Schema.Array(ShortString).check(Schema.isMaxLength(50)),
   branchName: ShortString,
   description: BoundedString(LINEAR_CONTEXT_TEXT_MAX_CHARS),
-  /** Open and finished issues that block this one; absent on records saved before relations. */
-  blockedBy: Schema.Array(
-    Schema.Struct({ identifier: ShortString, title: ShortString, stateType: ShortString }),
-  )
-    .check(Schema.isMaxLength(20))
-    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * Issues that block this one. Optional, not a decoding default: drafts are checked with
+   * `Schema.is`, which would reject records saved before relations existed.
+   */
+  blockedBy: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ identifier: ShortString, title: ShortString, stateType: ShortString }),
+    ).check(Schema.isMaxLength(20)),
+  ),
   subIssues: Schema.Array(
     Schema.Struct({
       identifier: ShortString,

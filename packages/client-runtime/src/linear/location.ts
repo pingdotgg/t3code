@@ -36,25 +36,6 @@ export function parseStoredLinearLocation(
 }
 
 /**
- * The search to open the page with. A location saved for another organization points at ids that do
- * not exist here, so it is dropped. An unknown current organization trusts the stored one.
- */
-export function resolveStoredLinearSearch(
-  stored: StoredLinearLocation | null,
-  organizationId: string | null,
-): LinearSearch {
-  if (stored === null) return {};
-  if (
-    organizationId !== null &&
-    stored.organizationId !== null &&
-    stored.organizationId !== organizationId
-  ) {
-    return {};
-  }
-  return stored.search;
-}
-
-/**
  * True when the page opened on a search that was restored from another organization's location. The
  * ids in it do not exist in this workspace, so the page resets instead of showing broken scopes.
  */

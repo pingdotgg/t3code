@@ -838,7 +838,6 @@ describe("composerDraftStore linear issue drafts", () => {
       branchName: "jan/att-612",
       linkedPullRequests: [],
       blockedBy: [],
-      blocks: [],
     },
     description: "Body",
     milestoneProgress: null,

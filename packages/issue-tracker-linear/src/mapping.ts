@@ -88,38 +88,44 @@ function toRef(node: RelatedIssueNode): LinearIssueRef {
   };
 }
 
-/**
- * `relations` hold edges where this issue is the source and `inverseRelations` where it is the
- * target, so `blocks` reads "blocks" forward and "blocked by" backward. `similar` is AI noise.
- */
-function mapRelations(node: IssueNode): {
-  readonly blockedBy: ReadonlyArray<LinearIssueRef>;
-  readonly blocks: ReadonlyArray<LinearIssueRef>;
-  readonly relatedIssues: ReadonlyArray<LinearIssueRef>;
-  readonly duplicates: ReadonlyArray<LinearDuplicateRef>;
-} {
-  const outgoing = (node.relations?.nodes ?? []).flatMap((relation) =>
-    relation.relatedIssue === null ? [] : [{ type: relation.type, other: relation.relatedIssue }],
-  );
-  const incoming = (node.inverseRelations?.nodes ?? []).flatMap((relation) =>
+interface RelationEdge {
+  readonly type: string;
+  readonly other: RelatedIssueNode;
+}
+
+/** Edges where this issue is the target: an incoming `blocks` means "blocked by". */
+function incomingEdges(node: IssueNode): ReadonlyArray<RelationEdge> {
+  return (node.inverseRelations?.nodes ?? []).flatMap((relation) =>
     relation.issue === null ? [] : [{ type: relation.type, other: relation.issue }],
   );
-  const refs = (entries: typeof outgoing, type: string) =>
-    entries.filter((entry) => entry.type === type).map((entry) => toRef(entry.other));
+}
+
+/** Edges where this issue is the source; only the detail query fetches them. */
+function outgoingEdges(node: IssueNode): ReadonlyArray<RelationEdge> {
+  return (node.relations?.nodes ?? []).flatMap((relation) =>
+    relation.relatedIssue === null ? [] : [{ type: relation.type, other: relation.relatedIssue }],
+  );
+}
+
+// `similar` is Linear's AI suggestion noise and is never read.
+const refsOfType = (edges: ReadonlyArray<RelationEdge>, type: string) =>
+  edges.filter((edge) => edge.type === type).map((edge) => toRef(edge.other));
+
+function mapDetailRelations(node: IssueNode) {
+  const outgoing = outgoingEdges(node);
+  const incoming = incomingEdges(node);
   const duplicates = (
-    entries: typeof outgoing,
+    edges: ReadonlyArray<RelationEdge>,
     direction: LinearDuplicateRef["direction"],
-  ): LinearDuplicateRef[] => refs(entries, "duplicate").map((ref) => ({ ...ref, direction }));
+  ) => refsOfType(edges, "duplicate").map((ref): LinearDuplicateRef => ({ ...ref, direction }));
   return {
-    blockedBy: refs(incoming, "blocks"),
-    blocks: refs(outgoing, "blocks"),
-    relatedIssues: [...refs(outgoing, "related"), ...refs(incoming, "related")],
+    blocks: refsOfType(outgoing, "blocks"),
+    relatedIssues: [...refsOfType(outgoing, "related"), ...refsOfType(incoming, "related")],
     duplicates: [...duplicates(outgoing, "duplicateOf"), ...duplicates(incoming, "duplicatedBy")],
   };
 }
 
 export function mapIssue(node: IssueNode): LinearIssue {
-  const { blockedBy, blocks } = mapRelations(node);
   return {
     id: node.id,
     identifier: node.identifier,
@@ -140,8 +146,7 @@ export function mapIssue(node: IssueNode): LinearIssue {
     project: node.project,
     team: node.team,
     parent: node.parent,
-    blockedBy,
-    blocks,
+    blockedBy: refsOfType(incomingEdges(node), "blocks"),
     // Canceled sub-issues are neither work to do nor work done, so they leave both counts.
     subIssueCount: node.children.nodes.filter((child) => child.state.type !== "canceled").length,
     completedSubIssueCount: node.children.nodes.filter((child) => child.state.type === "completed")
@@ -253,7 +258,7 @@ export function mapIssueDetail(
   subIssues: ReadonlyArray<LinearIssue> | null,
 ): LinearIssueDetail {
   const { description, comments, ...node } = issue;
-  const { relatedIssues, duplicates } = mapRelations(node);
+  const { blocks, relatedIssues, duplicates } = mapDetailRelations(node);
   return {
     issue: mapIssue({
       ...node,
@@ -269,6 +274,7 @@ export function mapIssueDetail(
         : clampProgress(node.projectMilestone.progress),
     subIssues: subIssues ?? [],
     subIssuesFailed: subIssues === null,
+    blocks,
     relatedIssues,
     duplicates,
     comments: (comments?.nodes ?? [])

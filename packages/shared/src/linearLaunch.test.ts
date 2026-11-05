@@ -22,7 +22,6 @@ import {
 } from "./linearLaunch.ts";
 
 const isContextRecord = Schema.is(LinearIssueContextRecord);
-const decodeContextRecord = Schema.decodeUnknownSync(LinearIssueContextRecord);
 
 const makeIssue = (overrides: Partial<LinearIssue> = {}): LinearIssue =>
   ({
@@ -64,6 +63,7 @@ const makeDetail = (overrides: Partial<LinearIssueDetail> = {}): LinearIssueDeta
     makeIssue({ id: "s-2", identifier: "ATT-614", title: "Port auth" }),
   ],
   subIssuesFailed: false,
+  blocks: [],
   relatedIssues: [],
   duplicates: [],
   comments: [
@@ -201,8 +201,19 @@ describe("buildLinearIssueContextRecord", () => {
         body: `${i}`.padEnd(3_000, "x"),
         createdAt: "2026-01-02T00:00:00.000Z",
       })),
+      // 24 finished blockers ahead of the one open blocker, which must survive the cap.
+      issue: makeIssue({
+        blockedBy: Array.from({ length: 25 }, (_, i) => ({
+          id: `b${i}`,
+          identifier: `ATT-${900 + i}`,
+          title: "Blocker",
+          state: { type: i < 24 ? "completed" : "started", name: "x", color: "#000" },
+        })),
+      }),
     });
     const record = buildLinearIssueContextRecord(detail);
+    expect(record.blockedBy).toHaveLength(20);
+    expect(record.blockedBy?.[0]?.identifier).toBe("ATT-924");
     expect(record.description.length).toBe(16_000);
     expect(record.description.endsWith("[description truncated]")).toBe(true);
     expect(record.subIssues).toHaveLength(50);
@@ -303,12 +314,6 @@ describe("buildLinearIssueMarkdown", () => {
     expect(markdown).toContain("ATT-613 Server-side RFID APDU handshake (blocked)");
     expect(markdown).not.toContain("ATT-614 Server-side RFID APDU handshake (blocked)");
     expect(buildLinearIssueMarkdown(makeDetail(), all)).not.toContain("## Blocked by");
-  });
-
-  it("decodes records saved before blockedBy existed", () => {
-    const { blockedBy: _omit, ...legacy } = buildLinearIssueContextRecord(makeDetail());
-    const decoded = decodeContextRecord(legacy);
-    expect(decoded.blockedBy).toEqual([]);
   });
 
   it("truncates to the provider input limit with a note", () => {

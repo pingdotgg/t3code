@@ -263,93 +263,61 @@ describe("Linear tracker data mapping", () => {
         title: `Issue ${n}`,
         state: { type, name: type, color: "#abc" },
       });
-      const { http } = makeHttp(() =>
+      const detailBody = (extra: Record<string, unknown>) =>
         json({
           data: {
-            issue: issueNode(7, {
-              relations: {
-                nodes: [
-                  { type: "blocks", relatedIssue: other(20) },
-                  { type: "related", relatedIssue: other(21) },
-                  { type: "duplicate", relatedIssue: other(22) },
-                  { type: "similar", relatedIssue: other(23) },
-                ],
-              },
-              inverseRelations: {
-                nodes: [
-                  { type: "blocks", issue: other(30, "completed") },
-                  { type: "related", issue: other(31) },
-                  { type: "duplicate", issue: other(32) },
-                  { type: "similar", issue: other(33) },
-                  { type: "blocks", issue: null },
-                ],
-              },
-            }),
+            issue: issueNode(7, { description: null, comments: { nodes: [] }, ...extra }),
+          },
+        });
+      const { http } = makeHttp(() =>
+        detailBody({
+          relations: {
+            nodes: [
+              { type: "blocks", relatedIssue: other(20) },
+              { type: "related", relatedIssue: other(21) },
+              { type: "duplicate", relatedIssue: other(22) },
+              { type: "similar", relatedIssue: other(23) },
+            ],
+          },
+          inverseRelations: {
+            nodes: [
+              { type: "blocks", issue: other(30, "completed") },
+              { type: "related", issue: other(31) },
+              { type: "duplicate", issue: other(32) },
+              { type: "similar", issue: other(33) },
+              { type: "blocks", issue: null },
+            ],
           },
         }),
       );
-      const issue = yield* (yield* tracker(http)).issue("ATT-7");
+      const detail = yield* (yield* tracker(http)).issueDetail("ATT-7");
       assert.deepStrictEqual(
-        issue.blockedBy.map((ref) => [ref.identifier, ref.state.type]),
+        detail.issue.blockedBy.map((ref) => [ref.identifier, ref.state.type]),
         [["ATT-30", "completed"]],
       );
       assert.deepStrictEqual(
-        issue.blocks.map((ref) => ref.identifier),
+        detail.blocks.map((ref) => ref.identifier),
         ["ATT-20"],
       );
+      assert.deepStrictEqual(
+        detail.relatedIssues.map((ref) => ref.identifier),
+        ["ATT-21", "ATT-31"],
+      );
+      assert.deepStrictEqual(
+        detail.duplicates.map((ref) => [ref.identifier, ref.direction]),
+        [
+          ["ATT-22", "duplicateOf"],
+          ["ATT-32", "duplicatedBy"],
+        ],
+      );
+
+      const missing = makeHttp(() => detailBody({ relations: null, inverseRelations: null }));
+      const bare = yield* (yield* tracker(missing.http)).issueDetail("ATT-7");
+      assert.deepStrictEqual(bare.issue.blockedBy, []);
+      assert.deepStrictEqual(bare.blocks, []);
+      assert.deepStrictEqual(bare.relatedIssues, []);
+      assert.deepStrictEqual(bare.duplicates, []);
     }),
-  );
-
-  it.effect(
-    "maps related and duplicate relations on the detail and tolerates missing relations",
-    () =>
-      Effect.gen(function* () {
-        const other = (n: number) => ({
-          id: `issue-${n}`,
-          identifier: `ATT-${n}`,
-          title: `Issue ${n}`,
-          state: { type: "started", name: "Doing", color: "#abc" },
-        });
-        const detailBody = (extra: Record<string, unknown>) =>
-          json({
-            data: {
-              issue: issueNode(7, { description: null, comments: { nodes: [] }, ...extra }),
-            },
-          });
-        const { http } = makeHttp(() =>
-          detailBody({
-            relations: {
-              nodes: [
-                { type: "related", relatedIssue: other(21) },
-                { type: "duplicate", relatedIssue: other(22) },
-              ],
-            },
-            inverseRelations: {
-              nodes: [
-                { type: "related", issue: other(31) },
-                { type: "duplicate", issue: other(32) },
-              ],
-            },
-          }),
-        );
-        const detail = yield* (yield* tracker(http)).issueDetail("ATT-7");
-        assert.deepStrictEqual(
-          detail.relatedIssues.map((ref) => ref.identifier),
-          ["ATT-21", "ATT-31"],
-        );
-        assert.deepStrictEqual(
-          detail.duplicates.map((ref) => [ref.identifier, ref.direction]),
-          [
-            ["ATT-22", "duplicateOf"],
-            ["ATT-32", "duplicatedBy"],
-          ],
-        );
-
-        const missing = makeHttp(() => detailBody({ relations: null }));
-        const bare = yield* (yield* tracker(missing.http)).issueDetail("ATT-7");
-        assert.deepStrictEqual(bare.relatedIssues, []);
-        assert.deepStrictEqual(bare.issue.blockedBy, []);
-      }),
   );
 
   it.effect("maps issues, sub-issue counts and GitHub pull request attachments", () =>

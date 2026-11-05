@@ -303,9 +303,9 @@
       "types": "./src/linearWriteBack.ts",
       "import": "./src/linearWriteBack.ts"
     },
-    "./linearBlocked": {
-      "types": "./src/linearBlocked.ts",
-      "import": "./src/linearBlocked.ts"
+    "./linearRelations": {
+      "types": "./src/linearRelations.ts",
+      "import": "./src/linearRelations.ts"
     },
     "./linearLaunch": {
       "types": "./src/linearLaunch.ts",

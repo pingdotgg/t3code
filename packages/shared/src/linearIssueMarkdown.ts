@@ -26,9 +26,10 @@ export function formatLinearIssueMarkdown(snapshot: LinearIssueSnapshot): string
   if (snapshot.assigneeName) lines.push(`- Assignee: ${snapshot.assigneeName}`);
   if (snapshot.labels.length > 0) lines.push(`- Labels: ${snapshot.labels.join(", ")}`);
   if (snapshot.description.trim()) lines.push("", snapshot.description.trim());
-  if (snapshot.blockedBy.length > 0) {
+  const blockedBy = snapshot.blockedBy ?? [];
+  if (blockedBy.length > 0) {
     lines.push("", "## Blocked by", "");
-    for (const blocker of snapshot.blockedBy) {
+    for (const blocker of blockedBy) {
       lines.push(
         `- ${SUB_ISSUE_CHECKBOX[blocker.stateType] ?? "[ ]"} ${blocker.identifier} ${blocker.title}`,
       );

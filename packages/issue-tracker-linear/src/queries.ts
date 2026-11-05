@@ -6,14 +6,15 @@ const PAGE_SIZE = 50;
 export const LIST_ISSUE_CAP = 250;
 
 // Sub-issue counts only need state types; lists keep this small to stay under query complexity limits.
-// `related` and `duplicate` edges share the relation connections with `blocks`, so a small page hides
-// blockers on related-heavy issues (a real issue had 12 inbound edges, 5 of them blockers). Linear
-// scores a 50-issue page with both connections at 50 at ~390 of its 10,000 points.
+// `related` and `duplicate` edges share the connection with `blocks`, so a small page hides blockers
+// on related-heavy issues. A 50-issue page with both directions at 50 scored ~390 of Linear's 10,000
+// points. Lists read only `inverseRelations` (blockers); outgoing `relations` are detail-only.
 const RELATION_PAGE = 50;
-// `customView.issues` scores far higher: 50 issues cost 4,736 with 10 relations, 8,436 with 20, and
-// 25 is rejected as too complex. Saved views stay at 10, so a related-heavy row there can miss a blocker.
+// `customView.issues` scores far higher (both directions measured: 10 → 4,736, 20 → 8,436, 25
+// rejected). Saved views stay at 10, so a related-heavy row there can miss a blocker.
 const VIEW_RELATION_PAGE = 10;
 const RELATED_ISSUE = "id identifier title state { type name color }";
+const OUTGOING_RELATIONS = `relations(first: ${RELATION_PAGE}) { nodes { type relatedIssue { ${RELATED_ISSUE} } } }`;
 const issueFields = (relationPage: number) => `
   id identifier title url priority priorityLabel branchName updatedAt
   state { id name type color }
@@ -26,7 +27,6 @@ const issueFields = (relationPage: number) => `
   parent { id identifier }
   children(first: 25) { nodes { id state { type } } }
   attachments(first: 10) { nodes { id title url sourceType metadata } }
-  relations(first: ${relationPage}) { nodes { type relatedIssue { ${RELATED_ISSUE} } } }
   inverseRelations(first: ${relationPage}) { nodes { type issue { ${RELATED_ISSUE} } } }
 `;
 const ISSUE_FIELDS = issueFields(RELATION_PAGE);
@@ -114,6 +114,7 @@ export const ISSUE_QUERY = `query Issue($issueId: String!) {
 export const ISSUE_DETAIL_QUERY = `query IssueDetail($issueId: String!) {
   issue(id: $issueId) {
     ${ISSUE_FIELDS.replace("projectMilestone { id name }", "projectMilestone { id name progress }")}
+    ${OUTGOING_RELATIONS}
     description
     comments(last: 20) { nodes { id body createdAt user { id name avatarUrl } } }
   }
