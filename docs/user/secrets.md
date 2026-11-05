@@ -54,5 +54,5 @@ card says so and the request stays open: unlock it and try again, or enter the v
 
 The value never appears in the conversation. Most requests keep it from the agent too: T3 Code
 passes it to the tool that needs it. When an agent has to run a command with the value, the card
-says so instead: the value goes into a private file that the agent's commands can read for 24
+says so instead: the value goes into a private file that the agent's commands can read for about 24
 hours.
