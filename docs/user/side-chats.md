@@ -23,3 +23,7 @@ The agent grades your explanation against its own full answer and says plainly w
 ## Pictures and animations
 
 Lessons write the explanation first, then add a picture, an interactive demo, or a short animated clip when it helps, or when you ask ("draw it", "animate it"). Pictures and demos usually follow the text within one to three minutes, and clips within about a minute. Clips need Manim on the machine running T3 Learn; without it, the lesson shows a demo instead.
+
+## Quizzes
+
+Lessons can ask graded quiz cards. Pick an option, set how sure you are, and optionally explain your thinking; your answer goes back to the lesson so it can respond. On mobile, quizzes appear as a tool row only.

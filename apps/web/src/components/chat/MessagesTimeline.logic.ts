@@ -65,6 +65,7 @@ import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
+import { type QuizCard } from "@t3tools/shared/quizCard";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -82,7 +83,8 @@ function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
+  if (entry.kind === "html-render" || entry.kind === "quiz-card" || entry.kind === "mcp-app")
+    return entry.runId;
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -633,6 +635,13 @@ type MessagesTimelineRowContent =
       htmlRender: HtmlRenderReference;
     }
   | {
+      kind: "quiz-card";
+      id: string;
+      createdAt: string;
+      quizCard: QuizCard;
+      answered: boolean;
+    }
+  | {
       kind: "mcp-app";
       id: string;
       createdAt: string;
@@ -795,6 +804,7 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "message" && entry.message.role === "user") ||
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
       entry.kind === "html-render" ||
+      entry.kind === "quiz-card" ||
       entry.kind === "mcp-app" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
@@ -1706,6 +1716,9 @@ export function deriveMessagesTimelineRows(input: {
     );
   };
 
+  const lastUserMessageIndex = timelineEntries.findLastIndex(
+    (entry) => entry.kind === "message" && entry.message.role === "user",
+  );
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -1982,6 +1995,18 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,
+      });
+      continue;
+    }
+
+    if (timelineEntry.kind === "quiz-card") {
+      const answered = index < lastUserMessageIndex;
+      nextRows.push({
+        kind: "quiz-card",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        quizCard: timelineEntry.quizCard,
+        answered,
       });
       continue;
     }
@@ -2473,6 +2498,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bh.createdAt &&
         a.anchorMessageId === bh.anchorMessageId &&
         htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender)
+      );
+    }
+
+    case "quiz-card": {
+      const bq = b as typeof a;
+      return (
+        a.createdAt === bq.createdAt &&
+        a.answered === bq.answered &&
+        Equal.equals(a.quizCard, bq.quizCard)
       );
     }
 

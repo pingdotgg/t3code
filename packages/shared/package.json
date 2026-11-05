@@ -139,6 +139,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./quizCard": {
+      "types": "./src/quizCard.ts",
+      "import": "./src/quizCard.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"

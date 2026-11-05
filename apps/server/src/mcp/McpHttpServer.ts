@@ -84,6 +84,8 @@ import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolki
 import { requestUrl } from "../requestUrl.ts";
 import * as KnowledgeHandlers from "./toolkits/knowledge/handlers.ts";
 import { KnowledgeToolkit } from "./toolkits/knowledge/tools.ts";
+import * as QuizHandlers from "./toolkits/quiz/handlers.ts";
+import { QuizToolkit } from "./toolkits/quiz/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   requestUrl(request).pipe(
@@ -1101,6 +1103,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
 
 // KnowledgeMap comes from the server runtime: one instance, so its write lock covers RPC and MCP saves.
 const layerKnowledgeToolkit = toolkitRegistration(KnowledgeToolkit, KnowledgeHandlers.layer);
+const layerQuizToolkit = toolkitRegistration(QuizToolkit, QuizHandlers.layer);
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -1217,6 +1220,7 @@ export const layerTools = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerKnowledgeToolkit,
+  layerQuizToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

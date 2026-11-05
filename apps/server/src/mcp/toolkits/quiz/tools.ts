@@ -1,0 +1,35 @@
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { T3_LEARN_QUIZ_RULES_FULL } from "@t3tools/provider-core/server/learnInstructions";
+import { QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/quizCard";
+import * as Schema from "effect/Schema";
+import { Tool, Toolkit } from "effect/ai";
+
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+
+export const QuizCardInput = Schema.Struct({
+  answer: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
+  explanation: Schema.String.pipe(Schema.check(Schema.isMaxLength(1500))),
+  level: Schema.Literals(["remember", "understand", "apply", "analyse"]),
+  question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
+  wrongOptions: Schema.Array(
+    Schema.Struct({
+      option: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
+      wrongIdea: Schema.String.pipe(Schema.check(Schema.isMaxLength(500))),
+    }),
+  ),
+});
+
+const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
+  description: T3_LEARN_QUIZ_RULES_FULL,
+  parameters: QuizCardInput,
+  success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [McpInvocationContext.McpInvocationContext],
+})
+  .annotate(Tool.Title, "Ask a quiz")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
+export const QuizToolkit = Toolkit.make(QuizCardTool);
