@@ -345,13 +345,14 @@ export const make = Effect.gen(function* () {
         directory,
         attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
       );
-      if (reservedDownloadPaths.has(target) || NodeFS.existsSync(target)) continue;
-      reservedDownloadPaths.add(target);
+      // macOS and Windows treat names differing only in case as the same file.
+      if (reservedDownloadPaths.has(target.toLowerCase()) || NodeFS.existsSync(target)) continue;
+      reservedDownloadPaths.add(target.toLowerCase());
       return target;
     }
     // @effect-diagnostics-next-line cryptoRandomUUID:off -- Must stay synchronous, as above.
     const target = path.join(directory, `${stem} (${crypto.randomUUID()})${extension}`);
-    reservedDownloadPaths.add(target);
+    reservedDownloadPaths.add(target.toLowerCase());
     return target;
   };
   const saveDownloadsToDownloadsFolder = (session: Electron.Session) => {
@@ -361,7 +362,7 @@ export const make = Effect.gen(function* () {
       const savePath = reserveDownloadPath(item.getFilename());
       item.setSavePath(savePath);
       item.once("done", (_doneEvent, state) => {
-        reservedDownloadPaths.delete(savePath);
+        reservedDownloadPaths.delete(savePath.toLowerCase());
         if (state === "completed") Electron.shell.showItemInFolder(savePath);
       });
     });

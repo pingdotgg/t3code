@@ -1165,108 +1165,86 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  // Temp Downloads folder, so names never depend on the machine running the test.
+  const mainWindowDownloads = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const downloads = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-desktop-downloads-test-",
+    });
+    const getPath = vi.spyOn(Electron.app, "getPath").mockReturnValue(downloads);
+    yield* Effect.addFinalizer(() => Effect.sync(() => getPath.mockRestore()));
+    const fakeWindow = makeFakeBrowserWindow();
+    const createCount = yield* Ref.make(0);
+    const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+    yield* Effect.gen(function* () {
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
+      yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+    }).pipe(Effect.provide(layerTest({ window: fakeWindow.window, createCount, mainWindow })));
+
+    const willDownload = fakeWindow.sessionListeners.get("will-download");
+    assert.isDefined(
+      willDownload,
+      "main window session has no will-download handler, so Electron opens its own Save dialog",
+    );
+    const download = (fileName: string) => {
+      const savePaths: string[] = [];
+      const finishers: Array<(event: unknown, state: string) => void> = [];
+      // Electron shows its Save dialog unless the path is set before the handler returns.
+      willDownload?.(
+        { preventDefault: vi.fn() },
+        {
+          getFilename: () => fileName,
+          setSavePath: (savePath: string) => void savePaths.push(savePath),
+          once: (_event: string, listener: (event: unknown, state: string) => void) =>
+            void finishers.push(listener),
+        },
+        fakeWindow.window.webContents,
+      );
+      return {
+        savePaths,
+        finish: (state: string) => finishers.forEach((finisher) => finisher({}, state)),
+      };
+    };
+    return { downloads, fileSystem, path, download };
+  });
+
   it.effect("saves main window downloads to Downloads without Electron's Save dialog", () =>
     Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+      const { downloads, path, download } = yield* mainWindowDownloads;
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-
-        const willDownload = fakeWindow.sessionListeners.get("will-download");
-        assert.isDefined(
-          willDownload,
-          "main window session has no will-download handler, so Electron opens its own Save dialog",
-        );
-        const savePaths: string[] = [];
-        const item = {
-          getFilename: () => "clip.mp4",
-          getSavePath: () => savePaths.at(-1) ?? "",
-          setSavePath: (path: string) => void savePaths.push(path),
-          on: vi.fn(),
-          once: vi.fn(),
-        };
-        // Electron shows its Save dialog unless the path is set before the handler returns.
-        willDownload?.({ preventDefault: vi.fn() }, item, fakeWindow.window.webContents);
-
-        assert.deepEqual(savePaths, ["/Users/alice/Downloads/clip.mp4"]);
-      }).pipe(Effect.provide(layer));
-    }),
+      assert.deepEqual(download("clip.mp4").savePaths, [path.join(downloads, "clip.mp4")]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("gives a concurrent same-name download its own name until the first finishes", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+  it.effect(
+    "gives a concurrent download of the same name, in any letter case, its own name until the first finishes",
+    () =>
+      Effect.gen(function* () {
+        const { downloads, path, download } = yield* mainWindowDownloads;
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const first = download("clip.mp4");
+        const second = download("CLIP.mp4");
+        first.finish("cancelled");
+        const third = download("clip.mp4");
 
-        const willDownload = fakeWindow.sessionListeners.get("will-download");
-        const savePaths: string[] = [];
-        const finishers: Array<(event: unknown, state: string) => void> = [];
-        const download = () =>
-          willDownload?.(
-            { preventDefault: vi.fn() },
-            {
-              getFilename: () => "clip.mp4",
-              setSavePath: (path: string) => void savePaths.push(path),
-              once: (_event: string, listener: (event: unknown, state: string) => void) =>
-                void finishers.push(listener),
-            },
-            fakeWindow.window.webContents,
-          );
-        download();
-        download();
-        finishers[0]?.({}, "cancelled");
-        download();
-
-        assert.deepEqual(savePaths, [
-          "/Users/alice/Downloads/clip.mp4",
-          "/Users/alice/Downloads/clip (1).mp4",
-          "/Users/alice/Downloads/clip.mp4",
-        ]);
-      }).pipe(Effect.provide(layer));
-    }),
+        assert.deepEqual(
+          [...first.savePaths, ...second.savePaths, ...third.savePaths],
+          [
+            path.join(downloads, "clip.mp4"),
+            path.join(downloads, "CLIP (1).mp4"),
+            path.join(downloads, "clip.mp4"),
+          ],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("never replaces a file already in Downloads", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const downloads = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-downloads-test-",
-      });
+      const { downloads, fileSystem, path, download } = yield* mainWindowDownloads;
       yield* fileSystem.writeFileString(path.join(downloads, "clip.mp4"), "existing");
-      using _downloads = vi.spyOn(Electron.app, "getPath").mockReturnValue(downloads);
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-
-        const savePaths: string[] = [];
-        fakeWindow.sessionListeners.get("will-download")?.(
-          { preventDefault: vi.fn() },
-          {
-            getFilename: () => "clip.mp4",
-            setSavePath: (savePath: string) => void savePaths.push(savePath),
-            once: vi.fn(),
-          },
-          fakeWindow.window.webContents,
-        );
-
-        assert.deepEqual(savePaths, [path.join(downloads, "clip (1).mp4")]);
-      }).pipe(Effect.provide(layer));
+      assert.deepEqual(download("clip.mp4").savePaths, [path.join(downloads, "clip (1).mp4")]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
