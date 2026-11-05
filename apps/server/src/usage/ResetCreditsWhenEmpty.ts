@@ -84,8 +84,10 @@ const make = Effect.gen(function* () {
   ) {
     if ("sourceId" in target) return yield* sources.consumeResetCredit(target);
     const instance = yield* instances.getInstance(target.instanceId);
-    if (!instance?.enabled || !instance.consumeResetCredit)
-      return yield* fail("This provider cannot use reset credits.");
+    if (!instance) return yield* fail("Provider instance not found.");
+    if (!instance.enabled) return yield* fail("This provider is disabled.");
+    if (!instance.consumeResetCredit)
+      return yield* fail("This provider does not bank reset credits.");
     const outcome = yield* instance
       .consumeResetCredit()
       .pipe(Effect.mapError((error) => fail(error.detail)));
@@ -157,13 +159,21 @@ const make = Effect.gen(function* () {
           (window?.resetsAt !== entry.resetsAt ||
             limits.credentialFingerprint !== entry.credentialFingerprint ||
             nativeAccountIdentity !== entry.nativeAccountIdentity ||
-            (limits.resetCredits?.availableCount ?? 0) !== entry.availableCount ||
-            entry.nextCreditId !== limits.resetCredits?.nextCreditId);
+            (limits.resetCredits !== undefined &&
+              (limits.resetCredits.availableCount !== entry.availableCount ||
+                entry.nextCreditId !== limits.resetCredits.nextCreditId)));
         if (expired || changed) {
           yield* remove(entry.target);
           continue;
         }
-        if (!limits || limits.unavailable || !window || window.usedPercent < 100) continue;
+        if (
+          !limits ||
+          limits.unavailable ||
+          !limits.resetCredits ||
+          !window ||
+          window.usedPercent < 100
+        )
+          continue;
         // Persist disarming before spending so reconnects and server restarts cannot spend twice.
         yield* remove(entry.target);
         yield* consumeTarget(entry.target).pipe(Effect.ignoreCause({ log: true }));

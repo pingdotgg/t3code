@@ -183,8 +183,10 @@ account and choose **Use reset** to redeem one. The account shows both the reset
 is left in that period. No hub plugin is required.
 
 Enable **Reset when empty** on a period to use one banked credit after that period reaches 0% left.
-The environment checks every 30 seconds, including while the app is closed, without stopping
-running threads. The toggle turns off after one attempt; cancel it at any time. A manual reset,
+The environment checks every 30 seconds while its server is running, without stopping running
+threads. Closing a desktop app that manages its own local server also stops those checks;
+a separately running server can continue while the app is closed.
+The toggle turns off after one attempt; cancel it at any time. A manual reset,
 a change of account or credit, or the period resetting naturally cancels the queued reset.
 
 This connection supplies usage information; configure

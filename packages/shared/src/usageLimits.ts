@@ -250,6 +250,7 @@ export interface LimitAccount {
   readonly redeem: {
     readonly environmentId: EnvironmentId;
     readonly input: ProviderConsumeResetCreditInput;
+    readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   } | null;
   readonly limits: ServerProviderUsageLimits;
 }
@@ -348,7 +349,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
         sourceLabel: null,
-        redeem: { environmentId, input: { instanceId: provider.instanceId } },
+        redeem: {
+          environmentId,
+          input: { instanceId: provider.instanceId },
+          windows: provider.usageLimits.windows,
+        },
         limits: provider.usageLimits,
       });
     }
@@ -379,6 +384,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
                   accountId: account.id,
                   creditId: account.usageLimits.resetCredits.nextCreditId,
                 },
+                windows: account.usageLimits.windows,
               }
             : null,
           limits: account.usageLimits,
@@ -882,4 +888,16 @@ export function resetCreditTargetKey(input: ProviderConsumeResetCreditInput): st
   return "instanceId" in input
     ? JSON.stringify(["instance", input.instanceId])
     : JSON.stringify(["source", input.sourceId, input.accountId]);
+}
+
+export function resetWhenEmptyWindow(
+  account: LimitAccount | undefined,
+  window: ServerProviderUsageWindow | undefined,
+): ServerProviderUsageWindow | undefined {
+  if (!account?.redeem || !window) return undefined;
+  const candidates = account.redeem.windows.filter((entry) => entry.kind === window.kind);
+  return (
+    candidates.find((entry) => entry.id === window.id) ??
+    (candidates.length === 1 ? candidates[0] : undefined)
+  );
 }

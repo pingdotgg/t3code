@@ -12,6 +12,7 @@ import {
   formatResetsIn,
   paceRemainingPercent,
   remainingPercent,
+  resetWhenEmptyWindow,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
@@ -553,7 +554,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const resetsIn = window ? formatResetsIn(window, now) : null;
-  const reportedWindow = account?.limits.windows.find((entry) => entry.id === window?.id);
+  const reportedWindow = resetWhenEmptyWindow(account, window);
   const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);

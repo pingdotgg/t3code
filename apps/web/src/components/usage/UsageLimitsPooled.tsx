@@ -15,6 +15,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  resetWhenEmptyWindow,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -152,7 +153,7 @@ function SegmentPopover({
 }) {
   const now = Math.max(snapshotNow, Date.parse(`${useNowMinute()}:00Z`));
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const reportedWindow = account.limits.windows.find((entry) => entry.id === window.id);
+  const reportedWindow = resetWhenEmptyWindow(account, window);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);

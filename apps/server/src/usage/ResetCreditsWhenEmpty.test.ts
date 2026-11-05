@@ -175,7 +175,13 @@ it.effect(
       }));
       yield* tick;
       expect(yield* Ref.get(spends)).toBe(0);
-      yield* Ref.update(usage, ({ unavailable: _, ...value }) => value);
+      yield* Ref.update(usage, ({ unavailable: _, resetCredits: __, ...value }) => value);
+      yield* tick;
+      expect(yield* Ref.get(spends)).toBe(0);
+      expect(
+        (yield* (yield* ServerSettings.ServerSettingsService).getSettings).resetCreditsWhenEmpty,
+      ).toHaveLength(1);
+      yield* Ref.update(usage, (value) => ({ ...value, resetCredits: limits.resetCredits }));
       yield* tick;
       expect(yield* Ref.get(spends)).toBe(1);
       yield* tick;

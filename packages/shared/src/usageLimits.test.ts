@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  resetWhenEmptyWindow,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -385,7 +386,11 @@ describe("pools", () => {
     const [account] = collectLimitAccounts(input);
     expect(account?.limits.windows[0]?.usedPercent).toBe(55);
     expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({ environmentId: "env-a", input: { instanceId: "claude" } });
+    expect(account?.redeem).toEqual({
+      environmentId: "env-a",
+      input: { instanceId: "claude" },
+      windows: [window],
+    });
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
@@ -417,7 +422,14 @@ describe("pools", () => {
                     email: "same@example.com",
                     usageLimits: {
                       checkedAt,
-                      windows: [{ ...window, usedPercent: 55 }],
+                      windows: [
+                        {
+                          ...window,
+                          id: "hub-session",
+                          resetsAt: "2026-09-03T15:00:00.000Z",
+                          usedPercent: 55,
+                        },
+                      ],
                       resetCredits: { availableCount: 2, nextCreditId: "hub-credit" },
                     },
                   },
@@ -432,8 +444,18 @@ describe("pools", () => {
     expect(account?.redeem).toEqual({
       environmentId: "env-a",
       input: { sourceId: "hub", accountId: "claude-same@example.com.json", creditId: "hub-credit" },
+      windows: [
+        { ...window, id: "hub-session", resetsAt: "2026-09-03T15:00:00.000Z", usedPercent: 55 },
+      ],
     });
     expect(account?.limits.resetCredits?.availableCount).toBe(3);
+    expect(resetWhenEmptyWindow(account, account?.limits.windows[0])).toEqual({
+      ...window,
+      id: "hub-session",
+      resetsAt: "2026-09-03T15:00:00.000Z",
+      usedPercent: 55,
+    });
+    expect(resetWhenEmptyWindow(account, { ...window, kind: "weekly" })).toBeUndefined();
   });
 
   it("redeems on the environment whose snapshot supplied the credits on show", () => {
@@ -462,7 +484,11 @@ describe("pools", () => {
     ]);
     const [account] = collectLimitAccounts(input);
     expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({ environmentId: "env-b", input: { instanceId: "codex" } });
+    expect(account?.redeem).toEqual({
+      environmentId: "env-b",
+      input: { instanceId: "codex" },
+      windows: [window],
+    });
   });
 
   it("keeps distinct hub accounts redeemable through their own source", () => {
@@ -492,6 +518,7 @@ describe("pools", () => {
       hubAccounts.map((account) => ({
         environmentId: "env-a",
         input: { sourceId: "hub", accountId: account.id, creditId: `${account.id}-credit` },
+        windows: account.usageLimits.windows,
       })),
     );
   });
