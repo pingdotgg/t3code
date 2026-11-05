@@ -44,9 +44,13 @@ does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version ch
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
 If **Server URL** points at this machine's OpenCode background service, updating
-OpenCode from T3 Code restarts that service on the new version. Running turns are
-interrupted, and the service runs with T3 Code's environment. Set any variables it
-needs with `opencode service set env <name> <value>`.
+OpenCode from T3 Code restarts that service on the new version. The URL must use the
+service's own protocol, host, and port. For a service listening on `0.0.0.0` use
+`127.0.0.1`, and for `[::]` use `[::1]`. With any other address, including
+`localhost`, the service keeps running the old version until you restart it.
+
+Restarting interrupts running turns, and the service then runs with T3 Code's
+environment. Set any variables it needs with `opencode service set env <name> <value>`.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
