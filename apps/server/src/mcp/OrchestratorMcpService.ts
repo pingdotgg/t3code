@@ -67,6 +67,7 @@ import {
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -1327,6 +1328,19 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const defaultModelSelection = Effect.fn("OrchestratorMcpService.defaultModelSelection")(
+    function* (projectId: ProjectId) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const project = yield* projects.getById(projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      return resolveProjectSettings(settings, projectId, project).settings.defaultModelSelection;
+    },
+  );
+
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1447,9 +1461,13 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions
-      ? knownOptions(inheritedSelection.options, descriptors)
-      : undefined;
+    const baseSelection = inheritsOptions
+      ? inheritedSelection
+      : yield* defaultModelSelection(input.parent.thread.projectId);
+    let options =
+      baseSelection?.instanceId === instanceId && baseSelection.model === model
+        ? knownOptions(baseSelection.options, descriptors)
+        : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
