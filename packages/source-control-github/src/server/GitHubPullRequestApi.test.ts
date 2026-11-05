@@ -2066,6 +2066,84 @@ layer("GitHubPullRequestApi.layer", (it) => {
   });
 
   it.effect.each([
+    { queued: false, field: "mergePullRequest", state: "MERGED", autoMergeRequest: null },
+    {
+      queued: true,
+      field: "enablePullRequestAutoMerge",
+      state: "OPEN",
+      autoMergeRequest: { mergeMethod: "MERGE" },
+    },
+  ] as const)(
+    "returns the pull request from GitHub's $field reply",
+    ({ queued, field, state, autoMergeRequest }) =>
+      Effect.gen(function* () {
+        const mergedAt = state === "MERGED" ? "2026-10-27T11:59:00Z" : null;
+        route(
+          ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
+          [
+            field + "(",
+            {
+              data: {
+                [field]: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Pull request 7",
+                    url: "https://github.com/acme/web/pull/7",
+                    headRefName: "feat/page",
+                    baseRefName: "main",
+                    state,
+                    isDraft: false,
+                    updatedAt: "2026-10-27T12:00:00Z",
+                    mergedAt,
+                    closedAt: mergedAt,
+                    headRefOid: "response-head",
+                    author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
+                    autoMergeRequest,
+                  },
+                },
+              },
+            },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        expect(yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" })).toEqual({
+          number: 7,
+          title: "Pull request 7",
+          url: "https://github.com/acme/web/pull/7",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: state.toLowerCase(),
+          isDraft: false,
+          updatedAt: "2026-10-27T12:00:00Z",
+          mergedAt,
+          closedAt: mergedAt,
+          author: { login: "alice", name: null, avatarUrl: null },
+          headSha: "response-head",
+          autoMergeEnabled: queued,
+          ...(queued ? { autoMergeMethod: "merge" } : {}),
+        });
+        // The action-state read and the mutation; no re-read of the pull request.
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect("succeeds without a summary when GitHub's merge reply does not decode", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ isMergeQueueEnabled: false })],
+        [
+          "mergePullRequest(",
+          { data: { mergePullRequest: { pullRequest: { state: "MERGING" } } } },
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+      ).toBeUndefined();
+    }),
+  );
+
+  it.effect.each([
     {
       description: "base-only write",
       basePermission: "WRITE",
@@ -3446,7 +3524,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 checkSuite: { workflowRun: { workflow: { name: "windows" } } },
                               }),
                             ],
-                            pageInfo: { hasNextPage: false },
+                            pageInfo: { hasNextPage: false, endCursor: null },
                           },
                         },
                       },
@@ -3483,7 +3561,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   );
 
   it.effect.each([false, true])(
-    "reads every check when the combined response has another page (reviewer refusal: %s)",
+    "continues after the core check page without reading it twice (reviewer refusal: %s)",
     (refused) =>
       Effect.gen(function* () {
         if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
@@ -3498,13 +3576,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         commit: {
                           statusCheckRollup: {
                             contexts: {
-                              nodes: [
-                                checkRun({
-                                  name: "first",
-                                  status: "COMPLETED",
-                                  conclusion: "SUCCESS",
-                                }),
-                              ],
+                              nodes: [checkRun({ name: "first", conclusion: "SUCCESS" })],
                               pageInfo: { hasNextPage: true, endCursor: "c1" },
                             },
                           },
@@ -3519,15 +3591,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
-            output(
-              checkContextsPage(
-                [
-                  checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
-                ],
-                null,
-              ),
-            ),
+            output(checkContextsPage([checkRun({ name: "last", conclusion: "FAILURE" })], null)),
           ),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -3543,12 +3607,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
+        expect(detail.checks.map((check) => check.name).sort()).toEqual(["first", "last"]);
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
-        // The whole rollup is walked from its start, so no check is counted twice or skipped.
-        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
-        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(variablesOf("CheckContexts")).toEqual([
+          expect.objectContaining({ number: 7, after: "c1" }),
+        ]);
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
 
         if (refused) {
@@ -3573,7 +3637,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   statusCheckRollup: {
                     contexts: {
                       nodes: [],
-                      pageInfo: { hasNextPage: true },
+                      pageInfo: { hasNextPage: true, endCursor: "c1" },
                     },
                   },
                 },
