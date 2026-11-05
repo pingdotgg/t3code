@@ -13,6 +13,8 @@ import { expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   failPage: false,
   settled: false,
+  updatedAt: null as string | null,
+  holdContinuation: null as null | { started: () => void; wait: Promise<void> },
   refreshes: null as null | ((key: string) => Atom.Writable<AsyncResult.AsyncResult<number>>),
 }));
 
@@ -38,7 +40,7 @@ vi.mock("../../state/pull-requests", async () => {
       number,
       host: "github.com",
       repository: "org/repo",
-      updatedAt: `2026-10-0${number}T00:00:00Z`,
+      updatedAt: number === 1 && mocks.updatedAt ? mocks.updatedAt : `2026-10-0${number}T00:00:00Z`,
       observedAt: mocks.settled ? 2 : 1,
       ...(updatedAtState === undefined ? {} : { updatedAtState }),
     }) as PullRequestListEntry;
@@ -63,6 +65,16 @@ vi.mock("../../state/pull-requests", async () => {
           );
         if (target.input.cursors && mocks.failPage)
           return Effect.fail(new PullRequestListTestError({ message: "Page failed." }));
+        if (target.input.cursors) {
+          const held = mocks.holdContinuation;
+          mocks.holdContinuation = null;
+          if (held)
+            return Effect.promise(async () => {
+              held.started();
+              await held.wait;
+              return response;
+            });
+        }
         return Effect.succeed(response);
       }),
     );
@@ -97,6 +109,8 @@ import { usePullRequestList } from "./usePullRequestList";
 function setup(ids: readonly string[]) {
   mocks.failPage = false;
   mocks.settled = false;
+  mocks.updatedAt = null;
+  mocks.holdContinuation = null;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const registry = AtomRegistry.make();
   const targets = ids.map((id) => ({
@@ -162,26 +176,43 @@ it("keeps load-more failures retryable", async () => {
   expect(probe.latest.continued).toBe(true);
 });
 
-it("reads a page loaded past the head again when a refresh comes while its rows are undated", async () => {
-  using probe = setup(["healthy"]);
-  const dates = () => probe.latest.entries.map((entry) => [entry.number, entry.updatedAtState]);
-  await act(async () => probe.latest.onRefresh());
-  await act(async () => probe.latest.loadMore());
-  expect(dates()).toEqual([
-    [2, undefined],
-    [1, "pending"],
-  ]);
-
-  mocks.settled = true;
-  await act(async () =>
-    probe.registry.set(
-      mocks.refreshes!(JSON.stringify({ environmentId: "healthy", input: {} })),
-      AsyncResult.success(1),
-    ),
-  );
-  expect(dates()).toEqual([
-    [2, undefined],
-    [1, undefined],
-  ]);
-  expect(probe.latest.hasMore).toBe(false);
-});
+it.each(["after response", "before response", "already dated"] as const)(
+  "refreshes loaded continuations when activity settles %s",
+  async (ordering) => {
+    using probe = setup(["healthy"]);
+    await act(async () => probe.latest.onRefresh());
+    const refresh = () =>
+      probe.registry.set(
+        mocks.refreshes!(JSON.stringify({ environmentId: "healthy", input: {} })),
+        AsyncResult.success(1),
+      );
+    if (ordering === "already dated") mocks.settled = true;
+    if (ordering === "before response") {
+      const started = Promise.withResolvers<void>();
+      const answer = Promise.withResolvers<void>();
+      mocks.holdContinuation = { started: started.resolve, wait: answer.promise };
+      await act(async () => {
+        probe.latest.loadMore();
+        await started.promise;
+        mocks.settled = true;
+        refresh();
+        answer.resolve();
+      });
+    } else {
+      await act(async () => probe.latest.loadMore());
+      expect(probe.latest.entries.find((entry) => entry.number === 1)?.updatedAtState).toBe(
+        ordering === "already dated" ? undefined : "pending",
+      );
+      mocks.settled = true;
+      mocks.updatedAt = "2026-10-03T00:00:00Z";
+      await act(async () => refresh());
+    }
+    const row = probe.latest.entries.find((entry) => entry.number === 1);
+    expect(row?.updatedAtState).toBeUndefined();
+    expect(row?.updatedAt).toBe(
+      ordering === "before response" ? "2026-10-01T00:00:00Z" : "2026-10-03T00:00:00Z",
+    );
+    expect(probe.latest.entries).toHaveLength(2);
+    expect(probe.latest.hasMore).toBe(false);
+  },
+);

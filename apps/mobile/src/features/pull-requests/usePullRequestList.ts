@@ -18,7 +18,6 @@ import {
   nextPullRequestListInput,
   patchPullRequestListEntry,
   pullRequestListHead,
-  pullRequestListRevalidations,
   shownPullRequestListPages,
   pullRequestStatKey as statKey,
   scopedPullRequestListKey,
@@ -71,6 +70,7 @@ async function loadNextPages(
 ) {
   const responses = await Promise.allSettled(
     continuations(registry, targets).map(async ({ target, pages, input }) => {
+      const epoch = registry.get(refreshEpochsFamily(JSON.stringify(targets)));
       const response = await executeAtomQuery(
         registry,
         composerPullRequests.list({ ...target, input }),
@@ -91,6 +91,9 @@ async function loadNextPages(
         input,
       );
       registry.set(pagesAtom, next);
+      // Settlement may arrive before this page has joined the loaded continuations.
+      if (registry.get(refreshEpochsFamily(JSON.stringify(targets))) !== epoch)
+        await revalidatePages(registry, [target], signal);
       if (
         input.cursors &&
         Object.keys(next.nextCursors).length &&
@@ -141,7 +144,7 @@ async function revalidatePages(
   await Promise.allSettled(
     targets.flatMap((target) => {
       const pages = currentPages(read, target);
-      return (pages ? pullRequestListRevalidations(pages) : []).map(async (input) => {
+      return (pages?.continuations ?? []).map(async (input) => {
         const response = await executeAtomQuery(
           registry,
           composerPullRequests.list({ ...target, input }),

@@ -345,15 +345,6 @@ export function appendPullRequestListPage(
   };
 }
 
-/** The continuations to read again: a row they loaded can still be waiting for its date. */
-export function pullRequestListRevalidations(
-  pages: PullRequestListPages,
-): readonly PullRequestListInput[] {
-  return pages.entries.some((entry) => entry.updatedAtState !== undefined)
-    ? pages.continuations
-    : [];
-}
-
 /** Takes a continuation's newer rows, keeping the cursors and breadth already loaded. */
 export function withRevalidatedPullRequestListPage(
   pages: PullRequestListPages,

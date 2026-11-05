@@ -22,7 +22,6 @@ import {
   pullRequestListInput,
   scopedPullRequestListKey,
   shownPullRequestListPages,
-  pullRequestListRevalidations,
   pullRequestListRowsAreEqual,
   withAnsweredPullRequestStats,
   withRevalidatedPullRequestListPage,
@@ -147,7 +146,6 @@ describe("mobile PR list pagination", () => {
     expect(updated.entries[1]?.title).toBe("New title");
     expect(updated.nextCursors).toEqual({ repo: "second" });
     expect(pullRequestListHead(updated, updated.head)).toBe(updated);
-    expect(pullRequestListRevalidations(updated)).toEqual([]);
 
     // A row loaded past the head while its date was unread is read again where it was loaded.
     const continuation = { state: "open" as const, cursors: updated.nextCursors };
@@ -158,10 +156,6 @@ describe("mobile PR list pagination", () => {
     );
     const settledHead = pullRequestListHead(undated, page([entry(4, { observedAt: 3 })]));
     expect(settledHead.entries.find((row) => row.number === 1)?.updatedAtState).toBe("pending");
-    expect(pullRequestListRevalidations(settledHead)).toEqual([
-      { state: "open", cursors: first.nextCursors },
-      continuation,
-    ]);
     const revalidated = withRevalidatedPullRequestListPage(
       settledHead,
       continuation,
@@ -174,7 +168,6 @@ describe("mobile PR list pagination", () => {
       [1, undefined],
     ]);
     expect(revalidated.nextCursors).toEqual({ repo: "third" });
-    expect(pullRequestListRevalidations(revalidated)).toEqual([]);
     const reset = pullRequestListHead(null, page([entry(4)]));
     expect(withRevalidatedPullRequestListPage(reset, continuation, page([entry(1)]))).toBe(reset);
   });
