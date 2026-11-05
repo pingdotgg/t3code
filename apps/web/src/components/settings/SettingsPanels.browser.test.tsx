@@ -7,13 +7,14 @@ import { render, stubGlobal } from "../../../test/render";
 import { AboutVersionSection } from "./SettingsPanels";
 
 const mocks = vi.hoisted(() => ({
+  status: "downloaded" as DesktopUpdateState["status"],
   confirm: null as unknown as (message: string) => Promise<boolean>,
 }));
 vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/desktopUpdate")>()),
   useDesktopUpdateState: (): DesktopUpdateState => ({
     enabled: true,
-    status: "downloaded",
+    status: mocks.status,
     channel: "latest",
     currentVersion: "0.1.2",
     hostArch: "x64",
@@ -57,9 +58,15 @@ vi.mock("../sidebar/useUpdateEverything", () => ({
 }));
 vi.mock("./CliCommandSettingsRow", () => ({ CliCommandSettingsRow: () => null }));
 
-it("reviews the paired service with the app before About installs an update", async () => {
+function setup() {
+  mocks.status = "downloaded";
   const confirm = vi.fn(async () => true);
   mocks.confirm = confirm;
+  return { confirm };
+}
+
+it("reviews the paired service with the app before About installs an update", async () => {
+  const { confirm } = setup();
   using _bridge = stubGlobal("desktopBridge", { installUpdate: vi.fn() });
   await using screen = await render(<AboutVersionSection />);
 
@@ -68,4 +75,12 @@ it("reviews the paired service with the app before About installs an update", as
   await expect.element(page.getByText("Update 2 machines?")).toBeVisible();
   await expect.element(page.getByText("Background service")).toBeVisible();
   expect(confirm).not.toHaveBeenCalled();
+
+  mocks.status = "checking";
+  await screen.rerender(<AboutVersionSection />);
+  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
+
+  mocks.status = "downloaded";
+  await screen.rerender(<AboutVersionSection />);
+  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeEnabled();
 });

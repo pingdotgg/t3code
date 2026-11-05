@@ -164,10 +164,17 @@ export function AboutVersionSection() {
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   // Installing also moves connected servers to the app's version; providers keep their own update.
   const everything = useUpdateEverything(
-    updateState && action !== "none" ? getDesktopUpdateDownloadedVersion(updateState) : null,
+    updateState?.downloadedVersion ??
+      (updateState && action !== "none" ? getDesktopUpdateDownloadedVersion(updateState) : null),
     { includeProviders: false },
   );
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  const installDisabledReason =
+    updateRun !== null
+      ? "An update is already running."
+      : action !== "install"
+        ? "Wait for the app update to be ready before installing."
+        : null;
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -216,7 +223,7 @@ export function AboutVersionSection() {
     }
 
     if (action === "install") {
-      if (isUpdateActionPending) return;
+      if (isUpdateActionPending || updateRun !== null) return;
       if (everything.hasUpdates) {
         setIsConfirmingEverything(true);
         return;
@@ -289,8 +296,8 @@ export function AboutVersionSection() {
 
   const runEverything = async () => {
     const bridge = window.desktopBridge;
+    if (!bridge || installDisabledReason !== null || isUpdateActionPending) return;
     setIsConfirmingEverything(false);
-    if (!bridge) return;
     setIsUpdateActionPending(true);
     const result = await settlePromise(() =>
       everything.run({ installLocal: (reportError) => installLocalUpdate(bridge, reportError) }),
@@ -458,6 +465,7 @@ export function AboutVersionSection() {
         providerCount={everything.providerCount}
         rows={everything.rows}
         restarts={everything.restarts}
+        disabledReason={installDisabledReason}
         onConfirm={() => void runEverything()}
       />
       {switchChannel === null ? null : (
