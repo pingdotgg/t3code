@@ -51,6 +51,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  routeWithLabel,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
@@ -150,6 +151,16 @@ export class EnvironmentRegistry extends Context.Service<
       | EnvironmentNotRegisteredError
       | PlatformEnvironmentRemovalError
       | ConnectionBlockedError
+    >;
+    readonly setLabel: (
+      environmentId: EnvironmentId,
+      label: string,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
     >;
     readonly removeRelayEnvironments: () => Effect.Effect<
       void,
@@ -1025,6 +1036,33 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const setLabel = Effect.fn("EnvironmentRegistry.setLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    const trimmed = label.trim();
+    if (trimmed === "") {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: "Environment label cannot be empty.",
+      });
+    }
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const routes = connectionRoutes(entry);
+        if (routes.every((route) => route.target.label === trimmed)) return;
+        // Every route carries the label: the first one is displayed, and reordering can change it.
+        const renamed = routes.map((route) => routeWithLabel(route, trimmed));
+        for (const route of renamed) {
+          if (Option.isSome(route.profile)) yield* profiles.put(route.profile.value);
+        }
+        yield* replaceRoutesLocked(entry, renamed);
+      }),
+    );
+  });
+
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
       const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
@@ -1193,6 +1231,7 @@ export const make = Effect.gen(function* () {
     remove,
     removeRoute,
     reorderRoutes,
+    setLabel,
     removeRelayEnvironments,
     retryNow,
     setEnabled,
