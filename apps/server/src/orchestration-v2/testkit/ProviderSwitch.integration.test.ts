@@ -2767,6 +2767,125 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // A shared Codex session that stays attached keeps the other provider's MCP credential.
+  it.live("detaches the left provider's session when a sent message switches providers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("direct-provider-switch-detach");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+          const commandId = (ordinal: number) =>
+            CommandId.make(`direct-provider-switch:${ordinal}`);
+          const run = Effect.fn("run")(function* (ordinal: number, selection: ModelSelection) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: commandId(ordinal),
+              threadId,
+              messageId: MessageId.make(`direct-provider-switch:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          const sessionIdFor = Effect.fn("sessionIdFor")(function* (instanceId: string) {
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            return projection.providerSessions.find(
+              (session) => session.providerInstanceId === instanceId,
+            )?.id;
+          });
+          const detachedSessionIds = Effect.fn("detachedSessionIds")(function* (ordinal: number) {
+            return (yield* effectOutbox.listByCommandId(commandId(ordinal))).flatMap((effect) =>
+              effect.request.type === "provider-session.detach"
+                ? [effect.request.providerSessionId]
+                : [],
+            );
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("direct-provider-switch:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Direct provider switch",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* run(1, CODEX_MODEL_SELECTION);
+          const codexSessionId = yield* sessionIdFor(CODEX_MODEL_SELECTION.instanceId);
+          yield* run(2, CLAUDE_MODEL_SELECTION);
+          const claudeSessionId = yield* sessionIdFor(CLAUDE_MODEL_SELECTION.instanceId);
+          yield* run(3, CODEX_MODEL_SELECTION);
+
+          assert.isDefined(codexSessionId);
+          assert.deepEqual(yield* detachedSessionIds(2), [codexSessionId]);
+          assert.deepEqual(yield* detachedSessionIds(3), [claudeSessionId]);
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "direct-provider-switch-detach",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+                { databaseLayer: layerDatabase },
+              ),
+              layerOutboxProvided,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   // regression: #21314 a queued PR update must follow the provider that took over the thread
   it.live.each([
     ["automatic", "Claude"],
