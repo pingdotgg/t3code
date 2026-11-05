@@ -489,6 +489,64 @@ it.effect("a policy without webhook tasks keeps existing ones but refuses saves 
   ),
 );
 
+it.effect("a policy without scheduled tasks keeps them but runs none", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  const interval = { schedule: { type: "interval", everyMs: 3_600_000 } };
+  return withService(
+    ({ service, sql }) =>
+      Effect.gen(function* () {
+        const timerInput = { id: "scheduled-task:timer", ...interval };
+        const { task: timer } = yield* service.upsert(yield* webhookTaskInput(timerInput));
+        const { task: hook } = yield* service.upsert(yield* webhookTaskInput());
+        yield* TestClock.adjust("2 hours");
+        yield* withService(
+          ({ service, launches }) =>
+            Effect.gen(function* () {
+              const blocked = "Example Corp's policy does not allow scheduled tasks.";
+              yield* workers.get("scheduled-tasks")!;
+              assert.equal(yield* Queue.size(launches), 0);
+
+              const { tasks } = yield* service.list();
+              assert.deepEqual(
+                tasks.map(({ blockedByPolicy }) => blockedByPolicy),
+                [blocked, blocked],
+              );
+
+              const ran = yield* service.runNow({ id: timer.id }).pipe(Effect.flip);
+              assert.equal(ran.message, blocked);
+              assert.equal(yield* Queue.size(launches), 0);
+
+              const saved = yield* service
+                .upsert(yield* webhookTaskInput(timerInput))
+                .pipe(Effect.flip);
+              assert.equal(saved.message, blocked);
+
+              // Turned off, it can still be edited, but not turned back on.
+              yield* service.setEnabled({ id: timer.id, enabled: false });
+              yield* service.upsert(yield* webhookTaskInput({ ...timerInput, enabled: false }));
+              const reenabled = yield* service
+                .setEnabled({ id: timer.id, enabled: true })
+                .pipe(Effect.flip);
+              assert.equal(reenabled.message, blocked);
+
+              const result = yield* service.triggerWebhook(requestFor(hook));
+              assert.equal(result._tag, "blocked_by_policy");
+            }),
+          {
+            sql,
+            workers,
+            policy: {
+              schemaVersion: 1,
+              organization: "Example Corp",
+              limits: { scheduledTasks: false },
+            },
+          },
+        );
+      }),
+    { workers: new Map() },
+  );
+});
+
 it.effect("logs but does not run deliveries to a disabled task, and refuses run now", () =>
   withService(({ service, launches }) =>
     Effect.gen(function* () {

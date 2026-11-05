@@ -693,6 +693,7 @@ function TaskForm({
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
+  const tasksDenial = managedCapabilityDenial(config?.managedPolicy, "scheduledTasks");
   // Existing webhook tasks keep the option so they can still switch to a timer.
   const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
   const canOperate = useAtomValue(
@@ -822,6 +823,15 @@ function TaskForm({
     }
     onSaved();
   };
+
+  // The server refuses these enabled tasks under this policy.
+  const saveDenial = !draft.enabled
+    ? undefined
+    : tasksDenial !== undefined
+      ? `${tasksDenial} Turn this task off to save it.`
+      : draft.schedule.mode === "webhook" && webhookDenial !== undefined
+        ? `${webhookDenial} Switch the task to a timer, or turn it off, to save it.`
+        : undefined;
 
   return (
     <View className="gap-5">
@@ -1030,6 +1040,11 @@ function TaskForm({
               }}
             />
           </View>
+          {saveDenial !== undefined ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              {saveDenial}
+            </Text>
+          ) : null}
           {draft.schedule.mode === "fixed_time" ? (
             <>
               <Pressable
@@ -1107,11 +1122,9 @@ function TaskForm({
                 }}
               />
             </>
-          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
-            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
-              {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
-            </Text>
-          ) : draft.schedule.mode === "once" ? (
+          ) : draft.schedule.mode === "webhook" &&
+            webhookDenial !== undefined &&
+            draft.enabled ? null : draft.schedule.mode === "once" ? (
             (["date", "time"] as const).map((field) => {
               const runAt = new Date(draft.schedule.runAt);
               const label = field === "date" ? formatRunAtDate(runAt) : formatRunAtTime(runAt);
@@ -1279,8 +1292,7 @@ function TaskForm({
           dictationPending ||
           taskMissing ||
           environmentUnavailable ||
-          // The server refuses an enabled webhook task under this policy.
-          (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
+          saveDenial !== undefined
         }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
@@ -1498,7 +1510,13 @@ function EnvironmentTasks({
                 },
                 ...(task.schedule.type === "webhook"
                   ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                  : [
+                      {
+                        id: "run",
+                        title: "Run now",
+                        attributes: { disabled: !canOperate || task.blockedByPolicy !== undefined },
+                      },
+                    ]),
                 {
                   id: "delete",
                   title: "Delete",

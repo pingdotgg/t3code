@@ -820,7 +820,10 @@ function ScheduledTaskRow({
                   Deliveries
                 </MenuItem>
               ) : (
-                <MenuItem onClick={() => void act("run")}>
+                <MenuItem
+                  disabled={task.blockedByPolicy !== undefined}
+                  onClick={() => void act("run")}
+                >
                   <PlayIcon />
                   Run now
                 </MenuItem>
@@ -1213,7 +1216,9 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
-  const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
+  const managedPolicy = useManagedPolicy(environmentId);
+  const tasksDenial = managedCapabilityDenial(managedPolicy, "scheduledTasks");
+  const webhookDenial = managedCapabilityDenial(managedPolicy, "webhookTasks");
   const [draft, setDraft] = useState<DraftState>(() =>
     task
       ? taskToDraft(task)
@@ -1660,7 +1665,11 @@ function ScheduledTaskEditorForm({
               </ToggleGroup>
             </div>
 
-            {webhookDenial !== undefined ? (
+            {tasksDenial !== undefined ? (
+              <ManagedNotice>
+                {draft.enabled ? `${tasksDenial} Turn this task off to save it.` : tasksDenial}
+              </ManagedNotice>
+            ) : webhookDenial !== undefined ? (
               <ManagedNotice>
                 {draft.scheduleMode === "webhook"
                   ? `${webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.`
@@ -1942,7 +1951,9 @@ function ScheduledTaskEditorForm({
             editingTaskMissing ||
             !connected ||
             !tasksQuery.data ||
-            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            (draft.enabled &&
+              (tasksDenial !== undefined ||
+                (draft.scheduleMode === "webhook" && webhookDenial !== undefined)))
           }
           onClick={() => void submit()}
         >
