@@ -39,9 +39,9 @@ export function UsageLimitRecoveryCard({
     thread.runtime?.status !== "failed" ||
     thread.runtime.lastErrorClass !== "usage_limit" ||
     !runId ||
-    // ChatGptUsageLimitNotice owns these; sharing limits never report a reset time.
-    code === CHATGPT_USAGE_LIMIT_CODE ||
-    code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE
+    // Without a reset there is nothing to schedule, and ChatGptUsageLimitNotice covers it.
+    (resetAt === null &&
+      (code === CHATGPT_USAGE_LIMIT_CODE || code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE))
   )
     return null;
   const snoozed =

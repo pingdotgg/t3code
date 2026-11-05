@@ -66,6 +66,21 @@ describe("UsageLimitRecoveryCard", () => {
     },
   );
 
+  it("keeps reset controls for a ChatGPT limit stored with a reset time", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(new Date(DAY_MS).toISOString(), CHATGPT_USAGE_LIMIT_CODE)}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Resume at reset");
+  });
+
   it("disables Snooze once a reset more than 24.8 days away passes", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: 0 });
