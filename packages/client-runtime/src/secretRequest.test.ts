@@ -48,6 +48,13 @@ describe("secretRequestAnswerInput", () => {
     expect(savedSecret("  pass word  ")).toBe("  pass word  ");
     expect(savedSecret(" ")).toBe(" ");
     expect(savedSecret("")).toBeNull();
+    expect(() =>
+      decodeAnswerInput({
+        threadId: item.threadId,
+        turnItemId: item.id,
+        answer: { type: "save", secret: "" },
+      }),
+    ).toThrow();
   });
 });
 
