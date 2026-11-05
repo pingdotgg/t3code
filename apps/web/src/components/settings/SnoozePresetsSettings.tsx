@@ -367,7 +367,7 @@ function SnoozePresetFields(props: {
           onChange(next);
         }}
       >
-        <SelectTrigger size="sm" className="w-32" aria-label="When">
+        <SelectTrigger variant="well" size="compact" className="w-32" aria-label="When">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>
@@ -388,7 +388,7 @@ function SnoozePresetFields(props: {
           <span className="text-meta text-muted-foreground">at</span>
           <Input
             nativeInput
-            size="sm"
+            size="settings"
             type="time"
             className="w-32"
             aria-label="Time"
@@ -423,7 +423,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
   return (
     <div className="flex max-w-full min-w-0 items-center gap-2">
       <NumberField
-        size="sm"
+        size="compact"
         className="w-32 shrink-0"
         min={1}
         max={maxAmount}
@@ -465,7 +465,12 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-28 max-sm:min-w-0" aria-label="Unit">
+        <SelectTrigger
+          variant="well"
+          size="compact"
+          className="w-28 max-sm:min-w-0"
+          aria-label="Unit"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>

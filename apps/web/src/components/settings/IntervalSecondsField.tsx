@@ -36,7 +36,7 @@ export function IntervalSecondsField({
       value={field.draft}
       min={min}
       step={step}
-      size="sm"
+      size="compact"
       className="w-32"
       onValueChange={(draft) => setField((current) => ({ ...current, draft }))}
       onValueCommitted={(next) => {
