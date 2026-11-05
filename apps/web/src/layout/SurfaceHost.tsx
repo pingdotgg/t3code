@@ -1045,10 +1045,12 @@ export function LayoutSurfaceHost({
     staged || (stacked && (paneId === undefined || !focusedWorkspacePaneIds.has(paneId)));
 
   // Panes open, close and shift with niri's window motion (motion/paneMotion.ts)
-  // on the plain strip; a resize drag, a switch, the overview and the window
-  // resizing move them 1:1.
+  // on the plain strip; a resize drag, a switch, the overview, filling the
+  // window and the window resizing move them 1:1.
   const paneMotionKey =
-    staged || stacked || dragging || narrow ? null : `${workspace.id}:${viewportWidth}`;
+    staged || stacked || dragging || narrow
+      ? null
+      : `${workspace.id}:${viewportWidth}:${maximizedTabId !== null}`;
   const [ghosts, setGhosts] = useState<ReadonlyMap<string, ClosingTab>>(NO_GHOSTS);
   const presentPanes = shown.workspaces.flatMap((candidate) =>
     candidate.columns.flatMap((column) => column.panes),
