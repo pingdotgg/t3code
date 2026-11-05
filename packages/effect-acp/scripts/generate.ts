@@ -166,6 +166,15 @@ function isJsonArray(value: Schema.Json | undefined): value is ReadonlyArray<Sch
   return Array.isArray(value);
 }
 
+// A `properties` map is keyed by property names, which can collide with keywords like `anyOf`.
+const mapPropertySchemas = (
+  properties: Schema.Json,
+  map: (schema: Schema.Json) => Schema.Json,
+): Schema.Json =>
+  properties === null || typeof properties !== "object" || isJsonArray(properties)
+    ? map(properties)
+    : Object.fromEntries(Object.entries(properties).map(([name, schema]) => [name, map(schema)]));
+
 function normalizeSchemaKeywords(value: Schema.Json): Schema.Json {
   if (isJsonArray(value)) {
     return value.map(normalizeSchemaKeywords);
@@ -176,7 +185,9 @@ function normalizeSchemaKeywords(value: Schema.Json): Schema.Json {
 
   const normalizedEntries = Object.entries(value).map(([key, child]) => [
     key,
-    normalizeSchemaKeywords(child),
+    key === "properties"
+      ? mapPropertySchemas(child, normalizeSchemaKeywords)
+      : normalizeSchemaKeywords(child),
   ]);
   const normalizedObject = Object.fromEntries(normalizedEntries) as Record<string, Schema.Json>;
   // ACP's forward-compatible variants exclude known discriminator values.
@@ -314,10 +325,14 @@ function flattenCompositions(
   value: Schema.Json,
   definitions: Readonly<Record<string, Schema.Json>>,
 ): Schema.Json {
-  if (isJsonArray(value)) return value.map((child) => flattenCompositions(child, definitions));
+  const flatten = (child: Schema.Json) => flattenCompositions(child, definitions);
+  if (isJsonArray(value)) return value.map(flatten);
   if (value === null || typeof value !== "object") return value;
   const normalized = Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, flattenCompositions(child, definitions)]),
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === "properties" ? mapPropertySchemas(child, flatten) : flatten(child),
+    ]),
   );
   const { allOf, anyOf, ...base } = normalized;
   const merge = (left: Schema.Json, right: Schema.Json): Schema.Json => {
