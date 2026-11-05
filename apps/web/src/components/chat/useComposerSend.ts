@@ -579,14 +579,14 @@ export function useComposerSend(input: ComposerSendInput) {
       linkedEnvironments,
     })[0];
     if (strandedThread) {
-      const owner =
-        readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
-        "its machine";
+      const owner = readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label;
       toastManager.add(
         stackedThreadToast({
           type: "warning",
           title: t({ message: "Attached thread is on another machine" }),
-          description: t`This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+          description: owner
+            ? t`This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`
+            : t`This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to its machine to send.`,
         }),
       );
       return;

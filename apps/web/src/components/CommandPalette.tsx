@@ -1134,12 +1134,14 @@ function OpenCommandPaletteDialog(props: {
   const startAddProjectSourceSelection = (environmentId: EnvironmentId): void => {
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
     if (!canCreateProjectInEnvironment(environment?.connection.phase)) {
-      const environmentLabelText = environment?.label ?? "The selected environment";
+      const environmentLabelText = environment?.label;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: t({ message: "Environment unavailable" }),
-          description: t`${environmentLabelText} is not connected.`,
+          description: environmentLabelText
+            ? t`${environmentLabelText} is not connected.`
+            : t({ message: "The selected environment is not connected." }),
         }),
       );
       return;
@@ -1826,12 +1828,14 @@ function OpenCommandPaletteDialog(props: {
       (candidate) => candidate.environmentId === input.environmentId,
     );
     if (!canCreateProjectInEnvironment(environment?.connection.phase)) {
-      const environmentLabelText2 = environment?.label ?? "The selected environment";
+      const environmentLabelText2 = environment?.label;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: t({ message: "Environment unavailable" }),
-          description: t`${environmentLabelText2} is not connected.`,
+          description: environmentLabelText2
+            ? t`${environmentLabelText2} is not connected.`
+            : t({ message: "The selected environment is not connected." }),
         }),
       );
       return;
@@ -2025,12 +2029,14 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     if (!canCreateProjectInEnvironment(browseEnvironment?.connection.phase)) {
-      const browseEnvironmentLabelText = browseEnvironment?.label ?? "The selected environment";
+      const browseEnvironmentLabelText = browseEnvironment?.label;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: t({ message: "Environment unavailable" }),
-          description: t`${browseEnvironmentLabelText} is not connected.`,
+          description: browseEnvironmentLabelText
+            ? t`${browseEnvironmentLabelText} is not connected.`
+            : t({ message: "The selected environment is not connected." }),
         }),
       );
       return;

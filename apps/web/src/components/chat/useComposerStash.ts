@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { t, plural } from "@palamedes/core/macro";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ComposerContextRecord,
@@ -651,13 +651,14 @@ export function useComposerStash(input: {
           });
         }
       } else if (kept.length > 0) {
-        const keptLength1Text = kept.length === 1 ? "" : "s";
-        const keptLength1Text2 = kept.length === 1 ? "it" : "them";
-        const keptLength1Text3 = kept.length === 1 ? "it" : "them";
         toastManager.add({
           type: "warning",
           title: t({ message: "Stashed images did not attach" }),
-          description: t`That prompt was restored or deleted before ${kept.length} image${keptLength1Text} finished saving. Re-attach ${keptLength1Text2} if you still need ${keptLength1Text3}.`,
+          description: plural(kept.length, {
+            one: "That prompt was restored or deleted before # image finished saving. Re-attach it if you still need it.",
+            other:
+              "That prompt was restored or deleted before # images finished saving. Re-attach them if you still need them.",
+          }),
           data: { hideCopyButton: true },
         });
       }

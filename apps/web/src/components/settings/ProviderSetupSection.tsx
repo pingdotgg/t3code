@@ -144,7 +144,7 @@ function ProviderSetupActions({
     !(installation === null) && installation?.phase === "downloading"
       ? installation.totalBytes === null
         ? ""
-        : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)} MB`
+        : (installation.totalBytes / 1_000_000).toFixed(1)
       : undefined;
   const MathCeilText =
     !(installation === null) &&
@@ -160,7 +160,9 @@ function ProviderSetupActions({
     installation === null
       ? t({ message: "Checking the Antigravity runtime." })
       : installation?.phase === "downloading"
-        ? t`Downloading ${installationDownloadedBytes1000000ToFixedText} MB${installationTotalBytesNullText}.`
+        ? installation.totalBytes === null
+          ? t`Downloading ${installationDownloadedBytes1000000ToFixedText} MB.`
+          : t`Downloading ${installationDownloadedBytes1000000ToFixedText} MB of ${installationTotalBytesNullText} MB.`
         : installation?.phase === "extracting"
           ? t({ message: "Extracting Antigravity." })
           : installation?.phase === "verifying"

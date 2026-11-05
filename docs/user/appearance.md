@@ -7,8 +7,9 @@ German, French, Spanish, or Simplified Chinese. Select **Apply and reload** to u
 Save unfinished work before reloading. The choice is stored on this device and
 requires local storage. English is used until you choose another language.
 
-Translation coverage varies by language. Text that has not been translated yet
-appears in English. Native desktop menus and the mobile app still use English.
+The web app and desktop renderer use the chosen language. Provider output is
+shown as received. Server-generated messages, custom native desktop menus, and
+the mobile app may still use English.
 
 ## Themes
 

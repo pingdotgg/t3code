@@ -12,10 +12,7 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  alternateComposerDispatchAction,
-  resolveComposerDispatchMode,
-} from "@t3tools/client-runtime/state/composer-dispatch";
+import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 
 interface PendingActionState {
   questionIndex: number;
@@ -120,7 +117,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       canSteer,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
-  const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
 
@@ -237,33 +233,33 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             ? t({ message: "Steer message" })
             : t({ message: "Submit message" });
   const submitStatus = isEnvironmentUnavailable
-    ? "Environment disconnected"
+    ? t({ message: "Environment disconnected" })
     : (sendDisabledReason ??
       (isPreparingWorktree
-        ? "Preparing worktree"
+        ? t({ message: "Preparing worktree" })
         : isSendBusy
           ? isEditingQueuedMessage
-            ? "Updating queued message"
-            : "Submitting message"
+            ? t({ message: "Updating queued message" })
+            : t({ message: "Submitting message" })
           : null));
   const isMacPlatformNavigatorPlatformText =
     submitStatus == null && !compactsBeforeSend && isRunning && !isEditingQueuedMessage && canSteer
       ? isMacPlatform(navigator.platform)
         ? "⌘"
-        : "Ctrl"
-      : undefined;
-  const alternateShortcutLabelText =
-    submitStatus == null && !compactsBeforeSend && isRunning && !isEditingQueuedMessage && canSteer
-      ? alternateShortcutLabel
-        ? ` or ${alternateShortcutLabel}`
-        : ""
+        : t({ message: "Ctrl" })
       : undefined;
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
       ? t`Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
-        ? t`Click to ${followUpBehavior}, ${isMacPlatformNavigatorPlatformText}-click${alternateShortcutLabelText} to ${alternateAction}`
+        ? followUpBehavior === "queue"
+          ? alternateShortcutLabel
+            ? t`Click to queue, ${isMacPlatformNavigatorPlatformText}-click or ${alternateShortcutLabel} to steer`
+            : t`Click to queue, ${isMacPlatformNavigatorPlatformText}-click to steer`
+          : alternateShortcutLabel
+            ? t`Click to steer, ${isMacPlatformNavigatorPlatformText}-click or ${alternateShortcutLabel} to queue`
+            : t`Click to steer, ${isMacPlatformNavigatorPlatformText}-click to queue`
         : submitLabel);
 
   const sendButton = (

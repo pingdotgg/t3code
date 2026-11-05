@@ -27,13 +27,12 @@ export function DeviceToolVersions({
           .toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true }))
           .at(-1));
   const label = kind === "hub" ? t({ message: "Device hub" }) : t({ message: "Agent device" });
-  const ownerText = owner ? `Managed by ${owner}. ` : "";
   const versionText = kind
     ? version
-      ? `version ${version}`
+      ? t`version ${version}`
       : selected
-        ? "not installed"
-        : "version unknown"
+        ? t({ message: "not installed" })
+        : t({ message: "version unknown" })
     : undefined;
   return (
     <Popover>
@@ -61,13 +60,13 @@ export function DeviceToolVersions({
           <div className="mt-4 divide-y divide-border/50">
             {(
               [
-                ["Device hub", tools.hub],
-                ["Agent device", tools.agent],
+                ["hub", <Trans key="hub">Device hub</Trans>, tools.hub],
+                ["agent", <Trans key="agent">Agent device</Trans>, tools.agent],
               ] as const
             )
-              .filter(([name]) => !kind || name === label)
-              .map(([name, tool]) => (
-                <div key={name} className="space-y-2 py-3 first:pt-0 last:pb-0">
+              .filter(([toolKind]) => !kind || toolKind === kind)
+              .map(([toolKind, name, tool]) => (
+                <div key={toolKind} className="space-y-2 py-3 first:pt-0 last:pb-0">
                   {!kind ? <p className="text-xs font-medium">{name}</p> : null}
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
                     <dt className="text-muted-foreground">
@@ -96,7 +95,11 @@ export function DeviceToolVersions({
           </p>
         )}
         <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">
-          <Trans>{ownerText}Tools update automatically on this host when needed.</Trans>
+          {owner ? (
+            <Trans>Managed by {owner}. Tools update automatically on this host when needed.</Trans>
+          ) : (
+            <Trans>Tools update automatically on this host when needed.</Trans>
+          )}
         </p>
         {error ? (
           <p role="status" className="mt-2 text-xs text-destructive">

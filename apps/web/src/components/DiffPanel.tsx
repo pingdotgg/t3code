@@ -428,7 +428,8 @@ export default function DiffPanel({
           : "branch-range"),
   );
   const comparisonHeadRef = selectedGitSource?.headRef ?? gitStatusQuery.data?.refName ?? "HEAD";
-  const comparisonBaseRef = selectedGitSource?.baseRef ?? selectedBaseRef ?? "Automatic";
+  const comparisonBaseRef =
+    selectedGitSource?.baseRef ?? selectedBaseRef ?? t({ message: "Automatic" });
   const selectedCommitSubject =
     selectedCommitSha !== null && selectedGitSource?.headRef === selectedCommitSha
       ? selectedGitSource.commitSubject
@@ -1358,17 +1359,6 @@ export default function DiffPanel({
     </>
   );
 
-  const isGitSelectionSelectedGitSourceFilesPreviewIncompleteText =
-    !!activeThread &&
-    !(!isGitRepo && !toolCallSelection) &&
-    !(selectedRunId !== null && orderedTurnDiffSummaries.length === 0) &&
-    !(isGitSelection && !canReadFiles) &&
-    isSelectedPatchTruncated &&
-    !lazySource
-      ? isGitSelection && selectedGitSource?.files && !preview?.incomplete
-        ? " Totals include all changes."
-        : ""
-      : undefined;
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
@@ -1408,10 +1398,14 @@ export default function DiffPanel({
             )}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
-                <Trans>
-                  This preview exceeds the size limit. Changes shown are incomplete.
-                  {isGitSelectionSelectedGitSourceFilesPreviewIncompleteText}
-                </Trans>
+                {isGitSelection && selectedGitSource?.files && !preview?.incomplete ? (
+                  <Trans>
+                    This preview exceeds the size limit. Changes shown are incomplete. Totals
+                    include all changes.
+                  </Trans>
+                ) : (
+                  <Trans>This preview exceeds the size limit. Changes shown are incomplete.</Trans>
+                )}
               </p>
             )}
             {omittedToolCallFiles > 0 && (

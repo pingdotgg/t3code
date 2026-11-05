@@ -368,7 +368,7 @@ export function SnapShotCoordinator() {
           } catch (error) {
             await dismissSnapShotAnimation(item.id);
             const errorInstanceofErrorText =
-              error instanceof Error ? error.message : "Try the capture again.";
+              error instanceof Error ? error.message : t({ message: "Try the capture again." });
             reportOnce(
               item.id,
               "delivery",

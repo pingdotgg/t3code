@@ -269,11 +269,6 @@ export function UsagePriceOverrides({
     if (!failed) setDrafts([]);
   };
 
-  const selectedLength1Text = !(selected.length === 0)
-    ? selected.length > 1
-      ? " Mixed cells keep each environment’s rate until you edit them."
-      : ""
-    : undefined;
   return (
     <Dialog
       open
@@ -587,8 +582,13 @@ export function UsagePriceOverrides({
                 <Trans>
                   Blank cache rates use the input price. Enter 0 for free tokens. A mapped model’s
                   usage counts as the model it maps to.
-                  {selectedLength1Text}
                 </Trans>
+                {selected.length > 1 ? (
+                  <>
+                    {" "}
+                    <Trans>Mixed cells keep each environment’s rate until you edit them.</Trans>
+                  </>
+                ) : null}
               </p>
             </>
           )}

@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { t, plural } from "@palamedes/core/macro";
 import { Trans } from "@palamedes/react/macro";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -180,16 +180,15 @@ function ExtendedOfficeViewer(props: {
   const documentPage = previewDocument?.pages[page];
   const navigation = workbook ? "sheet" : (previewDocument?.navigation ?? "slide");
   const documentCount = previewDocument?.pages.length ?? 0;
+  const chapterNumber = page + 1;
   const documentDetails =
     navigation === "chapter"
-      ? `Chapter ${page + 1} of ${documentCount}`
-      : `${documentCount} ${navigation}${documentCount === 1 ? "" : "s"}`;
-  const navigationSlideText =
-    count > 0 && !workbook && !(previewDocument?.navigation === "chapter")
-      ? navigation === "slide"
-        ? "Slide"
-        : "Page"
-      : undefined;
+      ? t`Chapter ${chapterNumber} of ${documentCount}`
+      : navigation === "slide"
+        ? plural(documentCount, { one: "# slide", other: "# slides" })
+        : navigation === "sheet"
+          ? plural(documentCount, { one: "# sheet", other: "# sheets" })
+          : plural(documentCount, { one: "# page", other: "# pages" });
   const pageText =
     count > 0 && !workbook && !(previewDocument?.navigation === "chapter") ? page + 1 : undefined;
   const pageText2 = props.kind === "ods" && sheet ? page + 1 : undefined;
@@ -200,15 +199,7 @@ function ExtendedOfficeViewer(props: {
   const fileSizeUndefinedText =
     props.kind === "ods" && sheet
       ? fileSize !== undefined
-        ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
-        : ""
-      : undefined;
-  const sheetTruncatedText =
-    !documentPage && sheet
-      ? sheet.truncated
-        ? props.kind === "ods"
-          ? " Limited to 500 rows and 50 columns."
-          : " Preview limited to 250,000 rows, 1,024 columns, and bounded cell text."
+        ? ` · ${fileSize === 0 ? t({ message: "0 bytes" }) : formatAttachmentSize(fileSize)}`
         : ""
       : undefined;
   return (
@@ -216,7 +207,15 @@ function ExtendedOfficeViewer(props: {
       {count > 0 ? (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs">
           <FileSurfaceAction
-            label={`Previous ${navigation}`}
+            label={
+              navigation === "slide"
+                ? t({ message: "Previous slide" })
+                : navigation === "chapter"
+                  ? t({ message: "Previous chapter" })
+                  : navigation === "sheet"
+                    ? t({ message: "Previous sheet" })
+                    : t({ message: "Previous page" })
+            }
             disabled={page === 0}
             onPress={() => selectPage(page - 1)}
           >
@@ -264,13 +263,27 @@ function ExtendedOfficeViewer(props: {
             </div>
           ) : (
             <span className="flex-1 text-center tabular-nums" aria-live="polite">
-              <Trans>
-                {navigationSlideText} {pageText} of {count}
-              </Trans>
+              {navigation === "slide" ? (
+                <Trans>
+                  Slide {pageText} of {count}
+                </Trans>
+              ) : (
+                <Trans>
+                  Page {pageText} of {count}
+                </Trans>
+              )}
             </span>
           )}
           <FileSurfaceAction
-            label={`Next ${navigation}`}
+            label={
+              navigation === "slide"
+                ? t({ message: "Next slide" })
+                : navigation === "chapter"
+                  ? t({ message: "Next chapter" })
+                  : navigation === "sheet"
+                    ? t({ message: "Next sheet" })
+                    : t({ message: "Next page" })
+            }
             disabled={page + 1 === count}
             onPress={() => selectPage(page + 1)}
           >
@@ -303,17 +316,28 @@ function ExtendedOfficeViewer(props: {
             <DocumentPages
               html={documentPage.html}
               name={`${props.name}: ${documentPage.title}`}
-              details={`${documentDetails}${fileSize !== undefined ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}` : ""}`}
+              details={`${documentDetails}${fileSize !== undefined ? ` · ${fileSize === 0 ? t({ message: "0 bytes" }) : formatAttachmentSize(fileSize)}` : ""}`}
             />
           </Suspense>
         </>
       ) : sheet ? (
         <>
           <FileSurfaceNotice>
-            <Trans>
-              Cell values only. Charts, images, and formatting are not shown.
-              {sheetTruncatedText}
-            </Trans>
+            {sheet.truncated ? (
+              props.kind === "ods" ? (
+                <Trans>
+                  Cell values only. Charts, images, and formatting are not shown. Limited to 500
+                  rows and 50 columns.
+                </Trans>
+              ) : (
+                <Trans>
+                  Cell values only. Charts, images, and formatting are not shown. Preview limited to
+                  250,000 rows, 1,024 columns, and bounded cell text.
+                </Trans>
+              )
+            ) : (
+              <Trans>Cell values only. Charts, images, and formatting are not shown.</Trans>
+            )}
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
             <p className="p-6 text-xs text-muted-foreground">

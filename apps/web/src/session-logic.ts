@@ -313,26 +313,30 @@ export function providerErrorPresentation(
     item.retry.maxAttempts === null
       ? `${item.retry.attempt}`
       : `${item.retry.attempt}/${item.retry.maxAttempts}`;
-  const itemFailureClassUsageLimitText =
-    !(item.status === "running") && !(item.status === "completed") && item.status === "failed"
-      ? item.failure.class === "usage_limit"
-        ? "Usage limit reached"
-        : "Provider error"
-      : undefined;
   const label =
     item.status === "running"
       ? t`Retrying provider (${progress})`
       : item.status === "completed"
         ? t`Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? t`${itemFailureClassUsageLimitText} after ${progress} retries`
+          ? item.failure.class === "usage_limit"
+            ? t`Usage limit reached after ${progress} retries`
+            : t`Provider error after ${progress} retries`
           : t`Provider retry stopped (${progress})`;
-  const retryDelay =
-    item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
-      ? item.retry.retryDelayMs < 1_000
-        ? ` Retrying in ${item.retry.retryDelayMs}ms.`
-        : ` Retrying in ${(item.retry.retryDelayMs / 1_000).toFixed(1).replace(/\.0$/u, "")}s.`
-      : "";
+  let retryDelay = "";
+  if (
+    item.status === "running" &&
+    item.retry.retryDelayMs !== null &&
+    item.retry.retryDelayMs > 0
+  ) {
+    const delayMs = item.retry.retryDelayMs;
+    if (delayMs < 1_000) {
+      retryDelay = t` Retrying in ${delayMs}ms.`;
+    } else {
+      const delaySeconds = (delayMs / 1_000).toFixed(1).replace(/\.0$/u, "");
+      retryDelay = t` Retrying in ${delaySeconds}s.`;
+    }
+  }
   return {
     label,
     detail: `${item.failure.message}${retryDelay}`,

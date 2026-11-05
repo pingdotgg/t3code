@@ -50,7 +50,7 @@ export function RemoveT3ConnectEnvironmentDialog({
       <Trans>T3 Connect settings</Trans>
     </InlineButton>
   ) : (
-    "T3 Connect settings"
+    <Trans>T3 Connect settings</Trans>
   );
 
   return (
@@ -78,7 +78,7 @@ export function RemoveT3ConnectEnvironmentDialog({
                   </Trans>
                 </>
               ) : shown.registration === "unregistered" ? (
-                "It's no longer on your T3 Connect account."
+                <Trans>It's no longer on your T3 Connect account.</Trans>
               ) : (
                 <>
                   <Trans>

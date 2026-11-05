@@ -219,7 +219,8 @@ export function DevicePanel(props: {
 
   const stateHostsFindHostHostIdPendingDeviceHostIdLabelText =
     !(activeDevice && activeSession) && loading && pendingDevice
-      ? (state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host")
+      ? (state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ??
+        t({ message: "Device host" }))
       : undefined;
   const bootingDevicesMapDeviceDeviceNameJoinText =
     bootingDevices.length > 0 ? bootingDevices.map((device) => device.name).join(", ") : undefined;
@@ -261,7 +262,7 @@ export function DevicePanel(props: {
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
               device={activeDevice}
-              hostLabel={activeHost?.label ?? "Device host"}
+              hostLabel={activeHost?.label ?? t({ message: "Device host" })}
               hostKind={activeHost?.kind}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
@@ -273,7 +274,7 @@ export function DevicePanel(props: {
             />
           ) : loading ? (
             <DeviceLoadingView
-              name={pendingDevice?.name ?? "Devices"}
+              name={pendingDevice?.name ?? t({ message: "Devices" })}
               description={
                 pendingDevice
                   ? t`${stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · ${pendingDevice.version}`
@@ -284,11 +285,11 @@ export function DevicePanel(props: {
                 loadError ??
                 (pendingDevice
                   ? pendingDevice.booted
-                    ? "Opening device…"
-                    : "Starting device…"
+                    ? t({ message: "Opening device…" })
+                    : t({ message: "Starting device…" })
                   : state.hostStatus === "installing"
-                    ? (state.hostStatusDetail ?? "Installing device support…")
-                    : "Finding devices…")
+                    ? (state.hostStatusDetail ?? t({ message: "Installing device support…" }))
+                    : t({ message: "Finding devices…" }))
               }
               error={loadError !== null}
             >
@@ -334,7 +335,9 @@ export function DevicePanel(props: {
                             const messageText = state.hosts.find(
                               (host) => host.id === device.hostId,
                             )?.label;
-                            const deviceBootedText = device.booted ? "Running" : "Stopped";
+                            const deviceBootedText = device.booted
+                              ? t({ message: "Running" })
+                              : t({ message: "Stopped" });
                             return (
                               <div
                                 key={deviceKey(device)}

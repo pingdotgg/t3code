@@ -140,12 +140,6 @@ export function CaptureShortcutConfig({
     end();
   };
 
-  const niriText = niri
-    ? "A custom --config or NIRI_CONFIG can change its location."
-    : "On Omarchy, use your own bindings file, not its defaults.";
-  const niriText2 = niri
-    ? "Paste this inside binds { … } in your Niri config, then save."
-    : "Add this binding to your Hyprland config, then save.";
   const messageText =
     result && !result.warning && !(preview?.operation === "remove") ? preview?.shortcut : undefined;
   return (
@@ -334,7 +328,17 @@ export function CaptureShortcutConfig({
             ) : null}
           </div>
           <p>
-            <Trans>Use your desktop's shortcut settings file. {niriText}</Trans>
+            {niri ? (
+              <Trans>
+                Use your desktop's shortcut settings file. A custom --config or NIRI_CONFIG can
+                change its location.
+              </Trans>
+            ) : (
+              <Trans>
+                Use your desktop's shortcut settings file. On Omarchy, use your own bindings file,
+                not its defaults.
+              </Trans>
+            )}
           </p>
           {result?.backupPath ? (
             <p className="break-all">
@@ -345,7 +349,16 @@ export function CaptureShortcutConfig({
             <Trans>Manual setup</Trans>
           </p>
           <p>
-            <Trans>{niriText2} Change the keys if needed.</Trans>
+            {niri ? (
+              <Trans>
+                Paste this inside <code>{"binds { … }"}</code> in your Niri config, then save.
+                Change the keys if needed.
+              </Trans>
+            ) : (
+              <Trans>
+                Add this binding to your Hyprland config, then save. Change the keys if needed.
+              </Trans>
+            )}
           </p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3">
             {state.shortcutBinding}

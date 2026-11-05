@@ -217,8 +217,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     const resetTime = resetAt
       ? `${formatUpcomingTimestamp(resetAt, timestampFormat, undefined, timeZone)} (${timeZone})`
       : null;
-    const resetTimeText = warning ? (resetTime ? ` Retry after ${resetTime}.` : "") : undefined;
-    const label = warning ? t`Usage limit reached.${resetTimeText}` : workEntry.label;
+    const label = warning
+      ? resetTime
+        ? t`Usage limit reached. Retry after ${resetTime}.`
+        : t({ message: "Usage limit reached." })
+      : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&

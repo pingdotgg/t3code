@@ -1114,11 +1114,6 @@ export function ChatSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
 
-  const settingsSendShortcutModEnterText = !(settings.sendShortcut === "mod-enter-multiline")
-    ? settings.sendShortcut === "mod-enter"
-      ? " + Shift"
-      : ""
-    : undefined;
   return (
     <SettingsPageContainer>
       <SettingsSection id="composer" title={t({ message: "Composer" })}>
@@ -1233,7 +1228,9 @@ export function ChatSettingsPanel() {
             t({ message: "Queue follow-ups while the agent runs or steer the current run. " }) +
             (settings.sendShortcut === "mod-enter-multiline"
               ? t`Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Shift + Enter for multiline prompts to do the opposite for one message.`
-              : t`Press ${modifierLabel}${settingsSendShortcutModEnterText} + Enter to do the opposite for one message.`)
+              : settings.sendShortcut === "mod-enter"
+                ? t`Press ${modifierLabel} + Shift + Enter to do the opposite for one message.`
+                : t`Press ${modifierLabel} + Enter to do the opposite for one message.`)
           }
           resetAction={
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (

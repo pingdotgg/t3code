@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { Trans } from "@palamedes/react/macro";
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -96,7 +97,7 @@ export default function NotebookPreview(props: {
   const propsNotebookCellsLengthToLocaleStringText = props.notebook.cells.length.toLocaleString();
   const propsSizeBytesUndefinedText =
     props.sizeBytes !== undefined
-      ? ` · ${props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}`
+      ? ` · ${props.sizeBytes === 0 ? t({ message: "0 bytes" }) : formatAttachmentSize(props.sizeBytes)}`
       : "";
   const propsNotebookCellsLengthText =
     visible < props.notebook.cells.length ? props.notebook.cells.length - visible : undefined;

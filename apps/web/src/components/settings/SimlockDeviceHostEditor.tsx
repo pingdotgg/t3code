@@ -125,10 +125,6 @@ export function SimlockDeviceHostEditor(props: {
     </label>
   );
 
-  const severalText = several ? " per environment" : "";
-  const propsIsNewText = props.isNew
-    ? null
-    : " Saving restarts this host, which releases its devices.";
   const propsBusyText = props.busy ? <Spinner size="xs" /> : null;
   return (
     <Dialog
@@ -223,12 +219,22 @@ export function SimlockDeviceHostEditor(props: {
                 />
               ))}
               <p className="text-xs text-muted-foreground">
+                <Trans>Leases, drives, and streams devices.</Trans>{" "}
+                {several ? (
+                  <Trans>
+                    Create one per environment with{" "}
+                    <code>simlock --gateway token create --role agent</code>, or leave it blank to
+                    add it later.
+                  </Trans>
+                ) : (
+                  <Trans>
+                    Create one with <code>simlock --gateway token create --role agent</code>, or
+                    leave it blank to add it later.
+                  </Trans>
+                )}{" "}
                 <Trans>
-                  Leases, drives, and streams devices. Create one{severalText} with{" "}
-                  <code>simlock --gateway token create --role agent</code>, or leave it blank to add
-                  it later. A blank token uses the machine's{" "}
-                  <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its{" "}
-                  <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
+                  A blank token uses the machine's <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when
+                  its <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
                 </Trans>
               </p>
             </div>
@@ -237,10 +243,13 @@ export function SimlockDeviceHostEditor(props: {
               {limit("maxLeaseMinutes", "Lease minutes", 5, 240)}
             </div>
             <p className="text-xs text-muted-foreground">
-              <Trans>
-                A lease ends after the lease minutes even while in use.
-                {propsIsNewText}
-              </Trans>
+              <Trans>A lease ends after the lease minutes even while in use.</Trans>
+              {!props.isNew ? (
+                <>
+                  {" "}
+                  <Trans>Saving restarts this host, which releases its devices.</Trans>
+                </>
+              ) : null}
             </p>
             {problem === null || !gatewayUrl ? null : (
               <p className="text-xs text-destructive" role="alert">

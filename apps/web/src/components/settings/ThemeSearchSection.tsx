@@ -444,8 +444,7 @@ export function ThemeSearchSection({
               const isInstalled = getCustomThemes().some(
                 (theme) => theme.collection?.id === extension.collectionId,
               );
-              const action = isInstalled ? "Update" : "Install";
-              const progressAction = isInstalled ? "Updating" : "Installing";
+              const action = isInstalled ? <Trans>Update</Trans> : <Trans>Install</Trans>;
               const DOWNLOADFORMATFormatText = DOWNLOAD_FORMAT.format(extension.downloadCount);
               return (
                 <article
@@ -472,7 +471,7 @@ export function ThemeSearchSection({
                     <div className="flex min-w-0 items-center gap-2">
                       {extension.sourceUrl ? (
                         <Button
-                          aria-label={`View source for ${extension.name}`}
+                          aria-label={t`View source for ${extension.name}`}
                           render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
                           size="icon-micro"
                           variant="ghost-muted"
@@ -482,7 +481,15 @@ export function ThemeSearchSection({
                       ) : null}
                     </div>
                     <Button
-                      aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
+                      aria-label={
+                        isInstalling
+                          ? isInstalled
+                            ? t`Updating ${extension.name}`
+                            : t`Installing ${extension.name}`
+                          : isInstalled
+                            ? t`Update ${extension.name}`
+                            : t`Install ${extension.name}`
+                      }
                       disabled={installingId !== null}
                       size="xs"
                       variant="outline"
@@ -495,7 +502,15 @@ export function ThemeSearchSection({
                       ) : (
                         <PackagePlusIcon />
                       )}
-                      {isInstalling ? <Trans>{progressAction}...</Trans> : action}
+                      {isInstalling ? (
+                        isInstalled ? (
+                          <Trans>Updating...</Trans>
+                        ) : (
+                          <Trans>Installing...</Trans>
+                        )
+                      ) : (
+                        action
+                      )}
                     </Button>
                   </div>
                 </article>

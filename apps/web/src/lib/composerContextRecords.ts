@@ -74,10 +74,15 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
   }
   const diffRange = /^([+-])(\d+)(?: to \1(\d+))?$/u.exec(comment.rangeLabel);
   const messageText = diffRange ? diffRange[2] : undefined;
-  const diffRange3Text = diffRange ? (diffRange[3] ? ` to L${diffRange[3]}` : "") : undefined;
-  const diffRange1Text = diffRange ? (diffRange[1] === "-" ? " (before)" : "") : undefined;
+  const rangeEnd = diffRange?.[3];
   const rangeLabel = diffRange
-    ? t`L${messageText}${diffRange3Text}${diffRange1Text}`
+    ? diffRange[1] === "-"
+      ? rangeEnd
+        ? t`L${messageText} to L${rangeEnd} (before)`
+        : t`L${messageText} (before)`
+      : rangeEnd
+        ? t`L${messageText} to L${rangeEnd}`
+        : t`L${messageText}`
     : comment.rangeLabel;
   const sectionPullRequest = /^pull-request:(\d+)$/u.exec(comment.sectionId)?.[1];
   const prefix = sectionPullRequest === undefined ? "" : `#${sectionPullRequest} `;

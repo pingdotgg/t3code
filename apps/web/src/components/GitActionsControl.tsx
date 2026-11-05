@@ -794,7 +794,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       id="publish-remote-name"
                       value={publishRemoteName}
                       onChange={(event) => setPublishRemoteName(event.target.value)}
-                      placeholder={t({ message: "origin" })}
+                      placeholder="origin"
                       disabled={publishRepositoryAction.isPending}
                     />
                   </label>
@@ -1338,7 +1338,13 @@ export default function GitActionsControl({
             ? t({ message: "Pulled" })
             : t({ message: "Already up to date" });
         const pullResultUpstreamRefText =
-          pullResult.status === "pulled" ? (pullResult.upstreamRef ?? "upstream") : undefined;
+          pullResult.status === "pulled"
+            ? (pullResult.upstreamRef ??
+              t({
+                message: "upstream",
+                comment: "Fallback branch label when the upstream reference name is unavailable.",
+              }))
+            : undefined;
         const description =
           pullResult.status === "pulled"
             ? t`Updated ${pullResult.refName} from ${pullResultUpstreamRefText}`

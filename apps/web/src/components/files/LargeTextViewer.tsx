@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { Trans } from "@palamedes/react/macro";
 import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
@@ -219,7 +220,7 @@ export default function LargeTextViewer(props: {
   const metaSizeBytes0Text =
     meta.complete && meta.sizeBytes !== undefined
       ? meta.sizeBytes === 0
-        ? "0 bytes"
+        ? t({ message: "0 bytes" })
         : formatAttachmentSize(meta.sizeBytes)
       : undefined;
   return (

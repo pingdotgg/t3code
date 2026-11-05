@@ -32,7 +32,7 @@ export function ProjectPinButton(props: {
   readonly onToggle: () => void;
   readonly shortcutLabel?: string | null;
 }) {
-  const action = `${props.pinned ? "Unpin" : "Pin"} ${props.name}`;
+  const action = props.pinned ? t`Unpin ${props.name}` : t`Pin ${props.name}`;
   return (
     <span
       className={cn(

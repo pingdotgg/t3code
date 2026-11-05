@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { Trans } from "@palamedes/react/macro";
 import { memo, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
@@ -344,7 +345,6 @@ export const ThemeColorField = memo(function ThemeColorField({
     ? (themeColorToHex(value) ?? value)
     : value;
 
-  const selectedText = selected ? "Hide" : "Show";
   return (
     <div
       className={cn(
@@ -357,7 +357,7 @@ export const ThemeColorField = memo(function ThemeColorField({
         <TooltipTrigger
           render={
             <button
-              aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
+              aria-label={selected ? t`Hide ${label} usage` : t`Show ${label} usage`}
               aria-pressed={selected}
               className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => onToggleSelected?.(role)}
@@ -368,11 +368,11 @@ export const ThemeColorField = memo(function ThemeColorField({
           }
         />
         <TooltipPopup side="top">
-          {
-            <Trans>
-              {selectedText} where {label} is used
-            </Trans>
-          }
+          {selected ? (
+            <Trans>Hide where {label} is used</Trans>
+          ) : (
+            <Trans>Show where {label} is used</Trans>
+          )}
         </TooltipPopup>
       </Tooltip>
       <div className="ml-auto flex shrink-0 items-center gap-2">

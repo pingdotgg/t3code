@@ -56,11 +56,6 @@ msgstr " · {shortcutLabel}"
 msgid " · {stepLabelText}"
 msgstr " · {stepLabelText}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-#~ msgid " · Created"
-#~ msgstr " · Created"
-
 #: apps/web/src/components/files/OpenXmlOfficeViewer.tsx
 msgid " · Fit to width"
 msgstr " · Fit to width"
@@ -93,10 +88,13 @@ msgstr " · Required"
 msgid " · synced"
 msgstr " · synced"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/themePalette.ts
-#~ msgid "--app-theme-placeholder"
-#~ msgstr "--app-theme-placeholder"
+#: apps/web/src/session-logic.ts#providerErrorPresentation
+msgid " Retrying in {delayMs}ms."
+msgstr " Retrying in {delayMs}ms."
+
+#: apps/web/src/session-logic.ts#providerErrorPresentation
+msgid " Retrying in {delaySeconds}s."
+msgstr " Retrying in {delaySeconds}s."
 
 #: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#ReviewVerdictEvent
 msgid ", before the latest commits"
@@ -134,11 +132,6 @@ msgstr "“{label}” will be removed from this account."
 msgid "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 msgstr "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ExpandedImageDialog.tsx#ExpandedImageDialog
-#~ msgid "({indexText}/{length})"
-#~ msgstr "({indexText}/{length})"
-
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "({length} of {length_1})"
 msgstr "({length} of {length_1})"
@@ -163,16 +156,6 @@ msgstr "(empty)"
 msgid "(guest)"
 msgstr "(guest)"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
-#~ msgid "{{body.id}}"
-#~ msgstr "{{body.id}}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
-#~ msgid "{{headers.delivery-id}}"
-#~ msgstr "{{headers.delivery-id}}"
-
 #: apps/web/src/components/settings/EasDeviceHostEditor.tsx#EasDeviceHostEditor
 msgid "{accountStatusCheckingText} Check account"
 msgstr "{accountStatusCheckingText} Check account"
@@ -188,11 +171,6 @@ msgstr "{activeEnvironmentLabelServerConfigEnvironmentLabelText} server"
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx#RelayClientInstallDialog
 msgid "{activeStepIndexText} of {length}"
 msgstr "{activeStepIndexText} of {length}"
-
-#: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
-msgid "{ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: {messageText}."
-msgstr ""
-"{ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: {messageText}."
 
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
 msgid "{advanced} (one environment)"
@@ -290,19 +268,6 @@ msgstr ""
 "{commentCount, plural, one {{detailCommentCountToLocaleStringText} comment} "
 "other {{detailCommentCountToLocaleStringText} comments}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#~ msgid ""
-#~ "{commentCount, plural, one {This conversation is only partially loaded. "
-#~ "{commentCount} comment  is loaded; open it on the host to read the rest.} "
-#~ "other {This conversation is only partially loaded. {commentCount} comment s "
-#~ "are loaded; open it on the host to read the rest.}}"
-#~ msgstr ""
-#~ "{commentCount, plural, one {This conversation is only partially loaded. "
-#~ "{commentCount} comment  is loaded; open it on the host to read the rest.} "
-#~ "other {This conversation is only partially loaded. {commentCount} comment s "
-#~ "are loaded; open it on the host to read the rest.}}"
-
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
 msgid ""
 "{commentCount, plural, one {This conversation is only partially loaded. "
@@ -371,14 +336,13 @@ msgstr ""
 "{credits, plural, one {{credits} reset credit banked} other {{credits} reset "
 "credits banked}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/usage/UsageLimitsPooled.tsx#LegendRow
-#~ msgid "{credits} reset {credits1Text} banked"
-#~ msgstr "{credits} reset {credits1Text} banked"
-
 #: apps/web/src/components/files/PdfViewer.tsx
 msgid "{currentText} / {numPages} pages"
 msgstr "{currentText} / {numPages} pages"
+
+#: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#formatReleaseAge
+msgid "{days}d ago"
+msgstr "{days}d ago"
 
 #: apps/web/src/components/chat/ComposerUsageLimits.tsx#modelFallbackBannerItem
 msgid "{defaultProviderName} is out of usage{resetsAtText}"
@@ -412,16 +376,6 @@ msgstr ""
 msgid "{detail} ({reason})"
 msgstr "{detail} ({reason})"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
-#~ msgid "{detailCommentCountToLocaleStringText} {detailCommentCount1Text}"
-#~ msgstr "{detailCommentCountToLocaleStringText} {detailCommentCount1Text}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
-#~ msgid "{detailCommitsLengthToLocaleStringText} {detailCommitsLength1Text}"
-#~ msgstr "{detailCommitsLengthToLocaleStringText} {detailCommitsLength1Text}"
-
 #: apps/web/src/components/settings/settingsScope.ts#resolveSettingsScope
 msgid "{displayName} / {environmentLabelText}"
 msgstr "{displayName} / {environmentLabelText}"
@@ -429,6 +383,18 @@ msgstr "{displayName} / {environmentLabelText}"
 #: apps/web/src/components/settings/settingsScope.ts#resolveSettingsScope
 msgid "{displayName} / {label}{sharesEnvironmentText}"
 msgstr "{displayName} / {label}{sharesEnvironmentText}"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "{documentCount, plural, one {# page} other {# pages}}"
+msgstr "{documentCount, plural, one {# page} other {# pages}}"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "{documentCount, plural, one {# sheet} other {# sheets}}"
+msgstr "{documentCount, plural, one {# sheet} other {# sheets}}"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "{documentCount, plural, one {# slide} other {# slides}}"
+msgstr "{documentCount, plural, one {# slide} other {# slides}}"
 
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "{done} of {length} updated"
@@ -490,9 +456,9 @@ msgstr ""
 msgid "{errorText} Click to retry."
 msgstr "{errorText} Click to retry."
 
-#: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
-msgid "{excerptSideOldText}showing {shown} of {total} diff lines"
-msgstr "{excerptSideOldText}showing {shown} of {total} diff lines"
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid "{failed} of {length} failing"
+msgstr "{failed} of {length} failing"
 
 #: apps/web/src/components/chat/ThreadRelationshipsControl.tsx#ThreadLineageGroup
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#PullRequestChecksPopover
@@ -502,16 +468,6 @@ msgstr "{failedCount} failed"
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
 msgid "{favoriteCount, plural, one {# favorite} other {# favorites}}"
 msgstr "{favoriteCount, plural, one {# favorite} other {# favorites}}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/UserMessageContextChips.tsx#UserMessageElementDetails
-#~ msgid "{fileName}{recordSourceLineNumberNullText}"
-#~ msgstr "{fileName}{recordSourceLineNumberNullText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/UserMessageContextChips.tsx#UserMessagePreviewAnnotationDetails
-#~ msgid "{fileName}{sourceLineNumberNullText}"
-#~ msgstr "{fileName}{sourceLineNumberNullText}"
 
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
 msgid "{filteredOutCount} hidden"
@@ -553,37 +509,13 @@ msgstr "{formatProviderListText} update in progress."
 msgid "{formatProviderListText2} updates are in progress."
 msgstr "{formatProviderListText2} updates are in progress."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts#getProviderUpdateSidebarPillView
-#~ msgid ""
-#~ "{formatProviderListText3} {unchangedProvidersLength1Text} outdated. Review "
-#~ "provider settings for details."
-#~ msgstr ""
-#~ "{formatProviderListText3} {unchangedProvidersLength1Text} outdated. Review "
-#~ "provider settings for details."
-
 #: apps/web/src/components/usage/UsageModelDialog.tsx#UsageModelDialog
 msgid "{formatTokensText} tokens have no known price"
 msgstr "{formatTokensText} tokens have no known price"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx#SidebarUpdateCapsule
-#~ msgid "{formatUpdateElapsedText}"
-#~ msgstr "{formatUpdateElapsedText}"
-
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserRecordingFrameRateSetting
 msgid "{frameRate} fps"
 msgstr "{frameRate} fps"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ProviderModelPicker.tsx#ProviderModelPicker
-#~ msgid "{getDisplayModelNameText}{selectedModelIsUnavailableText}"
-#~ msgstr "{getDisplayModelNameText}{selectedModelIsUnavailableText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ProviderModelPicker.tsx#ProviderModelPicker
-#~ msgid "{getTriggerDisplayModelNameText}{unavailable}"
-#~ msgstr "{getTriggerDisplayModelNameText}{unavailable}"
 
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserTimelineRow
 msgid "{guestName} (guest)"
@@ -593,11 +525,6 @@ msgstr "{guestName} (guest)"
 msgid "{guestName} is a guest"
 msgstr "{guestName} is a guest"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-#~ msgid "{hasMultipleEnvironmentsText}Archived"
-#~ msgstr "{hasMultipleEnvironmentsText}Archived"
-
 #: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
 msgid "{hasMultipleEnvironmentsText}Archived<0/>"
 msgstr "{hasMultipleEnvironmentsText}Archived<0/>"
@@ -605,17 +532,6 @@ msgstr "{hasMultipleEnvironmentsText}Archived<0/>"
 #: apps/web/src/components/pullRequest/PullRequestStackLayerContent.tsx#PullRequestStackLayerContent
 msgid "{headBranch} ·"
 msgstr "{headBranch} ·"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/promptLinks/HostedPromptLinkLanding.tsx#HostedPromptLinkLanding
-#~ msgid ""
-#~ "{hiddenCharacters, plural, one {T3 Code removed {hiddenCharacters_1} hidden "
-#~ "character . Read the prompt before you send it.} other {T3 Code removed "
-#~ "{hiddenCharacters_2} hidden character s. Read the prompt before you send it.}}"
-#~ msgstr ""
-#~ "{hiddenCharacters, plural, one {T3 Code removed {hiddenCharacters_1} hidden "
-#~ "character . Read the prompt before you send it.} other {T3 Code removed "
-#~ "{hiddenCharacters_2} hidden character s. Read the prompt before you send it.}}"
 
 #: apps/web/src/components/promptLinks/HostedPromptLinkLanding.tsx#HostedPromptLinkLanding
 #: apps/web/src/components/promptLinks/linkedPrompt.ts#warnAboutHiddenCharacters
@@ -642,15 +558,6 @@ msgstr ""
 "in the full diff} other {{hiddenFileCountToLocaleStringText} more files in the"
 " full diff}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ChangedFilesTree.tsx#ChangedFilesCard
-#~ msgid ""
-#~ "{hiddenFileCountToLocaleStringText} more file{hiddenFileCount1Text} in the "
-#~ "full diff"
-#~ msgstr ""
-#~ "{hiddenFileCountToLocaleStringText} more file{hiddenFileCount1Text} in the "
-#~ "full diff"
-
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid ""
 "{hiddenTestFileCount, plural, one {{hiddenTestFileCount} test file hidden} "
@@ -658,11 +565,6 @@ msgid ""
 msgstr ""
 "{hiddenTestFileCount, plural, one {{hiddenTestFileCount} test file hidden} "
 "other {{hiddenTestFileCount} test files hidden}}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
-#~ msgid "{hiddenTestFileCount} test {hiddenTestFileCount1Text} hidden"
-#~ msgstr "{hiddenTestFileCount} test {hiddenTestFileCount1Text} hidden"
 
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
 msgid "{hostGatewayUrlReplaceText} · {simlockLeaseLimitsText}"
@@ -684,18 +586,9 @@ msgstr ""
 msgid "{installationSourceLocalText}{installationInstalledVersionText}."
 msgstr "{installationSourceLocalText}{installationInstalledVersionText}."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeEditorPanel.tsx#ThemeEditorPanel
-#~ msgid "{isAdvancedText} · {usageCountText} {usageCount1Text}"
-#~ msgstr "{isAdvancedText} · {usageCountText} {usageCount1Text}"
-
 #: apps/web/src/components/pullRequest/PullRequestCopyableCode.tsx#PullRequestCopyableCode
 msgid "{isCopiedText}: {value}"
 msgstr "{isCopiedText}: {value}"
-
-#: apps/web/src/session-logic.ts#providerErrorPresentation
-msgid "{itemFailureClassUsageLimitText} after {progress} retries"
-msgstr "{itemFailureClassUsageLimitText} after {progress} retries"
 
 #: apps/web/src/components/composerContextPresentation.tsx#ContextChip
 msgid "{kindLabel}, {label}"
@@ -717,11 +610,6 @@ msgstr "{label} ({whenLabel})"
 #: apps/web/src/components/CommandPaletteLookups.ts#useEnvironmentLookups
 msgid "{label} (Local)"
 msgstr "{label} (Local)"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx#SidebarUpdateCapsule
-#~ msgid "{label} {status} {elapsed}"
-#~ msgstr "{label} {status} {elapsed}"
 
 #: apps/web/src/components/settings/settingsSearch.ts#sourceControlHostSearchItems
 msgid "{label} accounts and token"
@@ -764,10 +652,6 @@ msgstr "{label} immediately"
 msgid "{label} instance ''{instanceId}' was added."
 msgstr "{label} instance ''{instanceId}' was added."
 
-#: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
-msgid "{label} is {environmentReconnectingText}"
-msgstr "{label} is {environmentReconnectingText}"
-
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
 msgid ""
 "{label} is not authenticated on this server. Sign in or configure credentials "
@@ -777,6 +661,14 @@ msgstr ""
 "{label} is not authenticated on this server. Sign in or configure credentials "
 "using the <0>{executable}</0> tool on the server host to enable change request"
 " features."
+
+#: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
+msgid "{label} is offline"
+msgstr "{label} is offline"
+
+#: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
+msgid "{label} is reconnecting"
+msgstr "{label} is reconnecting"
 
 #: apps/web/src/components/settings/scheduledTasksSettings.logic.ts#scheduleDraftErrors
 msgid "{label} must contain a valid request placeholder."
@@ -854,15 +746,6 @@ msgstr ""
 " provider settings for details.} other {{formatProviderListText3} still appear"
 " outdated. Review provider settings for details.}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
-#~ msgid ""
-#~ "{length, plural, one {{length_1} empty placeholder} other {{length_2} empty "
-#~ "placeholder s}}"
-#~ msgstr ""
-#~ "{length, plural, one {{length_1} empty placeholder} other {{length_2} empty "
-#~ "placeholder s}}"
-
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
 msgid ""
 "{length, plural, one {{length_1} empty placeholder} other {{length_2} empty "
@@ -927,17 +810,6 @@ msgstr ""
 "{length, plural, one {Linked from {length_1} thread} other {Linked from "
 "{length_2} threads}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ConnectionStep
-#~ msgid ""
-#~ "{length, plural, one {Not connected, so setup skips {skippedLabelsJoinText}. "
-#~ "You can set  it up later from Settings.} other {Not connected, so setup skips "
-#~ "{skippedLabelsJoinText}. You can set  them up later from Settings.}}"
-#~ msgstr ""
-#~ "{length, plural, one {Not connected, so setup skips {skippedLabelsJoinText}. "
-#~ "You can set  it up later from Settings.} other {Not connected, so setup skips "
-#~ "{skippedLabelsJoinText}. You can set  them up later from Settings.}}"
-
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ConnectionStep
 msgid ""
 "{length, plural, one {Not connected, so setup skips {skippedLabelsJoinText}. "
@@ -960,6 +832,18 @@ msgstr ""
 "{length, plural, one {Review {term}, {length_1} comment pending} other {Review"
 " {term_1}, {length_2} comments pending}}"
 
+#: apps/web/src/components/chat/useComposerStash.ts#stashAndEncode
+msgid ""
+"{length, plural, one {That prompt was restored or deleted before # image "
+"finished saving. Re-attach it if you still need it.} other {That prompt was "
+"restored or deleted before # images finished saving. Re-attach them if you "
+"still need them.}}"
+msgstr ""
+"{length, plural, one {That prompt was restored or deleted before # image "
+"finished saving. Re-attach it if you still need it.} other {That prompt was "
+"restored or deleted before # images finished saving. Re-attach them if you "
+"still need them.}}"
+
 #: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
 msgid ""
 "{length, plural, one {Update {length_1} machine?} other {Update {length_2} "
@@ -980,11 +864,6 @@ msgstr ""
 msgid "{length} conversations"
 msgstr "{length} conversations"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
-#~ msgid "{length} empty placeholder{deliveryMissingFieldsLength1Text}"
-#~ msgstr "{length} empty placeholder{deliveryMissingFieldsLength1Text}"
-
 #: apps/web/src/components/usage/UsagePage.tsx#UsageEnvironmentFilter
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "{length} environments"
@@ -993,11 +872,6 @@ msgstr "{length} environments"
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "{length} failed"
 msgstr "{length} failed"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
-#~ msgid "{length} model{modelsLength1Text}{favoriteCount0Text}{hiddenCount0Text}"
-#~ msgstr "{length} model{modelsLength1Text}{favoriteCount0Text}{hiddenCount0Text}"
 
 #: apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts#getProviderUpdateRunToastView
 msgid "{length} of {length_1} provider updates failed"
@@ -1036,19 +910,9 @@ msgstr "{length} selected"
 msgid "{length} skipped"
 msgstr "{length} skipped"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
-#~ msgid "{length} supported {resultsLength1Text} found."
-#~ msgstr "{length} supported {resultsLength1Text} found."
-
 #: apps/web/src/components/ThreadStatusIndicators.tsx#ThreadTerminalStatusButton
 msgid "{length} terminal processes running. Open terminal"
 msgstr "{length} terminal processes running. Open terminal"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibrary
-#~ msgid "{length} themes {verb}"
-#~ msgstr "{length} themes {verb}"
 
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#EnabledPullRequestThreadLinks
 msgid "{linkedThreadsLabel}. Search in the command palette."
@@ -1061,11 +925,6 @@ msgid ""
 msgstr ""
 "{manual, plural, one {{manual} needs a manual update} other {{manual} need a "
 "manual update}}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
-#~ msgid "{manual} {manual1Text} a manual update"
-#~ msgstr "{manual} {manual1Text} a manual update"
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "{MathCeilText} MB download."
@@ -1095,16 +954,6 @@ msgstr "{messageText} failed"
 msgid "{messageText} on {messageText2}"
 msgstr "{messageText} on {messageText2}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibrary
-#~ msgid "{messageText2} {verb}"
-#~ msgstr "{messageText2} {verb}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
-#~ msgid "{missingImageCountText} image{missingImageCountEntry1Text} dropped"
-#~ msgstr "{missingImageCountText} image{missingImageCountEntry1Text} dropped"
-
 #: apps/web/src/components/chat/ProviderSubagentBar.tsx#ProviderSubagentBar
 msgid "{modelDescription} subagent: {announcement}"
 msgstr "{modelDescription} subagent: {announcement}"
@@ -1133,11 +982,6 @@ msgid ""
 msgstr ""
 "{moreReplies, plural, one {{moreRepliesToLocaleStringText} more reply} other "
 "{{moreRepliesToLocaleStringText} more replies}}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestMoreReplies.tsx#PullRequestMoreReplies
-#~ msgid "{moreRepliesToLocaleStringText} more {moreReplies1Text}"
-#~ msgstr "{moreRepliesToLocaleStringText} more {moreReplies1Text}"
 
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
 msgid "{name} · {color}"
@@ -1175,24 +1019,6 @@ msgstr "{named}: {entryStaleText}"
 msgid "{naturalWidthToLocaleStringText} × {naturalHeightToLocaleStringText}"
 msgstr "{naturalWidthToLocaleStringText} × {naturalHeightToLocaleStringText}"
 
-#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
-msgid "{navigationSlideText} {pageText} of {count}"
-msgstr "{navigationSlideText} {pageText} of {count}"
-
-#: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
-msgid "{niriText2} Change the keys if needed."
-msgstr "{niriText2} Change the keys if needed."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatView.logic.ts#buildExpiredTerminalContextToastCopy
-#~ msgid "{noun} omitted from message"
-#~ msgstr "{noun} omitted from message"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatView.logic.ts#buildExpiredTerminalContextToastCopy
-#~ msgid "{noun} won't be sent"
-#~ msgstr "{noun} won't be sent"
-
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
 msgid ""
 "{olderConversationCount, plural, one {Show # older conversation "
@@ -1215,11 +1041,6 @@ msgstr ""
 "{omittedItemCount, plural, one {{omittedItemCount} more change on GitHub} "
 "other {{omittedItemCount} more changes on GitHub}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#SidebarUpdateReleaseNotes
-#~ msgid "{omittedItemCount} more {omittedItemCount1Text} on GitHub"
-#~ msgstr "{omittedItemCount} more {omittedItemCount1Text} on GitHub"
-
 #: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#SidebarUpdateReleaseNotes
 msgid ""
 "{omittedReleaseCount, plural, one {{omittedReleaseCount_1} older release on "
@@ -1228,14 +1049,37 @@ msgstr ""
 "{omittedReleaseCount, plural, one {{omittedReleaseCount_1} older release on "
 "GitHub} other {{omittedReleaseCount_2} older releases on GitHub}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#SidebarUpdateReleaseNotes
-#~ msgid "{omittedReleaseCount} older {stateOmittedReleaseCount1Text} on GitHub"
-#~ msgstr "{omittedReleaseCount} older {stateOmittedReleaseCount1Text} on GitHub"
-
 #: apps/web/src/components/pullRequest/ThreadPullRequestsPanel.tsx#EnabledThreadPullRequestsPanel
 msgid "{openCount} open · {linkCount} linked{lastSyncedText}"
 msgstr "{openCount} open · {linkCount} linked{lastSyncedText}"
+
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid ""
+"{otherActionRequired, plural, one {{otherActionRequired} check awaiting "
+"action} other {{otherActionRequired} checks awaiting action}}"
+msgstr ""
+"{otherActionRequired, plural, one {{otherActionRequired} check awaiting "
+"action} other {{otherActionRequired} checks awaiting action}}"
+
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid ""
+"{otherActionRequired, plural, one {{workflowApprovalRequired} workflow and "
+"{otherActionRequired} check awaiting action} other {{workflowApprovalRequired}"
+" workflow and {otherActionRequired} checks awaiting action}}"
+msgstr ""
+"{otherActionRequired, plural, one {{workflowApprovalRequired} workflow and "
+"{otherActionRequired} check awaiting action} other {{workflowApprovalRequired}"
+" workflow and {otherActionRequired} checks awaiting action}}"
+
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid ""
+"{otherActionRequired, plural, one {{workflowApprovalRequired} workflows and "
+"{otherActionRequired} check awaiting action} other {{workflowApprovalRequired}"
+" workflows and {otherActionRequired} checks awaiting action}}"
+msgstr ""
+"{otherActionRequired, plural, one {{workflowApprovalRequired} workflows and "
+"{otherActionRequired} check awaiting action} other {{workflowApprovalRequired}"
+" workflows and {otherActionRequired} checks awaiting action}}"
 
 #: apps/web/src/components/chat/useForceStopThread.ts#forceStopThread
 msgid ""
@@ -1247,28 +1091,23 @@ msgstr ""
 "those to free it.} other {It is shared with {others0Text} working threads. "
 "Stop those to free it.}}"
 
-#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
-msgid "{ownerText}Tools update automatically on this host when needed."
-msgstr "{ownerText}Tools update automatically on this host when needed."
-
 #: apps/web/src/components/files/BinaryViewer.tsx
 msgid ""
 "{pageSQLITEPAGESIZEText}–{MathMinText} of {tableCountToLocaleStringText2}"
 msgstr ""
 "{pageSQLITEPAGESIZEText}–{MathMinText} of {tableCountToLocaleStringText2}"
 
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid "{passed} of {length} passing"
+msgstr "{passed} of {length} passing"
+
 #: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#ReviewThreadEvent
 msgid "{path}:{line}"
 msgstr "{path}:{line}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
-#~ msgid ""
-#~ "{pendingImageCount, plural, one {saving {pendingImageCount_1} image …} other"
-#~ " {saving {pendingImageCount_2} image s…}}"
-#~ msgstr ""
-#~ "{pendingImageCount, plural, one {saving {pendingImageCount_1} image …} other"
-#~ " {saving {pendingImageCount_2} image s…}}"
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid "{pending} of {length} running"
+msgstr "{pending} of {length} running"
 
 #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
 msgid ""
@@ -1281,10 +1120,6 @@ msgstr ""
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "{pendingLabel}."
 msgstr "{pendingLabel}."
-
-#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
-msgid "{progressAction}..."
-msgstr "{progressAction}..."
 
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "{projectSelector} to start"
@@ -1311,14 +1146,13 @@ msgstr ""
 "{providerCount, plural, one {{providerCount} provider update} other "
 "{{providerCount} provider updates}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
-#~ msgid "{providerCount} provider {providerCount1Text}"
-#~ msgstr "{providerCount} provider {providerCount1Text}"
+#: apps/web/src/components/chat/ProviderStatusBanner.tsx#ProviderStatusBanner
+msgid "{providerName} {statusVersionText} is known to be broken"
+msgstr "{providerName} {statusVersionText} is known to be broken"
 
 #: apps/web/src/components/chat/ProviderStatusBanner.tsx#ProviderStatusBanner
-msgid "{providerName} {statusVersionText} is {incompatibleStatusBrokenText}"
-msgstr "{providerName} {statusVersionText} is {incompatibleStatusBrokenText}"
+msgid "{providerName} {statusVersionText} is unsupported"
+msgstr "{providerName} {statusVersionText} is unsupported"
 
 #: apps/web/src/components/pullRequest/pullRequestDiffError.ts#describePullRequestDiffError
 msgid ""
@@ -1382,11 +1216,6 @@ msgstr ""
 "{resultCount, plural, one {{resultCount} compatible agent found.} other "
 "{{resultCount} compatible agents found.}}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistrySearchStep
-#~ msgid "{resultCount} compatible {resultCount1Text} found."
-#~ msgstr "{resultCount} compatible {resultCount1Text} found."
-
 #: apps/web/src/components/pullRequest/guide/GuideRail.tsx#GuideRail
 msgid "{reviewed} of {length} read"
 msgstr "{reviewed} of {length} read"
@@ -1395,23 +1224,38 @@ msgstr "{reviewed} of {length} read"
 msgid "{routeCount} routes"
 msgstr "{routeCount} routes"
 
+#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
+msgid ""
+"{running, plural, one {{running} running thread will be interrupted and can "
+"resume after the restart.} other {{running} running threads will be "
+"interrupted and can resume after the restart.}}"
+msgstr ""
+"{running, plural, one {{running} running thread will be interrupted and can "
+"resume after the restart.} other {{running} running threads will be "
+"interrupted and can resume after the restart.}}"
+
+#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
+msgid ""
+"{running, plural, one {{running} running thread will be interrupted. "
+"{continuing} can resume after the restart.} other {{running} running threads "
+"will be interrupted. {continuing} can resume after the restart.}}"
+msgstr ""
+"{running, plural, one {{running} running thread will be interrupted. "
+"{continuing} can resume after the restart.} other {{running} running threads "
+"will be interrupted. {continuing} can resume after the restart.}}"
+
+#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
+msgid ""
+"{running, plural, one {{running} running thread will be interrupted.} other "
+"{{running} running threads will be interrupted.}}"
+msgstr ""
+"{running, plural, one {{running} running thread will be interrupted.} other "
+"{{running} running threads will be interrupted.}}"
+
 #: apps/web/src/components/chat/useComposerMenuItems.ts#skillItems
 #: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
 msgid "{scope} skill"
 msgstr "{scope} skill"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ProviderModelPicker.tsx#ProviderModelPicker
-#~ msgid ""
-#~ "{selectedEntriesSlice02MapSelectionSelectionLabelJoinText}{selectedEntriesLeng"
-#~ "th2Text}"
-#~ msgstr ""
-#~ "{selectedEntriesSlice02MapSelectionSelectionLabelJoinText}{selectedEntriesLeng"
-#~ "th2Text}"
-
-#: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorField
-msgid "{selectedText} where {label} is used"
-msgstr "{selectedText} where {label} is used"
 
 #: apps/web/src/components/ServerUpdateAction.tsx#useServerUpdate
 msgid "{serverLabel} not updated"
@@ -1426,11 +1270,6 @@ msgstr "{serverLabel} update failed"
 #: apps/web/src/components/ServerUpdateAction.tsx#handleUpdate
 msgid "{serverLabel} updated"
 msgstr "{serverLabel} updated"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ThreadStatusIndicators.tsx#prStatusIndicator
-#~ msgid "{shortLabel} {stateLabelToLowerCaseText}"
-#~ msgstr "{shortLabel} {stateLabelToLowerCaseText}"
 
 #: apps/web/src/components/ThreadStatusIndicators.tsx#resolveThreadPullRequestBadgePresentation
 msgid "{shortLabel} #{number}, status pending"
@@ -1472,11 +1311,6 @@ msgstr ""
 msgid "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
 msgstr "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/GitActionsControl.tsx
-#~ msgid "{status} {output}"
-#~ msgstr "{status} {output}"
-
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseCount
 msgid "{StringText} notices"
 msgstr "{StringText} notices"
@@ -1507,11 +1341,11 @@ msgstr "{targetsLength1Text} Hosts on the same machine are skipped."
 
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ConnectionStep
 msgid ""
-"{telemetryOffText} To read more about how your data is "
-"used{telemetryOffUndefinedText}, see our <0>privacy policy</0>."
+"{telemetryOff} To read more about how your data is used, see our <0>privacy "
+"policy</0>."
 msgstr ""
-"{telemetryOffText} To read more about how your data is "
-"used{telemetryOffUndefinedText}, see our <0>privacy policy</0>."
+"{telemetryOff} To read more about how your data is used, see our <0>privacy "
+"policy</0>."
 
 #: apps/web/src/components/DiffPanel.tsx
 msgid ""
@@ -1528,20 +1362,6 @@ msgstr "{text} · {color}"
 #: apps/web/src/components/chat/TimelineWorkGroupRows.tsx#LiveWorkEntryTimelineRow
 msgid "{thoughtLineText}{threadLabelTextText}, tool call failed"
 msgstr "{thoughtLineText}{threadLabelTextText}, tool call failed"
-
-#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
-msgid "{threads} will be interrupted and can resume after the restart."
-msgstr "{threads} will be interrupted and can resume after the restart."
-
-#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
-msgid "{threads} will be interrupted."
-msgstr "{threads} will be interrupted."
-
-#: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
-msgid ""
-"{threads} will be interrupted. {continuing} can resume after the restart."
-msgstr ""
-"{threads} will be interrupted. {continuing} can resume after the restart."
 
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
 msgid "{timeLeft}% left by now"
@@ -1613,11 +1433,6 @@ msgstr "{tooltip}: {detail}"
 msgid "{tooltipLead}: {title}"
 msgstr "{tooltipLead}: {title}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ChangedFilesTree.tsx#ChangedFilesCard
-#~ msgid "{totalsCountToLocaleStringText} changed file{totalsCount1Text}"
-#~ msgstr "{totalsCountToLocaleStringText} changed file{totalsCount1Text}"
-
 #: apps/web/src/components/LegacyThreadMigrationToast.ts#startLegacyThreadMigrationToast
 msgid ""
 "{totalThreadCount, plural, one {Migrating "
@@ -1639,11 +1454,6 @@ msgstr "{unchangedProviderName} still needs an update"
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
 msgid "{unswitchedMachines} machines still run"
 msgstr "{unswitchedMachines} machines still run"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
-#~ msgid "{updateFailedText} {versionMismatchServerLabel}"
-#~ msgstr "{updateFailedText} {versionMismatchServerLabel}"
 
 #: apps/web/src/components/clerk/T3ChatUserProfilePage.tsx#planLabel
 msgid "{upgradeLink} for more tunnels"
@@ -1667,15 +1477,6 @@ msgstr ""
 msgid "{used} of {limit} tunnels in use"
 msgstr "{used} of {limit} tunnels in use"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
-#~ msgid ""
-#~ "{value, plural, one {{missingImageCountText} image  dropped} other "
-#~ "{{missingImageCountText} image s dropped}}"
-#~ msgstr ""
-#~ "{value, plural, one {{missingImageCountText} image  dropped} other "
-#~ "{{missingImageCountText} image s dropped}}"
-
 #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
 msgid ""
 "{value, plural, one {{missingImageCountText} image dropped} other "
@@ -1696,15 +1497,15 @@ msgstr ""
 "{webhookDenial} Switch this task to a time or an interval, or turn it off, to "
 "save it."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
-#~ msgid "{workflowCanSendNowText}{itemServerIndex0PropsSteerShortcutLabelText}"
-#~ msgstr "{workflowCanSendNowText}{itemServerIndex0PropsSteerShortcutLabelText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
-#~ msgid "/"
-#~ msgstr "/"
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid ""
+"{workflowApprovalRequired, plural, one {{workflowApprovalRequired} workflow "
+"awaiting approval} other {{workflowApprovalRequired} workflows awaiting "
+"approval}}"
+msgstr ""
+"{workflowApprovalRequired, plural, one {{workflowApprovalRequired} workflow "
+"awaiting approval} other {{workflowApprovalRequired} workflows awaiting "
+"approval}}"
 
 #: apps/web/src/components/chat/useComposerMenuItems.ts#providerSlashCommandItems
 msgid "/{name}"
@@ -1729,11 +1530,6 @@ msgstr "#{number} · {headBranch} to {baseBranch}"
 #: apps/web/src/components/BranchToolbarBranchSelector.tsx#BranchToolbarBranchSelector
 msgid "#{prNumber}{displayedPrTitleTrimText}"
 msgstr "#{prNumber}{displayedPrTitleTrimText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
-#~ msgid "+ {size} {selectedFilesSize1Text}"
-#~ msgstr "+ {size} {selectedFilesSize1Text}"
 
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#NetworkAccessDescription
 msgid "+{hiddenEndpointCount}"
@@ -1792,6 +1588,12 @@ msgstr "<0><1/></0>Collection health"
 msgid "<0><1/></0>Host state"
 msgstr "<0><1/></0>Host state"
 
+#: apps/web/src/components/files/LargeTextViewer.tsx
+#: apps/web/src/components/files/NotebookPreview.tsx
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "0 bytes"
+msgstr "0 bytes"
+
 #: apps/web/src/components/files/BinaryViewer.tsx
 msgid "0 rows"
 msgstr "0 rows"
@@ -1828,6 +1630,14 @@ msgstr "90 days"
 msgid "A background prompt could not be sent"
 msgstr "A background prompt could not be sent"
 
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+msgid ""
+"A blank token uses the machine's <0>AGENT_DEVICE_DAEMON_AUTH_TOKEN</0> when "
+"its <1>AGENT_DEVICE_DAEMON_BASE_URL</1> is this gateway."
+msgstr ""
+"A blank token uses the machine's <0>AGENT_DEVICE_DAEMON_AUTH_TOKEN</0> when "
+"its <1>AGENT_DEVICE_DAEMON_BASE_URL</1> is this gateway."
+
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid ""
 "A comment is anchored to the whole change, so switch to All commits to write "
@@ -1844,9 +1654,21 @@ msgstr "A community color theme for your editor."
 msgid "A contract to check"
 msgstr "A contract to check"
 
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
+msgid ""
+"A guide is a tour of the change: stops through the code in reading order, with"
+" the calls only a maintainer can make."
+msgstr ""
+"A guide is a tour of the change: stops through the code in reading order, with"
+" the calls only a maintainer can make."
+
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
-msgid "A lease ends after the lease minutes even while in use.{propsIsNewText}"
-msgstr "A lease ends after the lease minutes even while in use.{propsIsNewText}"
+msgid "A lease ends after the lease minutes even while in use."
+msgstr "A lease ends after the lease minutes even while in use."
+
+#: apps/web/src/components/chat/LinkRequestCard.tsx#linkRequestTargetName
+msgid "a machine"
+msgstr "a machine"
 
 #: apps/web/src/components/chat/GuestShareControls.tsx#GuestShareDialog
 msgid "A new link ends the current one."
@@ -1929,11 +1751,6 @@ msgstr "Accept"
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockTokenField
 msgid "Accepted as {signedInAs}."
 msgstr "Accepted as {signedInAs}."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
-#~ msgid "access"
-#~ msgstr "access"
 
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx
 msgid "Access"
@@ -2029,11 +1846,6 @@ msgstr "Actions not saved"
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 msgid "Activating installation"
 msgstr "Activating installation"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
-#~ msgid "active"
-#~ msgstr "active"
 
 #: apps/web/src/components/Sidebar.tsx
 msgid "Active"
@@ -2324,6 +2136,14 @@ msgstr "Add T3 Connect"
 msgid "Add theme"
 msgstr "Add theme"
 
+#: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+msgid ""
+"Add this binding to your Hyprland config, then save. Change the keys if "
+"needed."
+msgstr ""
+"Add this binding to your Hyprland config, then save. Change the keys if "
+"needed."
+
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#renderAnnotation
 msgid "Add to agent"
 msgstr "Add to agent"
@@ -2391,11 +2211,6 @@ msgstr "Adds this side chat to the main thread's next message."
 #: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
 msgid "Adjust the contrast of colors and borders across the interface."
 msgstr "Adjust the contrast of colors and borders across the interface."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
-#~ msgid "advanced"
-#~ msgstr "advanced"
 
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
 #: apps/web/src/components/settings/AdvancedSettings.tsx#AdvancedSettings
@@ -2525,9 +2340,17 @@ msgstr "All"
 msgid "All {filteredOutCount} comments are hidden by the filter."
 msgstr "All {filteredOutCount} comments are hidden by the filter."
 
+#: apps/web/src/components/settings/settingsScope.ts#resolveSettingsScope
+msgid "All checkouts"
+msgstr "All checkouts"
+
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 msgid "All checks have passed"
 msgstr "All checks have passed"
+
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
+msgid "All checks passed"
+msgstr "All checks passed"
 
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "All commits"
@@ -3192,11 +3015,6 @@ msgstr "attempt {attempt}"
 msgid "Attempted path<0>{attemptedPath}</0>"
 msgstr "Attempted path<0>{attemptedPath}</0>"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ChatMarkdownMedia.tsx#ChatMarkdownMediaUnavailableLabel
-#~ msgid "audio"
-#~ msgstr "audio"
-
 #: apps/web/src/components/chat/ChatMarkdownMedia.tsx#ChatMarkdownMediaUnavailableLabel
 msgid "Audio unavailable"
 msgstr "Audio unavailable"
@@ -3204,11 +3022,6 @@ msgstr "Audio unavailable"
 #: apps/web/src/components/files/AudioPreview.tsx#AudioChip
 msgid "Audio unavailable. Open the file or retry playback."
 msgstr "Audio unavailable. Open the file or retry playback."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
-#~ msgid "authenticated"
-#~ msgstr "authenticated"
 
 #: apps/web/src/components/settings/SourceControlSettings.tsx#authPresentation
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
@@ -3412,11 +3225,6 @@ msgstr "Awaiting Input"
 msgid "Awaiting review"
 msgstr "Awaiting review"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarChrome.tsx#HistoryNavigationButton
-#~ msgid "back"
-#~ msgstr "back"
-
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 #: apps/web/src/components/CommandPaletteContent.tsx#CommandPaletteContent
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
@@ -3465,11 +3273,6 @@ msgstr "Backend added"
 #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
 msgid "Backend paired"
 msgstr "Backend paired"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useComposerSend.ts#onSend
-#~ msgid "background"
-#~ msgstr "background"
 
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx#renderColorFields
@@ -3559,23 +3362,6 @@ msgstr ""
 "Beyond read only, it can start, message and stop threads, and none of them can"
 " run with more than the mode you pick."
 
-#: apps/web/src/components/ui/badge.tsx
-msgid ""
-"bg-[color-mix(in_srgb,var(--label)_8%,transparent)] "
-"text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] "
-"dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] "
-"dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]"
-msgstr ""
-"bg-[color-mix(in_srgb,var(--label)_8%,transparent)] "
-"text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] "
-"dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] "
-"dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
-#~ msgid "binary"
-#~ msgstr "binary"
-
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
 msgid "Binary path"
 msgstr "Binary path"
@@ -3587,10 +3373,10 @@ msgstr "Bing"
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid ""
 "Blank cache rates use the input price. Enter 0 for free tokens. A mapped "
-"model’s usage counts as the model it maps to.{selectedLength1Text}"
+"model’s usage counts as the model it maps to."
 msgstr ""
 "Blank cache rates use the input price. Enter 0 for free tokens. A mapped "
-"model’s usage counts as the model it maps to.{selectedLength1Text}"
+"model’s usage counts as the model it maps to."
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
 msgid "Blank profile"
@@ -3967,11 +3753,6 @@ msgstr "Cancel new keybinding"
 msgid "Cancel sign-in"
 msgstr "Cancel sign-in"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
-#~ msgid "cancelled"
-#~ msgstr "cancelled"
-
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 msgid "Cancelled"
 msgstr "Cancelled"
@@ -3984,11 +3765,6 @@ msgstr "Cancelled cloning {name}"
 #: apps/web/src/components/CommandPalette.tsx#handleAddProjectForEnvironment
 msgid "Cannot add project"
 msgstr "Cannot add project"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeEditorPanel.tsx#renderColorFields
-#~ msgid "canvas"
-#~ msgstr "canvas"
 
 #: apps/web/src/components/desktop/SnapShotCoordinator.tsx#operation
 msgid "Capture {id}: {errorInstanceofErrorText}"
@@ -4053,12 +3829,24 @@ msgid "Caution"
 msgstr "Caution"
 
 #: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Cell values only. Charts, images, and formatting are not shown."
+msgstr "Cell values only. Charts, images, and formatting are not shown."
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
 msgid ""
-"Cell values only. Charts, images, and formatting are not "
-"shown.{sheetTruncatedText}"
+"Cell values only. Charts, images, and formatting are not shown. Limited to 500"
+" rows and 50 columns."
 msgstr ""
-"Cell values only. Charts, images, and formatting are not "
-"shown.{sheetTruncatedText}"
+"Cell values only. Charts, images, and formatting are not shown. Limited to 500"
+" rows and 50 columns."
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid ""
+"Cell values only. Charts, images, and formatting are not shown. Preview "
+"limited to 250,000 rows, 1,024 columns, and bounded cell text."
+msgstr ""
+"Cell values only. Charts, images, and formatting are not shown. Preview "
+"limited to 250,000 rows, 1,024 columns, and bounded cell text."
 
 #: apps/web/src/components/preview/previewConstants.ts
 msgid "Certificate authority is not trusted"
@@ -4158,10 +3946,9 @@ msgstr "Changing labels needs triage access on this repository"
 msgid "Chapter"
 msgstr "Chapter"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/files/extendedDocumentPreview.ts#openEpub
-#~ msgid "Chapter {pagesLengthText}"
-#~ msgstr "Chapter {pagesLengthText}"
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Chapter {chapterNumber} of {documentCount}"
+msgstr "Chapter {chapterNumber} of {documentCount}"
 
 #: apps/web/src/components/chat/composerSubmission.ts#getComposerPromptLengthValidationMessage
 msgid "character"
@@ -4304,6 +4091,10 @@ msgid ""
 msgstr ""
 "Check the host connection and network access, then retry. Your device settings"
 " are saved."
+
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
+msgid "Check the review guide model in Settings → Source control."
+msgstr "Check the review guide model in Settings → Source control."
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#versionActions
 msgid "Check versions"
@@ -4530,10 +4321,6 @@ msgstr ""
 "Choices in every snooze menu, listed soonest first. Weekdays mean the next one"
 " after today."
 
-#: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
-msgid "Choose {fileChooserMultipleText2}"
-msgstr "Choose {fileChooserMultipleText2}"
-
 #: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorPicker
 msgid "Choose {label} color"
 msgstr "Choose {label} color"
@@ -4614,10 +4401,12 @@ msgstr "Choose colors for additions and deletions, including change counts."
 msgid "Choose editor"
 msgstr "Choose editor"
 
+#: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
 msgid "Choose file"
 msgstr "Choose file"
 
+#: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#chooseButton
 msgid "Choose files"
 msgstr "Choose files"
@@ -4808,8 +4597,12 @@ msgid "Cleared {name}'s cookies and cache"
 msgstr "Cleared {name}'s cookies and cache"
 
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-msgid "CLI Proxy{sourceEnabledText}{labelSourceUrlText}"
-msgstr "CLI Proxy{sourceEnabledText}{labelSourceUrlText}"
+msgid "CLI Proxy · Disabled{labelSourceUrlText}"
+msgstr "CLI Proxy · Disabled{labelSourceUrlText}"
+
+#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
+msgid "CLI Proxy{labelSourceUrlText}"
+msgstr "CLI Proxy{labelSourceUrlText}"
 
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 msgid "Click"
@@ -4836,16 +4629,6 @@ msgid "Click the shortcut, then press the keys you want."
 msgstr "Click the shortcut, then press the keys you want."
 
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid ""
-"Click to {followUpBehavior}, "
-"{isMacPlatformNavigatorPlatformText}-click{alternateShortcutLabelText} to "
-"{alternateAction}"
-msgstr ""
-"Click to {followUpBehavior}, "
-"{isMacPlatformNavigatorPlatformText}-click{alternateShortcutLabelText} to "
-"{alternateAction}"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Click to compact first"
 msgstr "Click to compact first"
 
@@ -4867,6 +4650,18 @@ msgstr "Click to hide email"
 msgid "Click to keep full history"
 msgstr "Click to keep full history"
 
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid ""
+"Click to queue, {isMacPlatformNavigatorPlatformText}-click or "
+"{alternateShortcutLabel} to steer"
+msgstr ""
+"Click to queue, {isMacPlatformNavigatorPlatformText}-click or "
+"{alternateShortcutLabel} to steer"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid "Click to queue, {isMacPlatformNavigatorPlatformText}-click to steer"
+msgstr "Click to queue, {isMacPlatformNavigatorPlatformText}-click to steer"
+
 #: apps/web/src/components/chat/ComposerUsageLimits.tsx#AccountSummary
 #: apps/web/src/components/settings/SecretsSettings.tsx#EnvironmentSecretProviders
 #: apps/web/src/components/settings/SourceControlSettings.tsx#RedactedAccount
@@ -4880,6 +4675,18 @@ msgstr "Click to reveal account"
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
 msgid "Click to reveal email"
 msgstr "Click to reveal email"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid ""
+"Click to steer, {isMacPlatformNavigatorPlatformText}-click or "
+"{alternateShortcutLabel} to queue"
+msgstr ""
+"Click to steer, {isMacPlatformNavigatorPlatformText}-click or "
+"{alternateShortcutLabel} to queue"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid "Click to steer, {isMacPlatformNavigatorPlatformText}-click to queue"
+msgstr "Click to steer, {isMacPlatformNavigatorPlatformText}-click to queue"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#PullRequestLinksOpenInAppSetting
 msgid ""
@@ -4990,6 +4797,10 @@ msgstr "Clone protocol"
 #: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
 msgid "Clone to {targetLabelText2}"
 msgstr "Clone to {targetLabelText2}"
+
+#: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
+msgid "Clone to machine"
+msgstr "Clone to machine"
 
 #: apps/web/src/components/CommandPalette.tsx#submitAddProjectCloneFlow
 msgid "Clone unavailable"
@@ -5127,11 +4938,6 @@ msgstr "Closed"
 #: apps/web/src/components/pullRequest/usePullRequestActions.ts#close
 msgid "Closed {closed} of {length} pull requests"
 msgstr "Closed {closed} of {length} pull requests"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/usePullRequestActions.ts#close
-#~ msgid "Closed {closed} pull request{closed1Text}"
-#~ msgstr "Closed {closed} pull request{closed1Text}"
 
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#PullRequestCommentForm
 msgid "Closing..."
@@ -5318,16 +5124,6 @@ msgstr "Command approval"
 msgid "Command palette"
 msgstr "Command palette"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ThreadActivityBanners.tsx#rows
-#~ msgid "command_execution"
-#~ msgstr "command_execution"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderSettingsForm.tsx#deriveProviderSettingsFields
-#~ msgid "commandPath"
-#~ msgstr "commandPath"
-
 #: apps/web/src/components/settings/ProjectActionsSettings.tsx#ProjectActionsSettings
 msgid ""
 "Commands that run in this project's checkout or its worktree, with optional "
@@ -5375,11 +5171,6 @@ msgstr ""
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 msgid "Comments unavailable"
 msgstr "Comments unavailable"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/DiffPanel.tsx
-#~ msgid "commit"
-#~ msgstr "commit"
 
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/GitActionsControl.logic.ts#buildMenuItems
@@ -5466,20 +5257,10 @@ msgstr "Complete a run in this fork before merging it back"
 msgid "Complete sign-in in the terminal below."
 msgstr "Complete sign-in in the terminal below."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/session-logic.ts#providerErrorPresentation
-#~ msgid "completed"
-#~ msgstr "completed"
-
 #: apps/web/src/components/Sidebar.logic.ts#resolveThreadStatusPill
 #: apps/web/src/components/chat/V2LifecycleRow.tsx
 msgid "Completed"
 msgstr "Completed"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ThreadNotificationCoordinator.tsx#present
-#~ msgid "completion"
-#~ msgstr "completion"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#AttributionTable
 msgid "Component"
@@ -5599,18 +5380,17 @@ msgstr "Confirmations"
 msgid "Confirming the dev server is running"
 msgstr "Confirming the dev server is running"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailActions.tsx#PullRequestResolveConflictsButton
-#~ msgid "conflicts"
-#~ msgstr "conflicts"
-
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#resolvePullRequestConflict
 msgid "Conflicts with {baseBranch}"
 msgstr "Conflicts with {baseBranch}"
 
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingConflictWarning
-msgid "Conflicts with {labelsSlice03JoinText}{labelsLength3Text}."
-msgstr "Conflicts with {labelsSlice03JoinText}{labelsLength3Text}."
+msgid "Conflicts with {labelsSlice03JoinText}, and more."
+msgstr "Conflicts with {labelsSlice03JoinText}, and more."
+
+#: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingConflictWarning
+msgid "Conflicts with {labelsSlice03JoinText}."
+msgstr "Conflicts with {labelsSlice03JoinText}."
 
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingConflictWarning
 msgid "Conflicts with {messageText2}."
@@ -5661,13 +5441,17 @@ msgstr ""
 "Connect an environment to manage the secret providers its provider variables "
 "read from."
 
-#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
-msgid "Connect an environment to see {showingLimitsText}."
-msgstr "Connect an environment to see {showingLimitsText}."
-
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Connect an environment to see diagnostics."
 msgstr "Connect an environment to see diagnostics."
+
+#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
+msgid "Connect an environment to see limits."
+msgstr "Connect an environment to see limits."
+
+#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
+msgid "Connect an environment to see usage."
+msgstr "Connect an environment to see usage."
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Connect an environment to set model prices."
@@ -5795,11 +5579,6 @@ msgstr "Connections"
 msgid "Contacts"
 msgstr "Contacts"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/CommandPalette.tsx#CommandPaletteDialog
-#~ msgid "content"
-#~ msgstr "content"
-
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#ThreadDetailsContext
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Context"
@@ -5875,6 +5654,10 @@ msgstr "Context: {usedTokens} tokens used"
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
 msgid "Continue"
 msgstr "Continue"
+
+#: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
+msgid "Continue as {requestedAccountEmail} on OpenAI."
+msgstr "Continue as {requestedAccountEmail} on OpenAI."
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
 msgid "Continue authentication"
@@ -6291,11 +6074,6 @@ msgstr "Could not connect to this device"
 msgid "Could not continue authentication"
 msgstr "Could not continue authentication"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/lib/addProjectToMachine.ts#addProjectToMachine
-#~ msgid "Could not copy {length} {failedLength1Text} to {label}"
-#~ msgstr "Could not copy {length} {failedLength1Text} to {label}"
-
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
 msgid "Could not copy {providerName} update command"
 msgstr "Could not copy {providerName} update command"
@@ -6634,8 +6412,12 @@ msgid "Could not revoke pairing link"
 msgstr "Could not revoke pairing link"
 
 #: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
-msgid "Could not rewrite this guide. {FAILURE_HINT}"
-msgstr "Could not rewrite this guide. {FAILURE_HINT}"
+msgid ""
+"Could not rewrite this guide. Check the review guide model in Settings → "
+"Source control."
+msgstr ""
+"Could not rewrite this guide. Check the review guide model in Settings → "
+"Source control."
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#rotateUrl
 msgid "Could not rotate webhook URL"
@@ -6658,6 +6440,7 @@ msgid "Could not save maintainer access"
 msgstr "Could not save maintainer access"
 
 #: apps/web/src/hooks/useSettings.ts#persistServerSettings
+#: apps/web/src/hooks/useSettings.ts#failures
 msgid "Could not save on {label}: {errorInstanceofErrorText}"
 msgstr "Could not save on {label}: {errorInstanceofErrorText}"
 
@@ -6745,8 +6528,12 @@ msgid "Could not stop workflow"
 msgstr "Could not stop workflow"
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#handleSetSavedBackendEnabled
-msgid "Could not switch backend {enabledText2}"
-msgstr "Could not switch backend {enabledText2}"
+msgid "Could not switch backend off"
+msgstr "Could not switch backend off"
+
+#: apps/web/src/components/settings/ConnectionsSettings.tsx#handleSetSavedBackendEnabled
+msgid "Could not switch backend on"
+msgstr "Could not switch backend on"
 
 #: apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx#fail
 msgid "Could not switch to {label}"
@@ -6881,11 +6668,6 @@ msgstr "Couldn’t save theme selection"
 msgid "Couldn’t start a new thread"
 msgstr "Couldn’t start a new thread"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#PullRequestChecksPopover
-#~ msgid "count"
-#~ msgstr "count"
-
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#AttributionTable
 msgid "Count"
 msgstr "Count"
@@ -6984,6 +6766,22 @@ msgstr ""
 "Create one in Settings → Sharing & access, or run <0>t3 auth pairing "
 "create</0> on this machine."
 
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+msgid ""
+"Create one per environment with <0>simlock --gateway token create --role "
+"agent</0>, or leave it blank to add it later."
+msgstr ""
+"Create one per environment with <0>simlock --gateway token create --role "
+"agent</0>, or leave it blank to add it later."
+
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+msgid ""
+"Create one with <0>simlock --gateway token create --role agent</0>, or leave "
+"it blank to add it later."
+msgstr ""
+"Create one with <0>simlock --gateway token create --role agent</0>, or leave "
+"it blank to add it later."
+
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AuthorizedClientsHeaderAction
 msgid "Create pairing link"
 msgstr "Create pairing link"
@@ -7062,16 +6860,24 @@ msgstr "Creating…"
 msgid "Creation"
 msgstr "Creation"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
-#~ msgid "credentials"
-#~ msgstr "credentials"
-
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingPill
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Ctrl"
 msgstr "Ctrl"
+
+#: apps/web/src/components/chat/ThreadServersPanel.tsx#ThreadServersList
+msgid "Ctrl-click"
+msgstr "Ctrl-click"
+
+#: apps/web/src/components/QuitHoldOverlay.tsx#QuitHoldOverlay
+msgid "Ctrl+Q"
+msgstr "Ctrl+Q"
+
+#: apps/web/src/components/chat/useComposerAttachmentIntake.ts#addComposerAttachments
+msgid "Ctrl+Shift+V"
+msgstr "Ctrl+Shift+V"
 
 #: apps/web/src/components/CommandPaletteThemeItems.tsx#useCommandPaletteThemeItems
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#ProcessResourceHistoryTable
@@ -7625,11 +7431,6 @@ msgstr "Details"
 msgid "detected"
 msgstr "detected"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/i18n/locale.ts
-#~ msgid "Deutsch"
-#~ msgstr "Deutsch"
-
 #: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
 #: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
 msgid "Dev artwork"
@@ -7651,6 +7452,7 @@ msgid "Device discovery warning · {label}"
 msgstr "Device discovery warning · {label}"
 
 #: apps/web/src/components/RightPanelTabs.tsx#DeviceTabTooltip
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 #: apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx#DeviceMiniPlayer
 msgid "Device host"
 msgstr "Device host"
@@ -7702,6 +7504,7 @@ msgstr "Device tools"
 msgid "Device unavailable"
 msgstr "Device unavailable"
 
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#DeviceIntegrationSettings
 #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#ProviderSettingsPanelContent
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -8004,11 +7807,6 @@ msgstr "Done"
 msgid "Double press"
 msgstr "Double press"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
-#~ msgid "download"
-#~ msgstr "download"
-
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewFileNotShown
 msgid "Download"
 msgstr "Download"
@@ -8052,21 +7850,24 @@ msgstr "Downloading"
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid ""
-"Downloading {installationDownloadedBytes1000000ToFixedText} "
-"MB{installationTotalBytesNullText}."
+"Downloading {installationDownloadedBytes1000000ToFixedText} MB of "
+"{installationTotalBytesNullText} MB."
 msgstr ""
-"Downloading {installationDownloadedBytes1000000ToFixedText} "
-"MB{installationTotalBytesNullText}."
+"Downloading {installationDownloadedBytes1000000ToFixedText} MB of "
+"{installationTotalBytesNullText} MB."
+
+#: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
+#: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
+msgid "Downloading {installationDownloadedBytes1000000ToFixedText} MB."
+msgstr "Downloading {installationDownloadedBytes1000000ToFixedText} MB."
 
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 msgid ""
-"Downloading "
-"{installationDownloadedBytes1000000ToFixedText}{installationTotalBytesNullText"
-"} MB."
+"Downloading {installationDownloadedBytes1000000ToFixedText} of "
+"{installationTotalBytesNullText} MB."
 msgstr ""
-"Downloading "
-"{installationDownloadedBytes1000000ToFixedText}{installationTotalBytesNullText"
-"} MB."
+"Downloading {installationDownloadedBytes1000000ToFixedText} of "
+"{installationTotalBytesNullText} MB."
 
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 msgid "Downloading relay client"
@@ -8130,12 +7931,6 @@ msgstr "Duplicate theme"
 #: apps/web/src/components/CustomSnoozeDialog.tsx#CustomSnoozeDialog
 msgid "Duration"
 msgstr "Duration"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/MessagesTimeline.logic.ts#singleToolCallLabel
-#~ #: apps/web/src/components/chat/MessagesTimeline.logic.ts#workEntryDisplayLabel
-#~ msgid "dynamic_tool"
-#~ msgstr "dynamic_tool"
 
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx#renderNameField
 msgid "e.g. Aurora"
@@ -8322,6 +8117,10 @@ msgstr "Edited tracked files"
 msgid "Editing in the composer"
 msgstr "Editing in the composer"
 
+#: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
+msgid "editor"
+msgstr "editor"
+
 #: apps/web/src/components/GitActionsControl.tsx#openChangedFileInEditor
 msgid "Editor opening is unavailable."
 msgstr "Editor opening is unavailable."
@@ -8355,11 +8154,6 @@ msgstr ""
 #: apps/web/src/projectIconColors.ts
 msgid "Emerald"
 msgstr "Emerald"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
-#~ msgid "emoji"
-#~ msgstr "emoji"
 
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Emoji"
@@ -8471,11 +8265,6 @@ msgstr "Encoding"
 msgid "Endpoint the pairing QR code and URL use"
 msgstr "Endpoint the pairing QR code and URL use"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/i18n/locale.ts
-#~ msgid "English"
-#~ msgstr "English"
-
 #: apps/web/src/components/GitHubStarPrompt.tsx#showStarPrompt
 msgid "Enjoying T3 Code?"
 msgstr "Enjoying T3 Code?"
@@ -8490,9 +8279,17 @@ msgstr "Enter"
 msgid "Enter a backend host and pairing code."
 msgstr "Enter a backend host and pairing code."
 
+#: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
+msgid "Enter a new value to rename a saved one or make it plain text."
+msgstr "Enter a new value to rename a saved one or make it plain text."
+
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
-msgid "Enter a path relative to <0>{workspaceRootText}</0>."
-msgstr "Enter a path relative to <0>{workspaceRootText}</0>."
+msgid "Enter a path relative to <0>{workspaceRoot}</0>."
+msgstr "Enter a path relative to <0>{workspaceRoot}</0>."
+
+#: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
+msgid "Enter a path relative to the workspace."
+msgstr "Enter a path relative to the workspace."
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid "Enter a port from 1 to 65535."
@@ -8571,6 +8368,7 @@ msgstr "Environment and worktree"
 msgid "Environment connected"
 msgstr "Environment connected"
 
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEnvironmentSection
 msgid "Environment disconnected"
 msgstr "Environment disconnected"
@@ -8622,12 +8420,6 @@ msgstr ""
 msgid "ERR_{MathAbsCodeText}"
 msgstr "ERR_{MathAbsCodeText}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
-#~ #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#EnvironmentUnavailablePlaceholder
-#~ msgid "error"
-#~ msgstr "error"
-
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Error"
 msgstr "Error"
@@ -8643,11 +8435,6 @@ msgstr "Error report"
 #: apps/web/src/components/CommandPaletteContent.tsx#CommandPaletteContent
 msgid "Esc"
 msgstr "Esc"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/i18n/locale.ts
-#~ msgid "Español"
-#~ msgstr "Español"
 
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
 msgid "Even pace"
@@ -8770,11 +8557,15 @@ msgstr "Expo access token"
 msgid ""
 "Expo allows sessions of up to 40 minutes on free accounts and 115 on paid "
 "ones, and ends one after the idle minutes without activity, so idle minutes "
-"must be smaller than session minutes.{propsIsNewText}"
+"must be smaller than session minutes."
 msgstr ""
 "Expo allows sessions of up to 40 minutes on free accounts and 115 on paid "
 "ones, and ends one after the idle minutes without activity, so idle minutes "
-"must be smaller than session minutes.{propsIsNewText}"
+"must be smaller than session minutes."
+
+#: apps/web/src/components/settings/EasDeviceHostEditor.tsx
+msgid "EXPO_TOKEN on the server"
+msgstr "EXPO_TOKEN on the server"
 
 #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibraryCard
 msgid "Export theme file"
@@ -8784,11 +8575,6 @@ msgstr "Export theme file"
 msgid "Extension installed"
 msgstr "Extension installed"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/files/office/word-text.ts#common
-#~ msgid "external"
-#~ msgstr "external"
-
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 msgid "Extra High"
 msgstr "Extra High"
@@ -8796,12 +8582,6 @@ msgstr "Extra High"
 #: apps/web/src/components/device/DeviceToolsPanel.tsx
 msgid "Extra large"
 msgstr "Extra large"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
-#~ #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
-#~ msgid "extracting"
-#~ msgstr "extracting"
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Extracting Antigravity."
@@ -8987,11 +8767,6 @@ msgstr "Failed to send message."
 msgid "Failed to settle thread"
 msgstr "Failed to settle thread"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
-#~ msgid "Failed to snooze {length} thread{failuresLength1Text}"
-#~ msgstr "Failed to snooze {length} thread{failuresLength1Text}"
-
 #: apps/web/src/components/Sidebar.tsx#attemptSnooze
 msgid "Failed to snooze thread"
 msgstr "Failed to snooze thread"
@@ -9009,8 +8784,12 @@ msgid "Failed to switch ref."
 msgstr "Failed to switch ref."
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#handleSetSavedBackendEnabled
-msgid "Failed to switch the backend {enabledText}."
-msgstr "Failed to switch the backend {enabledText}."
+msgid "Failed to switch the backend off."
+msgstr "Failed to switch the backend off."
+
+#: apps/web/src/components/settings/ConnectionsSettings.tsx#handleSetSavedBackendEnabled
+msgid "Failed to switch the backend on."
+msgstr "Failed to switch the backend on."
 
 #: apps/web/src/components/Sidebar.tsx#attemptUnsettle
 #: apps/web/src/components/chat/useThreadLifecycle.tsx#handleUnsettleActiveThread
@@ -9046,12 +8825,6 @@ msgstr "Failed to wake thread"
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 msgid "Failing"
 msgstr "Failing"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/OpenSourceLicenses.tsx#OpenSourceLicensesPanel
-#~ #: apps/web/src/state/queries.ts#usePaginatedBranches
-#~ msgid "Failure"
-#~ msgstr "Failure"
 
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Failures"
@@ -9119,11 +8892,6 @@ msgstr "File picker"
 #: apps/web/src/components/chat/TimelinePendingApprovalRow.tsx
 msgid "File read approval"
 msgstr "File read approval"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/MessagesTimeline.logic.ts#workEntryDisplayLabel
-#~ msgid "file_search"
-#~ msgstr "file_search"
 
 #: apps/web/src/components/chat/ThreadDetailsPrRow.tsx#ThreadDetailsPrRow
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
@@ -9226,6 +8994,10 @@ msgstr "Find in thread"
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Find open-source themes from Open VSX."
 msgstr "Find open-source themes from Open VSX."
+
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+msgid "Finding devices…"
+msgstr "Finding devices…"
 
 #: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
 msgid "Finding ignored files…"
@@ -9344,6 +9116,10 @@ msgstr "Folder"
 msgid "Folder on {targetLabelText}"
 msgstr "Folder on {targetLabelText}"
 
+#: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
+msgid "Folder on the other machine"
+msgstr "Folder on the other machine"
+
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ImportCandidateList
 msgid "folders"
 msgstr "folders"
@@ -9437,11 +9213,6 @@ msgstr "Found in the stack"
 msgid "Foundation"
 msgstr "Foundation"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/i18n/locale.ts
-#~ msgid "Français"
-#~ msgstr "Français"
-
 #: apps/web/src/components/settings/SnoozePresetsSettings.tsx
 msgid "Friday"
 msgstr "Friday"
@@ -9453,11 +9224,6 @@ msgstr "From"
 #: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
 msgid "From {activeThreadLinkOrigin}"
 msgstr "From {activeThreadLinkOrigin}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
-#~ msgid "from <0>{variable}</0>"
-#~ msgstr "from <0>{variable}</0>"
 
 #: apps/web/src/components/ProjectScriptsControl.tsx
 msgid "From t3.json"
@@ -9474,11 +9240,6 @@ msgstr "From the thread's project"
 #: apps/web/src/projectIconColors.ts
 msgid "Fuchsia"
 msgstr "Fuchsia"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/scopedSettings.ts#failedEnvironments
-#~ msgid "fulfilled"
-#~ msgstr "fulfilled"
 
 #: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
 msgid "Full"
@@ -9677,6 +9438,10 @@ msgstr ""
 "Grouping rule decides how each checkout joins project groups in the sidebar. "
 "Changing it can move a checkout to a different project."
 
+#: apps/web/src/components/chat/GuestShareControls.tsx#GuestPendingMessages
+msgid "Guest"
+msgstr "Guest"
+
 #: apps/web/src/components/chat/GuestShareControls.tsx#GuestShareDialog
 msgid "Guest link"
 msgstr "Guest link"
@@ -9771,6 +9536,10 @@ msgstr "Hide"
 msgid "Hide {label} accounts"
 msgstr "Hide {label} accounts"
 
+#: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorField
+msgid "Hide {label} usage"
+msgstr "Hide {label} usage"
+
 #: apps/web/src/components/settings/SourceControlAppSignInSettings.tsx#SourceControlAppSignInSettings
 msgid "Hide account"
 msgstr "Hide account"
@@ -9815,6 +9584,10 @@ msgstr "Hide the question and its options"
 msgid "Hide this server's threads. Switch it on again in Environments."
 msgstr "Hide this server's threads. Switch it on again in Environments."
 
+#: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorField
+msgid "Hide where {label} is used"
+msgstr "Hide where {label} is used"
+
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -9844,11 +9617,6 @@ msgstr "Highlight mouse presses and held buttons in new recordings."
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Highlight surface"
 msgstr "Highlight surface"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/QuitHoldOverlay.tsx#QuitHoldOverlay
-#~ msgid "hold"
-#~ msgstr "hold"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx
 msgid "Hold"
@@ -9958,11 +9726,6 @@ msgstr "HTTPS endpoint"
 msgid "HTTPS port"
 msgstr "HTTPS port"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
-#~ msgid "hub"
-#~ msgstr "hub"
-
 #: apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx#AddUsageLimitSourceDialog
 msgid "Hub URL"
 msgstr "Hub URL"
@@ -10002,11 +9765,6 @@ msgstr "Identity file"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Identity: <0>PID + start time</0>"
 msgstr "Identity: <0>PID + start time</0>"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
-#~ msgid "idle"
-#~ msgstr "idle"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Idle"
@@ -10079,11 +9837,6 @@ msgstr "Implementation actions"
 msgid "Import"
 msgstr "Import"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ImportStep
-#~ msgid "Import {length} {selectedLength1Text}"
-#~ msgstr "Import {length} {selectedLength1Text}"
-
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
 msgid "Import from"
 msgstr "Import from"
@@ -10124,11 +9877,6 @@ msgstr "Imported"
 msgid "Imported {cookieResultCountText}"
 msgstr "Imported {cookieResultCountText}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/onboarding/WelcomeWizard.tsx#completion
-#~ msgid "Imported {importedThreadCount} {importedThreadCount1Text}"
-#~ msgstr "Imported {importedThreadCount} {importedThreadCount1Text}"
-
 #: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
 msgid "Importing"
 msgstr "Importing"
@@ -10141,11 +9889,6 @@ msgstr "Importing cookies"
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ImportingStep
 msgid "Importing…"
 msgstr "Importing…"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookFiltersField
-#~ msgid "in"
-#~ msgstr "in"
 
 #: apps/web/src/components/settings/SnoozePresetsSettings.tsx
 msgid "In"
@@ -10230,6 +9973,10 @@ msgstr "Included with T3 Code. No download needed."
 msgid "Includes ignored files, except node_modules."
 msgstr "Includes ignored files, except node_modules."
 
+#: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
+msgid "Incompatible"
+msgstr "Incompatible"
+
 #: apps/web/src/components/settings/SnoozePresetsSettings.tsx#DurationFields
 msgid "Increase"
 msgstr "Increase"
@@ -10311,20 +10058,19 @@ msgstr "Inspect processes, resource use, and logs on one environment at a time."
 msgid "Inspect processes, resource use, and logs on this environment."
 msgstr "Inspect processes, resource use, and logs on this environment."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
-#~ #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
-#~ msgid "install"
-#~ msgstr "install"
-
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentCard
 #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Install"
 msgstr "Install"
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
 msgid "Install {getProviderVersionLabelText}"
 msgstr "Install {getProviderVersionLabelText}"
+
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Install {name}"
+msgstr "Install {name}"
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Install and manage Antigravity."
@@ -10406,10 +10152,9 @@ msgstr "Installed at {installedPath}. Open a new terminal to use it."
 msgid "Installed."
 msgstr "Installed."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/device/DeviceSetup.tsx#AgentDeviceSetupStatus
-#~ msgid "installing"
-#~ msgstr "installing"
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Installing {name}"
+msgstr "Installing {name}"
 
 #: apps/web/src/components/device/DeviceSetup.tsx#AgentDeviceSetupStatus
 msgid "Installing agent tools…"
@@ -10423,10 +10168,18 @@ msgstr "Installing Codex."
 msgid "Installing device hub…"
 msgstr "Installing device hub…"
 
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+msgid "Installing device support…"
+msgstr "Installing device support…"
+
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx#RelayClientInstallDialog
 msgid "Installing relay client"
 msgstr "Installing relay client"
+
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Installing..."
+msgstr "Installing..."
 
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceHubSetupStatus
 #: apps/web/src/components/device/DeviceSetup.tsx#AgentDeviceSetupStatus
@@ -10543,13 +10296,6 @@ msgstr "iPhone and iPad"
 msgid "iPhone Duo stands"
 msgstr "iPhone Duo stands"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useForceStopThread.ts#forceStopThread
-#~ msgid ""
-#~ "It is shared with {others0Text} working {others1Text}. Stop those to free it."
-#~ msgstr ""
-#~ "It is shared with {others0Text} working {others1Text}. Stop those to free it."
-
 #: apps/web/src/components/sourceControlAppAccessToast.ts#suggestAppAccessForRemote
 msgid ""
 "It isn't installed there, so GitHub requests for {repository} use your own "
@@ -10592,6 +10338,10 @@ msgstr ""
 msgid "It will be back in the composer once the question is answered."
 msgstr "It will be back in the composer once the question is answered."
 
+#: apps/web/src/components/clerk/RemoveT3ConnectEnvironmentDialog.tsx#RemoveT3ConnectEnvironmentDialog
+msgid "It's no longer on your T3 Connect account."
+msgstr "It's no longer on your T3 Connect account."
+
 #: apps/web/src/components/settings/ThemeEditorHost.tsx#handleSaved
 #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibrary
 msgid "It’s now active."
@@ -10624,11 +10374,6 @@ msgstr "Join"
 #: apps/web/src/components/guest/GuestPage.tsx#NameForm
 msgid "Join a shared thread"
 msgstr "Join a shared thread"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ExpandedImageDialog.tsx#ExpandedImageDialog
-#~ msgid "json"
-#~ msgstr "json"
 
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#terminalContextMenuItems
 msgid "Jump to latest"
@@ -10726,11 +10471,6 @@ msgstr ""
 "Keeps this project's default branch current when the checkout has no local "
 "changes or commits."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useQueuedRunEdit.ts#beginEdit
-#~ msgid "kept"
-#~ msgstr "kept"
-
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Keybinding"
 msgstr "Keybinding"
@@ -10766,8 +10506,20 @@ msgid "Known broken version"
 msgstr "Known broken version"
 
 #: apps/web/src/lib/composerContextRecords.ts#reviewCommentContextLabel
-msgid "L{messageText}{diffRange3Text}{diffRange1Text}"
-msgstr "L{messageText}{diffRange3Text}{diffRange1Text}"
+msgid "L{messageText}"
+msgstr "L{messageText}"
+
+#: apps/web/src/lib/composerContextRecords.ts#reviewCommentContextLabel
+msgid "L{messageText} (before)"
+msgstr "L{messageText} (before)"
+
+#: apps/web/src/lib/composerContextRecords.ts#reviewCommentContextLabel
+msgid "L{messageText} to L{rangeEnd}"
+msgstr "L{messageText} to L{rangeEnd}"
+
+#: apps/web/src/lib/composerContextRecords.ts#reviewCommentContextLabel
+msgid "L{messageText} to L{rangeEnd} (before)"
+msgstr "L{messageText} to L{rangeEnd} (before)"
 
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
 #: apps/web/src/components/settings/CustomModelEditor.tsx#renderChoice
@@ -10854,11 +10606,6 @@ msgstr "Last selected"
 msgid "Last user message"
 msgstr "Last user message"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx#SidebarUpdateCapsule
-#~ msgid "later"
-#~ msgstr "later"
-
 #: apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx#SidebarUpdateCapsule
 msgid "Later"
 msgstr "Later"
@@ -10880,16 +10627,8 @@ msgid "Latitude"
 msgstr "Latitude"
 
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
-msgid ""
-"Leases, drives, and streams devices. Create one{severalText} with <0>simlock "
-"--gateway token create --role agent</0>, or leave it blank to add it later. A "
-"blank token uses the machine's <1>AGENT_DEVICE_DAEMON_AUTH_TOKEN</1> when its "
-"<2>AGENT_DEVICE_DAEMON_BASE_URL</2> is this gateway."
-msgstr ""
-"Leases, drives, and streams devices. Create one{severalText} with <0>simlock "
-"--gateway token create --role agent</0>, or leave it blank to add it later. A "
-"blank token uses the machine's <1>AGENT_DEVICE_DAEMON_AUTH_TOKEN</1> when its "
-"<2>AGENT_DEVICE_DAEMON_BASE_URL</2> is this gateway."
+msgid "Leases, drives, and streams devices."
+msgstr "Leases, drives, and streams devices."
 
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#PullRequestCommentForm
 msgid "Leave a comment"
@@ -10981,11 +10720,6 @@ msgstr "Letters, digits, '-', or '_'."
 msgid "Level"
 msgstr "Level"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibraryCard
-#~ msgid "light"
-#~ msgstr "light"
-
 #: apps/web/src/components/CommandPaletteThemeItems.tsx
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
 #: apps/web/src/components/preview/PreviewMoreMenu.tsx
@@ -11012,11 +10746,6 @@ msgstr "Lime"
 msgid "Limit what the paired client can do."
 msgstr "Limit what the paired client can do."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ThreadNotificationCoordinator.tsx#present
-#~ msgid "limited"
-#~ msgstr "limited"
-
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 msgid "Limited"
 msgstr "Limited"
@@ -11025,6 +10754,7 @@ msgstr "Limited"
 msgid "Limited permissions"
 msgstr "Limited permissions"
 
+#: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
 #: apps/web/src/components/settings/providerStatus.ts
 msgid "Limited support"
 msgstr "Limited support"
@@ -11062,11 +10792,6 @@ msgstr "lines"
 #: apps/web/src/components/chat/TerminalContextInlineChip.tsx#TerminalContextInlineChip
 msgid "Lines {lineStart}–{lineEnd}"
 msgstr "Lines {lineStart}–{lineEnd}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#PairingLinkListRow
-#~ msgid "link"
-#~ msgstr "link"
 
 #: apps/web/src/components/chat/LinkRequestCard.tsx#LinkRequestDialog
 #: apps/web/src/components/pullRequest/LinkPullRequestDialog.tsx#LinkPullRequestDialog
@@ -11168,11 +10893,6 @@ msgstr "Linked by you"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Linked environments"
 msgstr "Linked environments"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#EnabledPullRequestThreadLinks
-#~ msgid "Linked from {length} {linkedThreadsLength1Text}"
-#~ msgstr "Linked from {length} {linkedThreadsLength1Text}"
 
 #: apps/web/src/components/promptLinks/linkedPrompt.ts#placeLinkedPrompt
 msgid "Linked prompt ready"
@@ -11506,12 +11226,6 @@ msgstr "Loading..."
 msgid "Loading…"
 msgstr "Loading…"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#startHandoff
-#~ #: apps/web/src/components/pullRequest/usePullRequestActions.ts#startHandoff
-#~ msgid "local"
-#~ msgstr "local"
-
 #: apps/web/src/components/CommandPaletteLookups.ts#useEnvironmentLookups
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Local"
@@ -11633,11 +11347,6 @@ msgstr "Low"
 msgid "Low power mode"
 msgstr "Low power mode"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
-#~ msgid "lucide"
-#~ msgstr "lucide"
-
 #: apps/web/src/components/settings/DeviceHostEditor.tsx#DeviceHostEditorForm
 msgid "Mac mini"
 msgstr "Mac mini"
@@ -11712,6 +11421,15 @@ msgstr "Manage usage"
 #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#deleteInstance
 msgid "Managed binary cleanup failed."
 msgstr "Managed binary cleanup failed."
+
+#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
+msgid "Managed by {owner}. Tools update automatically on this host when needed."
+msgstr ""
+"Managed by {owner}. Tools update automatically on this host when needed."
+
+#: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
+msgid "Managed by T3 Code"
+msgstr "Managed by T3 Code"
 
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx#RelayClientInstallDialog
 msgid "Managed relay client"
@@ -11834,12 +11552,6 @@ msgstr "Menu now: {menuOrderJoinText}"
 msgid "Menus offer only Custom…"
 msgstr "Menus offer only Custom…"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailActions.tsx#PullRequestPrimaryAction
-#~ #: apps/web/src/components/pullRequest/PullRequestStackMenu.tsx#run
-#~ msgid "merge"
-#~ msgstr "merge"
-
 #: apps/web/src/components/chat/ThreadDetailsPrRow.tsx#ThreadDetailsPrRow
 #: apps/web/src/components/pullRequest/PullRequestSpeedActions.tsx
 #: apps/web/src/components/pullRequest/pullRequestDetail.logic.ts
@@ -11953,17 +11665,6 @@ msgstr "Metrics"
 msgid "Microphone"
 msgstr "Microphone"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/LegacyThreadMigrationToast.ts#startLegacyThreadMigrationToast
-#~ msgid ""
-#~ "Migrating {migrationTotalThreadCountToLocaleStringText} "
-#~ "{migrationTotalThreadCount1Text} from the previous version. You can keep "
-#~ "working while this finishes."
-#~ msgstr ""
-#~ "Migrating {migrationTotalThreadCountToLocaleStringText} "
-#~ "{migrationTotalThreadCount1Text} from the previous version. You can keep "
-#~ "working while this finishes."
-
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Mini PC"
 msgstr "Mini PC"
@@ -11998,6 +11699,10 @@ msgstr "Minutes"
 #: apps/web/src/components/usage/usagePriceTable.ts#usagePriceCell
 msgid "Mixed"
 msgstr "Mixed"
+
+#: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
+msgid "Mixed cells keep each environment’s rate until you edit them."
+msgstr "Mixed cells keep each environment’s rate until you edit them."
 
 #: apps/web/src/components/settings/BranchNamingSettings.tsx#BranchNamingSettings
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
@@ -12093,11 +11798,6 @@ msgstr "Monday"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Monitor overhead"
 msgstr "Monitor overhead"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
-#~ msgid "monogram"
-#~ msgstr "monogram"
 
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Monogram"
@@ -12210,11 +11910,6 @@ msgstr "Mute {title}"
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTab
 msgid "Mute tab"
 msgstr "Mute tab"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTab
-#~ msgid "muted"
-#~ msgstr "muted"
 
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Muted text"
@@ -12413,12 +12108,6 @@ msgstr "new worktrees start from remote"
 msgid "New York"
 msgstr "New York"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
-#~ #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#~ msgid "newest"
-#~ msgstr "newest"
-
 #: apps/web/src/components/settings/ThemeSearchSection.tsx
 msgid "Newest"
 msgstr "Newest"
@@ -12437,6 +12126,10 @@ msgstr "Newest shown"
 msgid "Next"
 msgstr "Next"
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Next chapter"
+msgstr "Next chapter"
+
 #: apps/web/src/components/chat/ThreadFindBar.tsx#ThreadFindBar
 msgid "Next match"
 msgstr "Next match"
@@ -12449,6 +12142,7 @@ msgstr "Next matching page"
 msgid "Next media"
 msgstr "Next media"
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
 #: apps/web/src/components/files/PdfViewer.tsx
 msgid "Next page"
 msgstr "Next page"
@@ -12469,6 +12163,11 @@ msgstr "Next send compacts {compactTokens} tokens first."
 msgid "Next send keeps all {compactTokens} tokens."
 msgstr "Next send keeps all {compactTokens} tokens."
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Next sheet"
+msgstr "Next sheet"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Next slide"
 msgstr "Next slide"
@@ -12541,6 +12240,8 @@ msgstr "No authors found"
 
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#LazyChecksBody
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#ChecksBody
+#: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
+#: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#summarizePullRequestChecks
 msgid "No checks reported"
 msgstr "No checks reported"
 
@@ -12807,6 +12508,7 @@ msgid "No preview yet"
 msgstr "No preview yet"
 
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "No project"
 msgstr "No project"
@@ -13008,15 +12710,6 @@ msgstr "Not connected"
 msgid "Not connected yet."
 msgstr "Not connected yet."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ConnectionStep
-#~ msgid ""
-#~ "Not connected, so setup skips {skippedLabelsJoinText}. You can set "
-#~ "{skippedLabelsLength1Text} up later from Settings."
-#~ msgstr ""
-#~ "Not connected, so setup skips {skippedLabelsJoinText}. You can set "
-#~ "{skippedLabelsLength1Text} up later from Settings."
-
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Not connected: message not sent"
 msgstr "Not connected: message not sent"
@@ -13024,6 +12717,10 @@ msgstr "Not connected: message not sent"
 #: apps/web/src/components/settings/SessionPermissions.tsx#SessionPermissions
 msgid "Not granted"
 msgstr "Not granted"
+
+#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
+msgid "not installed"
+msgstr "not installed"
 
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
@@ -13070,11 +12767,6 @@ msgstr "Note"
 msgid "Notes on this stop"
 msgstr "Notes on this stop"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/guide/GuideNotes.tsx#GuideNotes
-#~ msgid "Notes on this stop<0>{notesLength1Text}</0>"
-#~ msgstr "Notes on this stop<0>{notesLength1Text}</0>"
-
 #: apps/web/src/components/settings/SourceControlSettings.tsx#EmptySourceControlDiscovery
 msgid "Nothing detected yet"
 msgstr "Nothing detected yet"
@@ -13116,20 +12808,9 @@ msgstr "Notifications only"
 msgid "Notifications with sound"
 msgstr "Notifications with sound"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useThreadLifecycle.tsx#useThreadLifecycle
-#~ msgid "now"
-#~ msgstr "now"
-
 #: apps/web/src/projectIconOptions.ts
 msgid "Octopus"
 msgstr "Octopus"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
-#~ #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
-#~ msgid "off"
-#~ msgstr "off"
 
 #: apps/web/src/components/chat/ComposerModelEffort.tsx#EffortRows
 #: apps/web/src/components/chat/TraitsPicker.tsx#TraitsMenuContent
@@ -13255,11 +12936,6 @@ msgstr "One moment while this environment verifies the agent's request."
 msgid "One or two letters or numbers."
 msgstr "One or two letters or numbers."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SecretsSettings.tsx#EnvironmentSecretProviders
-#~ msgid "one_password"
-#~ msgstr "one_password"
-
 #: apps/web/src/components/chat/LinkRequestCard.tsx#PendingLinkRequest
 msgid "Only a session that manages access here can answer this."
 msgstr "Only a session that manages access here can answer this."
@@ -13301,11 +12977,6 @@ msgstr ""
 msgid "Only UTF-8 text and images can be opened inside an archive."
 msgstr "Only UTF-8 text and images can be opened inside an archive."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/fileContextMenu.ts#activate
-#~ msgid "open"
-#~ msgstr "open"
-
 #: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#backgroundWorkNowItem
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
@@ -13316,6 +12987,10 @@ msgstr "Only UTF-8 text and images can be opened inside an archive."
 #: apps/web/src/fileContextMenu.ts#buildFileContextMenuItems
 msgid "Open"
 msgstr "Open"
+
+#: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
+msgid "Open {path} in Code"
+msgstr "Open {path} in Code"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailCrumbs.tsx#PullRequestDetailCrumbs
 msgid "Open {repository} repository"
@@ -13714,7 +13389,6 @@ msgid "Open-source notices are unavailable"
 msgstr "Open-source notices are unavailable"
 
 #: apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx#PullRequestLinkPreview
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookFiltersField
 msgid "opened"
 msgstr "opened"
 
@@ -13722,14 +13396,9 @@ msgstr "opened"
 msgid "opened this {term}"
 msgstr "opened this {term}"
 
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookFiltersField
-msgid "opened, reopened"
-msgstr "opened, reopened"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/device/DeviceLoadingView.tsx#DeviceLoadingView
-#~ msgid "opening"
-#~ msgstr "opening"
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+msgid "Opening device…"
+msgstr "Opening device…"
 
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 msgid "Opening it in the environment’s browser, which reaches its network"
@@ -13855,10 +13524,6 @@ msgstr "Organization"
 msgid "Orientation"
 msgstr "Orientation"
 
-#: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
-msgid "origin"
-msgstr "origin"
-
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserMessageIntentMarker
 msgid "Originally queued, then promoted to steer the active turn"
 msgstr "Originally queued, then promoted to steer the active turn"
@@ -13940,15 +13605,9 @@ msgstr "Package name to launch"
 msgid "Page"
 msgstr "Page"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/files/extendedDocumentPreview.ts#openDocument
-#~ msgid "Page {indexText}"
-#~ msgstr "Page {indexText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/files/extendedDocumentPreview.ts#finishPage
-#~ msgid "Page {pagesLengthText2}"
-#~ msgstr "Page {pagesLengthText2}"
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Page {pageText} of {count}"
+msgstr "Page {pageText} of {count}"
 
 #: apps/web/src/routes/__root.tsx#RootRouteNotFoundView
 msgid "Page not found"
@@ -13993,11 +13652,6 @@ msgstr "Pair with this environment"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#renderRemoteFields
 msgid "PAIRCODE"
 msgstr "PAIRCODE"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
-#~ msgid "paired"
-#~ msgstr "paired"
 
 #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
 msgid "Pairing backend"
@@ -14129,6 +13783,14 @@ msgstr "Paste the code"
 msgid "Paste the URL from the sign-in tab"
 msgstr "Paste the URL from the sign-in tab"
 
+#: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+msgid ""
+"Paste this inside <0>binds '{ … }'</0> in your Niri config, then save. "
+"Change the keys if needed."
+msgstr ""
+"Paste this inside <0>binds '{ … }'</0> in your Niri config, then save. "
+"Change the keys if needed."
+
 #: apps/web/src/components/chat/useComposerAttachmentIntake.ts#foldPastedText
 msgid "Pasted text is too large for this message"
 msgstr "Pasted text is too large for this message"
@@ -14225,11 +13887,6 @@ msgstr "Performance"
 msgid "Permission"
 msgstr "Permission"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#EnvironmentUnavailablePlaceholder
-#~ msgid "permissions"
-#~ msgstr "permissions"
-
 #: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerPermissionsSection
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#PermissionsSection
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AuthorizedClientsHeaderAction
@@ -14283,11 +13940,6 @@ msgstr "Pick a thread to continue"
 msgid "Pick where to host it, then point us at a repo to push to."
 msgstr "Pick where to host it, then point us at a repo to push to."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
-#~ msgid "picker"
-#~ msgstr "picker"
-
 #: apps/web/src/projectIconOptions.ts
 msgid "Picture"
 msgstr "Picture"
@@ -14299,15 +13951,14 @@ msgstr "Picture"
 msgid "PID"
 msgstr "PID"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarChrome.tsx#SidebarChromeHeader
-#~ msgid "pill"
-#~ msgstr "pill"
-
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx
 msgid "Pin"
 msgstr "Pin"
+
+#: apps/web/src/components/ProjectPinButton.tsx#ProjectPinButton
+msgid "Pin {name}"
+msgstr "Pin {name}"
 
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 #: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
@@ -14332,20 +13983,10 @@ msgstr "Pinned"
 msgid "Pinned projects come first in project pickers."
 msgstr "Pinned projects come first in project pickers."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/themeInspector.ts
-#~ msgid "placeholder"
-#~ msgstr "placeholder"
-
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 #: apps/web/src/composer-code-languages.ts
 msgid "Plain text"
 msgstr "Plain text"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
-#~ msgid "plan"
-#~ msgstr "plan"
 
 #: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
 #: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
@@ -14429,11 +14070,6 @@ msgstr "Popular"
 msgid "Port"
 msgstr "Port"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
-#~ msgid "portal"
-#~ msgstr "portal"
-
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 #: apps/web/src/components/device/DeviceToolsPanel.tsx
 msgid "Portrait"
@@ -14471,18 +14107,9 @@ msgstr "Prefix"
 msgid "Premium <0>{formatUsdText}</0>"
 msgstr "Premium <0>{formatUsdText}</0>"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
-#~ msgid "preparing"
-#~ msgstr "preparing"
-
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
 msgid "Preparing"
 msgstr "Preparing"
-
-#: apps/web/src/components/media/MediaActions.tsx#showMenu
-msgid "Preparing {noun} download…"
-msgstr "Preparing {noun} download…"
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "Preparing changes…"
@@ -14492,6 +14119,10 @@ msgstr "Preparing changes…"
 #: apps/web/src/components/files/FilePreviewPanel.tsx#WorkspaceLargeTextPreview
 msgid "Preparing file…"
 msgstr "Preparing file…"
+
+#: apps/web/src/components/media/MediaActions.tsx#showMenu
+msgid "Preparing image download…"
+msgstr "Preparing image download…"
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Preparing local..."
@@ -14513,6 +14144,14 @@ msgstr "Preparing sign-in."
 #: apps/web/src/components/pullRequest/usePullRequestActions.ts#startHandoff
 msgid "Preparing the {singular} checkout..."
 msgstr "Preparing the {singular} checkout..."
+
+#: apps/web/src/components/media/MediaActions.tsx#showMenu
+msgid "Preparing video download…"
+msgstr "Preparing video download…"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid "Preparing worktree"
+msgstr "Preparing worktree"
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Preparing worktree..."
@@ -14539,12 +14178,14 @@ msgstr ""
 "Shift + Enter for multiline prompts to do the opposite for one message."
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
+msgid "Press {modifierLabel} + Enter to do the opposite for one message."
+msgstr "Press {modifierLabel} + Enter to do the opposite for one message."
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid ""
-"Press {modifierLabel}{settingsSendShortcutModEnterText} + Enter to do the "
-"opposite for one message."
+"Press {modifierLabel} + Shift + Enter to do the opposite for one message."
 msgstr ""
-"Press {modifierLabel}{settingsSendShortcutModEnterText} + Enter to do the "
-"opposite for one message."
+"Press {modifierLabel} + Shift + Enter to do the opposite for one message."
 
 #: apps/web/src/components/QuitHoldOverlay.tsx#QuitHoldOverlay
 msgid "Press {shortcut} again to quit"
@@ -14643,6 +14284,10 @@ msgstr "Previous"
 msgid "Previous agents"
 msgstr "Previous agents"
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Previous chapter"
+msgstr "Previous chapter"
+
 #: apps/web/src/components/chat/ThreadFindBar.tsx#ThreadFindBar
 msgid "Previous match"
 msgstr "Previous match"
@@ -14651,6 +14296,7 @@ msgstr "Previous match"
 msgid "Previous media"
 msgstr "Previous media"
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
 #: apps/web/src/components/files/PdfViewer.tsx
 msgid "Previous page"
 msgstr "Previous page"
@@ -14663,6 +14309,11 @@ msgstr "Previous question"
 msgid "Previous rows"
 msgstr "Previous rows"
 
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Previous sheet"
+msgstr "Previous sheet"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Previous slide"
 msgstr "Previous slide"
@@ -14760,11 +14411,6 @@ msgid ""
 msgstr ""
 "Profiles separate cookies and logins. Incognito data is cleared when the app "
 "closes."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
-#~ msgid "project"
-#~ msgstr "project"
 
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestFiltersMenu
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
@@ -14926,6 +14572,10 @@ msgstr "Provider deleted, but managed files remain"
 #: apps/web/src/session-logic.ts#providerErrorPresentation
 msgid "Provider error"
 msgstr "Provider error"
+
+#: apps/web/src/session-logic.ts#providerErrorPresentation
+msgid "Provider error after {progress} retries"
+msgstr "Provider error after {progress} retries"
 
 #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#EnvironmentProviderSettings
 msgid "provider health check interval"
@@ -15147,11 +14797,6 @@ msgstr ""
 msgid "Pull requests unavailable"
 msgstr "Pull requests unavailable"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/GitActionsControl.tsx#runQuickAction
-#~ msgid "pulled"
-#~ msgstr "pulled"
-
 #: apps/web/src/components/GitActionsControl.tsx#runQuickAction
 msgid "Pulled"
 msgstr "Pulled"
@@ -15246,11 +14891,6 @@ msgstr "Raised surface"
 msgid "Ran command"
 msgstr "Ran command"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatView.logic.ts#buildExpiredTerminalContextToastCopy
-#~ msgid "Re-add {pronoun} if you want that terminal output included."
-#~ msgstr "Re-add {pronoun} if you want that terminal output included."
-
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid "Re-enable the Windows backend?"
 msgstr "Re-enable the Windows backend?"
@@ -15258,11 +14898,6 @@ msgstr "Re-enable the Windows backend?"
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#PairingLinkListRow
 msgid "Reach this machine via"
 msgstr "Reach this machine via"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#ConfiguredCloudLinkRow
-#~ msgid "reachable"
-#~ msgstr "reachable"
 
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#NetworkAccessDescription
 msgid "Reachable at"
@@ -15273,11 +14908,6 @@ msgid ""
 "Reaches repositories in accounts and organizations that installed the app."
 msgstr ""
 "Reaches repositories in accounts and organizations that installed the app."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/session-logic.ts#projectedWorkEntry
-#~ msgid "read"
-#~ msgstr "read"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#AggregateCard
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#HistoryProcessTable
@@ -15391,11 +15021,6 @@ msgstr "Ready to code."
 #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
 msgid "Ready to update to {targetVersion}"
 msgstr "Ready to update to {targetVersion}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/TimelineWorkGroupRows.tsx#LiveWorkEntryTimelineRow
-#~ msgid "reasoning"
-#~ msgstr "reasoning"
 
 #: apps/web/src/components/chat/TraitsPicker.tsx
 #: apps/web/src/components/settings/customModelEditor.logic.ts
@@ -15737,11 +15362,6 @@ msgstr "Reinstall helper"
 msgid "Reject requests without a valid HMAC-SHA256 signature of the body."
 msgstr "Reject requests without a valid HMAC-SHA256 signature of the body."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/scopedSettings.ts#failedEnvironments
-#~ msgid "rejected"
-#~ msgstr "rejected"
-
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
 msgid "Rejected · HTTP {status}"
 msgstr "Rejected · HTTP {status}"
@@ -15856,11 +15476,6 @@ msgstr "Remove {label} from this device?"
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove {label}?"
 msgstr "Remove {label}?"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatView.logic.ts#buildExpiredTerminalContextToastCopy
-#~ msgid "Remove {pronoun} or re-add {pronoun} to include terminal output."
-#~ msgstr "Remove {pronoun} or re-add {pronoun} to include terminal output."
 
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -16049,6 +15664,10 @@ msgstr ""
 msgid "Remove worktrees with no commits beyond the default branch."
 msgstr "Remove worktrees with no commits beyond the default branch."
 
+#: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
+msgid "Removed code, showing {shown} of {total} diff lines"
+msgstr "Removed code, showing {shown} of {total} diff lines"
+
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
 msgid "Removing…"
@@ -16114,11 +15733,6 @@ msgstr "Reply to this conversation"
 msgid "Repositories"
 msgstr "Repositories"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
-#~ msgid "repository"
-#~ msgstr "repository"
-
 #: apps/web/src/components/CommandPaletteAddProject.tsx#RemoteRepositorySummary
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
 msgid "Repository"
@@ -16144,11 +15758,6 @@ msgstr "Repository name incomplete"
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
 msgid "Repository published"
 msgstr "Repository published"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ThreadNotificationCoordinator.tsx#present
-#~ msgid "request"
-#~ msgstr "request"
 
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 msgid "Request"
@@ -16209,11 +15818,6 @@ msgstr "Reset"
 #: apps/web/src/components/settings/settingsLayout.tsx#SettingResetButton
 msgid "Reset {label} to default"
 msgstr "Reset {label} to default"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SettingInheritance.tsx#SettingInheritance
-#~ msgid "Reset {overridingLength1Text}"
-#~ msgstr "Reset {overridingLength1Text}"
 
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivityAdvancedDialog
 msgid "Reset all"
@@ -16467,11 +16071,6 @@ msgstr "Restoring your threads…"
 msgid "Restoring..."
 msgstr "Restoring..."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#toggle
-#~ msgid "resume"
-#~ msgstr "resume"
-
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#goalNowItem
 msgid "Resume"
 msgstr "Resume"
@@ -16497,11 +16096,6 @@ msgstr "Resume at reset"
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Resume thread"
 msgstr "Resume thread"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/SidebarUpdateCapsule.tsx#SidebarUpdateCapsule
-#~ msgid "retry"
-#~ msgstr "retry"
 
 #: apps/web/src/components/ProjectCloneToastCoordinator.tsx#EnvironmentCloneToasts
 #: apps/web/src/components/chat/MermaidDiagram.tsx#DiagramError
@@ -16639,11 +16233,6 @@ msgstr "Revert changes"
 msgid "Revert files too"
 msgstr "Revert files too"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/pullRequestDetail.logic.ts#commentTimelineEvent
-#~ msgid "review"
-#~ msgstr "review"
-
 #: apps/web/src/components/pullRequest/PullRequestComposer.tsx#PullRequestComposer
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestFiltersMenu
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
@@ -16657,11 +16246,6 @@ msgstr "Review ({length})"
 #: apps/web/src/components/pullRequest/PullRequestComposer.tsx#PullRequestComposer
 msgid "Review {term}"
 msgstr "Review {term}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestComposer.tsx#PullRequestComposer
-#~ msgid "Review {term}, {length} {pendingCommentsLength1Text} pending"
-#~ msgstr "Review {term}, {length} {pendingCommentsLength1Text} pending"
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "Review changes"
@@ -16805,9 +16389,17 @@ msgstr ""
 "Rewind chat to before this message. Your prompt and attachments return to the "
 "composer. “Revert files too” also undoes your own edits."
 
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
+msgid "Rewrite"
+msgstr "Rewrite"
+
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Rewrite guide"
 msgstr "Rewrite guide"
+
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
+msgid "Rewriting this guide. You will be told when the new one is ready."
+msgstr "Rewriting this guide. You will be told when the new one is ready."
 
 #: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorPickerPanel
 msgid "RGB"
@@ -16829,10 +16421,6 @@ msgstr "Robot"
 #: apps/web/src/projectIconOptions.ts
 msgid "Rocket"
 msgstr "Rocket"
-
-#: apps/web/src/components/settings/AddEnvironmentDialog.tsx#renderSshFields
-msgid "root"
-msgstr "root"
 
 #: apps/web/src/projectIconColors.ts
 msgid "Rose"
@@ -16868,11 +16456,6 @@ msgstr "Routes"
 #: apps/web/src/components/files/LargeTextViewer.tsx
 msgid "rows"
 msgstr "rows"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/V2LifecycleRow.tsx#V2LifecycleRow
-#~ msgid "run"
-#~ msgstr "run"
 
 #: apps/web/src/components/ProjectScriptsControl.tsx
 msgid "Run {name}"
@@ -17031,13 +16614,9 @@ msgstr "Run this on each computer you want to connect."
 msgid "Run WSL only"
 msgstr "Run WSL only"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/session-logic.ts#providerErrorPresentation
-#~ msgid "running"
-#~ msgstr "running"
-
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#backgroundWorkNowItem
 #: apps/web/src/components/chat/V2LifecycleRow.tsx
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 msgid "Running"
@@ -17054,11 +16633,6 @@ msgstr "Running: {runningEndpoint}"
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
 msgid "Running: {runningEndpoint} from <0>{variable}</0>"
 msgstr "Running: {runningEndpoint} from <0>{variable}</0>"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
-#~ msgid "Running: {runningKeyText}{overrideVariableText}"
-#~ msgstr "Running: {runningKeyText}{overrideVariableText}"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "Runs on"
@@ -17094,11 +16668,6 @@ msgstr "San Francisco"
 msgid "Saturday"
 msgstr "Saturday"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/media/MediaActions.tsx#showMenu
-#~ msgid "save"
-#~ msgstr "save"
-
 #: apps/web/src/browser/ServerBrowserSurface.tsx#offerDownload
 #: apps/web/src/components/chat/AssistantCitationCommentEditor.tsx#AssistantCitationCommentEditor
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
@@ -17126,10 +16695,6 @@ msgstr "save {label} settings"
 msgid "save {label} token"
 msgstr "save {label} token"
 
-#: apps/web/src/components/media/MediaActions.tsx#showMenu
-msgid "Save {noun}"
-msgstr "Save {noun}"
-
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Save action"
 msgstr "Save action"
@@ -17153,9 +16718,17 @@ msgstr "Save file"
 msgid "Save icon"
 msgstr "Save icon"
 
+#: apps/web/src/components/media/MediaActions.tsx#showMenu
+msgid "Save image"
+msgstr "Save image"
+
 #: apps/web/src/components/files/AttachmentFilePreview.tsx#AttachmentFilePreview
 msgid "Save it to open in an app that supports {propsNameSplitAt1Text} files."
 msgstr "Save it to open in an app that supports {propsNameSplitAt1Text} files."
+
+#: apps/web/src/components/files/AttachmentFilePreview.tsx#AttachmentFilePreview
+msgid "Save it to open in an app that supports this format."
+msgstr "Save it to open in an app that supports this format."
 
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 msgid "Save plan to workspace"
@@ -17180,6 +16753,10 @@ msgstr "Save task"
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#ProposedPlanCard
 msgid "Save to workspace"
 msgstr "Save to workspace"
+
+#: apps/web/src/components/media/MediaActions.tsx#showMenu
+msgid "Save video"
+msgstr "Save video"
 
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx
 msgid ""
@@ -17210,10 +16787,13 @@ msgstr "Saved, but the shortcut needs attention. Check Advanced for help."
 msgid "Saving"
 msgstr "Saving"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
-#~ msgid "saving {pendingImageCount} image{entryPendingImageCount1Text}…"
-#~ msgstr "saving {pendingImageCount} image{entryPendingImageCount1Text}…"
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+msgid "Saving restarts this host, which releases its devices."
+msgstr "Saving restarts this host, which releases its devices."
+
+#: apps/web/src/components/settings/EasDeviceHostEditor.tsx#EasDeviceHostEditor
+msgid "Saving restarts this host, which stops its running sessions."
+msgstr "Saving restarts this host, which stops its running sessions."
 
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 #: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#RecoveryActions
@@ -17325,11 +16905,6 @@ msgstr "Scroll tabs right"
 #: apps/web/src/components/chat/TimelineOverlays.tsx#ScrollToEndButton
 msgid "Scroll to end{propsSummaryNullText}"
 msgstr "Scroll to end{propsSummaryNullText}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/session-logic.ts#projectedWorkEntry
-#~ msgid "search"
-#~ msgstr "search"
 
 #: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
@@ -17596,13 +17171,17 @@ msgstr "Select an ACP or configure one manually."
 msgid "Select an element · Esc to cancel"
 msgstr "Select an element · Esc to cancel"
 
-#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
-msgid "Select an environment to see {showingLimitsText2}."
-msgstr "Select an environment to see {showingLimitsText2}."
-
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Select an environment to see and change its model prices."
 msgstr "Select an environment to see and change its model prices."
+
+#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
+msgid "Select an environment to see limits."
+msgstr "Select an environment to see limits."
+
+#: apps/web/src/components/usage/UsagePage.tsx#UsagePage
+msgid "Select an environment to see usage."
+msgstr "Select an environment to see usage."
 
 #: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
 msgid "Select an existing thread or create a new one to get started."
@@ -17741,12 +17320,8 @@ msgid "Sending…"
 msgstr "Sending…"
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
-msgid ""
-"Sensitive values are stored separately and never returned to the "
-"app.{rowsSomeRowRowValueRedactedTrueText}"
-msgstr ""
-"Sensitive values are stored separately and never returned to the "
-"app.{rowsSomeRowRowValueRedactedTrueText}"
+msgid "Sensitive values are stored separately and never returned to the app."
+msgstr "Sensitive values are stored separately and never returned to the app."
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 msgid "Sensitive, stored separately"
@@ -18094,6 +17669,10 @@ msgstr "Shorten selection"
 msgid "Show"
 msgstr "Show"
 
+#: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorField
+msgid "Show {label} usage"
+msgstr "Show {label} usage"
+
 #: apps/web/src/components/chat/ThreadDetailsPrRows.tsx#ThreadDetailsPrRows
 msgid "Show {length} more"
 msgstr "Show {length} more"
@@ -18103,20 +17682,6 @@ msgstr "Show {length} more"
 #: apps/web/src/components/chat/ThreadServersPanel.tsx#ThreadServersList
 msgid "Show {MathMinText} more"
 msgstr "Show {MathMinText} more"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#~ msgid ""
-#~ "Show {MathMinText} older conversation{hiddenConversationCount1Text} "
-#~ "({hiddenConversationCount} hidden)"
-#~ msgstr ""
-#~ "Show {MathMinText} older conversation{hiddenConversationCount1Text} "
-#~ "({hiddenConversationCount} hidden)"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/DiffPanel.tsx
-#~ msgid "Show {testFileCount} hidden test {testFileCount1Text}"
-#~ msgstr "Show {testFileCount} hidden test {testFileCount1Text}"
 
 #: apps/web/src/components/device/DeviceStreamView.tsx#DeviceStreamView
 msgid "Show 3D phone"
@@ -18360,10 +17925,18 @@ msgstr ""
 "Show the quota of every account the hub pools, next to the providers on "
 "{environmentLabel}. The key stays on that server."
 
+#: apps/web/src/components/settings/ThemeColorPicker.tsx#ThemeColorField
+msgid "Show where {label} is used"
+msgstr "Show where {label} is used"
+
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "Show whitespace changes"
 msgstr "Show whitespace changes"
+
+#: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
+msgid "Showing {shown} of {total} diff lines"
+msgstr "Showing {shown} of {total} diff lines"
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#AccessSettings
 msgid "Showing access for"
@@ -18636,6 +18209,10 @@ msgstr "Sky"
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Slide"
 msgstr "Slide"
+
+#: apps/web/src/components/files/OfficeViewer.tsx#ExtendedOfficeViewer
+msgid "Slide {pageText} of {count}"
+msgstr "Slide {pageText} of {count}"
 
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Slide {pageText} of {length}"
@@ -19049,11 +18626,6 @@ msgstr "Start worktree from remote"
 msgid "Started {newDateRequestStartedAtToLocaleTimeStringText}"
 msgstr "Started {newDateRequestStartedAtToLocaleTimeStringText}"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useMultipleModelSend.ts#useMultipleModelSend
-#~ msgid "Started {startedCount} {startedCount1Text} in background"
-#~ msgstr "Started {startedCount} {startedCount1Text} in background"
-
 #: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
 msgid ""
 "Started by an agent on {activeThreadLinkOrigin} through a linked environment."
@@ -19063,13 +18635,6 @@ msgstr ""
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Started in background"
 msgstr "Started in background"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/device/DeviceSetup.tsx#AgentDeviceSetupStatus
-#~ #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
-#~ #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
-#~ msgid "starting"
-#~ msgstr "starting"
 
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
 msgid "Starting"
@@ -19090,6 +18655,10 @@ msgstr "Starting agent tools…"
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceHubSetupStatus
 msgid "Starting device hub…"
 msgstr "Starting device hub…"
+
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+msgid "Starting device…"
+msgstr "Starting device…"
 
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Starting sign-in…"
@@ -19243,6 +18812,7 @@ msgid "Stop watching"
 msgstr "Stop watching"
 
 #: apps/web/src/components/chat/V2LifecycleRow.tsx
+#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 msgid "Stopped"
 msgstr "Stopped"
 
@@ -19257,21 +18827,6 @@ msgstr "Stopping..."
 #: apps/web/src/components/settings/SecretInput.tsx#SecretInput
 msgid "Stored secret, enter a new value to replace"
 msgstr "Stored secret, enter a new value to replace"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatMarkdown.tsx
-#~ #: apps/web/src/components/chat/ThreadActivityBanners.tsx#backgroundWorkNowItem
-#~ #: apps/web/src/components/device/deviceHubApi.ts#visit
-#~ #: apps/web/src/components/device/deviceHubApi.ts#fetchDeviceAxTree
-#~ #: apps/web/src/components/device/deviceHubApi.ts#elements
-#~ #: apps/web/src/components/settings/settingsLayout.tsx#SettingsRow
-#~ #: apps/web/src/composerDraftStore.ts#normalizePersistedTerminalContextDraft
-#~ #: apps/web/src/openVsxThemes.ts#extensionFromDetail
-#~ #: apps/web/src/openVsxThemes.ts#importOpenVsxThemeExtension
-#~ #: apps/web/src/state/use-atom-command.ts#useAtomCommand
-#~ #: apps/web/src/state/use-atom-query-runner.ts#useAtomQueryRunner
-#~ msgid "string"
-#~ msgstr "string"
 
 #: apps/web/src/components/chat/SnapShotAttachmentDetails.tsx#SnapShotContentsButton
 msgid ""
@@ -19301,6 +18856,10 @@ msgstr "Submit message"
 #: apps/web/src/components/pullRequest/PullRequestReviewForm.tsx#PullRequestReviewForm
 msgid "Submit review"
 msgstr "Submit review"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid "Submitting message"
+msgstr "Submitting message"
 
 #: apps/web/src/components/pullRequest/PullRequestReviewForm.tsx#PullRequestReviewForm
 msgid "Submitting..."
@@ -19362,11 +18921,6 @@ msgstr "Supported providers approve routine actions; others still ask."
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Surface"
 msgstr "Surface"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderSettingsForm.tsx#ProviderSettingsFieldRow
-#~ msgid "switch"
-#~ msgstr "switch"
 
 #: apps/web/src/components/chat/ChatOverlayHosts.tsx#BranchRestoreConfirmHost
 msgid "Switch branch"
@@ -19443,11 +18997,6 @@ msgstr "Switches the hosted app release channel."
 msgid "Sync ref"
 msgstr "Sync ref"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ThemeSettings.tsx#renderModeTiles
-#~ msgid "system"
-#~ msgstr "system"
-
 #: apps/web/src/components/CommandPaletteThemeItems.tsx
 #: apps/web/src/components/preview/PreviewMoreMenu.tsx
 #: apps/web/src/components/settings/IntegrationsSettings.tsx
@@ -19474,6 +19023,14 @@ msgstr "System default follows your browser or OS clock preference."
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "T3 Code also reads any files included by this file."
 msgstr "T3 Code also reads any files included by this file."
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#ConnectionStep
+msgid ""
+"T3 Code collects anonymous usage data to help us improve it. To read more "
+"about how your data is used and how to opt out, see our <0>privacy policy</0>."
+msgstr ""
+"T3 Code collects anonymous usage data to help us improve it. To read more "
+"about how your data is used and how to opt out, see our <0>privacy policy</0>."
 
 #: apps/web/src/components/onboarding/FirstRunGate.tsx#FirstRunRecovery
 msgid "T3 Code could not confirm this workspace."
@@ -19524,16 +19081,6 @@ msgid ""
 msgstr ""
 "T3 Code needs the relay client to make this environment available through T3 "
 "Connect."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/promptLinks/HostedPromptLinkLanding.tsx#HostedPromptLinkLanding
-#~ #: apps/web/src/components/promptLinks/linkedPrompt.ts#warnAboutHiddenCharacters
-#~ msgid ""
-#~ "T3 Code removed {hiddenCharacters} hidden "
-#~ "character{promptHiddenCharacters1Text}. Read the prompt before you send it."
-#~ msgstr ""
-#~ "T3 Code removed {hiddenCharacters} hidden "
-#~ "character{promptHiddenCharacters1Text}. Read the prompt before you send it."
 
 #: apps/web/src/connection/clientMetadata.ts#clientPresentationMetadata
 msgid "T3 Code Web"
@@ -19750,11 +19297,6 @@ msgstr "Technical details"
 msgid "Tent stand"
 msgstr "Tent stand"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
-#~ msgid "terminal"
-#~ msgstr "terminal"
-
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelEmptyState
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTabs
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#TerminalSidebarGroup
@@ -19874,16 +19416,6 @@ msgstr "Text size"
 msgid "Thanks for the star!"
 msgstr "Thanks for the star!"
 
-#: apps/web/src/components/chat/useComposerStash.ts#stashAndEncode
-msgid ""
-"That prompt was restored or deleted before {length} image{keptLength1Text} "
-"finished saving. Re-attach {keptLength1Text2} if you still need "
-"{keptLength1Text3}."
-msgstr ""
-"That prompt was restored or deleted before {length} image{keptLength1Text} "
-"finished saving. Re-attach {keptLength1Text2} if you still need "
-"{keptLength1Text3}."
-
 #: apps/web/src/components/Sidebar.snooze.ts#pickSnoozePreset
 msgid "That snooze time has passed. Choose another time."
 msgstr "That snooze time has passed. Choose another time."
@@ -19909,6 +19441,10 @@ msgstr "The {singular} is in its own worktree, with a thread open on it."
 #: apps/web/src/components/pullRequest/usePullRequestActions.ts#startAsk
 msgid "The {singular} is in the composer. Type your question, then send."
 msgstr "The {singular} is in the composer. Type your question, then send."
+
+#: apps/web/src/components/settings/EasDeviceHostEditor.tsx
+msgid "the access token saved here"
+msgstr "the access token saved here"
 
 #: apps/web/src/components/settings/SecretProviderDialog.tsx#SecretProviderDialog
 msgid ""
@@ -20173,8 +19709,12 @@ msgstr ""
 "The owner sees your name and approves each message before the agent gets it."
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
-msgid "The page asks for {fileChooserMultipleText}."
-msgstr "The page asks for {fileChooserMultipleText}."
+msgid "The page asks for a file."
+msgstr "The page asks for a file."
+
+#: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
+msgid "The page asks for files."
+msgstr "The page asks for files."
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#copyPageText
 msgid "The page copied text"
@@ -20247,6 +19787,22 @@ msgstr "The rest of this diff could not be loaded."
 msgid "The review could not be submitted"
 msgstr "The review could not be submitted"
 
+#: apps/web/src/hooks/useSettings.ts#persistServerSettings
+#: apps/web/src/hooks/useSettings.ts#failures
+msgid "The save failed. Try reconnecting and saving again."
+msgstr "The save failed. Try reconnecting and saving again."
+
+#: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
+#: apps/web/src/hooks/useSettings.ts#updateSettings
+msgid "the selected environment"
+msgstr "the selected environment"
+
+#: apps/web/src/components/CommandPalette.tsx#startAddProjectSourceSelection
+#: apps/web/src/components/CommandPalette.tsx#handleAddProjectForEnvironment
+#: apps/web/src/components/CommandPalette.tsx#submitAddProjectCloneFlow
+msgid "The selected environment is not connected."
+msgstr "The selected environment is not connected."
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 msgid "The selected targets use different streaming modes."
 msgstr "The selected targets use different streaming modes."
@@ -20254,6 +19810,10 @@ msgstr "The selected targets use different streaming modes."
 #: apps/web/src/components/chat/citationProcedure.ts#loadCitedHistory
 msgid "The selected text is still saved in your citation."
 msgstr "The selected text is still saved in your citation."
+
+#: apps/web/src/components/settings/EasDeviceHostEditor.tsx
+msgid "the server's eas login"
+msgstr "the server's eas login"
 
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#handleSave
 #: apps/web/src/components/settings/ProviderSettingsPanel.tsx#persistInstance
@@ -20555,15 +20115,6 @@ msgstr "This context is no longer available."
 msgid "This context is no longer available. Remove it or attach it again."
 msgstr "This context is no longer available. Remove it or attach it again."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#~ msgid ""
-#~ "This conversation is only partially loaded. {commentCount} "
-#~ "comment{commentCount1Text} loaded; open it on the host to read the rest."
-#~ msgstr ""
-#~ "This conversation is only partially loaded. {commentCount} "
-#~ "comment{commentCount1Text} loaded; open it on the host to read the rest."
-
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "This count covers only part of the change"
 msgstr "This count covers only part of the change"
@@ -20763,6 +20314,14 @@ msgstr ""
 "This machine's agent can't read \"{title}\". Remove it, or switch back to "
 "{owner} to send."
 
+#: apps/web/src/components/chat/useComposerSend.ts#onSend
+msgid ""
+"This machine's agent can't read \"{title}\". Remove it, or switch back to its "
+"machine to send."
+msgstr ""
+"This machine's agent can't read \"{title}\". Remove it, or switch back to its "
+"machine to send."
+
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ImportingStep
 msgid "This may take a moment."
 msgstr "This may take a moment."
@@ -20776,12 +20335,16 @@ msgid "This notebook is empty."
 msgstr "This notebook is empty."
 
 #: apps/web/src/components/DiffPanel.tsx
+msgid "This preview exceeds the size limit. Changes shown are incomplete."
+msgstr "This preview exceeds the size limit. Changes shown are incomplete."
+
+#: apps/web/src/components/DiffPanel.tsx
 msgid ""
-"This preview exceeds the size limit. Changes shown are "
-"incomplete.{isGitSelectionSelectedGitSourceFilesPreviewIncompleteText}"
+"This preview exceeds the size limit. Changes shown are incomplete. Totals "
+"include all changes."
 msgstr ""
-"This preview exceeds the size limit. Changes shown are "
-"incomplete.{isGitSelectionSelectedGitSourceFilesPreviewIncompleteText}"
+"This preview exceeds the size limit. Changes shown are incomplete. Totals "
+"include all changes."
 
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectSettingsPanel
 msgid "This project is no longer available."
@@ -21070,11 +20633,6 @@ msgstr "thread title instructions"
 msgid "Thread title instructions"
 msgstr "Thread title instructions"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/ChatComposer.tsx#importDroppedThread
-#~ msgid "thread_transcript_too_large"
-#~ msgstr "thread_transcript_too_large"
-
 #: apps/web/src/components/AppSidebarLayout.tsx#AppSidebarLayout
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
 #: apps/web/src/components/settings/KeybindingsSettings.logic.ts
@@ -21140,6 +20698,10 @@ msgstr ""
 "To import cookies from {name}, T3 Code needs Full Disk Access. Turn it on in "
 "System Settings, then come back to finish the import. You can revoke it again "
 "once the import is done."
+
+#: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#formatReleaseAge
+msgid "today"
+msgstr "today"
 
 #: apps/web/src/components/settings/SnoozePresetsSettings.tsx
 msgid "Today"
@@ -21266,10 +20828,9 @@ msgstr "Tool output image"
 msgid "Tools"
 msgstr "Tools"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/composerContextPresentation.tsx#ContextChip
-#~ msgid "tooltip"
-#~ msgstr "tooltip"
+#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
+msgid "Tools update automatically on this host when needed."
+msgstr "Tools update automatically on this host when needed."
 
 #: apps/web/src/components/BranchToolbar.logic.ts
 msgid "Top level only"
@@ -21349,6 +20910,7 @@ msgstr "Try a broader search."
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#CloudEnvironmentConnectRows
 #: apps/web/src/components/files/fileSurfaceChrome.tsx#FileSurfaceFailure
 #: apps/web/src/components/pullRequest/PullRequestDiffUnavailableState.tsx#PullRequestDiffUnavailableState
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#BlockedStep
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseManifestError
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
@@ -21776,6 +21338,7 @@ msgstr "Unicorn"
 msgid "Unit"
 msgstr "Unit"
 
+#: apps/web/src/components/chat/useProjectScriptEditing.ts#deleteProjectScript
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#ChoiceSelect
 msgid "Unknown"
 msgstr "Unknown"
@@ -21838,6 +21401,10 @@ msgstr "Unpin"
 msgid "Unpin ({pinnedCount})"
 msgstr "Unpin ({pinnedCount})"
 
+#: apps/web/src/components/ProjectPinButton.tsx#ProjectPinButton
+msgid "Unpin {name}"
+msgstr "Unpin {name}"
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#GeneralSettingsPanel
 msgid "unpin confirmation"
 msgstr "unpin confirmation"
@@ -21864,11 +21431,6 @@ msgstr "Unpriced"
 msgid "Unpriced usage details"
 msgstr "Unpriced usage details"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#ConfiguredCloudLinkRow
-#~ msgid "unreachable"
-#~ msgstr "unreachable"
-
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
 msgid "Unreachable"
 msgstr "Unreachable"
@@ -21881,10 +21443,9 @@ msgstr "Unresolve"
 msgid "Unsent draft"
 msgstr "Unsent draft"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/DiffPanel.tsx
-#~ msgid "unstaged"
-#~ msgstr "unstaged"
+#: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
+msgid "Unsupported"
+msgstr "Unsupported"
 
 #: apps/web/src/components/settings/providerStatus.ts
 msgid "Unsupported version"
@@ -21905,6 +21466,7 @@ msgid "Up to {MAX_SNOOZE_PRESETS} options"
 msgstr "Up to {MAX_SNOOZE_PRESETS} options"
 
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update"
 msgstr "Update"
 
@@ -21912,15 +21474,9 @@ msgstr "Update"
 msgid "Update “{messageText}”?"
 msgstr "Update “{messageText}”?"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
-#~ msgid "Update {length} {targetsLength1Text}"
-#~ msgstr "Update {length} {targetsLength1Text}"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/sidebar/UpdateEverythingDialog.tsx#UpdateEverythingDialogContent
-#~ msgid "Update {length} {updatingLength1Text}?"
-#~ msgstr "Update {length} {updatingLength1Text}?"
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Update {name}"
+msgstr "Update {name}"
 
 #: apps/web/src/components/ProviderUpdatesAction.tsx#ProviderUpdatesAction
 #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
@@ -22103,6 +21659,10 @@ msgstr "Updating {activeProviderName}"
 msgid "Updating {length} providers"
 msgstr "Updating {length} providers"
 
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Updating {name}"
+msgstr "Updating {name}"
+
 #: apps/web/src/components/device/DeviceSetup.tsx#AgentDeviceSetupStatus
 msgid "Updating agent access…"
 msgstr "Updating agent access…"
@@ -22118,6 +21678,14 @@ msgstr "updating providers"
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 msgid "Updating pull requests"
 msgstr "Updating pull requests"
+
+#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
+msgid "Updating queued message"
+msgstr "Updating queued message"
+
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "Updating..."
+msgstr "Updating..."
 
 #: apps/web/src/components/ProviderUpdatesAction.tsx#ProviderUpdatesAction
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceHubSetupStatus
@@ -22136,11 +21704,10 @@ msgstr "Upgrade on T3 Chat"
 msgid "Upside down"
 msgstr "Upside down"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/CommandPalette.tsx#buildAddProjectSourceGroups
-#~ #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
-#~ msgid "url"
-#~ msgstr "url"
+#. Fallback branch label when the upstream reference name is unavailable.
+#: apps/web/src/components/GitActionsControl.tsx#runQuickAction
+msgid "upstream"
+msgstr "upstream"
 
 #: apps/web/src/components/media/MediaActions.tsx#showMenu
 msgid "URL copied"
@@ -22170,9 +21737,17 @@ msgstr "Usage breakdown by time"
 msgid "Usage limit reached"
 msgstr "Usage limit reached"
 
+#: apps/web/src/session-logic.ts#providerErrorPresentation
+msgid "Usage limit reached after {progress} retries"
+msgstr "Usage limit reached after {progress} retries"
+
 #: apps/web/src/components/chat/TimelineWorkEntryRow.tsx#WorkEntryLogRow
-msgid "Usage limit reached.{resetTimeText}"
-msgstr "Usage limit reached.{resetTimeText}"
+msgid "Usage limit reached."
+msgstr "Usage limit reached."
+
+#: apps/web/src/components/chat/TimelineWorkEntryRow.tsx#WorkEntryLogRow
+msgid "Usage limit reached. Retry after {resetTime}."
+msgstr "Usage limit reached. Retry after {resetTime}."
 
 #: apps/web/src/components/chat/ComposerUsageLimits.tsx#usageLimitsBannerItem
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#ThreadDetailsUsage
@@ -22196,12 +21771,6 @@ msgstr "Usage period"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Usage providers"
 msgstr "Usage providers"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ChatView.tsx
-#~ #: apps/web/src/session-logic.ts#providerErrorPresentation
-#~ msgid "usage_limit"
-#~ msgstr "usage_limit"
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "USD / million tokens"
@@ -22390,8 +21959,20 @@ msgid "Use your ChatGPT subscription."
 msgstr "Use your ChatGPT subscription."
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
-msgid "Use your desktop's shortcut settings file. {niriText}"
-msgstr "Use your desktop's shortcut settings file. {niriText}"
+msgid ""
+"Use your desktop's shortcut settings file. A custom --config or NIRI_CONFIG "
+"can change its location."
+msgstr ""
+"Use your desktop's shortcut settings file. A custom --config or NIRI_CONFIG "
+"can change its location."
+
+#: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+msgid ""
+"Use your desktop's shortcut settings file. On Omarchy, use your own bindings "
+"file, not its defaults."
+msgstr ""
+"Use your desktop's shortcut settings file. On Omarchy, use your own bindings "
+"file, not its defaults."
 
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx
 msgid ""
@@ -22424,6 +22005,10 @@ msgstr "user@host or SSH alias"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#renderSshFields
 msgid "Username"
 msgstr "Username"
+
+#: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
+msgid "Uses custom intervals. Shared policy: {messageText}."
+msgstr "Uses custom intervals. Shared policy: {messageText}."
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Uses the custom binary path below. Installation keeps that path."
@@ -22463,6 +22048,10 @@ msgstr "Using reset credit…"
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockTokenField
 msgid "Using this machine's agent-device token ({signedInAs})."
 msgstr "Using this machine's agent-device token ({signedInAs})."
+
+#: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
+msgid "Using your installed Codex"
+msgstr "Using your installed Codex"
 
 #: apps/web/src/components/usage/UsageLimits.tsx#ResetCredits
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
@@ -22506,13 +22095,6 @@ msgstr ""
 "Verify the backend is reachable from this browser, supports CORS for hosted "
 "clients, and is served over HTTPS when opening this page from HTTPS."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
-#~ #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
-#~ #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
-#~ msgid "verifying"
-#~ msgstr "verifying"
-
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 msgid "Verifying download"
 msgstr "Verifying download"
@@ -22523,6 +22105,10 @@ msgstr "Verifying download"
 msgid "Version"
 msgstr "Version"
 
+#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
+msgid "version {version}"
+msgstr "version {version}"
+
 #: apps/web/src/components/chat/ThreadDetailsPanel.tsx#ThreadDetailsPanel
 msgid "Version Control"
 msgstr "Version Control"
@@ -22531,6 +22117,10 @@ msgstr "Version Control"
 #: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
 msgid "Version pill"
 msgstr "Version pill"
+
+#: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
+msgid "version unknown"
+msgstr "version unknown"
 
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 msgid "Version unknown"
@@ -22547,11 +22137,6 @@ msgstr "Versions have not been checked."
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 msgid "Versions unavailable"
 msgstr "Versions unavailable"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/ThreadTerminalDrawer.tsx#TerminalSidebarGroup
-#~ msgid "vertical"
-#~ msgstr "vertical"
 
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
 msgid "Via"
@@ -22604,6 +22189,10 @@ msgstr "View policy"
 #: apps/web/src/components/sidebar/SidebarUpdateReleaseNotes.tsx#SidebarUpdateReleaseNotes
 msgid "View release on GitHub"
 msgstr "View release on GitHub"
+
+#: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
+msgid "View source for {name}"
+msgstr "View source for {name}"
 
 #: apps/web/src/components/pullRequest/PullRequestStackMenu.tsx#PullRequestStackMenu
 msgid "View stack #{number}, layer {position} of {length}{noticeText}"
@@ -22745,11 +22334,6 @@ msgstr "Wake thread now"
 msgid "Waking..."
 msgstr "Waking..."
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/device/DevicePanel.tsx#DeviceNotice
-#~ msgid "warning"
-#~ msgstr "warning"
-
 #: apps/web/src/components/ChatMarkdown.tsx
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Warning"
@@ -22795,11 +22379,6 @@ msgstr ""
 msgid "Web"
 msgstr "Web"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
-#~ msgid "webhook"
-#~ msgstr "webhook"
-
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookEndpointField
 msgid "Webhook URL"
 msgstr "Webhook URL"
@@ -22829,12 +22408,8 @@ msgid "What should the agent do each time this runs?"
 msgstr "What should the agent do each time this runs?"
 
 #: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
-msgid "What should we build in"
-msgstr "What should we build in"
-
-#: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
-msgid "What should we build<0>?</0><1>in</1>"
-msgstr "What should we build<0>?</0><1>in</1>"
+msgid "What should we build in <0>{children}</0>?"
+msgstr "What should we build in <0>{children}</0>?"
 
 #: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
@@ -22909,11 +22484,6 @@ msgstr "Wide"
 #: apps/web/src/components/pullRequest/PullRequestListEmptyState.tsx#PullRequestListEmptyState
 msgid "Widen the state, involvement or project filter to see more."
 msgstr "Widen the state, involvement or project filter to see more."
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/files/extendedDocumentPreview.ts#openRtf
-#~ msgid "windows-{arg}"
-#~ msgstr "windows-{arg}"
 
 #: apps/web/src/components/CommandPalette.tsx#handleAddProjectForEnvironment
 #: apps/web/src/components/CommandPalette.tsx#submitAddProjectCloneFlow
@@ -23012,11 +22582,6 @@ msgstr "Workspace path is unavailable"
 msgid "Workstation"
 msgstr "Workstation"
 
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/BranchToolbar.tsx#RunContextSelector
-#~ msgid "worktree"
-#~ msgstr "worktree"
-
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Worktree"
 msgstr "Worktree"
@@ -23096,6 +22661,7 @@ msgid "Write custom instructions for all"
 msgstr "Write custom instructions for all"
 
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
 msgid "Write guide"
 msgstr "Write guide"
 
@@ -23110,11 +22676,6 @@ msgstr "Write throughput"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ProcessTable
 msgid "Write Total"
 msgstr "Write Total"
-
-#~ #@ obsolete-since: 2026-11-05
-#~ #: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
-#~ msgid "Write-only headers JSON, e.g. {\"Authorization\":\"Bearer …\"}"
-#~ msgstr "Write-only headers JSON, e.g. {\"Authorization\":\"Bearer …\"}"
 
 #: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
 msgid "Write-only headers JSON, e.g. {example}"
@@ -23135,6 +22696,10 @@ msgstr "Writing a review guide"
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Writing guide..."
 msgstr "Writing guide..."
+
+#: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
+msgid "Written before the latest push."
+msgstr "Written before the latest push."
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#renderWslRow
 #: apps/web/src/components/settings/settingsSearch.ts

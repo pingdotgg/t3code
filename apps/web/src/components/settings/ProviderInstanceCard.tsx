@@ -424,12 +424,6 @@ export function ProviderEnvironmentSection(props: {
       },
     ]);
 
-  const rowsSomeRowRowValueRedactedTrueText =
-    rows.length > 0
-      ? rows.some((row) => row.valueRedacted === true)
-        ? " Enter a new value to rename a saved one or make it plain text."
-        : null
-      : undefined;
   return (
     <SettingsRow
       title={t({ message: "Variables" })}
@@ -571,10 +565,13 @@ export function ProviderEnvironmentSection(props: {
             );
           })}
           <p className="text-xs text-muted-foreground">
-            <Trans>
-              Sensitive values are stored separately and never returned to the app.
-              {rowsSomeRowRowValueRedactedTrueText}
-            </Trans>
+            <Trans>Sensitive values are stored separately and never returned to the app.</Trans>
+            {rows.some((row) => row.valueRedacted === true) ? (
+              <>
+                {" "}
+                <Trans>Enter a new value to rename a saved one or make it plain text.</Trans>
+              </>
+            ) : null}
           </p>
         </div>
       ) : null}
@@ -949,10 +946,10 @@ export function ProviderInstanceCard({
   const statusDiagnostic = hasCompatibilityWarning && needsAttention ? summary.detail : null;
   const inlineStatusDetail = hasCompatibilityWarning
     ? compatibility?.status === "broken"
-      ? "Incompatible"
+      ? t({ message: "Incompatible" })
       : compatibility?.status === "unsupported"
-        ? "Unsupported"
-        : "Limited support"
+        ? t({ message: "Unsupported" })
+        : t({ message: "Limited support" })
     : summary.detail;
   const editorStatusNode =
     isAuthenticated && authEmail ? (

@@ -233,7 +233,7 @@ export function useComposerAttachmentIntake(input: {
         const formatAttachmentSizeText = formatAttachmentSize(attached.sizeBytes);
         const isMacPlatformNavigatorPlatformText = isMacPlatform(navigator.platform)
           ? "⌘⇧V"
-          : "Ctrl+Shift+V";
+          : t({ message: "Ctrl+Shift+V" });
         toastManager.add({
           type: "info",
           title: t`Large paste attached as ${attached.name}`,

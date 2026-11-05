@@ -53,7 +53,15 @@ const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, stri
 type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
 
 const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
-  ...BACKGROUND_ACTIVITY_PROFILE_LABELS,
+  get balanced() {
+    return BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced;
+  },
+  get performance() {
+    return BACKGROUND_ACTIVITY_PROFILE_LABELS.performance;
+  },
+  get "battery-saver"() {
+    return BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"];
+  },
   get advanced() {
     return t({ message: "Advanced" });
   },
@@ -72,8 +80,6 @@ const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<BackgroundActivityProfile
     return t({ message: "Also pauses background probes when the host or client is on battery." });
   },
 };
-
-const ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION = "Uses custom intervals.";
 
 const BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES: ReadonlyArray<{
   readonly key:
@@ -404,7 +410,7 @@ export function BackgroundActivitySettingsRow() {
       : undefined;
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
-      ? t`${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: ${messageText}.`
+      ? t`Uses custom intervals. Shared policy: ${messageText}.`
       : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
   const canResetBackgroundActivity = !Equal.equals(
     settings.backgroundActivity,

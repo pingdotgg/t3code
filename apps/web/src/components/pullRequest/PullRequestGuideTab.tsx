@@ -1,7 +1,7 @@
 import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, type ReactNode } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -92,7 +92,7 @@ export function PullRequestGuideTab({
   const stale = guide !== null && currentHeadSha !== null && currentHeadSha !== guide.headSha;
   const failure =
     runState?._tag === "Failed" && runState.headSha === currentHeadSha ? runState.detail : null;
-  const writeButton = (label: string, size: "sm" | "xs") =>
+  const writeButton = (label: ReactNode, size: "sm" | "xs") =>
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
         {running ? <Spinner /> : <SparklesIcon aria-hidden className="size-3.5" />}
@@ -126,13 +126,20 @@ export function PullRequestGuideTab({
               will be told when it is ready.
             </Trans>
           ) : failure === null ? (
-            (query.error ??
-            "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")
+            (query.error ?? (
+              <Trans>
+                A guide is a tour of the change: stops through the code in reading order, with the
+                calls only a maintainer can make.
+              </Trans>
+            ))
           ) : (
-            FAILURE_HINT
+            <Trans>Check the review guide model in Settings → Source control.</Trans>
           )}
         </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+        {writeButton(
+          failure === null ? <Trans>Write guide</Trans> : <Trans>Try again</Trans>,
+          "sm",
+        )}
         {failure === null || running ? null : <FailureDetails detail={failure} />}
       </div>
     );
@@ -144,17 +151,22 @@ export function PullRequestGuideTab({
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
           {running ? (
-            "Rewriting this guide. You will be told when the new one is ready."
+            <Trans>Rewriting this guide. You will be told when the new one is ready.</Trans>
           ) : failure === null ? (
-            "Written before the latest push."
+            <Trans>Written before the latest push.</Trans>
           ) : (
             <>
-              {<Trans>Could not rewrite this guide. {FAILURE_HINT}</Trans>}
+              <Trans>
+                Could not rewrite this guide. Check the review guide model in Settings → Source
+                control.
+              </Trans>
               <FailureDetails detail={failure} />
             </>
           )}
         </AlertDescription>
-        {!running && canWrite ? <AlertAction>{writeButton("Rewrite", "xs")}</AlertAction> : null}
+        {!running && canWrite ? (
+          <AlertAction>{writeButton(<Trans>Rewrite</Trans>, "xs")}</AlertAction>
+        ) : null}
       </Alert>
     ) : null;
 
@@ -181,8 +193,6 @@ export function PullRequestGuideTab({
     </GuideProseContext>
   );
 }
-
-const FAILURE_HINT = "Check the review guide model in Settings → Source control.";
 
 function FailureDetails({ detail }: { detail: string }) {
   return (

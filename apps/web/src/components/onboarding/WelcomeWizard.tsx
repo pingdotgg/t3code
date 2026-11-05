@@ -347,9 +347,6 @@ function ConnectionStep({
       continueRef.current?.focus();
     }
   }, [ready]);
-  const telemetryOffText =
-    telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it.";
-  const telemetryOffUndefinedText = telemetryOff === undefined ? " and how to opt out" : "";
   const skippedLabelsJoinText = skippedLabels.length > 0 ? skippedLabels.join(", ") : undefined;
 
   return (
@@ -465,19 +462,34 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          <Trans>
-            {telemetryOffText} To read more about how your data is used{telemetryOffUndefinedText},
-            see our{" "}
-            <a
-              className="underline underline-offset-2 hover:text-foreground"
-              href={PRIVACY_POLICY_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              privacy policy
-            </a>
-            .
-          </Trans>
+          {telemetryOff === undefined ? (
+            <Trans>
+              T3 Code collects anonymous usage data to help us improve it. To read more about how
+              your data is used and how to opt out, see our{" "}
+              <a
+                className="underline underline-offset-2 hover:text-foreground"
+                href={PRIVACY_POLICY_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                privacy policy
+              </a>
+              .
+            </Trans>
+          ) : (
+            <Trans>
+              {telemetryOff} To read more about how your data is used, see our{" "}
+              <a
+                className="underline underline-offset-2 hover:text-foreground"
+                href={PRIVACY_POLICY_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                privacy policy
+              </a>
+              .
+            </Trans>
+          )}
         </p>
         <Button
           className="shrink-0 self-end"

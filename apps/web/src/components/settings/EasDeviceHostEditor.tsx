@@ -34,9 +34,15 @@ import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 const FROM_THREAD_PROJECT = "thread-project";
 
 const CREDENTIAL_SOURCES: Record<DeviceEasAccount["credentialSource"], string> = {
-  settings: "the access token saved here",
-  env: "EXPO_TOKEN on the server",
-  "eas-login": "the server's eas login",
+  get settings() {
+    return t({ message: "the access token saved here" });
+  },
+  get env() {
+    return t({ message: "EXPO_TOKEN on the server" });
+  },
+  get "eas-login"() {
+    return t({ message: "the server's eas login" });
+  },
 };
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
@@ -161,9 +167,6 @@ export function EasDeviceHostEditor(props: {
   );
 
   const accountStatusCheckingText = account.status === "checking" ? <Spinner size="xs" /> : null;
-  const propsIsNewText = props.isNew
-    ? null
-    : " Saving restarts this host, which stops its running sessions.";
   const propsBusyText = props.busy ? <Spinner size="xs" /> : null;
   const messageText =
     account.status === "signed-in"
@@ -351,8 +354,13 @@ export function EasDeviceHostEditor(props: {
                 Expo allows sessions of up to 40 minutes on free accounts and 115 on paid ones, and
                 ends one after the idle minutes without activity, so idle minutes must be smaller
                 than session minutes.
-                {propsIsNewText}
               </Trans>
+              {!props.isNew ? (
+                <>
+                  {" "}
+                  <Trans>Saving restarts this host, which stops its running sessions.</Trans>
+                </>
+              ) : null}
             </p>
             {problem === null ? null : (
               <p className="text-xs text-destructive" role="alert">

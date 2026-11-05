@@ -279,7 +279,7 @@ export function AttachmentFilePreview(props: {
     !(kind === "audio") &&
     !(kind === "video") &&
     !(kind === "image")
-      ? props.name.split(".").at(-1) || "this format"
+      ? props.name.split(".").at(-1)
       : undefined;
   const body = failure ? (
     <FileSurfaceFailure
@@ -389,7 +389,11 @@ export function AttachmentFilePreview(props: {
         <Trans>No preview for this file</Trans>
       </p>
       <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        <Trans>Save it to open in an app that supports {propsNameSplitAt1Text} files.</Trans>
+        {propsNameSplitAt1Text ? (
+          <Trans>Save it to open in an app that supports {propsNameSplitAt1Text} files.</Trans>
+        ) : (
+          <Trans>Save it to open in an app that supports this format.</Trans>
+        )}
       </p>
     </div>
   );

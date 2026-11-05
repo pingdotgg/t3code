@@ -292,7 +292,6 @@ function SavePlanToWorkspaceForm({
 }) {
   const [savePath, setSavePath] = useState(initialPath);
   const savePathInputId = useId();
-  const workspaceRootText = workspaceRoot ?? "the workspace";
   return (
     <>
       <DialogHeader>
@@ -300,9 +299,13 @@ function SavePlanToWorkspaceForm({
           <Trans>Save plan to workspace</Trans>
         </DialogTitle>
         <DialogDescription>
-          <Trans>
-            Enter a path relative to <code>{workspaceRootText}</code>.
-          </Trans>
+          {workspaceRoot ? (
+            <Trans>
+              Enter a path relative to <code>{workspaceRoot}</code>.
+            </Trans>
+          ) : (
+            <Trans>Enter a path relative to the workspace.</Trans>
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>

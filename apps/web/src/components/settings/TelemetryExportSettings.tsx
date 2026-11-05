@@ -163,7 +163,7 @@ function TelemetryExportForm() {
   }, [canCheck]);
 
   const environmentLabelText = !canEdit
-    ? (environment?.label ?? "the selected environment")
+    ? (environment?.label ?? t({ message: "the selected environment" }))
     : undefined;
   return (
     <SettingsSection title={t({ message: "OpenTelemetry export" })} id="telemetry-export">

@@ -682,15 +682,19 @@ function ConnectionsSettingsContent({
     const result = await setEnvironmentEnabled({ environmentId, enabled });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      const enabledText = !(error instanceof Error) ? (enabled ? "on" : "off") : undefined;
       const message =
-        error instanceof Error ? error.message : t`Failed to switch the backend ${enabledText}.`;
+        error instanceof Error
+          ? error.message
+          : enabled
+            ? t({ message: "Failed to switch the backend on." })
+            : t({ message: "Failed to switch the backend off." });
       setSavedBackendError(message);
-      const enabledText2 = enabled ? "on" : "off";
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: t`Could not switch backend ${enabledText2}`,
+          title: enabled
+            ? t({ message: "Could not switch backend on" })
+            : t({ message: "Could not switch backend off" }),
           description: message,
         }),
       );

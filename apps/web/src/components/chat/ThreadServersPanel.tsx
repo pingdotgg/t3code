@@ -65,7 +65,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   if (servers.length === 0) return null;
   const externalClickLabel = isMacPlatform(navigator.platform)
     ? t({ message: "⌘-click" })
-    : "Ctrl-click";
+    : t({ message: "Ctrl-click" });
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const hiddenCount = Math.max(0, servers.length - visibleCount);
 

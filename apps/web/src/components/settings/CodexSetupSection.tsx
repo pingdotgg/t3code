@@ -618,7 +618,7 @@ function ManagedCodexSetup({
     installation?.phase === "downloading"
       ? installation.totalBytes === null
         ? ""
-        : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)}`
+        : (installation.totalBytes / 1_000_000).toFixed(1)
       : undefined;
   const installationSourceLocalText =
     !(installation?.phase === "downloading") &&
@@ -626,8 +626,8 @@ function ManagedCodexSetup({
     !(installation?.phase === "verifying") &&
     installed
       ? installation?.source === "local"
-        ? "Using your installed Codex"
-        : "Managed by T3 Code"
+        ? t({ message: "Using your installed Codex" })
+        : t({ message: "Managed by T3 Code" })
       : undefined;
   const installationInstalledVersionText =
     !(installation?.phase === "downloading") &&
@@ -640,7 +640,9 @@ function ManagedCodexSetup({
       : undefined;
   const runtimeDescription =
     installation?.phase === "downloading"
-      ? t`Downloading ${installationDownloadedBytes1000000ToFixedText}${installationTotalBytesNullText} MB.`
+      ? installation.totalBytes === null
+        ? t`Downloading ${installationDownloadedBytes1000000ToFixedText} MB.`
+        : t`Downloading ${installationDownloadedBytes1000000ToFixedText} of ${installationTotalBytesNullText} MB.`
       : installation?.phase === "extracting"
         ? t({ message: "Installing Codex." })
         : installation?.phase === "verifying"
@@ -650,12 +652,12 @@ function ManagedCodexSetup({
             : (installation?.message ??
               t({ message: "T3 Code downloads and manages Codex for you." }));
   const accountDescription = finishingSignIn ? (
-    "Finishing sign-in..."
+    t({ message: "Finishing sign-in..." })
   ) : installActive ? (
     runtimeDescription
   ) : authActive || auth?.phase === "failed" || auth?.phase === "cancelled" ? (
     auth?.phase === "waiting" && requestedAccountEmail ? (
-      `Continue as ${requestedAccountEmail} on OpenAI.`
+      t`Continue as ${requestedAccountEmail} on OpenAI.`
     ) : (
       (auth?.message ?? t({ message: "Finish signing in in your browser." }))
     )

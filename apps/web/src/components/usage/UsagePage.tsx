@@ -530,18 +530,6 @@ export function UsagePage() {
     </div>
   );
 
-  const showingLimitsText =
-    selectedEnvironments.length === 0 && environments.length === 0
-      ? showingLimits
-        ? "limits"
-        : "usage"
-      : undefined;
-  const showingLimitsText2 =
-    selectedEnvironments.length === 0 && !(environments.length === 0)
-      ? showingLimits
-        ? "limits"
-        : "usage"
-      : undefined;
   return (
     <AppRouteModal label={t({ message: "Usage" })}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -555,9 +543,15 @@ export function UsagePage() {
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0 ? (
-                  <Trans>Connect an environment to see {showingLimitsText}.</Trans>
+                  showingLimits ? (
+                    <Trans>Connect an environment to see limits.</Trans>
+                  ) : (
+                    <Trans>Connect an environment to see usage.</Trans>
+                  )
+                ) : showingLimits ? (
+                  <Trans>Select an environment to see limits.</Trans>
                 ) : (
-                  <Trans>Select an environment to see {showingLimitsText2}.</Trans>
+                  <Trans>Select an environment to see usage.</Trans>
                 )}
               </p>
             ) : showingLimits ? (

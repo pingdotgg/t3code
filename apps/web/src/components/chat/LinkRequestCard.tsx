@@ -10,7 +10,6 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
-  linkRequestTargetName,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
 import {
@@ -44,6 +43,9 @@ import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } fro
 import { WorkLogRow } from "./WorkLog";
 
 const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
+
+const linkRequestTargetName = (item: Pick<LinkRequestItem, "label" | "url">): string =>
+  item.label?.trim() || item.url || t({ message: "a machine" });
 
 /** Whether the agent left the machine for the user to pick. */
 const picksMachine = (item: LinkRequestItem) =>

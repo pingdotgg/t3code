@@ -602,7 +602,7 @@ export function AddEnvironmentDialog({
                 value={savedBackendSshUsername}
                 onChange={(event) => setSavedBackendSshUsername(event.target.value)}
                 onKeyDown={handleSavedBackendSshFieldKeyDown}
-                placeholder={t({ message: "root" })}
+                placeholder="root"
                 disabled={isAddingSavedBackend}
                 spellCheck={false}
               />

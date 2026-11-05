@@ -125,7 +125,7 @@ export function resolveSettingsScope(
         environmentIds: [checkout.environmentId],
       };
     }
-    const environmentLabelText = environment?.label ?? "All checkouts";
+    const environmentLabelText = environment?.label ?? t({ message: "All checkouts" });
     return {
       kind: "project",
       group,

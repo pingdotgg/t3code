@@ -288,11 +288,7 @@ function WebhookFiltersField({
               <div className="grid min-w-0 flex-1 grid-cols-1">
                 <Input
                   aria-label={`Filter ${index + 1} value`}
-                  placeholder={
-                    filter.op === "in"
-                      ? t({ message: "opened, reopened" })
-                      : t({ message: "opened" })
-                  }
+                  placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
                   value={filter.value}
                   onChange={(event) => update(index, { value: event.target.value })}
                 />

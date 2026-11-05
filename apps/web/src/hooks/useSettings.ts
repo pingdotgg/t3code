@@ -596,7 +596,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       const errorInstanceofErrorText =
         error instanceof Error
           ? error.message
-          : "The save failed. Try reconnecting and saving again.";
+          : t({ message: "The save failed. Try reconnecting and saving again." });
       toastManager.add({
         type: "error",
         title: t({ message: "Setting not saved" }),
@@ -621,7 +621,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       options?.onFailed?.();
       const environmentsFindTargetTargetEnvironmentIdEnvironmentIdLabelText =
         environments.find((target) => target.environmentId === environmentId)?.label ??
-        "the selected environment";
+        t({ message: "the selected environment" });
       toastManager.add({
         type: "warning",
         title: t({ message: "Setting not saved" }),
@@ -710,9 +710,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
             const failures = outcomes.flatMap(({ label, result }) => {
               if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
               const error = squashAtomCommandFailure(result);
-              return [
-                `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
-              ];
+              const errorInstanceofErrorText =
+                error instanceof Error
+                  ? error.message
+                  : t({ message: "The save failed. Try reconnecting and saving again." });
+              return [t`Could not save on ${label}: ${errorInstanceofErrorText}`];
             });
             if (
               deniedLabels.length === 0 &&

@@ -250,7 +250,7 @@ export function useProjectScriptEditing(input: {
       keybindingCommand: commandForProjectScript(scriptId),
     });
     if (result._tag === "Success") {
-      const deletedNameText = deletedName ?? "Unknown";
+      const deletedNameText = deletedName ?? t({ message: "Unknown" });
       toastManager.add({
         type: "success",
         title: t`Deleted action "${deletedNameText}"`,

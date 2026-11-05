@@ -192,13 +192,14 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       !suppressUnavailableBanner;
     if (showUnavailableBanner) {
-      const environmentReconnectingText = environmentReconnecting ? "reconnecting" : "offline";
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         group: "environment",
         icon: <WifiOffIcon />,
-        title: t`${activeEnvironmentUnavailableState.label} is ${environmentReconnectingText}`,
+        title: environmentReconnecting
+          ? t`${activeEnvironmentUnavailableState.label} is reconnecting`
+          : t`${activeEnvironmentUnavailableState.label} is offline`,
         description: activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,

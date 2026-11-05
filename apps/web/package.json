@@ -9,7 +9,7 @@
     "dev:built": "vp build --watch",
     "build": "vp build",
     "i18n:extract": "pmds extract",
-    "i18n:check": "pmds extract --check && pmds lint --fail-on warning && pmds catalog compile --target js --output .palamedes/check",
+    "i18n:check": "pmds extract --check && pmds lint --fail-on warning && pmds audit --fail-on warning && pmds report --fail-if-below 100 && pmds catalog compile --target js --output .palamedes/check --fail-on-missing",
     "preview": "vp preview",
     "test": "vp test run --passWithNoTests --project unit --project browser",
     "i18n:coverage": "pmds report --fail-if-below 100"

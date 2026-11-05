@@ -52,7 +52,6 @@ export function UsageProviderSettings({
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
-            const sourceEnabledText = source.enabled ? "" : " · Disabled";
             const labelSourceUrlText = label !== source.url ? ` · ${source.url}` : "";
             return (
               <SettingsRow
@@ -60,10 +59,11 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    <Trans>
-                      CLI Proxy{sourceEnabledText}
-                      {labelSourceUrlText}
-                    </Trans>
+                    {source.enabled ? (
+                      <Trans>CLI Proxy{labelSourceUrlText}</Trans>
+                    ) : (
+                      <Trans>CLI Proxy · Disabled{labelSourceUrlText}</Trans>
+                    )}
                   </span>
                 }
                 control={

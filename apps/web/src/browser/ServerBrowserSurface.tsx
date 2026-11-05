@@ -742,18 +742,6 @@ export function ServerBrowserSurface(props: {
     resetInput(textarea);
   };
 
-  const fileChooserMultipleText =
-    fileChooser && control?.controller === "you"
-      ? fileChooser.multiple
-        ? "files"
-        : "a file"
-      : undefined;
-  const fileChooserMultipleText2 =
-    fileChooser && control?.controller === "you"
-      ? fileChooser.multiple
-        ? "files"
-        : "file"
-      : undefined;
   return (
     <div
       className={cn("relative flex flex-col overflow-hidden", className)}
@@ -847,7 +835,11 @@ export function ServerBrowserSurface(props: {
             aria-label={t({ message: "Choose files for the page" })}
           >
             <p className="text-sm">
-              <Trans>The page asks for {fileChooserMultipleText}.</Trans>
+              {fileChooser.multiple ? (
+                <Trans>The page asks for files.</Trans>
+              ) : (
+                <Trans>The page asks for a file.</Trans>
+              )}
             </p>
             <input
               ref={fileInputRef}
@@ -866,7 +858,7 @@ export function ServerBrowserSurface(props: {
                 <Trans>Cancel</Trans>
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-                <Trans>Choose {fileChooserMultipleText2}</Trans>
+                {fileChooser.multiple ? <Trans>Choose files</Trans> : <Trans>Choose file</Trans>}
               </Button>
             </div>
           </div>

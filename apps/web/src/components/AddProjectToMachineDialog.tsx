@@ -213,7 +213,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
 
   const projectRepositoryIdentityDisplayNameText =
     project?.repositoryIdentity?.displayName ?? project?.title;
-  const targetLabelText = target?.label ?? "the other machine";
+  const targetLabelText = target?.label;
 
   const selectedBytes0Text =
     canListFiles && copyable.length > 0
@@ -221,7 +221,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         ? ` · ${formatBytes(selectedBytes)}`
         : ""
       : undefined;
-  const targetLabelText2 = !submitting ? (target?.label ?? "machine") : undefined;
+  const targetLabelText2 = !submitting ? target?.label : undefined;
   return (
     <Dialog
       open
@@ -349,7 +349,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${id}-path`}>
-                <Trans>Folder on {targetLabelText}</Trans>
+                {targetLabelText ? (
+                  <Trans>Folder on {targetLabelText}</Trans>
+                ) : (
+                  <Trans>Folder on the other machine</Trans>
+                )}
               </Label>
               <Input
                 id={`${id}-path`}
@@ -440,7 +444,13 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               <Trans>Cancel</Trans>
             </Button>
             <Button type="submit" disabled={unavailable || submitting}>
-              {submitting ? <Trans>Starting…</Trans> : <Trans>Clone to {targetLabelText2}</Trans>}
+              {submitting ? (
+                <Trans>Starting…</Trans>
+              ) : targetLabelText2 ? (
+                <Trans>Clone to {targetLabelText2}</Trans>
+              ) : (
+                <Trans>Clone to machine</Trans>
+              )}
             </Button>
           </DialogFooter>
         </form>

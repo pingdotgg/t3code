@@ -364,18 +364,23 @@ function ExcerptDiff({
           </div>
         )}
         renderHeaderMetadata={() => {
-          const excerptSideOldText = excerpt.side === "old" ? "removed code, " : "";
           return (
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="tabular-nums">
-                <Trans>
-                  {excerptSideOldText}showing {slice.shown} of {slice.total} diff lines
-                </Trans>
+                {excerpt.side === "old" ? (
+                  <Trans>
+                    Removed code, showing {slice.shown} of {slice.total} diff lines
+                  </Trans>
+                ) : (
+                  <Trans>
+                    Showing {slice.shown} of {slice.total} diff lines
+                  </Trans>
+                )}
               </span>
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`Open ${excerpt.path} in Code`}
+                aria-label={t`Open ${excerpt.path} in Code`}
                 onClick={() => onOpenFile(excerpt.path)}
               >
                 <ArrowUpRightIcon aria-hidden />

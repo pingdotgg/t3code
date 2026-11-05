@@ -286,7 +286,9 @@ export const OpenInPicker = memo(function OpenInPicker({
   const backgroundThread = use(BackgroundThreadContext);
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-  const primaryOptionLabelText = isPanel ? (primaryOption?.label ?? "editor") : undefined;
+  const primaryOptionLabelText = isPanel
+    ? (primaryOption?.label ?? t({ message: "editor" }))
+    : undefined;
   const primaryLabel = isPanel ? t`Open in ${primaryOptionLabelText}` : t({ message: "Open" });
 
   const editorItems = (

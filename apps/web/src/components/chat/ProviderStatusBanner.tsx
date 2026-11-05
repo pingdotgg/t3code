@@ -133,16 +133,12 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
   const statusVersionText = !isUnauthenticated && incompatible ? (status.version ?? "") : undefined;
-  const incompatibleStatusBrokenText =
-    !isUnauthenticated && incompatible
-      ? incompatible.status === "broken"
-        ? "known to be broken"
-        : "unsupported"
-      : undefined;
   const title = isUnauthenticated
     ? t`${providerName} is unauthenticated`
     : incompatible
-      ? t`${providerName} ${statusVersionText} is ${incompatibleStatusBrokenText}`
+      ? incompatible.status === "broken"
+        ? t`${providerName} ${statusVersionText} is known to be broken`
+        : t`${providerName} ${statusVersionText} is unsupported`
       : t`${providerName} provider status`;
   const message = incompatible?.message ?? getProviderStatusMessage(status);
   const isWarning =

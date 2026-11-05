@@ -275,15 +275,12 @@ function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }
   if (labels.length === 0) return null;
   const messageText2 = labels.length === 1 ? labels[0] : undefined;
   const labelsSlice03JoinText = !(labels.length === 1) ? labels.slice(0, 3).join(", ") : undefined;
-  const labelsLength3Text = !(labels.length === 1)
-    ? labels.length > 3
-      ? ", and more"
-      : ""
-    : undefined;
   const description =
     labels.length === 1
       ? t`Conflicts with ${messageText2}.`
-      : t`Conflicts with ${labelsSlice03JoinText}${labelsLength3Text}.`;
+      : labels.length > 3
+        ? t`Conflicts with ${labelsSlice03JoinText}, and more.`
+        : t`Conflicts with ${labelsSlice03JoinText}.`;
 
   return (
     <WarningTooltipIcon label={description}>

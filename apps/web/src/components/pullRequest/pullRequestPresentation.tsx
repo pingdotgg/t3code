@@ -1,4 +1,4 @@
-import { t } from "@palamedes/core/macro";
+import { t, plural } from "@palamedes/core/macro";
 import { Trans } from "@palamedes/react/macro";
 import { Spinner } from "~/components/ui/spinner";
 import type {
@@ -587,7 +587,7 @@ export function PullRequestMetaLine({
 }
 
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+  if (checks.length === 0) return t({ message: "No checks reported" });
   const actionRequired = checks.filter((check) => check.status === "action-required");
   const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;
   const otherActionRequired = actionRequired.length - workflowApprovalRequired;
@@ -596,16 +596,32 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
-  if (failed > 0) return `${failed} of ${checks.length} failing`;
+  if (failed > 0) return t`${failed} of ${checks.length} failing`;
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+    return workflowApprovalRequired === 1
+      ? plural(otherActionRequired, {
+          one: `${workflowApprovalRequired} workflow and ${otherActionRequired} check awaiting action`,
+          other: `${workflowApprovalRequired} workflow and ${otherActionRequired} checks awaiting action`,
+        })
+      : plural(otherActionRequired, {
+          one: `${workflowApprovalRequired} workflows and ${otherActionRequired} check awaiting action`,
+          other: `${workflowApprovalRequired} workflows and ${otherActionRequired} checks awaiting action`,
+        });
   }
   if (workflowApprovalRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} awaiting approval`;
+    return plural(workflowApprovalRequired, {
+      one: `${workflowApprovalRequired} workflow awaiting approval`,
+      other: `${workflowApprovalRequired} workflows awaiting approval`,
+    });
   }
   if (otherActionRequired > 0) {
-    return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+    return plural(otherActionRequired, {
+      one: `${otherActionRequired} check awaiting action`,
+      other: `${otherActionRequired} checks awaiting action`,
+    });
   }
-  if (pending > 0) return `${pending} of ${checks.length} running`;
-  return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  if (pending > 0) return t`${pending} of ${checks.length} running`;
+  return passed === checks.length
+    ? t({ message: "All checks passed" })
+    : t`${passed} of ${checks.length} passing`;
 }

@@ -128,7 +128,6 @@ function UpdateEverythingDialogContent({
     ),
   );
   const running = stopped + continuing;
-  const threads = `${running} running ${running === 1 ? "thread" : "threads"}`;
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
   const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
   const skipped = rows.filter((row) => row.skipped !== null);
@@ -247,13 +246,23 @@ function UpdateEverythingDialogContent({
         ) : running > 0 ? (
           <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
             {stopped === 0 ? (
-              <Trans>{threads} will be interrupted and can resume after the restart.</Trans>
+              <Plural
+                value={running}
+                one={`${running} running thread will be interrupted and can resume after the restart.`}
+                other={`${running} running threads will be interrupted and can resume after the restart.`}
+              />
             ) : continuing === 0 ? (
-              <Trans>{threads} will be interrupted.</Trans>
+              <Plural
+                value={running}
+                one={`${running} running thread will be interrupted.`}
+                other={`${running} running threads will be interrupted.`}
+              />
             ) : (
-              <Trans>
-                {threads} will be interrupted. {continuing} can resume after the restart.
-              </Trans>
+              <Plural
+                value={running}
+                one={`${running} running thread will be interrupted. ${continuing} can resume after the restart.`}
+                other={`${running} running threads will be interrupted. ${continuing} can resume after the restart.`}
+              />
             )}
           </p>
         ) : null}

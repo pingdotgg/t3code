@@ -134,7 +134,6 @@ export function MediaActions({
     let failureTitle = "Could not open media menu";
     let progressToast: ReturnType<typeof toastManager.add> | undefined;
     const result = await settlePromise(async () => {
-      const noun = source.kind === "image" ? "image" : "video";
       const unavailable = !canReadMedia || (source.src === null && source.asset === undefined);
       const canCopyImage =
         typeof navigator !== "undefined" &&
@@ -154,7 +153,12 @@ export function MediaActions({
           label: t({ message: "Open in file viewer" }),
           disabled: !canReadMedia,
         });
-      items.push({ id: "save", label: t`Save ${noun}`, disabled: unavailable });
+      items.push({
+        id: "save",
+        label:
+          source.kind === "image" ? t({ message: "Save image" }) : t({ message: "Save video" }),
+        disabled: unavailable,
+      });
       if (source.kind === "image") {
         items.push({
           id: "copy-image",
@@ -190,7 +194,11 @@ export function MediaActions({
         progressToast = toastManager.add({
           type: "loading",
           title:
-            action === "save" ? t`Preparing ${noun} download…` : t({ message: "Copying image…" }),
+            action === "save"
+              ? source.kind === "image"
+                ? t({ message: "Preparing image download…" })
+                : t({ message: "Preparing video download…" })
+              : t({ message: "Copying image…" }),
         });
         await (action === "save" ? save() : copyImage());
         toastManager.update(progressToast, {

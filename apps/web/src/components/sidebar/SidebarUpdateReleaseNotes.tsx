@@ -30,7 +30,7 @@ function formatReleaseAge(releasedAt: string): string {
   const days = Math.round(
     (today - Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]))) / 86_400_000,
   );
-  return days <= 0 ? "today" : `${days}d ago`;
+  return days <= 0 ? t({ message: "today" }) : t`${days}d ago`;
 }
 
 function ReleaseLink({
