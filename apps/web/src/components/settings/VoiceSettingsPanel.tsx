@@ -768,7 +768,8 @@ function TranscriptionTest(props: {
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
 }) {
-  const [draft, setDraft] = useState("");
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const draft = transcript ?? "";
   const [showTranscript, setShowTranscript] = useState(false);
   const draftRef = useRef(draft);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft to the asynchronous transcription controller
@@ -786,7 +787,7 @@ function TranscriptionTest(props: {
       text: draftRef.current,
       selection: { start: draftRef.current.length, end: draftRef.current.length },
     }),
-    commitDraft: (text) => setDraft(text),
+    commitDraft: (text) => setTranscript(text),
   });
   return (
     <SettingsSearchTarget {...searchableSetting("transcription-test")}>
@@ -846,19 +847,22 @@ function TranscriptionTest(props: {
                 <XIcon />
               </Button>
             </div>
-            {speech.preview ? (
-              <p role="status" className="mt-2 text-sm text-muted-foreground">
-                {speech.preview.committed}
-                <span className="opacity-70">{speech.preview.tentative}</span>
+            {speech.preview || transcript !== null ? (
+              <p
+                role="status"
+                aria-label="Test transcript"
+                className="mt-2 select-text whitespace-pre-wrap break-words text-sm leading-relaxed"
+              >
+                {speech.preview ? (
+                  <>
+                    {speech.preview.committed}
+                    <span className="text-muted-foreground">{speech.preview.tentative}</span>
+                  </>
+                ) : (
+                  transcript || "No speech recognized. Try again."
+                )}
               </p>
             ) : null}
-            <Textarea
-              aria-label="Test transcript"
-              className="mt-2"
-              value={draft}
-              placeholder="The transcript appears here."
-              onChange={(event) => setDraft(event.target.value)}
-            />
           </div>
         ) : null}
       </ModelCard>
