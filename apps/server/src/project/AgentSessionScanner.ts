@@ -291,8 +291,9 @@ function isClaudeTaskNotification(record: DecodedTranscriptRecord): boolean {
   if (record.type !== "user") return false;
   const text = extractText(record.message?.content);
   const closingTag = "</task-notification>";
+  // Exactly one block: user text around a pasted block keeps the message.
   return (
-    text.startsWith("<task-notification>") &&
+    text.lastIndexOf("<task-notification>") === 0 &&
     text.endsWith(closingTag) &&
     text.indexOf(closingTag) === text.length - closingTag.length
   );
