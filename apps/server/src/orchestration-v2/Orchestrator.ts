@@ -1386,12 +1386,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         continue;
       reported.add(event.threadId);
       const pending = events.findLast(
-        (candidate) =>
-          candidate.threadId === event.threadId &&
-          (candidate.type === "thread.metadata-updated" || candidate.type === "thread.created"),
+        (candidate) => candidate.threadId === event.threadId && "lineage" in candidate.payload,
       );
       const thread =
-        pending?.type === "thread.metadata-updated" || pending?.type === "thread.created"
+        pending !== undefined && "lineage" in pending.payload
           ? pending.payload
           : yield* projectionStore.getThread(event.threadId);
       if (thread.background == null || thread.background.reportedAt != null) continue;

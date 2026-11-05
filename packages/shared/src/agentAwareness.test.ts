@@ -232,8 +232,33 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...input.thread, background: { ...background, reportedAt: NOW } },
       })?.phase,
     ).toBe("completed");
+    for (const status of ["running", "idle"] as const) {
+      const reportedAt = "2026-09-04T12:01:00.000Z";
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, status, background: { ...background, reportedAt } },
+        }),
+      ).toMatchObject({ phase: "completed", headline: "Result reported", updatedAt: reportedAt });
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, status, background },
+        })?.phase ?? null,
+      ).toBe(status === "running" ? "running" : null);
+    }
     expect(
       projectThreadAwarenessV2({ ...input, thread: { ...input.thread, status: "failed" } })?.phase,
+    ).toBe("failed");
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: {
+          ...input.thread,
+          status: "failed",
+          background: { ...background, reportedAt: NOW },
+        },
+      })?.phase,
     ).toBe("failed");
   });
 });
