@@ -5,6 +5,17 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn<(id: number) => Promise<{ locale: string; mode: number }>>(),
   transcribe: vi.fn<(id: number, uri: string, locale: string, mode: number) => Promise<string>>(),
   cancel: vi.fn<(id: number) => Promise<void>>(),
+  LiveVoiceRecorder: class {
+    readonly uri = "file:///live.pcm";
+  },
+}));
+
+vi.mock("react-native", () => ({
+  Platform: {
+    get Version() {
+      return 31;
+    },
+  },
 }));
 
 vi.mock("expo", () => ({
@@ -15,8 +26,17 @@ import {
   VoiceInputController,
   resetVoiceInputGlobalsForTests,
 } from "../../../../packages/client-runtime/src/voice-input/controller";
+import { Platform } from "react-native";
 
-import { getLocalVoiceTranscriber } from "./voiceTranscription.android";
+import { createLiveVoiceRecorder, getLocalVoiceTranscriber } from "./voiceTranscription.android";
+
+it.each([
+  [30, null],
+  [31, "file:///live.pcm"],
+] as const)("offers live recording only on supported Android versions (%s)", (version, uri) => {
+  using _version = vi.spyOn(Platform, "Version", "get").mockReturnValue(version);
+  expect(createLiveVoiceRecorder()?.uri ?? null).toBe(uri);
+});
 
 it.each([false, true])(
   "waits for device support before offering a transcriber (%s)",
