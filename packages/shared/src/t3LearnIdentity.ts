@@ -4,7 +4,7 @@
 
 export const T3_LEARN_REPOSITORY = "aabdel0181/t3-learn";
 export const T3_LEARN_APP_ID = "io.github.aabdel0181.t3learn";
-export const T3_LEARN_PRODUCT_NAME = "T3 Learn";
+export const T3_LEARN_PRODUCT_NAME = "OminaX";
 /** Linux executable and WM class, deb package, Windows install folder and boot service, like upstream's `t3code`. */
 export const T3_LEARN_EXECUTABLE_NAME = "t3learn";
 /** The CLI command Settings → About installs, like upstream's `t3`. */

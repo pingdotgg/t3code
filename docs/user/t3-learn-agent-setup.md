@@ -1,18 +1,18 @@
-# Set up T3 Learn with an agent
+# Set up OminaX with an agent
 
-Give this page to a coding agent (Claude Code, Codex, or a thread in T3 Code) and it can install T3 Learn, bring your T3 Code chats across, and connect the app. Paste this to the agent:
+Give this page to a coding agent (Claude Code, Codex, or a thread in T3 Code) and it can install OminaX, bring your T3 Code chats across, and connect the app. Paste this to the agent:
 
-> Read https://github.com/aabdel0181/t3-learn/blob/main/docs/user/t3-learn-agent-setup.md and set up T3 Learn for me. Follow its rules. Stop and tell me when a step says **Ask**.
+> Read https://github.com/aabdel0181/t3-learn/blob/main/docs/user/t3-learn-agent-setup.md and set up OminaX for me. Follow its rules. Stop and tell me when a step says **Ask**.
 
 Everything below is written for the agent.
 
 ## Rules
 
-- T3 Learn runs next to T3 Code. Never stop, restart, update or reconfigure T3 Code, its service, or its app.
+- OminaX runs next to T3 Code. Never stop, restart, update or reconfigure T3 Code, its service, or its app.
 - Never write to T3 Code's data folder (`~/.t3`, or the desktop app's home). Copying from it read-only is fine.
 - Kill only a process whose PID you started. Never kill by name or path pattern.
 - A pairing link is a one-time secret. Don't open it in a browser or T3 Code, and keep it out of commits, issues and logs. Hand it to the user to paste.
-- A shell started by a T3 Code agent inherits `T3CODE_HOME` and `T3_BOOT_SERVICE_UNIT` from the T3 Code server. Run every `t3` command for T3 Learn with both reset, as in the commands below. Without that, a command targets T3 Code's data.
+- A shell started by a T3 Code agent inherits `T3CODE_HOME` and `T3_BOOT_SERVICE_UNIT` from the T3 Code server. Run every `t3` command for OminaX with both reset, as in the commands below. Without that, a command targets T3 Code's data.
 
 ## 1. Install the app
 
@@ -26,15 +26,15 @@ On Windows, in PowerShell: `irm https://github.com/aabdel0181/t3-learn/releases/
 
 Use this command, not a download from the Releases page. The builds aren't signed, and only the command gets past macOS Gatekeeper. The app opens when the command finishes, installs next to T3 Code, and keeps its data in `~/.t3-learn`. Set `T3LEARN_NO_LAUNCH=1` to install without opening it.
 
-If the user's chats are not on a server, you are done: T3 Learn starts empty and the user signs in to a provider (Claude Code, Codex) in its settings. Copying chats from a T3 Code desktop app on the same machine isn't scripted yet.
+If the user's chats are not on a server, you are done: OminaX starts empty and the user signs in to a provider (Claude Code, Codex) in its settings. Copying chats from a T3 Code desktop app on the same machine isn't scripted yet.
 
 ## 2. Bring chats from a T3 Code server
 
-Do this on a Linux machine that runs T3 Code as a background service, so the user's chats stay where their projects and agents are. T3 Learn gets its own server beside it, with its own data folder, port and service.
+Do this on a Linux machine that runs T3 Code as a background service, so the user's chats stay where their projects and agents are. OminaX gets its own server beside it, with its own data folder, port and service.
 
 **Ask** before starting: this copies the user's chats and starts a second server. Then:
 
-1. Install T3 Learn's server as its own service. Take the Linux archive for the latest release (`t3-<version>-linux-x64.tar.gz`, or `linux-arm64`) from the [release page](https://github.com/aabdel0181/t3-learn/releases/latest), unpack it, and run:
+1. Install OminaX's server as its own service. Take the Linux archive for the latest release (`t3-<version>-linux-x64.tar.gz`, or `linux-arm64`) from the [release page](https://github.com/aabdel0181/t3-learn/releases/latest), unpack it, and run:
 
    ```bash
    env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" LANG=C.UTF-8 PATH="$PATH" \
@@ -51,9 +51,9 @@ Do this on a Linux machine that runs T3 Code as a background service, so the use
    systemctl --user restart t3learn.service
    ```
 
-3. Check out this repository at the tag of the installed server (`git checkout v<version>`), run `vp i`, and run `scripts/t3-learn-copy-chats.sh`. If that tag predates the script, run it from a newer checkout with `T3_LEARN_CHECKOUT=<path to the tag checkout>`. It needs `sqlite3`, `python3` and `node`. It reads T3 Code's database read-only, builds a copy in a staging folder, boots that copy with no provider reachable so runs that were in flight are stopped instead of continuing, and adds the chats T3 Learn doesn't have yet. Copied chats stop watching pull requests and won't auto-resume after a usage limit. A chat that ran in the last hour, or is waiting out a usage limit, is added on a later run. It stops `t3learn.service` for the few seconds that takes, and skips the run if T3 Learn has anything running. If you wrap the command in a systemd user unit named `t3-learn-chat-sync.service`, Settings → Threads shows “Sync from T3 Code” to run it.
+3. Check out this repository at the tag of the installed server (`git checkout v<version>`), run `vp i`, and run `scripts/t3-learn-copy-chats.sh`. If that tag predates the script, run it from a newer checkout with `T3_LEARN_CHECKOUT=<path to the tag checkout>`. It needs `sqlite3`, `python3` and `node`. It reads T3 Code's database read-only, builds a copy in a staging folder, boots that copy with no provider reachable so runs that were in flight are stopped instead of continuing, and adds the chats OminaX doesn't have yet. Copied chats stop watching pull requests and won't auto-resume after a usage limit. A chat that ran in the last hour, or is waiting out a usage limit, is added on a later run. It stops `t3learn.service` for the few seconds that takes, and skips the run if OminaX has anything running. If you wrap the command in a systemd user unit named `t3-learn-chat-sync.service`, Settings → Threads shows “Sync from T3 Code” to run it.
 
-Run the script again to bring over chats started in T3 Code since. It only adds: a chat T3 Learn already has is never replaced, so new messages in it don't come across, and chats, side chats, settings and paired devices in T3 Learn are kept.
+Run the script again to bring over chats started in T3 Code since. It only adds: a chat OminaX already has is never replaced, so new messages in it don't come across, and chats, side chats, settings and paired devices in OminaX are kept.
 
 Make `t3 pair` and `t3 thread` easy to run with the right home by wrapping them, for example in `~/.local/bin/t3-learn`:
 
@@ -66,7 +66,7 @@ T3CODE_HOME="$HOME/.t3-learn" exec "$t3" "$@"
 
 ## 3. Connect the desktop app
 
-The user's desktop app and the server need to reach each other. Tailscale with MagicDNS and HTTPS certificates turned on is the simplest route. T3 Connect isn't available in T3 Learn.
+The user's desktop app and the server need to reach each other. Tailscale with MagicDNS and HTTPS certificates turned on is the simplest route. T3 Connect isn't available in OminaX.
 
 On the server, publish it and mint a link that lasts a day:
 
@@ -74,9 +74,9 @@ On the server, publish it and mint a link that lasts a day:
 t3-learn pair --base-dir ~/.t3-learn --tailscale --tailscale-serve-port 8443 --ttl 24h
 ```
 
-Give the user the `Pairing URL` it prints, as a code block. Don't use the `t3code://` app link: it opens T3 Code, not T3 Learn.
+Give the user the `Pairing URL` it prints, as a code block. Don't use the `t3code://` app link: it opens T3 Code, not OminaX.
 
-Tell the user to open T3 Learn, go to **Settings → Environments → Add environment**, paste the whole URL, and add it. Run the command again for a fresh link if it expires or gets used.
+Tell the user to open OminaX, go to **Settings → Environments → Add environment**, paste the whole URL, and add it. Run the command again for a fresh link if it expires or gets used.
 
 ## 4. Tell the user how to learn from copied chats
 
@@ -89,4 +89,4 @@ Tell the user to open T3 Learn, go to **Settings → Environments → Add enviro
 
 ## Updating
 
-New versions are released automatically from `main` after CI and the install tests pass. T3 Learn shows an update button that updates the app and connected server together. On the Linux box, run `t3-learn update --yes`; when using the plain CLI, set `T3CODE_HOME=~/.t3-learn` first.
+New versions are released automatically from `main` after CI and the install tests pass. OminaX shows an update button that updates the app and connected server together. On the Linux box, run `t3-learn update --yes`; when using the plain CLI, set `T3CODE_HOME=~/.t3-learn` first.

@@ -576,7 +576,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("names packaged builds T3 Learn so they install beside T3 Code", () =>
+  it.effect("names packaged builds OminaX so they install beside T3 Code", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const mac = yield* createBuildConfig(
@@ -589,11 +589,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
       assert.equal(mac.appId, "io.github.aabdel0181.t3learn");
-      assert.equal(mac.productName, "T3 Learn");
-      assert.equal(mac.artifactName, "T3-Learn-${version}-${arch}.${ext}");
+      assert.equal(mac.productName, "OminaX");
+      assert.equal(mac.artifactName, "OminaX-${version}-${arch}.${ext}");
       const unsignedMac = mac.mac as Record<string, unknown>;
       assert.deepStrictEqual((unsignedMac.protocols as unknown[])[0], {
-        name: "T3 Learn",
+        name: "OminaX",
         schemes: ["t3learn"],
       });
       assert.equal(unsignedMac.identity, "-");
@@ -623,7 +623,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
       const linuxConfig = linux.linux as Record<string, unknown>;
       assert.equal(linuxConfig.executableName, "t3learn");
-      assert.deepStrictEqual(linuxConfig.protocols, [{ name: "T3 Learn", schemes: ["t3learn"] }]);
+      assert.deepStrictEqual(linuxConfig.protocols, [{ name: "OminaX", schemes: ["t3learn"] }]);
       assert.deepStrictEqual(linuxConfig.desktop, { entry: { StartupWMClass: "t3learn" } });
       const [metainfo, copyright] = (linux.deb as { fpm: string[] }).fpm.map((entry) =>
         entry.split("="),

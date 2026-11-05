@@ -2798,7 +2798,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Learn-${version}-${arch}.${ext}",
+    artifactName: "OminaX-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2851,13 +2851,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSLocalNetworkUsageDescription:
-          "T3 Learn connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+          "OminaX connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
         NSScreenCaptureUsageDescription:
-          "T3 Learn captures the active window when you use the window capture shortcut.",
+          "OminaX captures the active window when you use the window capture shortcut.",
         NSCameraUsageDescription:
-          "T3 Learn lets commands run by terminals and coding agents use the camera.",
+          "OminaX lets commands run by terminals and coding agents use the camera.",
         NSMicrophoneUsageDescription:
-          "T3 Learn lets commands run by terminals and coding agents use the microphone.",
+          "OminaX lets commands run by terminals and coding agents use the microphone.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -3891,7 +3891,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     private: true,
     packageManager: rootPackageJson.packageManager,
     description:
-      "T3 Learn is a fork of T3 Code for learning with AI. Highlight anything in a reply and ask about it in a side chat next to the lesson. It installs next to T3 Code and keeps its own data.",
+      "OminaX is a fork of T3 Code for learning with AI. Highlight anything in a reply and ask about it in a side chat next to the lesson. It installs next to T3 Code and keeps its own data.",
     license: "MIT",
     homepage: "https://github.com/aabdel0181/t3-learn",
     author: "aabdel0181",

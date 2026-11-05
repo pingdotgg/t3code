@@ -52,7 +52,7 @@ EOF
 ((${#all[@]})) && printf '%s\n' "${all[@]}"
 cat <<'EOF'
 
-**Install.** T3 Learn installs next to T3 Code and keeps its own projects and settings, so an existing T3 Code stays exactly as it is.
+**Install.** OminaX installs next to T3 Code and keeps its own projects and settings, so an existing T3 Code stays exactly as it is.
 
 macOS and Linux:
 

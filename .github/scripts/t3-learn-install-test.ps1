@@ -27,14 +27,14 @@ function Screenshot([string] $name) {
 }
 
 # Waits for the desktop app's server under a T3 home and returns its version.
-function Wait-Server([string] $t3Home) {
+function Wait-Server([string] $t3Home, [string] $ExpectedVersion = "") {
   $state = Join-Path $t3Home "userdata\server-runtime.json"
   for ($i = 0; $i -lt 180; $i++) {
     if (Test-Path $state) {
       try {
         $runtime = Get-Content -Raw $state | ConvertFrom-Json
         Invoke-WebRequest -UseBasicParsing "$($runtime.origin)/.well-known/t3/environment" | Out-Null
-        return $runtime.serverVersion
+        if (-not $ExpectedVersion -or $runtime.serverVersion -eq $ExpectedVersion) { return $runtime.serverVersion }
       } catch {}
     }
     Start-Sleep -Seconds 1
@@ -59,44 +59,66 @@ if ($Scenario -eq "next-to-t3-code") {
   Screenshot "t3-code"
 }
 
-Log "Installing T3 Learn $Version"
+if ($Scenario -eq "fresh") {
+  $previous = (gh release view -R $repo --json tagName -q .tagName 2>$null | ForEach-Object { $_ -replace '^v', '' })
+  if ($previous -and $previous -ne $Version) {
+    Log "Installing OminaX $previous (previous release)"
+    $env:T3LEARN_VERSION = $previous
+    $previousCommand = "irm https://github.com/$repo/releases/download/v$previous/install.ps1 | iex"
+    powershell -NoProfile -Command $previousCommand
+    if ($LASTEXITCODE -ne 0) { Fail "the previous installer failed" }
+    $previousRunning = Wait-Server (Join-Path $HOME ".t3-learn") $previous
+    Log "OminaX $previousRunning is running"
+    $knowledge = Join-Path $HOME ".t3-learn\userdata\knowledge.json"
+    '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content $knowledge
+    Copy-Item $knowledge (Join-Path $artifacts "knowledge.json")
+  } else {
+    Log "No distinct previous promoted release; installing OminaX $Version fresh"
+  }
+}
+
+Log "Installing OminaX $Version"
 $env:T3LEARN_VERSION = $Version
 $installCommand = "irm https://github.com/$repo/releases/download/v$Version/install.ps1 | iex"
 # A fresh PowerShell, like a user's, keeps the installer's variables out of this script.
 powershell -NoProfile -Command $installCommand
 if ($LASTEXITCODE -ne 0) { Fail "the installer failed" }
 
-$learnVersion = Wait-Server (Join-Path $HOME ".t3-learn")
-if ($learnVersion -ne $Version) { Fail "T3 Learn's server reports $learnVersion, expected $Version" }
-Log "T3 Learn $learnVersion is running"
+$learnVersion = Wait-Server (Join-Path $HOME ".t3-learn") $Version
+Log "OminaX $learnVersion is running"
 Start-Sleep -Seconds 5
 Screenshot "t3-learn"
 
 $learnDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
-if (-not (Test-Path (Join-Path $learnDir "T3 Learn.exe"))) { Fail "T3 Learn.exe is missing" }
+if (-not (Test-Path (Join-Path $learnDir "OminaX.exe"))) { Fail "OminaX.exe is missing" }
+$knowledge = Join-Path $HOME ".t3-learn\userdata\knowledge.json"
+if (-not (Test-Path $knowledge)) {
+  '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' | Set-Content $knowledge
+  Copy-Item $knowledge (Join-Path $artifacts "knowledge.json")
+}
 $uninstallKeys = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
-  ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "T3 Learn*" }
-if (-not $uninstallKeys) { Fail "T3 Learn has no entry in Installed apps" }
+  ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "OminaX*" }
+if (-not $uninstallKeys) { Fail "OminaX has no entry in Installed apps" }
 
 if ($Scenario -eq "next-to-t3-code") {
   Log "Checking that T3 Code is untouched"
-  if ((Wait-Server (Join-Path $HOME ".t3")) -ne $t3CodeVersion) { Fail "T3 Code's server changed" }
+  if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code's server changed" }
   if (-not (Test-Path $t3CodeExe.FullName)) { Fail "T3 Code's app is gone" }
   $codeKeys = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" |
     ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "T3 Code*" }
   if (-not $codeKeys) { Fail "T3 Code's entry in Installed apps is gone" }
   $handler = (Get-ItemProperty "HKCU:\Software\Classes\t3code\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
-  if ($handler -and $handler -like "*\t3learn\*") { Fail "T3 Learn took over t3code:// links" }
+  if ($handler -and $handler -like "*\t3learn\*") { Fail "OminaX took over t3code:// links" }
 }
 
-Log "Uninstalling T3 Learn"
+Log "Uninstalling OminaX"
 $env:T3LEARN_UNINSTALL = "1"
 powershell -NoProfile -Command $installCommand
 if ($LASTEXITCODE -ne 0) { Fail "the uninstaller failed" }
 Remove-Item Env:T3LEARN_UNINSTALL
-if (Test-Path (Join-Path $learnDir "T3 Learn.exe")) { Fail "T3 Learn is still installed" }
-if (-not (Test-Path (Join-Path $HOME ".t3-learn\userdata"))) { Fail "uninstall removed T3 Learn's data" }
+if (Test-Path (Join-Path $learnDir "OminaX.exe")) { Fail "OminaX is still installed" }
+if (-not (Test-Path (Join-Path $HOME ".t3-learn\userdata"))) { Fail "uninstall removed OminaX's data" }
 if ($Scenario -eq "next-to-t3-code") {
-  if ((Wait-Server (Join-Path $HOME ".t3")) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling T3 Learn" }
+  if ((Wait-Server (Join-Path $HOME ".t3") $t3CodeVersion) -ne $t3CodeVersion) { Fail "T3 Code stopped after uninstalling OminaX" }
 }
 Log "PASS"

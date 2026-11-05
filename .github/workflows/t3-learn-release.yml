@@ -387,7 +387,7 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.commit }}
-          name: T3 Learn ${{ needs.preflight.outputs.version }}
+          name: OminaX ${{ needs.preflight.outputs.version }}
           body_path: release-notes.md
           prerelease: true
           make_latest: false
@@ -502,4 +502,4 @@ jobs:
       - name: Mark release latest
         run: gh release edit "v$VERSION" --prerelease=false --latest
       - name: Summarize promotion
-        run: echo "T3 Learn v$VERSION passed install tests and is now latest." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "OminaX v$VERSION passed install tests and is now latest." >> "$GITHUB_STEP_SUMMARY"

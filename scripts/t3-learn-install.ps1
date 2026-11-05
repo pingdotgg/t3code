@@ -21,8 +21,10 @@
   $repo = "aabdel0181/t3-learn"
   $baseUrl = if ($env:T3LEARN_RELEASE_BASE_URL) { $env:T3LEARN_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
   $installDir = Join-Path $env:LOCALAPPDATA "Programs\t3learn"
-  $appExe = Join-Path $installDir "T3 Learn.exe"
-  $uninstaller = Join-Path $installDir "Uninstall T3 Learn.exe"
+  $appExe = Join-Path $installDir "OminaX.exe"
+  $oldAppExe = Join-Path $installDir "T3 Learn.exe"
+  $uninstaller = Join-Path $installDir "Uninstall OminaX.exe"
+  $oldUninstaller = Join-Path $installDir "Uninstall T3 Learn.exe"
   $dataDir = Join-Path $HOME ".t3-learn"
 
   function Fail([string] $message) { throw "t3-learn install: $message" }
@@ -33,7 +35,7 @@
         $_.Path -and $_.Path.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase)
       })
     if ($running.Count -eq 0) { return }
-    Say "Closing T3 Learn to update it..."
+    Say "Closing OminaX to update it..."
     $running | ForEach-Object { [void]$_.CloseMainWindow() }
     $deadline = (Get-Date).AddSeconds(10)
     while ((Get-Date) -lt $deadline -and ($running | Where-Object { -not $_.HasExited })) {
@@ -43,15 +45,16 @@
   }
 
   if ($env:T3LEARN_UNINSTALL -eq "1") {
-    if (Test-Path $uninstaller) {
+    $uninstallerPath = if (Test-Path $uninstaller) { $uninstaller } elseif (Test-Path $oldUninstaller) { $oldUninstaller } else { $null }
+    if ($uninstallerPath) {
       Stop-T3Learn
-      $process = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+      $process = Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait -PassThru
       if ($process.ExitCode -ne 0) { Fail "the uninstaller exited with code $($process.ExitCode)" }
-      Say "Removed T3 Learn."
+      Say "Removed OminaX."
     } else {
-      Say "T3 Learn is not installed."
+      Say "OminaX is not installed."
     }
-    Say "Your T3 Learn projects and settings are still in $dataDir; delete that folder to remove them too."
+    Say "Your OminaX projects and settings are still in $dataDir; delete that folder to remove them too."
     return
   }
 
@@ -63,7 +66,7 @@
     default { Fail "unsupported architecture $rawArch" }
   }
 
-  [Console]::Error.WriteLine("`n  T3 Learn installer`n")
+  [Console]::Error.WriteLine("`n  OminaX installer`n")
   Say "Finding the latest release..."
   $work = Join-Path ([IO.Path]::GetTempPath()) ("t3-learn-" + [Guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Path $work | Out-Null
@@ -79,11 +82,11 @@
     try {
       Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -UseBasicParsing
     } catch {
-      Fail "could not find a T3 Learn release at $sumsUrl"
+      Fail "could not find an OminaX release at $sumsUrl"
     }
 
     # sha256sum writes "<hash>  <file>", or "<hash> *<file>" in binary mode.
-    $pattern = "^([0-9a-f]{64}) [ *](T3-Learn-(.+)-$arch\.exe)$"
+    $pattern = "^([0-9a-f]{64}) [ *]((?:OminaX|T3-Learn)-(.+)-$arch\.exe)$"
     $match = Get-Content $sumsPath | ForEach-Object { [regex]::Match($_.Trim(), $pattern) } |
       Where-Object { $_.Success } | Select-Object -First 1
     if (-not $match) { Fail "this release has no build for Windows $arch" }
@@ -92,8 +95,8 @@
     $version = $match.Groups[3].Value
 
     $t3Code = (Test-Path (Join-Path $env:LOCALAPPDATA "Programs\t3code")) -or (Test-Path (Join-Path $HOME ".t3"))
-    if ($t3Code) { Say "Found T3 Code. It stays installed with its own data; T3 Learn installs next to it." }
-    Say "Installing T3 Learn $version"
+    if ($t3Code) { Say "Found T3 Code. It stays installed with its own data; OminaX installs next to it." }
+    Say "Installing OminaX $version"
 
     $installer = Join-Path $work $asset
     $previousProgress = $ProgressPreference
@@ -115,14 +118,15 @@
     Say "Installing to $installDir..."
     $process = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
     if ($process.ExitCode -ne 0) { Fail "the installer exited with code $($process.ExitCode)" }
-    if (-not (Test-Path $appExe)) { Fail "the installer finished but $appExe is missing" }
+    if (-not (Test-Path $appExe) -and -not (Test-Path $oldAppExe)) { Fail "the installer finished but no OminaX executable is present" }
+    if (-not (Test-Path $appExe)) { $appExe = $oldAppExe }
 
     if ($env:T3LEARN_NO_LAUNCH -ne "1") { Start-Process -FilePath $appExe }
   } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
   }
 
-  [Console]::Error.WriteLine("`n  Installed T3 Learn $version")
+  [Console]::Error.WriteLine("`n  Installed OminaX $version")
   Say "Open it from the Start menu. It updates itself."
   Say "Projects and settings live in $dataDir."
   [Console]::Error.WriteLine()
