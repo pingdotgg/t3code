@@ -1042,15 +1042,9 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenOptions={({ route, navigation }) =>
+      screenOptions={({ route }) =>
         Platform.OS === "android"
-          ? {
-              animation: androidWorkspaceDestinationAnimation(
-                route,
-                navigation.getState().routes,
-                usesSplitView,
-              ),
-            }
+          ? { animation: androidWorkspaceDestinationAnimation(route.name, usesSplitView) }
           : {}
       }
     />

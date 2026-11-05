@@ -3,19 +3,17 @@ import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
-import type { ReactNode } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AppBar } from "../../components/ui/AppBar";
-import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { WorkspaceSettledContentWidthContext } from "../layout/workspace-content-width";
 import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWorkspaceNavigation";
 import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -33,7 +31,7 @@ export function WorkspaceRootScreen() {
 
 function WorkspaceRoot() {
   const floatingTabsEnabled = useAndroidFloatingTabs();
-  const { layout, startNewTask, workspacePageWidth } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
@@ -82,14 +80,18 @@ function WorkspaceRoot() {
                   tab === "threads" ? (
                     <HomeRouteScreen />
                   ) : tab !== "pullRequests" ? (
-                    <WorkspacePageFrame width={workspacePageWidth ?? null}>
-                      <WorkspaceExtraTab tab={tab} />
-                    </WorkspacePageFrame>
+                    <WorkspaceExtraTab tab={tab} />
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
                       <AppBar embedded title="Pull requests" />
-                      <WorkspaceEmptyDetail tab="pullRequests" />
+                      <View className="flex-1 items-center justify-center px-10">
+                        <EmptyState
+                          title="Select a pull request"
+                          detail="Choose a pull request from the sidebar to review it."
+                          variant="plain"
+                        />
+                      </View>
                     </>
                   ) : (
                     <PullRequestsScreen
@@ -113,19 +115,5 @@ function WorkspaceRoot() {
         )}
       </View>
     </WorkspaceTabsContext>
-  );
-}
-
-// Hidden, the page sits in the narrower pane beside the list; laying it out at the width it opens
-// at keeps measured bars and breakpoints from catching up a frame after it appears.
-function WorkspacePageFrame(props: {
-  readonly width: number | null;
-  readonly children: ReactNode;
-}) {
-  if (props.width === null) return props.children;
-  return (
-    <WorkspaceSettledContentWidthContext value={props.width}>
-      <View style={{ flex: 1, width: props.width }}>{props.children}</View>
-    </WorkspaceSettledContentWidthContext>
   );
 }

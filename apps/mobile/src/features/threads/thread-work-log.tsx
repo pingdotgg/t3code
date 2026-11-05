@@ -69,7 +69,6 @@ import {
   workEntryRowLabel,
 } from "../../lib/threadActivity";
 import {
-  isJsonToolText,
   toolCallLines,
   turnItemOutputImages,
   turnItemOutputText,
@@ -875,16 +874,14 @@ function WorkspacePreparationRetryButton(props: {
   );
 }
 
-function ToolCodeText({
+function ReplCodeText({
   code,
-  language,
   theme,
 }: {
   readonly code: string;
-  readonly language: "typescript" | "html" | "json";
   readonly theme: "light" | "dark";
 }) {
-  const lines = useMarkdownCodeHighlight({ code, language, theme, enabled: true });
+  const lines = useMarkdownCodeHighlight({ code, language: "typescript", theme, enabled: true });
   let offset = 0;
   const highlighted = lines?.flatMap((line, lineIndex) => {
     const separator = lineIndex > 0 ? "\n" : "";
@@ -1258,32 +1255,20 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             ) : call ? (
               [
                 call.command,
-                ...(call.args ?? []).map(([key, value]) => {
-                  const language =
-                    key === "html"
-                      ? "html"
-                      : key === "code" &&
-                          shownItem.type === "dynamic_tool" &&
-                          isJavaScriptReplTool(shownItem.toolName)
-                        ? "typescript"
-                        : isJsonToolText(value)
-                          ? "json"
-                          : null;
-                  return language ? (
+                ...(call.args ?? []).map(([key, value]) =>
+                  key === "code" &&
+                  shownItem.type === "dynamic_tool" &&
+                  isJavaScriptReplTool(shownItem.toolName) ? (
                     <View key={key}>
                       <Text className="font-mono text-2xs leading-normal text-foreground-muted">
                         {key}
                       </Text>
-                      <ToolCodeText
-                        code={value}
-                        language={language}
-                        theme={props.themeAppearance}
-                      />
+                      <ReplCodeText code={value} theme={props.themeAppearance} />
                     </View>
                   ) : (
                     `${key} ${value}`
-                  );
-                }),
+                  ),
+                ),
                 call.argsText,
               ]
                 .filter((line) => Boolean(line))
@@ -1296,11 +1281,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                         selectable
                         className="font-mono text-2xs leading-normal text-foreground"
                       >
-                        {isJsonToolText(line) ? (
-                          <ToolCodeText code={line} language="json" theme={props.themeAppearance} />
-                        ) : (
-                          line
-                        )}
+                        {line}
                       </Text>
                     ) : (
                       line
@@ -1308,11 +1289,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                 )
             ) : fullDetail ? (
               <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-                {isJsonToolText(fullDetail) ? (
-                  <ToolCodeText code={fullDetail} language="json" theme={props.themeAppearance} />
-                ) : (
-                  fullDetail
-                )}
+                {fullDetail}
               </Text>
             ) : null}
             {fetchedOutput ? (
@@ -1323,15 +1300,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                   (!call || call.command || call.args || call.argsText) && "mt-1.5",
                 )}
               >
-                {isJsonToolText(fetchedOutput) ? (
-                  <ToolCodeText
-                    code={fetchedOutput}
-                    language="json"
-                    theme={props.themeAppearance}
-                  />
-                ) : (
-                  fetchedOutput
-                )}
+                {fetchedOutput}
               </Text>
             ) : null}
             {streamsOutput ? null : exitLine}
