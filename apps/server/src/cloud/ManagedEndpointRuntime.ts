@@ -100,6 +100,8 @@ interface ActiveConnector {
 }
 
 // An instantly failing relay client otherwise respawns ~100 times/sec and exhausts V8 via tracing.
+const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
+
 const RELAY_RESTART_STABLE_UPTIME_MS = 30_000;
 const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
 const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
@@ -261,7 +263,13 @@ export const make = Effect.gen(function* () {
         throwOnError: true,
       }),
     catch: (cause) =>
-      new RotatingFileSinkError({ operation: "initialize", filePath: relayClientLogPath, cause }),
+      isRotatingFileSinkError(cause)
+        ? cause
+        : new RotatingFileSinkError({
+            operation: "initialize",
+            filePath: relayClientLogPath,
+            cause,
+          }),
   }).pipe(
     Effect.map((sink) =>
       Logger.make((options) => {
