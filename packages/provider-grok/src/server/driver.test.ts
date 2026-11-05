@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -10,12 +10,14 @@ import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
+import * as GrokStatus from "./status.ts";
 import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -172,6 +174,65 @@ it.layer(layerTest)("GrokDriver", (it) => {
       );
     });
   }
+
+  it.effect("omits usage failures from health-only checks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = GrokDriver.defaultConfig();
+        const initial = yield* GrokStatus.buildInitialGrokProviderSnapshot(config);
+        using _status = vi.spyOn(GrokStatus, "checkGrokProviderStatus").mockReturnValue(
+          Effect.succeed({
+            ...initial,
+            enabled: true,
+            installed: true,
+            status: "ready",
+            auth: { status: "authenticated", type: "cached_token" },
+          }),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+        let requests = 0;
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-usage"),
+          displayName: "Grok test",
+          enabled: true,
+          config,
+          environment: [
+            { name: "GROK_HOME", value: home, sensitive: false },
+            { name: "XAI_API_KEY", value: "", sensitive: true },
+            {
+              name: "GROK_AUTH",
+              value: JSON.stringify({
+                "https://accounts.x.ai/sign-in": {
+                  key: "test-token",
+                  email: "account@example.com",
+                },
+              }),
+              sensitive: true,
+            },
+          ],
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests += 1;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+              );
+            }),
+          ),
+        );
+        const health = yield* instance.snapshot.refresh;
+        expect(health.auth.email).toBe("account@example.com");
+        expect(health.usageLimits).toBeUndefined();
+        expect(requests).toBe(0);
+        yield* instance.snapshot.refreshUsage!;
+        const usage = yield* instance.snapshot.getSnapshot;
+        expect(usage.usageLimits?.unavailable?.reason).toBe("probeFailed");
+        expect(requests).toBe(1);
+      }),
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
