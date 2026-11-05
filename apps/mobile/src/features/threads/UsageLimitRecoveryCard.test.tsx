@@ -13,6 +13,11 @@ type ButtonProps = { label: string; disabled?: boolean; onPress: () => void };
 
 vi.mock("react-native", () => ({
   Linking: { openURL: vi.fn() },
+  Pressable: ({ children, onPress }: { children: ReactNode; onPress: () => void }) => (
+    <button type="button" onClick={onPress}>
+      {children}
+    </button>
+  ),
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
@@ -50,7 +55,7 @@ function failedThread(
 }
 
 describe("UsageLimitRecoveryCard", () => {
-  // Servers before #25341 report sharing limits as provider errors.
+  // Older servers report ChatGPT sharing limits as provider errors.
   it.each([
     [CHATGPT_USAGE_LIMIT_CODE, "usage_limit", "Manage usage"],
     [CHATGPT_WORKSPACE_USAGE_LIMIT_CODE, "usage_limit", "Copy request for admin"],
