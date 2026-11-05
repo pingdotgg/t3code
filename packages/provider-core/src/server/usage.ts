@@ -73,6 +73,42 @@ export interface TranscriptUsageFormat<State> {
   };
   /** Enable cross-file deduplication when session records can appear in multiple files. */
   readonly sharedSessionsAcrossFiles?: true;
+  /** Capture the first session folder, including folder-only lines.
+   * Projected reads must retain the fields consumed by fromProjected.
+   */
+  readonly workingDirectory?: {
+    readonly markers: readonly [string, ...string[]];
+    fromLine(line: string, state: State): string | null;
+    fromProjected(projected: unknown, state: State): string | null;
+  };
+}
+
+/**
+ * Builds a `workingDirectory` hook from where a parsed line keeps the folder.
+ * `read` returns the folder, or anything else when the line does not name it.
+ */
+export function workingDirectoryHook<State = unknown>(
+  markers: readonly [string, ...string[]],
+  read: (record: Record<string, unknown>, state: State) => unknown,
+): NonNullable<TranscriptUsageFormat<State>["workingDirectory"]> {
+  const fromProjected = (projected: unknown, state: State): string | null => {
+    if (typeof projected !== "object" || projected === null) return null;
+    const value = read(projected as Record<string, unknown>, state);
+    return typeof value === "string" && value.length > 0 ? value : null;
+  };
+  return {
+    markers,
+    fromLine: (line, state) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        return null;
+      }
+      return fromProjected(parsed, state);
+    },
+    fromProjected,
+  };
 }
 
 export interface ProviderUsageInstance<Config> {
