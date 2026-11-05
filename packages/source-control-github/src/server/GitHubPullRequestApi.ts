@@ -2353,7 +2353,7 @@ export const make = Effect.gen(function* () {
     listRepositoryIssues: Effect.fn("GitHubPullRequestApi.listRepositoryIssues")(function* (input) {
       const { owner, name } = parseRepositorySelector(input.repository);
       const operation = "listRepositoryIssues";
-      const pageSize = Math.min(100, Math.max(1, input.limit));
+      const pageSize = 100;
       const startPage = Math.max(1, Number(input.cursor?.resumeAfter ?? "1") || 1);
       const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues?state=${input.state}&per_page=${pageSize}&page=${startPage}`;
       const raw = yield* restRead({

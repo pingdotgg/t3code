@@ -291,7 +291,11 @@ const make = Effect.gen(function* () {
     const scopeKey = mentionIndexScopeKey("figma", projectId);
     const meta = yield* index.scopeMeta(scopeKey);
     const now = yield* Clock.currentTimeMillis;
-    const stale = meta === null || now - meta.syncedAt > STALE_AFTER_MS;
+    const freshnessMs =
+      meta !== null && (meta.status === "empty" || meta.status === "error")
+        ? 30_000
+        : STALE_AFTER_MS;
+    const stale = meta === null || now - meta.syncedAt > freshnessMs;
     if (!stale) return;
 
     const key = String(projectId);

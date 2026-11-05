@@ -8,7 +8,7 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { parseFigmaDesignUrl } from "@t3tools/shared/composerContextExternalLinks";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { mentionIndexEnvironment } from "../../state/pullRequests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -250,7 +250,7 @@ function JiraMentionSettings() {
             aria-label="Jira JQL filter"
             onBlur={(event) => {
               const next = event.target.value;
-              if (mixed || next.trim() !== jqlExtra.trim()) {
+              if (mixed ? next.trim().length > 0 : next.trim() !== jqlExtra.trim()) {
                 commit({
                   serverName,
                   spaces: jira?.spaces ?? [],
@@ -393,9 +393,9 @@ function FigmaMentionSettings() {
           />
         }
       />
-      {!mixed && target !== null ? (
+      {!mixed && target !== null && pickerOpen ? (
         <FigmaProjectPickerDialog
-          open={pickerOpen}
+          open
           onOpenChange={setPickerOpen}
           environmentId={target.environmentId}
           projectId={target.projectId}
@@ -491,17 +491,15 @@ function FigmaProjectPickerDialog({
     setDetail(result.value.detail ?? null);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetch Figma teams when this dialog mounts (parent remounts on each Browse)
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- loadTeams kicks off an async RPC; state updates land after the response
+    void loadTeams();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- parent remounts this dialog on each Browse open
+  }, []);
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (next) {
-          setPicked(new Map(selected.map((project) => [project.id, project])));
-          void loadTeams();
-        }
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Select Figma projects</DialogTitle>

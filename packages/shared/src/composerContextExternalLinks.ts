@@ -12,11 +12,14 @@ import {
 } from "./composerContextReferences.ts";
 
 const JIRA_URL = /https?:\/\/([a-z0-9-]+\.)?atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\b/giu;
-/** Stop before whitespace and closing/sentence punctuation so `url).` / `url.` stay outside. */
+/** Allow `.` in path/query/hash; trim trailing prose punctuation after the match. */
 const FIGMA_URL =
-  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#).,;:!]*))?(?:\?([^#\s).,;:!]*))?(?:#([^\s).,;:!]*))?/giu;
-const GITHUB_ISSUE_URL =
-  /https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)\b(?:\/?[^\s]*)?/giu;
+  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^\s?#]*))?(?:\?([^\s#]*))?(?:#([^\s]*))?/giu;
+const GITHUB_ISSUE_URL = /https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)\b/giu;
+
+function trimTrailingProsePunctuation(value: string): string {
+  return value.replace(/[.,;:!)]+$/u, "");
+}
 
 type ExternalLinkContextRecord = JiraContextRecord | FigmaContextRecord | IssueContextRecord;
 
@@ -38,23 +41,25 @@ export function parseFigmaDesignUrl(value: string): {
   readonly nodeId?: string;
 } | null {
   const match =
-    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#).,;:!]*))?(?:\?([^#\s).,;:!]*))?(?:#([^\s).,;:!]*))?/iu.exec(
-      value.trim(),
+    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^\s?#]*))?(?:\?([^\s#]*))?(?:#([^\s]*))?/iu.exec(
+      trimTrailingProsePunctuation(value.trim()),
     );
   if (!match) return null;
   const fileKey = match[2]!;
   let slug: string;
   try {
-    slug = decodeURIComponent((match[3] ?? "").replace(/-/g, " ")).trim();
+    slug = decodeURIComponent(
+      trimTrailingProsePunctuation(match[3] ?? "").replace(/-/g, " "),
+    ).trim();
   } catch {
     return null;
   }
-  const query = match[4] ?? "";
+  const query = trimTrailingProsePunctuation(match[4] ?? "");
   const nodeFromQuery = /(?:^|&)node-id=([^&]+)/iu.exec(query)?.[1];
   let nodeId: string | undefined;
   if (nodeFromQuery) {
     try {
-      nodeId = decodeURIComponent(nodeFromQuery.replace(/-/g, ":"));
+      nodeId = decodeURIComponent(trimTrailingProsePunctuation(nodeFromQuery).replace(/-/g, ":"));
     } catch {
       return null;
     }
@@ -187,13 +192,15 @@ export function externalLinkContextReferences(
   });
 
   rewritten = rewritten.replace(FIGMA_URL, (match) => {
-    const parsed = parseFigmaDesignUrl(match);
+    const trimmed = trimTrailingProsePunctuation(match);
+    const trailing = match.slice(trimmed.length);
+    const parsed = parseFigmaDesignUrl(trimmed);
     if (!parsed) return match;
     const record = figmaContextRecord(parsed);
     const contextId = accept(record);
     if (contextId === undefined) return match;
     records.set(record.contextId, record);
-    return formatComposerContextReference({ ...record, contextId });
+    return `${formatComposerContextReference({ ...record, contextId })}${trailing}`;
   });
 
   rewritten = rewritten.replace(GITHUB_ISSUE_URL, (match) => {

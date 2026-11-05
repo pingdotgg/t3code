@@ -65,13 +65,19 @@ const make = Effect.gen(function* () {
 
           let payload: unknown;
           if (names.has("searchJiraIssuesUsingJql")) {
+            let cloudId: string | undefined;
+            if (names.has("getAccessibleAtlassianResources")) {
+              const resources = yield* session.callTool("getAccessibleAtlassianResources", {});
+              cloudId = firstAtlassianCloudId(resources);
+            }
             payload = yield* session.callTool("searchJiraIssuesUsingJql", {
               jql,
               maxResults: MAX_ROWS,
+              ...(cloudId !== undefined ? { cloudId } : {}),
             });
           } else if (names.has("search") || names.has("jira_search")) {
             const tool = names.has("search") ? "search" : "jira_search";
-            payload = yield* session.callTool(tool, { jql, maxResults: MAX_ROWS });
+            payload = yield* session.callTool(tool, { jql, limit: MAX_ROWS });
           } else {
             return yield* new MentionIndexMcpError({
               detail:
@@ -114,7 +120,11 @@ const make = Effect.gen(function* () {
     const scopeKey = mentionIndexScopeKey("jira", projectId);
     const meta = yield* index.scopeMeta(scopeKey);
     const now = yield* Clock.currentTimeMillis;
-    const stale = meta === null || now - meta.syncedAt > STALE_AFTER_MS;
+    const freshnessMs =
+      meta !== null && (meta.status === "empty" || meta.status === "error")
+        ? 30_000
+        : STALE_AFTER_MS;
+    const stale = meta === null || now - meta.syncedAt > freshnessMs;
     if (!stale) return;
 
     const key = String(projectId);
@@ -146,6 +156,23 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function firstAtlassianCloudId(payload: unknown): string | undefined {
+  const root = textFromMcpResult(payload);
+  const entries = Array.isArray(root)
+    ? root
+    : Array.isArray(asRecord(root)?.resources)
+      ? (asRecord(root)?.resources as unknown[])
+      : Array.isArray(asRecord(root)?.data)
+        ? (asRecord(root)?.data as unknown[])
+        : [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    const cloudId = record === null ? undefined : (stringOf(record.cloudId) ?? stringOf(record.id));
+    if (cloudId !== undefined) return cloudId;
+  }
+  return stringOf(asRecord(root)?.cloudId);
 }
 
 function stringOf(value: unknown): string | undefined {

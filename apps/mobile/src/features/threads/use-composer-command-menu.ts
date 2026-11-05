@@ -904,6 +904,29 @@ export function useComposerCommandMenu({
   const threadMentionIndexSyncingEmpty =
     threadMentionIndexLookup.data?.status === "syncing" &&
     threadMentionIndexLookup.data.hits.length === 0;
+  // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
+  useEffect(() => {
+    const refreshers: Array<() => void> = [];
+    if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (jiraMentionIndexSyncingEmpty) refreshers.push(jiraMentionIndexLookup.refresh);
+    if (figmaMentionIndexSyncingEmpty) refreshers.push(figmaMentionIndexLookup.refresh);
+    if (issueMentionIndexSyncingEmpty) refreshers.push(issueMentionIndexLookup.refresh);
+    if (refreshers.length === 0) return;
+    const interval = setInterval(() => {
+      for (const refresh of refreshers) refresh();
+    }, 750);
+    return () => clearInterval(interval);
+  }, [
+    threadMentionIndexSyncingEmpty,
+    jiraMentionIndexSyncingEmpty,
+    figmaMentionIndexSyncingEmpty,
+    issueMentionIndexSyncingEmpty,
+    threadMentionIndexLookup.refresh,
+    jiraMentionIndexLookup.refresh,
+    figmaMentionIndexLookup.refresh,
+    issueMentionIndexLookup.refresh,
+  ]);
 
   return {
     selection,

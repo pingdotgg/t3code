@@ -837,6 +837,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           composerMenu.trigger.kind === "pull-request" ||
           composerMenu.trigger.kind === "hash" ||
           composerMenu.trigger.kind === "jira" ||
+          composerMenu.trigger.kind === "figma" ||
           composerMenu.trigger.kind === "issue" ||
           composerMenu.trigger.kind === "thread") ? (
           <ComposerPopoverAnchor>

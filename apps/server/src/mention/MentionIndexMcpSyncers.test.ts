@@ -24,6 +24,9 @@ describe("MentionIndexMcpClient helpers", () => {
     expect(pickMentionMcpServer(servers, "figma")?.name).toBe("figma-dev");
     expect(pickMentionMcpServer(servers, "jira", "missing")).toBeNull();
     expect(pickMentionMcpServer(servers, "figma", "figma-dev")?.transport).toBe("http");
+    // Named exact match that fails kind heuristics must not spawn an unrelated MCP.
+    expect(pickMentionMcpServer(servers, "jira", "figma-dev")).toBeNull();
+    expect(pickMentionMcpServer(servers, "figma", "other")).toBeNull();
   });
 
   it("preserves apostrophes inside Codex command args", () => {

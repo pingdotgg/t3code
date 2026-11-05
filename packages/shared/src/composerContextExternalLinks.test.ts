@@ -24,6 +24,13 @@ describe("composerContextExternalLinks", () => {
       name: "Checkout",
       nodeId: "1:2",
     });
+    expect(
+      parseFigmaDesignUrl("https://www.figma.com/design/AbCdEf123/Flow.v2?node-id=1-2"),
+    ).toMatchObject({
+      fileKey: "AbCdEf123",
+      name: "Flow.v2",
+      nodeId: "1:2",
+    });
   });
 
   it("keeps trailing prose punctuation outside a Figma URL rewrite", () => {
@@ -38,6 +45,18 @@ describe("composerContextExternalLinks", () => {
     );
     expect(withPeriod.records[0]).toMatchObject({ kind: "figma", nodeId: "1:2" });
     expect(withPeriod.text.endsWith(".")).toBe(true);
+    const dottedSlug = externalLinkContextReferences(
+      "See https://www.figma.com/design/AbCdEf123/Flow.v2?node-id=1-2.",
+    );
+    expect(dottedSlug.records[0]).toMatchObject({ kind: "figma", name: "Flow.v2", nodeId: "1:2" });
+    expect(dottedSlug.text.endsWith(".")).toBe(true);
+  });
+
+  it("keeps trailing prose punctuation outside a GitHub issue URL rewrite", () => {
+    const rewritten = externalLinkContextReferences("(see https://github.com/acme/app/issues/7).");
+    expect(rewritten.records).toHaveLength(1);
+    expect(rewritten.records[0]).toMatchObject({ kind: "issue", number: 7 });
+    expect(rewritten.text.endsWith(").")).toBe(true);
   });
 
   it("scopes Jira context ids by site host", () => {

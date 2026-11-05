@@ -165,9 +165,10 @@ function pickServer(
 ): MentionMcpServerConfig | null {
   if (serverName !== undefined) {
     const exact = entries.find((entry) => entry.name === serverName);
-    if (exact) return exact;
     const folded = serverName.toLowerCase();
-    return entries.find((entry) => entry.name.toLowerCase() === folded) ?? null;
+    const named = exact ?? entries.find((entry) => entry.name.toLowerCase() === folded) ?? null;
+    // Named picks still require a jira/figma heuristic so browse RPCs cannot spawn an unrelated MCP.
+    return named !== null && matchesKind(named.name, kind) ? named : null;
   }
   return entries.find((entry) => matchesKind(entry.name, kind)) ?? null;
 }
