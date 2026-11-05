@@ -2391,6 +2391,8 @@ export const layerWithOptions = (
                 Effect.map(
                   (records) =>
                     records.thread.lineage.relationshipToParent === "subagent" &&
+                    // Progress ignores held runs, but a held follow-up still needs this session.
+                    !records.runs.some((run) => run.status === "queued") &&
                     delegatedTaskProgress(records).state === "result_available",
                 ),
                 // An unreadable thread may still be working; never kill it unseen.

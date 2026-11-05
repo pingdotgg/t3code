@@ -3954,7 +3954,7 @@ const finishedDelegateRunEvent = (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly ordinal: number;
-  readonly status: "completed" | "queued" | "running";
+  readonly status: "completed" | "queued" | "held" | "running";
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -3981,9 +3981,10 @@ const finishedDelegateRunEvent = (input: {
         }),
         rootNodeId: null,
         activeAttemptId: null,
-        status: input.status,
+        status: input.status === "held" ? ("queued" as const) : input.status,
+        ...(input.status === "held" ? { queueHeld: true } : {}),
         requestedAt: input.now,
-        startedAt: input.status === "queued" ? null : input.now,
+        startedAt: input.status === "queued" || input.status === "held" ? null : input.now,
         completedAt: input.status === "completed" ? input.now : null,
         checkpointId: null,
         contextHandoffId: null,
@@ -3995,7 +3996,7 @@ const finishedDelegateRunEvent = (input: {
 // it as a finished delegate with no clock advance, far inside the idle timeout.
 const runFinishedDelegateScenario = (input: {
   readonly delegated: boolean;
-  readonly runs: ReadonlyArray<"completed" | "queued" | "running">;
+  readonly runs: ReadonlyArray<"completed" | "queued" | "held" | "running">;
   readonly hasPendingBackgroundWork?: boolean;
 }) =>
   Effect.gen(function* () {
@@ -4093,7 +4094,7 @@ it.effect(
 it.effect.each<{
   readonly name: string;
   readonly delegated: boolean;
-  readonly runs: ReadonlyArray<"completed" | "queued" | "running">;
+  readonly runs: ReadonlyArray<"completed" | "queued" | "held" | "running">;
   readonly hasPendingBackgroundWork?: boolean;
 }>([
   { name: "an ordinary thread", delegated: false, runs: ["completed"] },
@@ -4102,6 +4103,11 @@ it.effect.each<{
     name: "a delegated child with a queued follow-up",
     delegated: true,
     runs: ["completed", "queued"],
+  },
+  {
+    name: "a delegated child with a held follow-up",
+    delegated: true,
+    runs: ["completed", "held"],
   },
   {
     name: "a delegated child with pending background work",
