@@ -1,0 +1,84 @@
+import { describe, expect, it } from "vite-plus/test";
+import {
+  quizAnswerMessage,
+  quizCardProblem,
+  readQuizCard,
+  shuffledQuizOptions,
+  type QuizCard,
+} from "./quizCard.ts";
+
+const card: QuizCard = {
+  answer: "High",
+  explanation: "Because",
+  level: "apply",
+  question: "Which?",
+  wrongOptions: [
+    { option: "Low", wrongIdea: "Mistake" },
+    { option: "Medium", wrongIdea: "Another" },
+  ],
+};
+
+describe("quiz cards", () => {
+  it("validates options and bounds", () => {
+    expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
+    expect(quizCardProblem({ ...card, answer: "(Recommended) High" })).toBeDefined();
+    expect(
+      quizCardProblem({
+        ...card,
+        wrongOptions: [
+          { option: "High", wrongIdea: "x" },
+          { option: "Low", wrongIdea: "y" },
+        ],
+      }),
+    ).toBeDefined();
+    expect(
+      quizCardProblem({ ...card, question: "漢".repeat(2000), explanation: "漢".repeat(1500) }),
+    ).toBeDefined();
+    expect(quizCardProblem(card)).toBeUndefined();
+    expect(
+      readQuizCard({
+        ...card,
+        wrongOptions: [{ option: "Low" }, { option: "Medium", wrongIdea: "x" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      readQuizCard({
+        ...card,
+        wrongOptions: [
+          ...card.wrongOptions,
+          { option: "x", wrongIdea: "x" },
+          { option: "y", wrongIdea: "y" },
+          { option: "z", wrongIdea: "z" },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+  it("shuffles deterministically", () => {
+    expect(shuffledQuizOptions(card, "one")).toEqual(shuffledQuizOptions(card, "one"));
+    expect(
+      shuffledQuizOptions(card, "one")
+        .map((x) => x.option)
+        .sort(),
+    ).toEqual([card.answer, ...card.wrongOptions.map((x) => x.option)].sort());
+    expect(
+      new Set(
+        ["a", "b", "c", "d"].map((seed) =>
+          shuffledQuizOptions(card, seed)
+            .map((x) => x.option)
+            .join("|"),
+        ),
+      ).size,
+    ).toBeGreaterThan(1);
+  });
+  it("formats answer messages", () => {
+    expect(
+      quizAnswerMessage({ answer: "High", correct: true, confidence: 80, thinking: "x" }),
+    ).toBe('Quiz answer: "High", right. Confidence: 80%. My thinking: x');
+    expect(quizAnswerMessage({ answer: "Low", correct: false, confidence: 20 })).toBe(
+      'Quiz answer: "Low", wrong. Confidence: 20%.',
+    );
+    expect(quizAnswerMessage({ answer: null, correct: false, thinking: "unsure" })).toBe(
+      "Quiz answer: I don't know. My thinking: unsure",
+    );
+  });
+});

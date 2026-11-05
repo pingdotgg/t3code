@@ -5,6 +5,7 @@ import {
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
   toolOutputImages,
+  quizCardFromToolItem,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
 
@@ -138,6 +139,28 @@ describe("compactDynamicToolOutput", () => {
       threadId: "known",
     });
   });
+});
+
+it("keeps valid quiz cards and drops invalid cards", () => {
+  const quizCard = {
+    answer: "A",
+    explanation: "Why",
+    level: "apply",
+    question: "Q",
+    wrongOptions: [
+      { option: "B", wrongIdea: "b" },
+      { option: "C", wrongIdea: "c" },
+    ],
+  };
+  expect(compactDynamicToolOutput({ quizCard })).toEqual({ quizCard });
+  expect(
+    compactDynamicToolOutput({ quizCard: { ...quizCard, wrongOptions: [{ option: "B" }] } }),
+  ).toBeUndefined();
+  expect(quizCardFromToolItem({ toolName: "quiz_card", output: { quizCard } })).toEqual(quizCard);
+  expect(
+    quizCardFromToolItem({ toolName: "mcp__t3-code__quiz_card", output: { quizCard } }),
+  ).toEqual(quizCard);
+  expect(quizCardFromToolItem({ toolName: "html_render", output: { quizCard } })).toBeUndefined();
 });
 
 describe("toolOutputIndicatesFailure", () => {
