@@ -408,6 +408,7 @@ const KIRO_RECORDING_SETTINGS = Schema.decodeSync(KiroSettings)({
 });
 
 const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: string) {
+  const hostEnv = yield* HostProcess.Environment;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === KIRO_PROVIDER);
   if (fixture === undefined || variant === undefined) {
@@ -544,7 +545,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
     scenario: fixtureName,
     metadata: {
       generatedBy: "live-kiro-recorder",
-      kiroVersion: process.env.T3_KIRO_VERSION ?? "unknown",
+      kiroVersion: hostEnv.T3_KIRO_VERSION ?? "unknown",
       normalization:
         "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
       droppedFrames,
@@ -553,8 +554,8 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       ...normalizeEntries({
         entries,
         workspace: realWorkspace,
-        home: process.env.HOME ?? "",
-        user: process.env.USER ?? "",
+        home: hostEnv.HOME ?? "",
+        user: hostEnv.USER ?? "",
         runtimeInstructions: buildRuntimeInstructions({
           harness: "Kiro",
           model: variant.modelSelection.model,

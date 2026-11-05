@@ -246,13 +246,12 @@ export const make = Effect.gen(function* () {
       );
 
   const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
+    const env = yield* HostProcess.Environment;
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
-      ...(globalThis.process.env.XDG_DATA_HOME
-        ? { dataHome: globalThis.process.env.XDG_DATA_HOME }
-        : {}),
-      ...(globalThis.process.env.APPDATA ? { appData: globalThis.process.env.APPDATA } : {}),
+      ...(env.XDG_DATA_HOME ? { dataHome: env.XDG_DATA_HOME } : {}),
+      ...(env.APPDATA ? { appData: env.APPDATA } : {}),
     })) {
       const exists = yield* fileSystem.exists(path).pipe(
         Effect.mapError(

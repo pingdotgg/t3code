@@ -53,6 +53,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
+  const env = yield* HostProcess.Environment;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
     const linuxPasswordStoreCommandLine =
       platform === "linux"
@@ -63,7 +64,7 @@ export const make = Effect.gen(function* () {
 
     if (linux !== null) {
       DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
-        env: process.env,
+        env,
         homeDirectory,
         joinPath: NodePath.posix.join,
         commandLine: Electron.app.commandLine,
@@ -77,8 +78,7 @@ export const make = Effect.gen(function* () {
       // have removed the executable referenced by the previous launch's entry.
       try {
         const applicationsDir = NodePath.posix.join(
-          process.env.XDG_DATA_HOME?.trim() ||
-            NodePath.posix.join(homeDirectory, ".local", "share"),
+          env.XDG_DATA_HOME?.trim() || NodePath.posix.join(homeDirectory, ".local", "share"),
           "applications",
         );
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
@@ -110,9 +110,7 @@ export const make = Effect.gen(function* () {
               appVersion: Electron.app.getVersion(),
             }).displayName,
             execTarget:
-              process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() ||
-              process.env.APPIMAGE?.trim() ||
-              process.execPath,
+              env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() || env.APPIMAGE?.trim() || process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
@@ -126,7 +124,7 @@ export const make = Effect.gen(function* () {
       }
       // Chromium keeps only the last --disable-features value, so pass the merged list.
       const disableFeatures = DesktopEarlyElectronStartup.resolveLinuxDisableFeaturesSwitch({
-        env: process.env,
+        env,
         ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
         enableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
         disableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),

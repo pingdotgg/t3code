@@ -307,12 +307,13 @@ const startup = Effect.gen(function* () {
   yield* desktopSettings.load;
 
   if (linuxElectronOptions !== null) {
+    const env = yield* HostProcess.Environment;
     yield* logStartupInfo("linux password store configured", {
       passwordStore: hasCommandLinePasswordStore
         ? "command-line"
         : (linuxElectronOptions.passwordStore ?? "electron-default"),
-      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
-      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+      xdgCurrentDesktop: env.XDG_CURRENT_DESKTOP ?? null,
+      xdgSessionDesktop: env.XDG_SESSION_DESKTOP ?? null,
     });
   }
 

@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -1141,7 +1142,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
-    const windir = process.env.WINDIR ?? "C:\\Windows";
+    const windir = (yield* HostProcess.Environment).WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
       effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,

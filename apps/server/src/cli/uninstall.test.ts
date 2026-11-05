@@ -47,7 +47,10 @@ it.live.runIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
       yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3.exe"), "");
 
-      const child = spawnWindowsRemoval(process.env.ComSpec ?? "cmd.exe", runtimeDir);
+      const child = spawnWindowsRemoval(
+        (yield* HostProcess.Environment).ComSpec ?? "cmd.exe",
+        runtimeDir,
+      );
       yield* Effect.callback<void, Error>((resume) => {
         child.once("error", (error) => resume(Effect.fail(error)));
         child.once("exit", (code) =>

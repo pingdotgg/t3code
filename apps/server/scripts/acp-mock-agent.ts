@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
@@ -467,6 +468,7 @@ function emitGrokKillTaskScenario(
 }
 
 const program = Effect.gen(function* () {
+  const hostEnv = yield* HostProcess.Environment;
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
@@ -512,7 +514,7 @@ const program = Effect.gen(function* () {
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 2,
-        info: { name: "t3-acp-mock-agent", version: process.env.T3_ACP_AGENT_VERSION ?? "0.0.0" },
+        info: { name: "t3-acp-mock-agent", version: hostEnv.T3_ACP_AGENT_VERSION ?? "0.0.0" },
         ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
           session: {
@@ -550,7 +552,7 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         if (
           request.methodId !== "oauth-personal" &&
-          !(request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY)
+          !(request.methodId === "gemini-api-key" && hostEnv.GEMINI_API_KEY)
         ) {
           return yield* AcpError.AcpRequestError.invalidParams(
             `Mock Antigravity rejected auth method ${request.methodId}.`,
@@ -811,7 +813,7 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
-      const idleError = process.env.T3_ACP_IDLE_ERROR;
+      const idleError = hostEnv.T3_ACP_IDLE_ERROR;
       if (idleError === "grok-background" && promptCount === 1) {
         // The structured completion lands before the prompt settles, so it is buffered.
         const taskId = "call-idle-error-background";

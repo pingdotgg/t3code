@@ -1487,11 +1487,12 @@ const runScenario = Effect.fn("record-codex-app-server-replay-fixture.runScenari
 });
 
 const program = Effect.gen(function* () {
+  const hostEnv = yield* HostProcess.Environment;
   const path = yield* Path.Path;
   const requestedScenarios = parseScenarios();
   const allScenarios = scenarios();
-  const outDir = readArgValue("--out-dir") ?? process.env.T3_CODEX_REPLAY_OUT_DIR;
-  const singleOutPath = readArgValue("--out") ?? process.env.T3_CODEX_REPLAY_OUT;
+  const outDir = readArgValue("--out-dir") ?? hostEnv.T3_CODEX_REPLAY_OUT_DIR;
+  const singleOutPath = readArgValue("--out") ?? hostEnv.T3_CODEX_REPLAY_OUT;
   const selected = allScenarios.filter((scenario) => requestedScenarios.includes(scenario.name));
 
   if (selected.length === 0) {

@@ -20,6 +20,7 @@ import {
   OrchestratorMcpTaskRole,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -2403,7 +2404,7 @@ const main = Effect.gen(function* () {
     }
     return;
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const apiKey = (yield* HostProcess.Environment).ANTHROPIC_API_KEY ?? "";
   const out = flags.out;
   if ((!apiKey && !codex) || out === undefined) {
     const message =

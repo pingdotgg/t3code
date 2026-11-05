@@ -323,6 +323,7 @@ function normalizeEntries(input: {
 const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
 const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: string) {
+  const hostEnv = yield* HostProcess.Environment;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === FX_DRIVER_KIND);
   if (fixture === undefined || variant === undefined) {
@@ -359,7 +360,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: process.env.T3_FX_BIN ?? "fx" };
+  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: hostEnv.T3_FX_BIN ?? "fx" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -455,7 +456,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
     isRecord(initialize.frame.result.agentInfo)
       ? initialize.frame.result.agentInfo
       : {};
-  const home = process.env.HOME ?? "";
+  const home = hostEnv.HOME ?? "";
   const transcript = {
     provider: FX_DRIVER_KIND,
     protocol: ACP_PROTOCOL,
@@ -473,11 +474,11 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
         entries,
         workspace: realWorkspace,
         home,
-        user: process.env.USER ?? "",
+        user: hostEnv.USER ?? "",
         skillNames: yield* readUserSkillNames(home),
-        ...(process.env.AI_GATEWAY_API_KEY === undefined
+        ...(hostEnv.AI_GATEWAY_API_KEY === undefined
           ? {}
-          : { gatewayApiKey: process.env.AI_GATEWAY_API_KEY }),
+          : { gatewayApiKey: hostEnv.AI_GATEWAY_API_KEY }),
         runtimeInstructions: buildRuntimeInstructions({
           harness: "fx",
           model: variant.modelSelection.model,
@@ -493,10 +494,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
     Effect.option,
   );
   if (liveFailure._tag === "Some") {
-    const dumpPath = path.join(
-      process.env.TMPDIR ?? "/tmp",
-      `fx-replay-${fixtureName}-failed.json`,
-    );
+    const dumpPath = path.join(hostEnv.TMPDIR ?? "/tmp", `fx-replay-${fixtureName}-failed.json`);
     yield* fs.writeFileString(dumpPath, encodeJson(transcript));
     yield* Console.log(
       `Live orchestration failed ${fixtureName} assertions; left ${outputPath} unchanged. Dump: ${dumpPath}`,

@@ -371,6 +371,7 @@ function normalizeEntries(input: {
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
+  const hostEnv = yield* HostProcess.Environment;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === GROK_PROVIDER);
   if (fixture === undefined || variant === undefined) {
@@ -404,7 +405,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
+  const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: hostEnv.T3_GROK_BIN ?? "grok" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -522,8 +523,8 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
       ...normalizeEntries({
         entries,
         workspace: realWorkspace,
-        home: process.env.HOME ?? "",
-        user: process.env.USER ?? "",
+        home: hostEnv.HOME ?? "",
+        user: hostEnv.USER ?? "",
         runtimeInstructions: buildRuntimeInstructions({
           harness: "Grok",
           model: variant.modelSelection.model,

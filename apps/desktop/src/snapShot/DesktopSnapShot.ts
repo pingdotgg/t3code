@@ -1619,9 +1619,10 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((state) =>
         Effect.gen(function* () {
+          const env = yield* HostProcess.Environment;
           const linuxDesktop =
             state.mode === "portal"
-              ? process.env.XDG_CURRENT_DESKTOP?.toLowerCase()
+              ? env.XDG_CURRENT_DESKTOP?.toLowerCase()
                   .split(":")
                   .find(
                     (name) =>
