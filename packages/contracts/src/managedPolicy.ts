@@ -248,6 +248,20 @@ export function managedAcpAgentDenial(summary: ManagedPolicySummary | undefined,
     : managedPolicyDeniedMessage(summary.organization, `the ACP agent ${agentId}`);
 }
 
+/** Why local ACP commands may not run on an environment, or undefined when they may. */
+export function managedLocalAcpCommandDenial(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.providers?.allowedAcpAgents === undefined
+    ? undefined
+    : managedPolicyDeniedMessage(summary.organization, "local ACP commands");
+}
+
+/** What ACP settings show while the policy limits agents, or undefined when it does not. */
+export function managedAcpAgentsNotice(summary: ManagedPolicySummary | undefined) {
+  return summary?.limits?.providers?.allowedAcpAgents === undefined
+    ? undefined
+    : `${summary.organization} chooses which ACP agents run here, so local commands and executable overrides are turned off.`;
+}
+
 /** Why updates are unavailable on an environment with `summary`, or undefined when allowed. */
 export function managedUpdatesDenial(summary: ManagedPolicySummary | undefined) {
   return summary?.limits?.updates?.mode === "off"

@@ -845,6 +845,7 @@ describe("AcpRegistrySupport", () => {
     const allowed = makeAgent({ npx: { package: "@example/acp@V1.2.3" } });
     const refused = { ...allowed, id: "refused-agent", name: "Refused Agent" };
     const denial = "Example Corp's policy does not allow the ACP agent refused-agent.";
+    const localDenial = "Example Corp's policy does not allow local ACP commands.";
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -856,6 +857,7 @@ describe("AcpRegistrySupport", () => {
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
         agentDenial: (agentId) => (agentId === allowed.id ? undefined : denial),
+        localCommandDenial: localDenial,
       }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
 
       const found = yield* catalog.search({ query: "agent" });
@@ -864,10 +866,19 @@ describe("AcpRegistrySupport", () => {
       const blocked = settings({ agentId: refused.id });
       const errors = [
         yield* Effect.flip(catalog.prepare({ agentId: refused.id })),
-        yield* Effect.flip(catalog.inspect(blocked, toolchain.environment)),
         yield* Effect.flip(catalog.resolve(blocked, "/workspace", toolchain.environment)),
       ];
-      expect(errors.map((error) => error.detail)).toEqual([denial, denial, denial]);
+      expect(errors.map((error) => error.detail)).toEqual([denial, denial]);
+      expect(yield* catalog.inspect(blocked, toolchain.environment)).toEqual({
+        status: "denied",
+        message: denial,
+      });
+      expect(
+        yield* catalog.inspect(
+          decodeAcpRegistrySettings({ source: "local" }),
+          toolchain.environment,
+        ),
+      ).toEqual({ status: "denied", message: localDenial });
       const commands = yield* fileSystem
         .readFileString(toolchain.logPath)
         .pipe(Effect.orElseSucceed(() => ""));

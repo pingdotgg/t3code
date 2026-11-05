@@ -58,6 +58,12 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
         provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
     };
   }
+  if (provider.availability === "unavailable") {
+    return {
+      headline: "Unavailable",
+      detail: provider.unavailableReason ?? provider.message ?? null,
+    };
+  }
   if (!provider.installed) {
     return {
       headline: "Not found",
