@@ -154,7 +154,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
         setElapsed(Math.min(LOOPBACK_SECONDS, Math.floor((performance.now() - startedAt) / 1_000)));
       }, 100);
       recorder.start();
-      worklet.port.postMessage("start");
+      worklet.port.postMessage("start", []);
       setPhase("recording");
       current.timer = setTimeout(() => {
         if (recorder.state !== "inactive") recorder.stop();
