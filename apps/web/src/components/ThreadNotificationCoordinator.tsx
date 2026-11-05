@@ -250,7 +250,7 @@ export function startThreadNotifications(
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
-      // A side chat's questions and approvals already notify on its parent; only its completion is its own.
+      // A side chat's questions and approvals already notify on its parent; its outcome is its own.
       const sideChat = rawThread.lineage.sideChat === true;
       if (
         !sideChat &&
@@ -276,12 +276,9 @@ export function startThreadNotifications(
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
-        !sideChat &&
-        (status === "input" ||
-          status === "request" ||
-          status === "approval" ||
-          status === "failed" ||
-          status === "limited")
+        status === "failed" ||
+        status === "limited" ||
+        (!sideChat && (status === "input" || status === "request" || status === "approval"))
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");

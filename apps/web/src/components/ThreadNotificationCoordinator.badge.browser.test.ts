@@ -318,6 +318,23 @@ it("leaves a side chat's own approval to its parent", async () => {
   expect(TestNotification.sent).toEqual([]);
 });
 
+it("presents a failed side chat", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.shells.set("one", withSideChat({}));
+  app.start();
+  state.shells.set(
+    "one",
+    withSideChat({
+      latestTurn: { turnId: "turn", state: "error", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Thread failed", description: "Side chat" }),
+  );
+});
+
 it("does not toast a side chat open in its parent's right panel", async () => {
   await using app = setup();
   state.inApp = true;
