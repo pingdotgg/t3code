@@ -2377,9 +2377,10 @@ it.live.each([
         popup.newCDPSession = async (target) => {
           await launchGate.promise;
           const session = await newCDPSession(target);
+          const setUp = popup.sessions.length === 1;
           const send = session.send.getMockImplementation()!;
           session.send.mockImplementation(async (method, input) => {
-            if (holds(method, input)) {
+            if (setUp && holds(method, input)) {
               held.resolve();
               await answered.promise;
             }
@@ -2469,19 +2470,55 @@ it.live.each([
             expect(pendingDialog.dismiss).not.toHaveBeenCalled();
           } else {
             expect(popupStatus.dialog).toMatchObject({ type: "alert", message: "hello" });
-            // The held setup has not finished, yet the tab's owner can answer its dialog.
-            if (holding) expect(popup.page.waitForLoadState).not.toHaveBeenCalled();
             const accept = dialogState !== "holdsPageEnable";
-            const answer = yield* broker.invoke<PreviewAutomationStatus>({
-              scope,
-              tabId: adopted.tabId,
-              operation: "dialog",
-              input: { accept },
-            });
+            const answerAs = (target: typeof scope) =>
+              broker.invoke<PreviewAutomationStatus>({
+                scope: target,
+                tabId: adopted.tabId,
+                operation: "dialog",
+                input: { accept },
+              });
+            const handoffs: Array<Fiber.Fiber<void>> = [];
+            if (holding) {
+              // The held setup has not finished, yet only the tab's owner can answer its dialog.
+              expect(popup.page.waitForLoadState).not.toHaveBeenCalled();
+              expect(yield* answerAs(asSession("intruder")).pipe(Effect.flip)).toMatchObject({
+                reason: "agentMismatch",
+              });
+              const person = yield* browser.attachViewer(viewerInput(adopted.tabId, true));
+              const controlled = (byPerson: boolean) =>
+                Effect.gen(function* () {
+                  let control = yield* Queue.take(person.output);
+                  while (control._tag !== "control" || (control.controller === "you") !== byPerson)
+                    control = yield* Queue.take(person.output);
+                });
+              handoffs.push(yield* person.input({ type: "takeControl" }).pipe(Effect.forkScoped));
+              yield* controlled(true);
+              expect(yield* answerAs(scope).pipe(Effect.flip)).toMatchObject({
+                reason: "humanControl",
+              });
+              handoffs.push(
+                yield* person.input({ type: "releaseControl" }).pipe(Effect.forkScoped),
+              );
+              yield* controlled(false);
+              expect(pendingDialog.accept).not.toHaveBeenCalled();
+              expect(pendingDialog.dismiss).not.toHaveBeenCalled();
+              // Its opener keeps working while the popup's setup is held.
+              expect(
+                yield* broker.invoke({
+                  scope,
+                  tabId,
+                  operation: "evaluate",
+                  input: { expression: "document.title" },
+                }),
+              ).toBe("evaluated");
+            }
+            const answer = yield* answerAs(scope);
             expect(answer.dialog).toBeNull();
             expect(pendingDialog.accept).toHaveBeenCalledTimes(accept ? 1 : 0);
             expect(pendingDialog.dismiss).toHaveBeenCalledTimes(accept ? 0 : 1);
             if (holding) yield* Effect.promise(() => registered.promise);
+            for (const handoff of handoffs) yield* Fiber.join(handoff);
           }
         }
         const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
