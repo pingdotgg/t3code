@@ -40,7 +40,6 @@ const makeIssue = (overrides: Partial<LinearIssue> = {}): LinearIssue =>
     team: { id: "t1", key: "ATT", name: "Attraccess" },
     parent: null,
     blockedBy: [],
-    blocks: [],
     subIssueCount: 0,
     completedSubIssueCount: 0,
     branchName: "jan/att-612-rfid",

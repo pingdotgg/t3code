@@ -279,6 +279,17 @@ function RelationsSection(props: {
   );
 }
 
+function BlockedSummary(props: { readonly issue: LinearIssue }) {
+  return (
+    <>
+      <SymbolView name="slash.circle" size={12} tintColorClassName="accent-warning-foreground" />
+      <Text className="text-xs font-t3-medium text-warning-foreground">
+        {blockedBySummary(props.issue)}
+      </Text>
+    </>
+  );
+}
+
 function DetailBody(props: {
   readonly environmentId: EnvironmentId;
   readonly detail: LinearIssueDetail;
@@ -288,7 +299,7 @@ function DetailBody(props: {
   const { issue } = detail;
   const linearNavigation = useLinearNavigation(environmentId, {});
   // One open blocker opens directly; several are listed under Relations below.
-  const open = openBlockers(issue);
+  const open = isLinearIssueBlocked(issue) ? openBlockers(issue) : [];
   const loneBlocker = open.length === 1 ? open[0] : undefined;
   const launch = useLinearLaunch(environmentId);
   const openThread = useOpenLinearThread();
@@ -343,22 +354,18 @@ function DetailBody(props: {
             </Text>
           </Pressable>
         ) : null}
-        {isLinearIssueBlocked(issue) ? (
+        {loneBlocker ? (
           <Pressable
-            accessibilityRole={loneBlocker ? "button" : "text"}
-            disabled={!loneBlocker}
-            onPress={() => loneBlocker && linearNavigation.openIssue(loneBlocker.id)}
+            accessibilityRole="button"
+            onPress={() => linearNavigation.openIssue(loneBlocker.id)}
             className="min-h-11 flex-row items-center gap-1 self-start active:opacity-60"
           >
-            <SymbolView
-              name="slash.circle"
-              size={12}
-              tintColorClassName="accent-warning-foreground"
-            />
-            <Text className="text-xs font-t3-medium text-warning-foreground">
-              {blockedBySummary(issue)}
-            </Text>
+            <BlockedSummary issue={issue} />
           </Pressable>
+        ) : isLinearIssueBlocked(issue) ? (
+          <View className="flex-row items-center gap-1 self-start">
+            <BlockedSummary issue={issue} />
+          </View>
         ) : null}
       </View>
 
