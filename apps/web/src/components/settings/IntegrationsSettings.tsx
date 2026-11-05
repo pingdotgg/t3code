@@ -369,7 +369,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
       control={
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           <Select value={selectedViewport} onValueChange={selectViewport} disabled={disabled}>
-            <SelectTrigger size="sm" aria-label="Default browser viewport">
+            <SelectTrigger variant="well" size="compact" aria-label="Default browser viewport">
               <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -396,7 +396,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 max={PREVIEW_VIEWPORT_MAX_DIMENSION}
                 disabled={disabled}
                 format={NO_GROUPING}
-                size="sm"
+                size="compact"
                 className="w-20"
                 onValueCommitted={(value) => commitDimension("width", value)}
               >
@@ -411,7 +411,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 max={PREVIEW_VIEWPORT_MAX_DIMENSION}
                 disabled={disabled}
                 format={NO_GROUPING}
-                size="sm"
+                size="compact"
                 className="w-20"
                 onValueCommitted={(value) => commitDimension("height", value)}
               >
@@ -475,7 +475,8 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             className="w-full sm:w-40"
             aria-label="Default browser zoom"
             leadingIcon={<ZoomInIcon />}
@@ -520,7 +521,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
               updateSettings({ browserDefaultAppearance: value });
           }}
         >
-          <SelectTrigger size="sm" aria-label="Default browser appearance">
+          <SelectTrigger variant="well" size="compact" aria-label="Default browser appearance">
             <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -603,7 +604,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
             if (next !== undefined) updateSettings({ browserRecordingFrameRate: next });
           }}
         >
-          <SelectTrigger size="sm" aria-label="Browser recording frame rate">
+          <SelectTrigger variant="well" size="compact" aria-label="Browser recording frame rate">
             <SelectValue>{frameRate} fps</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -651,7 +652,8 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             className="w-full sm:w-40"
             aria-label="Open links in"
             leadingIcon={<GlobeIcon />}
@@ -714,7 +716,12 @@ function BrowserSearchEngineSetting() {
               }
             }}
           >
-            <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Search engine">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              className="w-full sm:w-40"
+              aria-label="Search engine"
+            >
               <SelectValue>{SEARCH_ENGINE_LABELS[engine]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -739,7 +746,7 @@ function BrowserSearchEngineSetting() {
           control={
             <DraftInput
               nativeInput
-              size="sm"
+              size="settings"
               className="w-full sm:w-64"
               aria-label="Custom search URL"
               placeholder="https://example.com/search?q=%s"

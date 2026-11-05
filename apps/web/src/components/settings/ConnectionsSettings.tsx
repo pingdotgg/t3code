@@ -853,7 +853,8 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-56"
                 aria-label="WSL backend"
                 disabled={isUpdatingWslBackend}

@@ -115,7 +115,8 @@ export function SecretSourceInput({
         }}
       >
         <SelectTrigger
-          size="sm"
+          variant={input.size === "settings" ? "well" : "default"}
+          size={input.size === "settings" ? "compact" : "sm"}
           className="w-auto min-w-0 shrink-0"
           aria-label={`${label} source`}
           title={provider === null ? "Value" : providerLabel(provider)}
@@ -149,7 +150,7 @@ export function SecretSourceInput({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <DraftInput
           {...(input.id !== undefined ? { id: input.id } : {})}
-          size="sm"
+          size={input.size === "settings" ? "settings" : "sm"}
           font="mono"
           value={rejectedReference ?? reference}
           onCommit={(next) => {
