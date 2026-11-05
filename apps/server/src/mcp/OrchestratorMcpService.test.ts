@@ -3230,6 +3230,122 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect.each(["global", "project"] as const)(
+    "a delegate on the %s default model gets that default's options",
+    (source) =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const model = "gpt-6.1-sol";
+        const parent = { instanceId: claudeInstanceId, model: "claude-opus-5-5" };
+        const defaultSelection = (effort: string) => ({
+          instanceId: codexInstanceId,
+          model,
+          options: [
+            { id: "reasoningEffort", value: effort },
+            { id: "notAnOptionOfThisModel", value: true },
+          ],
+        });
+        const commands: Array<{ readonly modelSelection?: unknown }> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], parent)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command as { readonly modelSelection?: unknown });
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(
+            source === "global"
+              ? { defaultModelSelection: defaultSelection("high") }
+              : {
+                  defaultModelSelection: defaultSelection("low"),
+                  projectSettingsOverrides: {
+                    [projectId]: { defaultModelSelection: defaultSelection("high") },
+                  },
+                },
+          ),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: claudeInstanceId,
+              driver: ProviderDriverKind.make("claudeAgent"),
+              model: parent.model,
+            }),
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+              }),
+              models: [
+                {
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "reasoningEffort",
+                        label: "Reasoning",
+                        type: "select",
+                        options: [
+                          { id: "low", label: "Low", isDefault: true },
+                          { id: "high", label: "High" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ]),
+          adapterRegistryLayer([claudeInstanceId, codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({ id: projectId, defaultModelSelection: null } as never),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ providerInstanceId: codexInstanceId, model }),
+            mode: "async",
+          });
+          assert.deepEqual(commands[0]?.modelSelection, {
+            instanceId: codexInstanceId,
+            model,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          });
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },
