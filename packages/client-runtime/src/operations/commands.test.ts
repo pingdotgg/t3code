@@ -293,7 +293,7 @@ describe("V2 environment commands", () => {
         title: "ZA-123 invoice PDF",
         generateTitle: false,
       });
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("skips the title seed when retrying a named thread that already exists", () =>
@@ -319,7 +319,7 @@ describe("V2 environment commands", () => {
       expect(commands).toHaveLength(1);
       expect(commands[0]).toMatchObject({ type: "message.dispatch", generateTitle: false });
       expect(commands[0]).not.toHaveProperty("titleSeed");
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("uses server-resolved delivery intent without fetching the full projection", () =>
