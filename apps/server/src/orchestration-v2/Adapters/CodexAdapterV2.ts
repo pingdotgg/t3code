@@ -199,6 +199,7 @@ export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelS
 export function codexProviderTurnTokenUsage(
   tokenUsage: CodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
   updatedAt: string,
+  autoCompactThreshold?: number,
 ) {
   return {
     usedTokens: Math.max(0, tokenUsage.last.totalTokens),
@@ -207,8 +208,20 @@ export function codexProviderTurnTokenUsage(
     cachedInputTokens: Math.max(0, tokenUsage.last.cachedInputTokens),
     outputTokens: Math.max(0, tokenUsage.last.outputTokens),
     reasoningOutputTokens: Math.max(0, tokenUsage.last.reasoningOutputTokens),
+    ...(autoCompactThreshold === undefined ? {} : { autoCompactThreshold }),
     updatedAt,
   };
+}
+
+// A "body_after_prefix" limit excludes the carried prefix, so it is not a point on the full-context meter.
+function codexAutoCompactThreshold(config: CodexSchema.V2ConfigReadResponse["config"]) {
+  const limit = config.model_auto_compact_token_limit;
+  return config.model_auto_compact_token_limit_scope !== "body_after_prefix" &&
+    limit != null &&
+    Number.isSafeInteger(limit) &&
+    limit > 0
+    ? limit
+    : undefined;
 }
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 // Plan flushes store three copies; use the client's assistant-text cadence.
@@ -1873,6 +1886,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
+        // Codex reports the effective limit only through config/read, resolved per cwd.
+        const autoCompactThresholdByCwd = new Map<string | null, number | undefined>();
+        const readAutoCompactThreshold = (cwd: string | null) => {
+          if (autoCompactThresholdByCwd.has(cwd)) return Effect.void;
+          autoCompactThresholdByCwd.set(cwd, undefined);
+          return client.request("config/read", { includeLayers: false, cwd }).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.map(({ config }) => {
+              autoCompactThresholdByCwd.set(cwd, codexAutoCompactThreshold(config));
+            }),
+            Effect.catch((cause) => Effect.logDebug("Codex config read failed.", { cause })),
+            Effect.forkIn(scope, { startImmediately: true }),
+            Effect.asVoid,
+          );
+        };
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
           if (!state) {
@@ -4555,6 +4583,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 tokenUsage: codexProviderTurnTokenUsage(
                   payload.tokenUsage,
                   DateTime.formatIso(now),
+                  autoCompactThresholdByCwd.get(context.input.runtimePolicy.cwd),
                 ),
               },
             });
@@ -6812,6 +6841,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
+            yield* readAutoCompactThreshold(turnInput.runtimePolicy.cwd);
             const started = yield* client.request("turn/start", turnStartParams);
             const previousTurn =
               previousTurns.get(started.turn.id) ??

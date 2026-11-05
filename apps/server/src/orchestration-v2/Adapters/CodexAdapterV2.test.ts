@@ -939,21 +939,30 @@ describe("CodexAdapterV2 process exit", () => {
           stdin: Stream.fromQueue(input),
           stdout: () =>
             Sink.forEach((chunk: string | Uint8Array) =>
-              Effect.gen(function* () {
-                const frame = JSON.parse(
-                  typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
-                ) as { readonly id?: number; readonly method: string };
-                const response = preamble.find(
-                  (entry) =>
-                    entry.type === "emit_inbound" &&
-                    entry.label === frame.method &&
-                    Predicate.isObject(entry.frame) &&
-                    "id" in entry.frame,
-                );
-                if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
-                }
-              }),
+              Effect.forEach(
+                (typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk))
+                  .split("\n")
+                  .filter((line) => line.trim().length > 0),
+                (line) => {
+                  const frame = JSON.parse(line) as {
+                    readonly id?: number;
+                    readonly method: string;
+                  };
+                  const response = preamble.find(
+                    (entry) =>
+                      entry.type === "emit_inbound" &&
+                      entry.label === frame.method &&
+                      Predicate.isObject(entry.frame) &&
+                      "id" in entry.frame,
+                  );
+                  const reply =
+                    response === undefined || frame.id === undefined
+                      ? undefined
+                      : withReplayRequestId(response, frame.id);
+                  return reply?.type === "emit_inbound" ? emit(reply.frame) : Effect.void;
+                },
+                { discard: true },
+              ),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
           stderr: () => Sink.drain,
         }),
