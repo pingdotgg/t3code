@@ -238,7 +238,6 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       AgentSessionScanner.layer,
-      layerProjectService,
       layerOrchestratorProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -268,7 +267,6 @@ const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      layerProjectService,
       layerProjectSetupScriptRunner,
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
@@ -293,7 +291,6 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
 const layerScratchThreadPromotionProvided = ScratchThreadPromotion.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      layerProjectService,
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
       layerScheduledTaskProvided,
@@ -368,8 +365,7 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
-  layer.pipe(Layer.provide(layerProjectService)),
-  layerProjectService,
+  layer,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
@@ -393,5 +389,6 @@ export const layerProduction = Layer.mergeAll(
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
   Layer.provide(Scheduler.layer),
+  Layer.provideMerge(layerProjectService),
   Layer.provideMerge(layerEventInfrastructure),
 );
