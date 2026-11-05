@@ -86,6 +86,10 @@ learn_version="$(wait_for_server "$HOME/.t3-learn")"
 log "T3 Learn $learn_version is running"
 sleep 5
 screenshot t3-learn
+# What you know (knowledge.json) must survive updates and uninstalls like the database.
+knowledge="$HOME/.t3-learn/userdata/knowledge.json"
+printf '%s\n' '[{"topic":"install test","explanation":"kept across updates","buildsOn":[],"doneAt":"2026-11-05T00:00:00.000Z","threadId":"install-test"}]' >"$knowledge"
+cp "$knowledge" "$artifacts/knowledge.json"
 
 if [ "$os" = Darwin ]; then
   app="/Applications/T3 Learn.app"
@@ -129,6 +133,7 @@ if [ "$os" = Darwin ] && [ "$scenario" = fresh ]; then
   ls -d "/Applications/.t3-learn-update."* 2>/dev/null && fail "the update left its staging folder"
   codesign --verify --deep "$app" || fail "the updated app's signature does not verify"
   screenshot after-update
+  cmp -s "$knowledge" "$artifacts/knowledge.json" || fail "the update changed or removed knowledge.json"
 fi
 
 if [ "$scenario" = next-to-t3-code ]; then
@@ -156,6 +161,7 @@ else
   ! installed t3learn || fail "the t3learn package is still installed"
 fi
 [ -d "$HOME/.t3-learn/userdata" ] || fail "uninstall removed T3 Learn's data"
+cmp -s "$knowledge" "$artifacts/knowledge.json" || fail "uninstall changed or removed knowledge.json"
 if [ "$scenario" = next-to-t3-code ]; then
   [ "$(wait_for_server "$HOME/.t3")" = "$t3code_version" ] || fail "T3 Code stopped after uninstalling T3 Learn"
 fi
