@@ -17,6 +17,7 @@ import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runti
 const presentationsState = vi.hoisted(() => ({
   value: new Map() as ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
 }));
+const usageState = vi.hoisted(() => ({ value: undefined as unknown }));
 const refreshCommand = vi.hoisted(() => ({ action: vi.fn() }));
 
 vi.mock(import("../../state/presentation"), async (original) => ({
@@ -29,6 +30,10 @@ vi.mock(import("../../state/presentation"), async (original) => ({
 
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: (() => refreshCommand.action) as never,
+}));
+
+vi.mock(import("../../state/usage"), () => ({
+  useUsage: (() => usageState.value) as never,
 }));
 
 const checkedAt = "2026-10-25T16:00:00.000Z";
@@ -74,19 +79,35 @@ function provider(
   } as unknown as ServerProvider;
 }
 
-function unavailableProvider(): ServerProvider {
+function unavailableProvider(message = "Could not read limits."): ServerProvider {
   return {
     ...provider("cursor", { session: 0, weekly: 0 }),
+    displayName: undefined,
     usageLimits: {
       checkedAt,
       windows: [],
-      unavailable: { reason: "probeFailed", message: "Could not read limits." },
+      unavailable: { reason: "probeFailed", message },
     },
   } as unknown as ServerProvider;
 }
 
-function setup(presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>) {
+function environmentPresentation(
+  providers: ServerProvider[],
+  label: string,
+): EnvironmentPresentationWithProviders {
+  return {
+    entry: { target: { label } },
+    connection: { phase: "connected", error: null, traceId: null },
+    serverConfig: { providers: [...providers] },
+  } as unknown as EnvironmentPresentationWithProviders;
+}
+
+function setup(
+  presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
+  usage: unknown = { shown: null, merged: { daily: [] }, selectedEnvironments: [] },
+) {
   presentationsState.value = presentations;
+  usageState.value = usage;
   refreshCommand.action.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   const registry = AtomRegistry.make();
   return { registry };
@@ -95,8 +116,9 @@ function setup(presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation
 function view(
   presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
   onOpenFull?: () => void,
+  usage?: unknown,
 ) {
-  const { registry } = setup(presentations);
+  const { registry } = setup(presentations, usage);
   return (
     <RegistryContext value={registry}>
       {onOpenFull === undefined ? (
@@ -110,14 +132,7 @@ function view(
 
 function envPresentations(providers: ServerProvider[]) {
   return new Map<EnvironmentId, EnvironmentPresentationWithProviders>([
-    [
-      EnvironmentId.make("env-1"),
-      {
-        entry: { target: { label: "Desk" } },
-        connection: { phase: "connected", error: null, traceId: null },
-        serverConfig: { providers: [...providers] },
-      } as unknown as EnvironmentPresentationWithProviders,
-    ],
+    [EnvironmentId.make("env-1"), environmentPresentation(providers, "Desk")],
   ]);
 }
 
@@ -175,12 +190,49 @@ describe("QuickUsagePopover", () => {
     await expect.element(page.getByText("Quick usage")).not.toBeInTheDocument();
   });
 
-  it("shows empty state when no provider has limits", async () => {
+  it("keeps spend summary and View more available when no provider reports limits", async () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-25T16:30:00.000Z"));
     const presentations = envPresentations([]);
-    await using screen = await render(view(presentations));
+    const merged = {
+      daily: [
+        { day: "2026-10-25", costUsd: 1 },
+        { day: "2026-10-24", costUsd: 2 },
+      ],
+    };
+    const usage = {
+      shown: { window: { timeZone: "UTC" }, merged },
+      merged,
+      selectedEnvironments: [],
+    };
+    const onOpenFull = vi.fn();
+    await using screen = await render(view(presentations, onOpenFull, usage));
 
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
     await expect.element(page.getByText("No usage limits reported yet.")).toBeVisible();
+    await expect.element(page.getByText("Spent today", { exact: true })).toBeVisible();
+    const viewMore = page.getByRole("button", { name: "View more" });
+    await expect.element(viewMore).toBeVisible();
+    await userEvent.click(viewMore);
+    expect(onOpenFull).toHaveBeenCalledOnce();
+  });
+
+  it("keeps notice-only accounts distinct across environments", async () => {
+    const presentations = new Map<EnvironmentId, EnvironmentPresentationWithProviders>([
+      [
+        EnvironmentId.make("env-1"),
+        environmentPresentation([unavailableProvider("Desk could not read limits.")], "Desk"),
+      ],
+      [
+        EnvironmentId.make("env-2"),
+        environmentPresentation([unavailableProvider("Remote could not read limits.")], "Remote"),
+      ],
+    ]);
+    await using screen = await render(view(presentations));
+
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await expect.element(page.getByRole("button", { name: "Cursor" })).toBeVisible();
+    await expect.element(page.getByText("Desk could not read limits.")).toBeVisible();
+    await expect.element(page.getByText("Remote could not read limits.")).toBeVisible();
   });
 
   it("shows refresh progress while refreshing connected provider limits", async () => {

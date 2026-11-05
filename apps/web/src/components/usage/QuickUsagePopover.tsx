@@ -91,7 +91,7 @@ function selectedDriverLimits(
     });
   }
 
-  for (const presentation of presentations.values()) {
+  for (const [environmentId, presentation] of presentations) {
     for (const provider of presentation.serverConfig?.providers ?? []) {
       const limits = provider.usageLimits;
       if (
@@ -108,11 +108,10 @@ function selectedDriverLimits(
       if (kind === undefined) continue;
       const notice = limitsNotice(limits);
       if (notice === null) continue;
+      const accountIdentity =
+        provider.auth.email?.trim().toLowerCase() || `${environmentId}:${provider.instanceId}`;
       addAccount(provider.driver, kind, {
-        key: [
-          provider.auth.email?.trim().toLowerCase() ?? provider.instanceId,
-          provider.auth.workspaceId ?? "",
-        ].join(":"),
+        key: [accountIdentity, provider.auth.workspaceId ?? ""].join(":"),
         label:
           provider.auth.email?.trim() ||
           provider.displayName?.trim() ||
@@ -344,40 +343,40 @@ export function QuickUsagePopover({
                   </section>
                 ))}
               </div>
-
-              {todaySummary ? (
-                <div className="flex items-center justify-between gap-3 rounded-lg bg-foreground/5 px-3 py-2">
-                  <div className="min-w-0 text-xs tabular-nums">
-                    <p className="font-medium text-foreground">Spent today</p>
-                    <p className="truncate text-muted-foreground">
-                      {formatUsd(todaySummary.todayCostUsd)} spent ·{" "}
-                      {formatUsd(todaySummary.paceUsd)} pace
-                    </p>
-                  </div>
-                  {todaySummary.deltaPercent === null ? null : (
-                    <span className="shrink-0 rounded-full border border-border px-2 py-1 text-2xs font-medium tabular-nums text-muted-foreground">
-                      {Math.abs(Math.round(todaySummary.deltaPercent))}%{" "}
-                      {todaySummary.deltaPercent <= 0 ? "under" : "over"} pace
-                    </span>
-                  )}
-                </div>
-              ) : null}
-
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setOpen(false);
-                    onOpenFull?.();
-                  }}
-                >
-                  View more
-                </Button>
-              </div>
             </>
           )}
+
+          {todaySummary ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-foreground/5 px-3 py-2">
+              <div className="min-w-0 text-xs tabular-nums">
+                <p className="font-medium text-foreground">Spent today</p>
+                <p className="truncate text-muted-foreground">
+                  {formatUsd(todaySummary.todayCostUsd)} spent · {formatUsd(todaySummary.paceUsd)}{" "}
+                  pace
+                </p>
+              </div>
+              {todaySummary.deltaPercent === null ? null : (
+                <span className="shrink-0 rounded-full border border-border px-2 py-1 text-2xs font-medium tabular-nums text-muted-foreground">
+                  {Math.abs(Math.round(todaySummary.deltaPercent))}%{" "}
+                  {todaySummary.deltaPercent <= 0 ? "under" : "over"} pace
+                </span>
+              )}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setOpen(false);
+                onOpenFull?.();
+              }}
+            >
+              View more
+            </Button>
+          </div>
         </div>
       </PopoverPopup>
     </Popover>

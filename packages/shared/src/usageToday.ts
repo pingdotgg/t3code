@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off -- Day keys are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
+import { DateTime } from "effect";
 import type { UsageBucket } from "@t3tools/contracts";
 
 /**
@@ -22,9 +22,9 @@ function timeZoneDayKey(now: Date, timeZone: string): string {
 }
 
 function priorDayKey(dayKey: string, daysAgo: number): string {
-  const [year = 0, month = 1, dayOfMonth = 1] = dayKey.split("-").map((part) => Number(part));
-  const date = new Date(Date.UTC(year, month - 1, dayOfMonth - daysAgo));
-  return date.toISOString().slice(0, 10);
+  return DateTime.formatIsoDateUtc(
+    DateTime.subtract(DateTime.makeUnsafe(`${dayKey}T00:00:00Z`), { days: daysAgo }),
+  );
 }
 
 export function summarizeTodayUsage(
