@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 import { Platform, ScrollView, Share, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -250,7 +250,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   return (
     <View collapsable={false} className="flex-1 bg-header">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title={TITLE} hideBottomBorder onBack={close} />
+      <AppBar sheet title={TITLE} hideBottomBorder onBack={close} />
       <ScreenContent>{content}</ScreenContent>
     </View>
   );

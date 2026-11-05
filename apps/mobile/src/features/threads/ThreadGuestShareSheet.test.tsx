@@ -49,7 +49,7 @@ vi.mock("../../components/ui/Button", () => ({
   ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidSheetHeader: () => null }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
 vi.mock("../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
 vi.mock("../../components/ui/ScreenContent", () => ({ ScreenContent: Slot }));
 vi.mock("../../components/ui/Dialog", () => ({}));
