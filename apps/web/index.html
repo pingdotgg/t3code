@@ -10,6 +10,25 @@
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <script data-locale-boot>
+      (() => {
+        let locale = "en";
+        try {
+          const stored = window.localStorage.getItem("t3code:locale");
+          if (
+            stored === "en" ||
+            stored === "de" ||
+            stored === "fr" ||
+            stored === "es" ||
+            stored === "zh-CN"
+          )
+            locale = stored;
+        } catch {
+          // Storage can be disabled independently of the application.
+        }
+        document.documentElement.lang = locale;
+      })();
+    </script>
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";

@@ -1,0 +1,649 @@
+msgid ""
+msgstr ""
+"Content-Transfer-Encoding: 8bit\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Language: zh-CN\n"
+"MIME-Version: 1.0\n"
+"X-Generator: palamedes\n"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "{projectSelector} to start"
+msgstr "选择{projectSelector}以开始"
+
+#~ #@ obsolete-since: 2026-11-05
+#~ #: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+#~ msgid "/"
+#~ msgstr ""
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "About"
+msgstr "关于"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Active"
+msgstr "活跃"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add a project"
+msgstr "添加项目"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add a project to start"
+msgstr "添加项目以开始"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Add a project to start your first thread."
+msgstr "添加项目以开始你的第一个会话。"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Add a project, or start without one."
+msgstr "添加项目，或直接开始。"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add project"
+msgstr "添加项目"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Adjust the contrast of colors and borders across the interface."
+msgstr "调整界面中颜色和边框的对比度。"
+
+#: apps/web/src/components/settings/AdvancedSettings.tsx#AdvancedSettings
+msgid "Advanced"
+msgstr "高级"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Agents"
+msgstr "智能体"
+
+#: apps/web/src/components/Sidebar.tsx#useSidebarLookups
+msgid "All projects"
+msgstr "所有项目"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Appearance"
+msgstr "外观"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid ""
+"Applies to this browser or desktop app. Applying the language reloads the "
+"page. Save any unfinished work first."
+msgstr ""
+"适用于此浏览器或桌面应用。应用语言时会重新加载页面，"
+"请先保存未完成的工作。"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Apply and reload"
+msgstr "应用并重新加载"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Archive"
+msgstr "归档"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Artwork"
+msgstr "插图"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Bars"
+msgstr "条形"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Branch copied"
+msgstr "分支已复制"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Browser"
+msgstr "浏览器"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#ConfirmDialogHost
+msgid "Cancel"
+msgstr "取消"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Chat"
+msgstr "聊天"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "chat width"
+msgstr "聊天宽度"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Chat width"
+msgstr "聊天宽度"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Choose a project"
+msgstr "选择项目"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Choose how Dev and Nightly environments are identified."
+msgstr "选择 Dev 和 Nightly 环境的标识方式。"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Clear settings search"
+msgstr "清空设置搜索"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Code"
+msgstr "代码"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Colors & themes"
+msgstr "颜色与主题"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Comfortable"
+msgstr "舒适"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Comfortable (default)"
+msgstr "舒适（默认）"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "composer context"
+msgstr "输入框上下文"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Composer context"
+msgstr "输入框上下文"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#ConfirmDialogHost
+msgid "Confirm"
+msgstr "确认"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#resolveConfirmDialogCopy
+msgid "Confirm action"
+msgstr "确认操作"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Connections"
+msgstr "连接"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "contrast"
+msgstr "对比度"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Contrast"
+msgstr "对比度"
+
+#: apps/web/src/components/ui/anchoredCopyToast.ts#showAnchoredCopySuccessToast
+msgid "Copied!"
+msgstr "已复制！"
+
+#: apps/web/src/components/chat/MessageCopyButton.tsx#MessageCopyButton
+msgid "Copy message"
+msgstr "复制消息"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Copy path"
+msgstr "复制路径"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Could not create thread"
+msgstr "无法创建会话"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Could not save the language. Allow local storage and try again."
+msgstr "无法保存语言。请允许本地存储后重试。"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Could not turn thread into a project"
+msgstr "无法将会话转换为项目"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Custom…"
+msgstr "自定义…"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Dev artwork"
+msgstr "Dev 插图"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Devices"
+msgstr "设备"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Diagnostics"
+msgstr "诊断"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Diffs & pull requests"
+msgstr "差异与拉取请求"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "effort display"
+msgstr "推理强度显示"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Effort display"
+msgstr "推理强度显示"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "environment identification"
+msgstr "环境标识"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Environment identification"
+msgstr "环境标识"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Environments"
+msgstr "环境"
+
+#: apps/web/src/components/ui/anchoredCopyToast.ts#showAnchoredCopyErrorToast
+msgid "Failed to copy"
+msgstr "复制失败"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy branch"
+msgstr "复制分支失败"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy path"
+msgstr "复制路径失败"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy thread ID"
+msgstr "复制会话 ID 失败"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to delete thread"
+msgstr "删除会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Failed to delete threads"
+msgstr "删除会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptPin
+msgid "Failed to pin thread"
+msgstr "置顶会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to regenerate thread title"
+msgstr "重新生成会话标题失败"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Failed to regenerate thread titles"
+msgstr "重新生成会话标题失败"
+
+#: apps/web/src/components/Sidebar.tsx#commitThreadRename
+#: apps/web/src/components/chat/ChatHeader.tsx#commitRename
+msgid "Failed to rename thread"
+msgstr "重命名会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptSettle
+msgid "Failed to settle thread"
+msgstr "归档会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptSnooze
+msgid "Failed to snooze thread"
+msgstr "稍后提醒会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnsettle
+msgid "Failed to un-settle thread"
+msgstr "取消归档会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnpin
+msgid "Failed to unpin thread"
+msgstr "取消置顶会话失败"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to update auto-settle"
+msgstr "更新自动归档失败"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnsnooze
+msgid "Failed to wake thread"
+msgstr "唤醒会话失败"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Full"
+msgstr "全宽"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "General"
+msgstr "常规"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "glass opacity"
+msgstr "不透明度"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Glass opacity"
+msgstr "不透明度"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Higher values make menus, dialogs, and the composer more solid."
+msgstr "值越高，菜单、对话框和输入框越不透明。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Interface"
+msgstr "界面"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Interface language"
+msgstr "界面语言"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Keep branch and worktree controls below the composer after a thread starts."
+msgstr ""
+"会话开始后，仍在输入框下方显示分支和工作树控件。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Keep composer context visible in active threads"
+msgstr "在活跃会话中保持输入框上下文可见"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Keybindings"
+msgstr "快捷键"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Labs"
+msgstr "实验室"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Language"
+msgstr "语言"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Maintenance"
+msgstr "维护"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "math rendering"
+msgstr "数学公式渲染"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "New thread"
+msgstr "新建会话"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "New thread in {activeProjectName}"
+msgstr "在 {activeProjectName} 中新建会话"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Nightly artwork"
+msgstr "Nightly 插图"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "No active thread"
+msgstr "没有活跃会话"
+
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "No matching projects."
+msgstr "没有匹配的项目。"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "No project"
+msgstr "无项目"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "No projects yet"
+msgstr "暂无项目"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "No settings found"
+msgstr "未找到设置"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "None"
+msgstr "无"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Only built-in themes show artwork, so this theme shows the version pill."
+msgstr "仅内置主题显示插图，因此此主题显示版本标签。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Only built-in themes show artwork."
+msgstr "仅内置主题显示插图。"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Open parent thread: {title}"
+msgstr "打开父会话：{title}"
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#settingsBreadcrumbLabel
+msgid "Open source licenses"
+msgstr "开源许可证"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Panel animation duration"
+msgstr "面板动画时长"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "panel animations"
+msgstr "面板动画"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Panel animations"
+msgstr "面板动画"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Path copied"
+msgstr "路径已复制"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Path unavailable"
+msgstr "路径不可用"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "Pick a thread to continue"
+msgstr "选择会话以继续"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Pin project"
+msgstr "置顶项目"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Pinned"
+msgstr "已置顶"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Project created"
+msgstr "项目已创建"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+#: apps/web/src/components/chat/ChatHeader.tsx#handleHeaderContextMenu
+msgid "Project settings"
+msgstr "项目设置"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Projects"
+msgstr "项目"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Providers"
+msgstr "提供商"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Render math"
+msgstr "渲染数学公式"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingResetButton
+msgid "Reset {label} to default"
+msgstr "将{label}重置为默认值"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingResetButton
+msgid "Reset to default"
+msgstr "重置为默认值"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingsRow
+msgid "Reset to inherited value"
+msgstr "重置为继承值"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Scheduled tasks"
+msgstr "计划任务"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Search"
+msgstr "搜索"
+
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Search projects"
+msgstr "搜索项目"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Search projects..."
+msgstr "搜索项目…"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Search settings"
+msgstr "搜索设置"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Secrets"
+msgstr "密钥"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "Select an existing thread or create a new one to get started."
+msgstr "选择已有会话或创建新会话以开始。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Set how fast panels open and close."
+msgstr "设置面板打开和关闭的速度。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Set how wide messages and the composer can grow on large screens."
+msgstr "设置大屏幕上消息和输入框的最大宽度。"
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#SettingsBreadcrumb
+msgid "Settings"
+msgstr "设置"
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#SettingsBreadcrumb
+msgid "Settings breadcrumb"
+msgstr "设置导航路径"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Settings sections"
+msgstr "设置分类"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Settled"
+msgstr "已归档"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Sharing & access"
+msgstr "共享与访问"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Show Dev or Nightly artwork in the sidebar header."
+msgstr "在侧栏顶部显示 Dev 或 Nightly 插图。"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Show reasoning effort in the composer as its name, such as High, or as bars."
+msgstr ""
+"在输入框中将推理强度显示为名称（如“高”）或条形。"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "SnapShots"
+msgstr "SnapShots"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Snoozed"
+msgstr "稍后提醒"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Source control"
+msgstr "版本控制"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Start without a project"
+msgstr "无项目开始"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#resolveConfirmDialogCopy
+msgid "This action requires your confirmation."
+msgstr "此操作需要你的确认。"
+
+#: apps/web/src/components/Sidebar.tsx#checkThreadOperations
+msgid "Thread action unavailable"
+msgstr "会话操作不可用"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread actions for {activeThreadTitle}"
+msgstr "{activeThreadTitle} 的会话操作"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread breadcrumb"
+msgstr "会话导航路径"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Thread ID copied"
+msgstr "会话 ID 已复制"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Thread search results"
+msgstr "会话搜索结果"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread title"
+msgstr "会话标题"
+
+#: apps/web/src/components/Sidebar.tsx#commitThreadRename
+#: apps/web/src/components/chat/ChatHeader.tsx#commitRename
+msgid "Thread title cannot be empty"
+msgstr "会话标题不能为空"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Threads"
+msgstr "会话"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Typeset LaTeX math, such as $x^2$ or \\[x^2\\], in messages and Markdown "
+"previews. The composer keeps TeX source editable."
+msgstr ""
+"在消息和 Markdown 预览中排版 LaTeX 公式，例如 $x^2$ 或 "
+"\\[x^2\\]。输入框中的 TeX 源码仍可编辑。"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Unpin project"
+msgstr "取消置顶项目"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Version pill"
+msgstr "版本标签"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "What should we work on?"
+msgstr "我们来做些什么？"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Wide"
+msgstr "宽"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Word"
+msgstr "文字"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Word (default)"
+msgstr "文字（默认）"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Working"
+msgstr "进行中"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Worktrees"
+msgstr "工作树"

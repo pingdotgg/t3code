@@ -1070,6 +1070,15 @@ importers:
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0
+      '@palamedes/core':
+        specifier: 2.1.0
+        version: 2.1.0
+      '@palamedes/react':
+        specifier: 2.1.0
+        version: 2.1.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@palamedes/runtime':
+        specifier: 2.1.0
+        version: 2.1.0
       '@pierre/diffs':
         specifier: 1.6.1
         version: 1.6.1(patch_hash=322ac5f5db8b5715189c010802047f8235c3a45d8ed5ca0ba60fac266e2eba34)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1263,6 +1272,12 @@ importers:
       '@effect/vitest':
         specifier: 4.1.2
         version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.60.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@palamedes/cli':
+        specifier: 2.1.0
+        version: 2.1.0
+      '@palamedes/vite-plugin':
+        specifier: 2.1.0
+        version: 2.1.0(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))
@@ -5880,6 +5895,124 @@ packages:
   '@oxlint/plugins@1.89.0':
     resolution: {integrity: sha512-TJBBNl4KIxbxrSk7gsqlz6iM1kxidfyTizEzfWqXvijF2Ou8/Da58GvjemBVmCmaUamwRij+JwsVc0kpBFuqfg==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
+
+  '@palamedes/cli-darwin-arm64@2.1.0':
+    resolution: {integrity: sha512-LICM/R2KN7vXuivixDbXB48njEbGwzMHo3wIfLBnFi+m28TQZW9IviPatLi0fGWO8mc5NSgfLmYHG8RThbca2A==}
+    cpu: [arm64]
+    os: [darwin]
+    hasBin: true
+
+  '@palamedes/cli-linux-arm64-gnu@2.1.0':
+    resolution: {integrity: sha512-oJzRphDvz1kvjk6U31jt7Q8z5XkgoCJfS9qaJg8NL5F//lPPX1cFr451L64M5XWe/pLUNzK6LFnD1atPx0ucIQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+    hasBin: true
+
+  '@palamedes/cli-linux-arm64-musl@2.1.0':
+    resolution: {integrity: sha512-bgpCx/PQ1vE4lQIReHHUBFFl2I8jZ6t/ZWoURM4fojAgsU0n7h6FOnVd8xGl6MOS1lt1HpDRX0IqeKRpoxU0Dg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+    hasBin: true
+
+  '@palamedes/cli-linux-x64-gnu@2.1.0':
+    resolution: {integrity: sha512-Hw/iuIeQOB2owRdwwEZ+FgTX7QDzvYhZ28T5yGFk2J5BOBAqaLdaDsznlj1wmWmWS5zP3aCqeOkm3lgdHHI6tw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+    hasBin: true
+
+  '@palamedes/cli-linux-x64-musl@2.1.0':
+    resolution: {integrity: sha512-BSVLTm72qao5Edf+Hqi9v9kCoSPhuQSJq7pRO5qIZvQeQQV8swjlFreOgtWtkU2Pl/g92bv8to9lTkapDBbd5Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+    hasBin: true
+
+  '@palamedes/cli-win32-x64-msvc@2.1.0':
+    resolution: {integrity: sha512-txqkf60+NihfvsxfZhxkgMCz5OIxpH0mjuPnmZUFwORlhSzJXQY97SZClb6jrIwc4m0PII2FVeW9MpiGk3n5Jw==}
+    cpu: [x64]
+    os: [win32]
+    hasBin: true
+
+  '@palamedes/cli@2.1.0':
+    resolution: {integrity: sha512-NM672oNKbuIAyDGfD9zuYERpjvtnnDgwS6yjqNvS9ea3SnDSY8m+H2VtEZztNCWVjk7FnH5PcgnFNGTGtFWzYA==}
+    engines: {node: '>=24.3.0'}
+    hasBin: true
+
+  '@palamedes/config@2.1.0':
+    resolution: {integrity: sha512-6sGViO5zm66X0sWbn/Uz59gfXfk9hUlog0aTgjOKQkcbQ/8nex7F3140ORYZ9ckaSuEDDBDxSb34eBls7h6MVg==}
+    engines: {node: '>=24.3.0'}
+
+  '@palamedes/core-node-darwin-arm64@2.1.0':
+    resolution: {integrity: sha512-n3V1t11VzX9szxF382YiLJekOmVIU6OUG4SUciEdkDdp4fbilA3DbcdyqIA5mLhbL6fKq3r9vQCpQiTC6AHBfA==}
+    engines: {node: '>=24.3.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@palamedes/core-node-linux-arm64-gnu@2.1.0':
+    resolution: {integrity: sha512-m0WxS7ksZEXS4yEtIWFR+qll/RWkX+4rVMWlhSey1zwDWTjp1nSTMbAKHfMofHfZ+UoKHWXb1NY4tBw54aGImQ==}
+    engines: {node: '>=24.3.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@palamedes/core-node-linux-arm64-musl@2.1.0':
+    resolution: {integrity: sha512-VNw/1DaJTykPmhMvZznZ7iHPh8yHl7BTsN4Fy+JlZn/RG2dDjpz34SJ6hJFZKiOYx1c0Vti5DZ/hEwZp0jp/yw==}
+    engines: {node: '>=24.3.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@palamedes/core-node-linux-x64-gnu@2.1.0':
+    resolution: {integrity: sha512-zY9l3nXZpcqnI8i70+iuxz1KfmYxtCCmiaeg4VlHqkhB0ZNlRlO8oTSx0yHIN2NuhgBwTH59C1NH4x2JkYw9kw==}
+    engines: {node: '>=24.3.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@palamedes/core-node-linux-x64-musl@2.1.0':
+    resolution: {integrity: sha512-MYMOyod155mgZbJ62IQQ0VB7lbjI3/riN+ieomfBuuwWgs8kYBAI5ytU+uiY3c8pRE9QiRFh/3iM62bz2pJANw==}
+    engines: {node: '>=24.3.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@palamedes/core-node-win32-x64-msvc@2.1.0':
+    resolution: {integrity: sha512-IlzF+U2f0jtxEMdXge/xKM1CM4XIyM3Eyfb8RXZuUkLRxXxRJLyCv16aArzV/si9uCChU35LMUx0Cielv4MVAg==}
+    engines: {node: '>=24.3.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@palamedes/core-node@2.1.0':
+    resolution: {integrity: sha512-lByYUggB5yMLIB901jvQgFhNgU2lvhSAgnjxzJ+8t0KmsGt75p3Y54jCWaXYK999o3mrYHqSbyuSm7wfaVddnw==}
+    engines: {node: '>=24.3.0'}
+
+  '@palamedes/core@2.1.0':
+    resolution: {integrity: sha512-05xRNv8s7DAqytKyfYD63Y8h3ofG/jFOLOJcW1fR0lfTxTWCvZoHQJOsE3WwnlBDJCDUs5smM9Li9L3lIqjH7g==}
+    engines: {node: '>=24.3.0'}
+
+  '@palamedes/react@2.1.0':
+    resolution: {integrity: sha512-YppqpbOC20IW+G1h15x1tBvfPlAArJMKFmiynUsdFK1WxqoVXjNsJYX7o8DyS0mdRgJMaywU9DiESLyiHWGM6g==}
+    engines: {node: '>=24.3.0'}
+    peerDependencies:
+      react: ^19.0.0
+      react-dom: ^19.0.0
+
+  '@palamedes/runtime@2.1.0':
+    resolution: {integrity: sha512-M2OjxPlzsBgihYiLlPzig6red50xtUYUhhFd0nY/96KjAeyzR39bnWyLd3BY5yro448jNquoi0YsjFNoinKNmg==}
+    engines: {node: '>=24.3.0'}
+
+  '@palamedes/transform@2.1.0':
+    resolution: {integrity: sha512-q/0RL9Cns9ADaUfoJWpdLcpuPOzigivfVZ4Lt137zLOfO/TrxVPnIDBo+sLg8HdTS+E3ycuUIwsl7WMxMa2Xmw==}
+    engines: {node: '>=24.3.0'}
+
+  '@palamedes/vite-plugin@2.1.0':
+    resolution: {integrity: sha512-ai3Lg8jW8xHiGTanXVqP7NR5aJEW24VxQOiV1zIOHmFXTgmQ01d9A3jjgi1BB6PsBwuS35XAhuMkxhDnFxxWjg==}
+    engines: {node: '>=24.3.0'}
+    peerDependencies:
+      vite: ^8
 
   '@peculiar/asn1-schema@2.8.0':
     resolution: {integrity: sha512-7YT0U/ze0tF2QOBbE15gKZwy5tvgGyLRiRHLzhlbOpf7BT032oBSd0haZqXn5W6l26WLlu3dyxzjM+2638/z2Q==}
@@ -11333,6 +11466,10 @@ packages:
     resolution: {integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==}
     engines: {node: '>= 18'}
 
+  smol-toml@1.9.1:
+    resolution: {integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==}
+    engines: {node: '>= 18'}
+
   source-map-js@1.2.2:
     resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
@@ -15386,6 +15523,94 @@ snapshots:
     optional: true
 
   '@oxlint/plugins@1.89.0': {}
+
+  '@palamedes/cli-darwin-arm64@2.1.0':
+    optional: true
+
+  '@palamedes/cli-linux-arm64-gnu@2.1.0':
+    optional: true
+
+  '@palamedes/cli-linux-arm64-musl@2.1.0':
+    optional: true
+
+  '@palamedes/cli-linux-x64-gnu@2.1.0':
+    optional: true
+
+  '@palamedes/cli-linux-x64-musl@2.1.0':
+    optional: true
+
+  '@palamedes/cli-win32-x64-msvc@2.1.0':
+    optional: true
+
+  '@palamedes/cli@2.1.0':
+    optionalDependencies:
+      '@palamedes/cli-darwin-arm64': 2.1.0
+      '@palamedes/cli-linux-arm64-gnu': 2.1.0
+      '@palamedes/cli-linux-arm64-musl': 2.1.0
+      '@palamedes/cli-linux-x64-gnu': 2.1.0
+      '@palamedes/cli-linux-x64-musl': 2.1.0
+      '@palamedes/cli-win32-x64-msvc': 2.1.0
+
+  '@palamedes/config@2.1.0':
+    dependencies:
+      jiti: 2.7.0
+      picomatch: 4.0.7
+      smol-toml: 1.9.1
+      yaml: 2.9.0
+
+  '@palamedes/core-node-darwin-arm64@2.1.0':
+    optional: true
+
+  '@palamedes/core-node-linux-arm64-gnu@2.1.0':
+    optional: true
+
+  '@palamedes/core-node-linux-arm64-musl@2.1.0':
+    optional: true
+
+  '@palamedes/core-node-linux-x64-gnu@2.1.0':
+    optional: true
+
+  '@palamedes/core-node-linux-x64-musl@2.1.0':
+    optional: true
+
+  '@palamedes/core-node-win32-x64-msvc@2.1.0':
+    optional: true
+
+  '@palamedes/core-node@2.1.0':
+    optionalDependencies:
+      '@palamedes/core-node-darwin-arm64': 2.1.0
+      '@palamedes/core-node-linux-arm64-gnu': 2.1.0
+      '@palamedes/core-node-linux-arm64-musl': 2.1.0
+      '@palamedes/core-node-linux-x64-gnu': 2.1.0
+      '@palamedes/core-node-linux-x64-musl': 2.1.0
+      '@palamedes/core-node-win32-x64-msvc': 2.1.0
+
+  '@palamedes/core@2.1.0': {}
+
+  '@palamedes/react@2.1.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@palamedes/core': 2.1.0
+      '@palamedes/runtime': 2.1.0
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+
+  '@palamedes/runtime@2.1.0':
+    dependencies:
+      '@palamedes/core': 2.1.0
+
+  '@palamedes/transform@2.1.0':
+    dependencies:
+      '@palamedes/core-node': 2.1.0
+      '@palamedes/runtime': 2.1.0
+
+  '@palamedes/vite-plugin@2.1.0(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))':
+    dependencies:
+      '@palamedes/config': 2.1.0
+      '@palamedes/core': 2.1.0
+      '@palamedes/core-node': 2.1.0
+      '@palamedes/runtime': 2.1.0
+      '@palamedes/transform': 2.1.0
+      vite: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
 
   '@peculiar/asn1-schema@2.8.0':
     dependencies:
@@ -21698,6 +21923,8 @@ snapshots:
   sisteransi@1.0.5: {}
 
   slugify@1.6.9: {}
+
+  smol-toml@1.9.1: {}
 
   smol-toml@1.9.1: {}
 

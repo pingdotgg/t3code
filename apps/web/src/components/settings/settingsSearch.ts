@@ -316,6 +316,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/appearance",
+    targetId: "language",
+    searchTerms: [
+      "locale language translation Sprache Deutsch English langue français idioma español 中文 语言 简体中文",
+    ],
+  },
+  {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",

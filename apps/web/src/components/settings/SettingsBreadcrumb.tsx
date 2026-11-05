@@ -1,34 +1,33 @@
+import { t } from "@palamedes/core/macro";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
-import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
-
-const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
-  ...SETTINGS_SECTION_LABELS,
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/open-source-licenses": "Open source licenses",
-};
+import { getSettingsSectionLabels } from "./settingsTranslations";
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
-  return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
+  const labels: Readonly<Record<string, string>> = {
+    ...getSettingsSectionLabels(),
+    "/settings/open-source-licenses": t`Open source licenses`,
+  };
+  return labels[normalizedPathname] ?? null;
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={t({ message: "Settings breadcrumb" })}>
       {sectionLabel ? (
         <>
-          <WorkspaceBreadcrumbItem>Settings</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbItem>{t({ message: "Settings" })}</WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
+        {sectionLabel ?? t`Settings`}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>
   );

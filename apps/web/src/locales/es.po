@@ -1,0 +1,654 @@
+msgid ""
+msgstr ""
+"Content-Transfer-Encoding: 8bit\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"X-Generator: palamedes\n"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "{projectSelector} to start"
+msgstr "{projectSelector} para empezar"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "About"
+msgstr "Acerca de"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Active"
+msgstr "Activo"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add a project"
+msgstr "Añadir un proyecto"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add a project to start"
+msgstr "Añade un proyecto para empezar"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Add a project to start your first thread."
+msgstr "Añade un proyecto para iniciar tu primera conversación."
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Add a project, or start without one."
+msgstr "Añade un proyecto o empieza sin él."
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Add project"
+msgstr "Añadir proyecto"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Adjust the contrast of colors and borders across the interface."
+msgstr "Ajusta el contraste de los colores y bordes de la interfaz."
+
+#: apps/web/src/components/settings/AdvancedSettings.tsx#AdvancedSettings
+msgid "Advanced"
+msgstr "Avanzado"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Agents"
+msgstr "Agentes"
+
+#: apps/web/src/components/Sidebar.tsx#useSidebarLookups
+msgid "All projects"
+msgstr "Todos los proyectos"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Appearance"
+msgstr "Apariencia"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid ""
+"Applies to this browser or desktop app. Applying the language reloads the "
+"page. Save any unfinished work first."
+msgstr ""
+"Se aplica a este navegador o aplicación de escritorio. Al aplicar el idioma "
+"se recarga la página. Guarda antes el trabajo pendiente."
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Apply and reload"
+msgstr "Aplicar y recargar"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Archive"
+msgstr "Archivo"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Artwork"
+msgstr "Ilustración"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Bars"
+msgstr "Barras"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Branch copied"
+msgstr "Rama copiada"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Browser"
+msgstr "Navegador"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#ConfirmDialogHost
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Chat"
+msgstr "Chat"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "chat width"
+msgstr "ancho del chat"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Chat width"
+msgstr "Ancho del chat"
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Choose a project"
+msgstr "Elegir un proyecto"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Choose how Dev and Nightly environments are identified."
+msgstr "Elige cómo identificar los entornos Dev y Nightly."
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Clear settings search"
+msgstr "Borrar la búsqueda de ajustes"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Code"
+msgstr "Código"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Colors & themes"
+msgstr "Colores y temas"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Comfortable"
+msgstr "Cómodo"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Comfortable (default)"
+msgstr "Cómodo (predeterminado)"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "composer context"
+msgstr "contexto del editor"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Composer context"
+msgstr "Contexto del editor"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#ConfirmDialogHost
+msgid "Confirm"
+msgstr "Confirmar"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#resolveConfirmDialogCopy
+msgid "Confirm action"
+msgstr "Confirmar acción"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsGroupLabel
+msgid "Connections"
+msgstr "Conexiones"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "contrast"
+msgstr "contraste"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Contrast"
+msgstr "Contraste"
+
+#: apps/web/src/components/ui/anchoredCopyToast.ts#showAnchoredCopySuccessToast
+msgid "Copied!"
+msgstr "¡Copiado!"
+
+#: apps/web/src/components/chat/MessageCopyButton.tsx#MessageCopyButton
+msgid "Copy message"
+msgstr "Copiar mensaje"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Copy path"
+msgstr "Copiar ruta"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Could not create thread"
+msgstr "No se pudo crear la conversación"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Could not save the language. Allow local storage and try again."
+msgstr ""
+"No se pudo guardar el idioma. Permite el almacenamiento local e inténtalo de "
+"nuevo."
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Could not turn thread into a project"
+msgstr "No se pudo convertir la conversación en proyecto"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Custom…"
+msgstr "Personalizado…"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Dev artwork"
+msgstr "Ilustración Dev"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Devices"
+msgstr "Dispositivos"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Diagnostics"
+msgstr "Diagnóstico"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Diffs & pull requests"
+msgstr "Diferencias y pull requests"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "effort display"
+msgstr "visualización del esfuerzo"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Effort display"
+msgstr "Visualización del esfuerzo"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "environment identification"
+msgstr "identificación del entorno"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Environment identification"
+msgstr "Identificación del entorno"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Environments"
+msgstr "Entornos"
+
+#: apps/web/src/components/ui/anchoredCopyToast.ts#showAnchoredCopyErrorToast
+msgid "Failed to copy"
+msgstr "Error al copiar"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy branch"
+msgstr "Error al copiar la rama"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy path"
+msgstr "Error al copiar la ruta"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Failed to copy thread ID"
+msgstr "Error al copiar el ID de la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to delete thread"
+msgstr "Error al eliminar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Failed to delete threads"
+msgstr "Error al eliminar las conversaciones"
+
+#: apps/web/src/components/Sidebar.tsx#attemptPin
+msgid "Failed to pin thread"
+msgstr "Error al fijar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to regenerate thread title"
+msgstr "Error al regenerar el título de la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#handleMultiSelectContextMenu
+msgid "Failed to regenerate thread titles"
+msgstr "Error al regenerar los títulos de las conversaciones"
+
+#: apps/web/src/components/Sidebar.tsx#commitThreadRename
+#: apps/web/src/components/chat/ChatHeader.tsx#commitRename
+msgid "Failed to rename thread"
+msgstr "Error al renombrar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#attemptSettle
+msgid "Failed to settle thread"
+msgstr "Error al archivar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#attemptSnooze
+msgid "Failed to snooze thread"
+msgstr "Error al posponer la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnsettle
+msgid "Failed to un-settle thread"
+msgstr "Error al desarchivar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnpin
+msgid "Failed to unpin thread"
+msgstr "Error al desfijar la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Failed to update auto-settle"
+msgstr "Error al actualizar el archivado automático"
+
+#: apps/web/src/components/Sidebar.tsx#attemptUnsnooze
+msgid "Failed to wake thread"
+msgstr "Error al reactivar la conversación"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Full"
+msgstr "Ancho completo"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "General"
+msgstr "General"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "glass opacity"
+msgstr " opacidad"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Glass opacity"
+msgstr "Opacidad"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Higher values make menus, dialogs, and the composer more solid."
+msgstr ""
+"Los valores más altos hacen menos transparentes los menús, diálogos y el "
+"editor."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Interface"
+msgstr "Interfaz"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Interface language"
+msgstr "Idioma de la interfaz"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Keep branch and worktree controls below the composer after a thread starts."
+msgstr ""
+"Mantén los controles de rama y worktree debajo del editor al iniciar una "
+"conversación."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Keep composer context visible in active threads"
+msgstr "Mantener visible el contexto del editor en las conversaciones activas"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Keybindings"
+msgstr "Atajos de teclado"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Labs"
+msgstr "Laboratorio"
+
+#: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+msgid "Language"
+msgstr "Idioma"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Maintenance"
+msgstr "Mantenimiento"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "math rendering"
+msgstr "representación de fórmulas"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "New thread"
+msgstr "Nueva conversación"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "New thread in {activeProjectName}"
+msgstr "Nueva conversación en {activeProjectName}"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Nightly artwork"
+msgstr "Ilustración Nightly"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "No active thread"
+msgstr "Ninguna conversación activa"
+
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "No matching projects."
+msgstr "No hay proyectos coincidentes."
+
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "No project"
+msgstr "Sin proyecto"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "No projects yet"
+msgstr "Aún no hay proyectos"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "No settings found"
+msgstr "No se encontraron ajustes"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "None"
+msgstr "Ninguno"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Only built-in themes show artwork, so this theme shows the version pill."
+msgstr ""
+"Solo los temas integrados muestran ilustraciones, por lo que este tema muestra"
+" la etiqueta de versión."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Only built-in themes show artwork."
+msgstr "Solo los temas integrados muestran ilustraciones."
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Open parent thread: {title}"
+msgstr "Abrir conversación principal: {title}"
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#settingsBreadcrumbLabel
+msgid "Open source licenses"
+msgstr "Licencias de código abierto"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Panel animation duration"
+msgstr "Duración de la animación de los paneles"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "panel animations"
+msgstr "animaciones de los paneles"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Panel animations"
+msgstr "Animaciones de los paneles"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Path copied"
+msgstr "Ruta copiada"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Path unavailable"
+msgstr "Ruta no disponible"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "Pick a thread to continue"
+msgstr "Elige una conversación para continuar"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Pin project"
+msgstr "Fijar proyecto"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Pinned"
+msgstr "Fijado"
+
+#: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
+msgid "Project created"
+msgstr "Proyecto creado"
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+#: apps/web/src/components/chat/ChatHeader.tsx#handleHeaderContextMenu
+msgid "Project settings"
+msgstr "Ajustes del proyecto"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Projects"
+msgstr "Proyectos"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Providers"
+msgstr "Proveedores"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+#: apps/web/src/components/settings/settingsTranslations.ts#getAppearanceSettingTitles
+msgid "Render math"
+msgstr "Mostrar fórmulas"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingResetButton
+msgid "Reset {label} to default"
+msgstr "Restablecer {label} al valor predeterminado"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingResetButton
+msgid "Reset to default"
+msgstr "Restablecer valor predeterminado"
+
+#: apps/web/src/components/settings/settingsLayout.tsx#SettingsRow
+msgid "Reset to inherited value"
+msgstr "Restablecer valor heredado"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Scheduled tasks"
+msgstr "Tareas programadas"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Search"
+msgstr "Buscar"
+
+#: apps/web/src/components/Sidebar.tsx
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "Search projects"
+msgstr "Buscar proyectos"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Search projects..."
+msgstr "Buscar proyectos…"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Search settings"
+msgstr "Buscar en los ajustes"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Secrets"
+msgstr "Secretos"
+
+#: apps/web/src/components/NoActiveThreadState.tsx#NoActiveThreadState
+msgid "Select an existing thread or create a new one to get started."
+msgstr "Selecciona una conversación existente o crea una nueva para empezar."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Set how fast panels open and close."
+msgstr "Ajusta la velocidad de apertura y cierre de los paneles."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Set how wide messages and the composer can grow on large screens."
+msgstr ""
+"Ajusta el ancho máximo de los mensajes y del editor en pantallas grandes."
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#SettingsBreadcrumb
+msgid "Settings"
+msgstr "Ajustes"
+
+#: apps/web/src/components/settings/SettingsBreadcrumb.tsx#SettingsBreadcrumb
+msgid "Settings breadcrumb"
+msgstr "Ruta de navegación de ajustes"
+
+#: apps/web/src/components/settings/SettingsSidebarNav.tsx#SettingsSidebarNav
+msgid "Settings sections"
+msgstr "Secciones de ajustes"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Settled"
+msgstr "Archivado"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Sharing & access"
+msgstr "Compartir y acceso"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Show Dev or Nightly artwork in the sidebar header."
+msgstr ""
+"Muestra una ilustración Dev o Nightly en la cabecera de la barra lateral."
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Show reasoning effort in the composer as its name, such as High, or as bars."
+msgstr ""
+"Muestra el esfuerzo de razonamiento en el editor con su nombre, como Alto, o "
+"con barras."
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "SnapShots"
+msgstr "SnapShots"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Snoozed"
+msgstr "Pospuesto"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Source control"
+msgstr "Control de versiones"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+msgid "Start without a project"
+msgstr "Empezar sin proyecto"
+
+#: apps/web/src/components/ConfirmDialogHost.tsx#resolveConfirmDialogCopy
+msgid "This action requires your confirmation."
+msgstr "Esta acción requiere tu confirmación."
+
+#: apps/web/src/components/Sidebar.tsx#checkThreadOperations
+msgid "Thread action unavailable"
+msgstr "Acción de conversación no disponible"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread actions for {activeThreadTitle}"
+msgstr "Acciones de {activeThreadTitle}"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread breadcrumb"
+msgstr "Ruta de navegación de la conversación"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Thread ID copied"
+msgstr "ID de conversación copiado"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Thread search results"
+msgstr "Resultados de búsqueda de conversaciones"
+
+#: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
+msgid "Thread title"
+msgstr "Título de la conversación"
+
+#: apps/web/src/components/Sidebar.tsx#commitThreadRename
+#: apps/web/src/components/chat/ChatHeader.tsx#commitRename
+msgid "Thread title cannot be empty"
+msgstr "El título de la conversación no puede estar vacío"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Threads"
+msgstr "Conversaciones"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid ""
+"Typeset LaTeX math, such as $x^2$ or \\[x^2\\], in messages and Markdown "
+"previews. The composer keeps TeX source editable."
+msgstr ""
+"Representa fórmulas LaTeX, como $x^2$ o \\[x^2\\], en mensajes y vistas "
+"previas de Markdown. El código TeX sigue siendo editable en el editor."
+
+#: apps/web/src/components/Sidebar.tsx#handleProjectFolderContextMenu
+msgid "Unpin project"
+msgstr "Desfijar proyecto"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#environmentIdentificationOptions
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Version pill"
+msgstr "Etiqueta de versión"
+
+#: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
+#: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
+msgid "What should we work on?"
+msgstr "¿En qué trabajamos?"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Wide"
+msgstr "Amplio"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Word"
+msgstr "Texto"
+
+#: apps/web/src/components/settings/AppearanceSettingsPanel.tsx#AppearanceSettingsPanel
+msgid "Word (default)"
+msgstr "Texto (predeterminado)"
+
+#: apps/web/src/components/Sidebar.tsx
+msgid "Working"
+msgstr "En curso"
+
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Worktrees"
+msgstr "Worktrees"

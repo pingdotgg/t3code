@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
+import { palamedes } from "@palamedes/vite-plugin";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
 import { playwright } from "vite-plus/test/browser-playwright";
@@ -280,12 +281,18 @@ export default defineConfig(() => {
             ],
           }),
       tanstackRouter({ autoCodeSplitting: true }),
+      palamedes({ failOnMissing: true }),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
       warmBundledDevPlugin(),
     ],
     optimizeDeps: {
       include: [
+        "@palamedes/core",
+        "@palamedes/core/compiled",
+        "@palamedes/react/compiled",
+        "@palamedes/runtime",
+        "@palamedes/runtime/internal",
         "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",
