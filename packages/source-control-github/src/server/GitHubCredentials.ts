@@ -200,9 +200,14 @@ export const make = Effect.gen(function* () {
 
   const savedToken = (host: string) =>
     sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
-      Effect.map((settings) => readSettings(settings).tokens[host]),
-      Effect.orElseSucceed(() => undefined),
-      Effect.flatMap(requireSettingsSecretLiteral),
+      Effect.map((settings) => ({
+        token: readSettings(settings).tokens[host],
+        secretProviders: settings.secretProviders,
+      })),
+      Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+      Effect.flatMap(({ token, secretProviders }) =>
+        requireSettingsSecretLiteral(token, secretProviders),
+      ),
       Effect.map((token) => token.trim() || null),
     );
 

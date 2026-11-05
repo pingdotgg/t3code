@@ -222,12 +222,12 @@ export const makeDiscovery = Effect.gen(function* () {
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
+      const current = yield* sourceControlHost.settings
+        .getWithSecrets(GitHubClient.definition.kind)
+        .pipe(Effect.orElseSucceed(() => undefined));
       const settings = readSourceControlHostSettings(
         GitHubClient.settings,
-        yield* sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
-          Effect.map((current) => current.sourceControlHosts[GitHubClient.definition.kind]),
-          Effect.orElseSucceed(() => undefined),
-        ),
+        current?.sourceControlHosts[GitHubClient.definition.kind],
       );
       const cli = yield* probeSourceControlProvider({
         cwd,
@@ -237,7 +237,7 @@ export const makeDiscovery = Effect.gen(function* () {
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
       const saved = yield* Effect.result(
-        requireSettingsSecretLiteral(settings.tokens["github.com"]),
+        requireSettingsSecretLiteral(settings.tokens["github.com"], current?.secretProviders ?? {}),
       );
       if (Result.isFailure(saved) && settings.hosts["github.com"]?.enabled !== false) {
         return offerAppSignIn({

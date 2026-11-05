@@ -136,15 +136,17 @@ export const make = Effect.gen(function* () {
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
       : sourceControlHost.settings.getWithSecrets(GitCafeClient.definition.kind).pipe(
-          Effect.map(
-            (settings) =>
-              readSourceControlHostSettings(
-                GitCafeClient.settings,
-                settings.sourceControlHosts[GitCafeClient.definition.kind],
-              ).token,
+          Effect.map((settings) => ({
+            token: readSourceControlHostSettings(
+              GitCafeClient.settings,
+              settings.sourceControlHosts[GitCafeClient.definition.kind],
+            ).token,
+            secretProviders: settings.secretProviders,
+          })),
+          Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+          Effect.flatMap(({ token, secretProviders }) =>
+            requireSettingsSecretLiteral(token, secretProviders),
           ),
-          Effect.orElseSucceed(() => undefined),
-          Effect.flatMap(requireSettingsSecretLiteral),
           Effect.map((token) => token || null),
         );
 

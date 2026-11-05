@@ -13,6 +13,7 @@ import {
   SettingsSecretUnresolvedError,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
+  type ServerSettings,
   type SourceControlProviderAuth,
   type SourceControlProviderInfo,
   type SourceControlRepositoryCloneUrls,
@@ -567,12 +568,13 @@ function credentialFrom(input: {
 
 const resolveCredential = Effect.fn("BitbucketApi.resolveCredential")(function* (
   settings: BitbucketClient.BitbucketSettings,
+  secretProviders: ServerSettings["secretProviders"],
   env: Config.Success<typeof BitbucketApiEnvConfig>,
 ) {
-  const accessToken = yield* requireSettingsSecretLiteral(settings.accessToken);
+  const accessToken = yield* requireSettingsSecretLiteral(settings.accessToken, secretProviders);
   const apiToken = HEADER_SAFE.test(accessToken)
     ? ""
-    : yield* requireSettingsSecretLiteral(settings.apiToken);
+    : yield* requireSettingsSecretLiteral(settings.apiToken, secretProviders);
   return (
     credentialFrom({ accessToken, email: settings.email, apiToken }) ??
     credentialFrom({
@@ -671,19 +673,27 @@ export const make = Effect.gen(function* () {
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
   const currentCredential = host.settings.getWithSecrets(BitbucketClient.definition.kind).pipe(
-    Effect.map((settings) =>
-      readSourceControlHostSettings(
+    Effect.map((settings) => ({
+      bitbucket: readSourceControlHostSettings(
         BitbucketClient.settings,
         settings.sourceControlHosts[BitbucketClient.definition.kind],
       ),
-    ),
+      secretProviders: settings.secretProviders,
+    })),
     Effect.catch((error) =>
       // No cause: a settings decode error can quote a hand-edited token.
       Effect.logWarning("failed to read Bitbucket credentials from settings", {
         operation: error.operation,
-      }).pipe(Effect.as(readSourceControlHostSettings(BitbucketClient.settings, {}))),
+      }).pipe(
+        Effect.as({
+          bitbucket: readSourceControlHostSettings(BitbucketClient.settings, {}),
+          secretProviders: {},
+        }),
+      ),
     ),
-    Effect.flatMap((settings) => resolveCredential(settings, config)),
+    Effect.flatMap(({ bitbucket, secretProviders }) =>
+      resolveCredential(bitbucket, secretProviders, config),
+    ),
   );
 
   const withAuth = (request: HttpClientRequest.HttpClientRequest) =>

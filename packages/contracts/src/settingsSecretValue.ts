@@ -39,9 +39,14 @@ export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSe
  */
 export const requireSettingsSecretLiteral = (
   value: SettingsSecretValue | undefined,
+  secretProviders: Readonly<Record<string, { readonly label: string } | undefined>>,
 ): Effect.Effect<string, SettingsSecretUnresolvedError> =>
   isSecretReference(value)
-    ? Effect.fail(new SettingsSecretUnresolvedError({ provider: value.provider }))
+    ? Effect.fail(
+        new SettingsSecretUnresolvedError({
+          provider: secretProviders[value.provider]?.label.trim() || value.provider,
+        }),
+      )
     : Effect.succeed(value ?? "");
 
 export function acceptsSecretReference(schema: Schema.Top): boolean {
