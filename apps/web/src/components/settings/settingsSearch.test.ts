@@ -359,6 +359,14 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("routes repository guidance to the multi-repository toggle it appears under", () => {
+    expect(searchSettings("repository guidance")[0]).toMatchObject({
+      id: "repo-worktree-guidance",
+      to: "/settings/storage",
+      targetId: "repo-worktrees",
+    });
+  });
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({
@@ -389,6 +397,8 @@ describe("searchSettings", () => {
     ["new threads", "new-threads", "/settings/general"],
     ["agent browser access", "agent-browser-access", "/settings/integrations"],
     ["automatically pull", "automatic-pull", "/settings/source-control"],
+    ["multi-repository project folder", "repo-worktrees", "/settings/storage"],
+    ["multiple repos", "repo-worktrees", "/settings/storage"],
     ["actions", "project-actions", "/settings/projects"],
     ["project overview", "project-overview", "/settings/projects"],
   ])("routes %s to its owning category", (query, id, to) => {

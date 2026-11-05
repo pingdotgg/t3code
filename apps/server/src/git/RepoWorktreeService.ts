@@ -37,7 +37,7 @@ export class RepoWorktreesDisabledError extends Schema.TaggedError<RepoWorktrees
   { projectId: Schema.String },
 ) {
   override get message(): string {
-    return "Repository worktrees are off for this project. Turn on Repository worktrees in the project's settings first.";
+    return "Multi-Repository Project Folder is off for this project. Turn it on in the project's Worktrees settings first.";
   }
 }
 

@@ -133,11 +133,11 @@ applies when the project and environment are both on **Inherit**.
 
 ## Repository Worktrees
 
-Some projects are a folder that holds several Git repositories, such as a team folder with a service, a client, and shared libraries. Select that project and turn on **Repository worktrees** in **Settings → General** (on mobile, **Settings → New threads**). It is off by default. Threads in the project stay in the folder, and the agent creates or reuses a worktree for each repository the work needs, including ones it discovers partway through a task. The setting applies from the agent's next turn.
+Some projects are a folder that holds several Git repositories, such as a team folder with a service, a client, and shared libraries. Select that project and turn on **Multi-Repository Project Folder** in **Settings → Storage → Worktrees** (on mobile, **Settings → Source control → Worktrees**). It is off by default. Threads in the project stay in the folder, and the agent creates or reuses a worktree for each repository the work needs, including ones it discovers partway through a task. The setting applies from the agent's next turn.
 
 Each worktree goes in the worktree location below, named after the repository and branch, such as `~/worktrees/service/feature-login`. If an unrelated folder already sits at that path, the new worktree gets a numbered name instead. When a worktree of the same repository already has the branch checked out, the agent reuses it as it is, uncommitted edits included. A branch that exists without a worktree is continued only when the agent asks for that on purpose, so new work gets its own branch. The branch checked out in your own copy of a repository is never taken over, and that copy is left as it is.
 
-Use **Repository worktree guidance** for anything agents should know, such as which branch each repository's work starts from. T3 Code gives agents the rules and this guidance itself, so no extra skill or instruction file is needed.
+Once it's on, use **Repository Guidance** below it for anything agents should know, such as which branch each repository's work starts from. T3 Code gives agents the rules and this guidance itself, so no extra skill or instruction file is needed.
 
 The thread's details panel (the Git sheet on mobile) lists its repository worktrees with their branch and path. Detach one there to stop tracking it; the folder, branch, and edits stay. Storage cleanup, deleting a thread with its worktree, and canceling a new thread's worktree setup never remove a worktree while another thread has it attached. To delete one, detach it there first. After you detach one or delete its thread, cleanup results list it as a folder no thread uses, for you to remove when you want.
 

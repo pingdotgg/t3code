@@ -38,6 +38,7 @@ import {
 import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { RepoWorktreeSettings } from "./RepoWorktreeSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -499,6 +500,7 @@ export function StorageSettingsPanel() {
           ))}
       <SettingsSection id="storage-worktrees" title="Worktrees">
         {!isProjectScope && <WorktreesDirectoryRow />}
+        <RepoWorktreeSettings />
         {isProjectScope && (
           <SettingsRow
             title="Automatic worktree cleanup"

@@ -163,6 +163,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
+    id: "repo-worktrees",
+    title: "Multi-Repository Project Folder",
+    to: "/settings/storage",
+    scope: "project-defaults",
+    searchTerms: [
+      "multiple repositories repos multi repo multirepo monorepo several git repositories worktrees per repository nested submodule",
+    ],
+  },
+  {
+    id: "repo-worktree-guidance",
+    targetId: "repo-worktrees",
+    title: "Repository Guidance",
+    to: "/settings/storage",
+    scope: "project-defaults",
+    searchTerms: [
+      "agent instructions multiple repositories repos worktrees base branch submodule rules",
+    ],
+  },
+  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/storage",
@@ -464,15 +483,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     scope: "project-defaults",
     searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
-  },
-  {
-    id: "repo-worktrees",
-    title: "Repository worktrees",
-    to: "/settings/general",
-    scope: "project-defaults",
-    searchTerms: [
-      "multiple repositories repos folder monorepo nested git worktree submodule guidance base branch",
-    ],
   },
   {
     id: "start-from-origin",

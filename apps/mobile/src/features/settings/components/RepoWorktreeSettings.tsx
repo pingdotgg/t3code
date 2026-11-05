@@ -3,34 +3,50 @@ import { useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
-import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
+const GUIDANCE_HELP =
+  "Instructions for agents working in these repositories, such as base branches and submodule rules.";
+
+/** Rows inside an existing section. The first draws a top border, so another row must precede it. */
 export function RepoWorktreeSettings(props: {
   enabled: boolean | null;
   instructions: string | null;
   disabled: boolean;
+  projectSelected: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
   const instructionsEdited = useRef(false);
   return (
-    <SettingsSection title="Repository worktrees">
-      <SettingsSwitchRow
-        icon="folder"
-        label="Repository worktrees"
-        subtitle="For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Turn diffs and rollback include those worktrees."
-        value={props.enabled}
-        disabled={props.disabled}
-        onValueChange={(value) => props.onChange({ repoWorktrees: value })}
-      />
+    <>
+      <View className="border-t border-border-subtle">
+        <SettingsSwitchRow
+          icon="folder"
+          label="Multi-Repository Project Folder"
+          subtitle={
+            props.projectSelected
+              ? "Create or reuse separate worktrees for the Git repositories inside this project folder as needed."
+              : "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it."
+          }
+          value={props.enabled}
+          disabled={props.disabled}
+          onValueChange={(value) => props.onChange({ repoWorktrees: value })}
+        />
+      </View>
       {props.enabled !== false ? (
-        <View className="gap-2 px-4 py-3">
-          <Text className="text-sm text-foreground-muted">
-            Guidance for agents, for example which branch each repository's work starts from.
-          </Text>
+        <View className="gap-2 border-t border-border-subtle px-4 py-3">
+          <View className="gap-1">
+            <Text textRole="body" className="text-foreground">
+              Repository Guidance
+            </Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              {GUIDANCE_HELP}
+            </Text>
+          </View>
           <AppTextInput
             key={props.instructions}
-            accessibilityLabel="Repository worktree guidance"
+            accessibilityLabel="Repository Guidance"
+            accessibilityHint={GUIDANCE_HELP}
             onChangeText={() => {
               instructionsEdited.current = true;
             }}
@@ -57,6 +73,6 @@ export function RepoWorktreeSettings(props: {
           />
         </View>
       ) : null}
-    </SettingsSection>
+    </>
   );
 }

@@ -51,17 +51,13 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
-  "new-threads": [
-    "defaultThreadEnvMode",
-    "worktreeSubmodules",
-    "repoWorktrees",
-    "repoWorktreeInstructions",
-    "defaultRuntimeMode",
-  ],
+  "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
   "source-control": [
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
     "newWorktreesStartFromOrigin",
+    "repoWorktrees",
+    "repoWorktreeInstructions",
     "branchNamingMode",
     "branchNamePrefix",
     "branchNameInstructions",
@@ -329,15 +325,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
-                  <RepoWorktreeSettings
-                    key={targets
-                      .map((target) => `${target.environment.environmentId}:${target.projectId}`)
-                      .join(",")}
-                    enabled={uniform("repoWorktrees")}
-                    instructions={uniform("repoWorktreeInstructions")}
-                    disabled={disabledFor("repoWorktrees")}
-                    onChange={write}
-                  />
                   <SettingsSection
                     title="Default permissions"
                     trailing={
@@ -401,6 +388,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
+                    />
+                    <RepoWorktreeSettings
+                      key={targets
+                        .map((target) => `${target.environment.environmentId}:${target.projectId}`)
+                        .join(",")}
+                      enabled={uniform("repoWorktrees")}
+                      instructions={uniform("repoWorktreeInstructions")}
+                      disabled={disabledFor("repoWorktrees")}
+                      projectSelected={projectSelected}
+                      onChange={write}
                     />
                   </SettingsSection>
                 </>

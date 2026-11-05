@@ -30,21 +30,21 @@ export function RepoWorktreeSettings() {
         {...searchableSetting("repo-worktrees")}
         description={
           isProjectScope
-            ? "For a folder of several Git repositories. The thread stays in the folder, and agents create or reuse a worktree for each repository the work needs. Turn diffs and rollback include those worktrees."
-            : "For project folders that hold several Git repositories. Turn it on for those projects."
+            ? "Create or reuse separate worktrees for the Git repositories inside this project folder as needed."
+            : "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it."
         }
         resetAction={
           settings.repoWorktrees ? (
             <SettingResetButton
-              label="repository worktrees"
-              tooltip="Turn repository worktrees off"
+              label="multi-repository project folder"
+              tooltip="Reset multi-repository project folder to off"
               onClick={() => updateSettings({ repoWorktrees: false })}
             />
           ) : null
         }
         control={
           <Switch
-            aria-label="Repository worktrees"
+            aria-label="Multi-Repository Project Folder"
             mixed={enabledMixed}
             checked={enabledMixed ? false : settings.repoWorktrees}
             onCheckedChange={(enabled) => updateSettings({ repoWorktrees: enabled })}
@@ -55,12 +55,12 @@ export function RepoWorktreeSettings() {
         <SettingsRow
           serverScoped
           settingKeys={["repoWorktreeInstructions"]}
-          title="Repository worktree guidance"
-          description="Given to agents with the repository worktree rules, for example which branch each repository's work starts from."
+          title="Repository Guidance"
+          description="Instructions for agents working in these repositories, such as base branches and submodule rules."
           resetAction={
             instructionsMixed || settings.repoWorktreeInstructions !== "" ? (
               <SettingResetButton
-                label="repository worktree guidance"
+                label="repository guidance"
                 onClick={() => updateSettings({ repoWorktreeInstructions: "" })}
               />
             ) : null
@@ -69,7 +69,7 @@ export function RepoWorktreeSettings() {
           <div className="mt-3 max-w-2xl pb-3.5">
             <Textarea
               key={`${scopeKey}:${instructionsMixed}:${settings.repoWorktreeInstructions}`}
-              aria-label="Repository worktree guidance"
+              aria-label="Repository Guidance"
               onChange={() => {
                 instructionsEdited.current = true;
               }}
