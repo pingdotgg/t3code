@@ -55,6 +55,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   ProjectId,
+  supportsLessonSideChats,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -151,7 +152,7 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -251,6 +252,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { openNewLesson } from "./lesson/NewLessonDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -2957,6 +2959,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   };
+  const newLessonSource = newThreadContext.activeThread;
+  const newLessonProjectRef = newLessonSource
+    ? scopeProjectRef(newLessonSource.environmentId, newLessonSource.projectId)
+    : newThreadContext.defaultProjectRef;
+  const handleNewLesson = () => {
+    if (!newLessonProjectRef) return;
+    openNewLesson({
+      projectRef: newLessonProjectRef,
+      ...(newLessonSource === null
+        ? {}
+        : {
+            modelSelection: newLessonSource.modelSelection,
+            runtimeMode: newLessonSource.runtimeMode,
+            interactionMode: newLessonSource.interactionMode,
+          }),
+    });
+  };
+  const canCreateLesson = useAtomValue(
+    serverEnvironment.createLesson.permissionAtom(newLessonProjectRef?.environmentId ?? null),
+  );
+  const lessonEnvironment = newLessonProjectRef
+    ? serverConfigs.get(newLessonProjectRef.environmentId)?.environment
+    : undefined;
+  const showNewLesson =
+    newLessonProjectRef !== null &&
+    canCreateLesson &&
+    lessonEnvironment !== undefined &&
+    supportsLessonSideChats(lessonEnvironment);
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
@@ -3178,6 +3208,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
+              onNewLesson={handleNewLesson}
+              showNewLesson={showNewLesson}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}

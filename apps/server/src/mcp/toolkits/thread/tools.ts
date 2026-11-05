@@ -19,6 +19,9 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  OrchestrationV2Lesson,
+  OrchestratorMcpClientRequestId,
+  SIDE_CHAT_EXCERPT_MAX_CHARS,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -28,6 +31,8 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as LessonService from "../../../orchestration-v2/lesson/LessonService.ts";
+import * as Digest from "effect/crypto/Digest";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
@@ -79,6 +84,32 @@ const queueEntry = Schema.Struct({
   text: Schema.String,
   truncated: Schema.Boolean,
 });
+
+const LessonCreateTool = Tool.make("lesson_create", {
+  description:
+    "Create a new T3 Learn lesson: a new thread that teaches a topic at a chosen depth and for a reason. Use when the user asks to make a lesson out of something. First ask the user the three questions (what to learn, how deep: overview / working / deep, why: toward an outcome or building prerequisites, and what for) unless they already answered them; pass the passage they mean as excerpt. After an error or lost reply, retry with the same clientRequestId.",
+  parameters: Schema.Struct({
+    topic: OrchestrationV2Lesson.fields.topic,
+    depth: OrchestrationV2Lesson.fields.depth,
+    purpose: OrchestrationV2Lesson.fields.purpose,
+    goal: OrchestrationV2Lesson.fields.goal,
+    excerpt: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(SIDE_CHAT_EXCERPT_MAX_CHARS)),
+    ),
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+  success: Schema.Struct({ threadId: ThreadId, link: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    LessonService.LessonService,
+    Digest.Digest,
+    SecureRandom.SecureRandom,
+  ],
+});
+
 const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {
   ...commandTool,
@@ -238,6 +269,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.OpenWorld, true);
 
 export const ThreadToolkit = Toolkit.make(
+  LessonCreateTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,

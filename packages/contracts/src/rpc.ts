@@ -5,6 +5,9 @@ import {
   OrchestrationV2SearchThreadsInput,
   OrchestrationV2SearchThreadsResult,
 } from "./orchestrationV2.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { OrchestrationV2Lesson } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   McpAppCallToolInput,
@@ -37,7 +40,13 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  CommandId,
+  NonNegativeInt,
+  TrimmedNonEmptyString,
+  ProjectId,
+  ThreadId,
+} from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -356,6 +365,7 @@ import {
   StorageCleanupReport,
   ChatSyncStatus,
   ChatSyncError,
+  LessonCreateError,
   DatabaseStorageStatus,
   ServerSettings,
   ServerSettingsError,
@@ -511,6 +521,7 @@ export const WS_METHODS = {
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverStartChatSync: "server.startChatSync",
+  lessonCreate: "lesson.create",
   serverGetChatSyncStatus: "server.getChatSyncStatus",
   knowledgeList: "knowledge.list",
   knowledgeRemove: "knowledge.remove",
@@ -800,6 +811,18 @@ const WsServerStartChatSyncRpc = Rpc.make(WS_METHODS.serverStartChatSync, {
   payload: Schema.Struct({}),
   success: ChatSyncStatus,
   error: Schema.Union([ChatSyncError, EnvironmentAuthorizationError]),
+});
+const WsLessonCreateRpc = Rpc.make(WS_METHODS.lessonCreate, {
+  payload: Schema.Struct({
+    commandId: CommandId,
+    projectId: ProjectId,
+    lesson: OrchestrationV2Lesson,
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+  success: Schema.Struct({ threadId: ThreadId }),
+  error: Schema.Union([LessonCreateError, EnvironmentAuthorizationError]),
 });
 const WsServerGetChatSyncStatusRpc = Rpc.make(WS_METHODS.serverGetChatSyncStatus, {
   payload: Schema.Struct({}),
@@ -2049,6 +2072,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerStartChatSyncRpc,
+  WsLessonCreateRpc,
   WsServerGetChatSyncStatusRpc,
   WsKnowledgeListRpc,
   WsKnowledgeRemoveRpc,

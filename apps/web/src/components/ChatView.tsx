@@ -130,6 +130,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
+import { openNewLesson } from "./lesson/NewLessonDialog";
 import { APP_BASE_NAME } from "../branding";
 import { isElectron } from "../env";
 import { useDiffPanelStore } from "../diffPanelStore";
@@ -435,6 +436,9 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const embedded = parentPanel !== undefined;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canCreateLesson = useAtomValue(
+    serverEnvironment.createLesson.permissionAtom(environmentId),
+  );
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -987,6 +991,20 @@ export default function ChatView(props: ChatViewProps) {
     return labels;
   })();
   const activeThreadRef = useActiveThreadRef(activeThread);
+  const createLessonFromSelection = useStableCallback((citation: AssistantCitation) => {
+    if (!activeThread || !activeThreadRef) return false;
+    openNewLesson({
+      projectRef: {
+        environmentId: activeThreadRef.environmentId,
+        projectId: activeThread.projectId,
+      },
+      modelSelection: activeThread.modelSelection,
+      runtimeMode: activeThread.runtimeMode,
+      interactionMode: activeThread.interactionMode,
+      source: { threadId: activeThread.id, excerpt: citation.text },
+    });
+    return true;
+  });
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
@@ -3438,6 +3456,9 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
+                  {...(lessonSideChatsOffered && canCreateLesson
+                    ? { onCreateLesson: createLessonFromSelection }
+                    : {})}
                   onAskInSideChat={canOperateThread ? lessonSideChats.onAskInSideChat : undefined}
                   askInSideChatPending={lessonSideChats.askPending}
                   {...(lessonSideChatsOffered ? { onOpenSideChat: openSideChatSurfaceStable } : {})}

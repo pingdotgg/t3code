@@ -5,7 +5,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { MessageCircleQuestionIcon, QuoteIcon } from "lucide-react";
+import { BookOpenIcon, MessageCircleQuestionIcon, QuoteIcon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -47,6 +47,7 @@ export function AssistantSelectionToolbar({
   threadRef,
   onCite,
   onAskInSideChat,
+  onCreateLesson,
   askPending = false,
   streamingMessageId = null,
 }: {
@@ -57,6 +58,10 @@ export function AssistantSelectionToolbar({
   onAskInSideChat?:
     | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
     | undefined;
+  onCreateLesson?: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor,
+  ) => boolean;
   /** Another side chat is still starting. */
   askPending?: boolean;
   /** The reply still being written; Ask waits until it finishes. */
@@ -67,7 +72,7 @@ export function AssistantSelectionToolbar({
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const [focusedAction, setFocusedAction] = useState<"cite" | "ask">("cite");
+  const [focusedAction, setFocusedAction] = useState<"cite" | "ask" | "lesson">("cite");
   const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   // A sheet traps focus and dismisses on outside presses, so the toolbar must live inside it.
@@ -244,6 +249,20 @@ export function AssistantSelectionToolbar({
     askAbout(viewport ? captureCitation(viewport, threadRef) : null),
   );
   const offersAsk = onAskInSideChat !== undefined;
+  const createLesson = () => {
+    if (
+      !onCreateLesson ||
+      !selection ||
+      selection.citation.text.length > SIDE_CHAT_EXCERPT_MAX_CHARS
+    )
+      return false;
+    const accepted = onCreateLesson(selection.citation, selection.sourceAnchor);
+    if (accepted) {
+      window.getSelection()?.removeAllRanges();
+      dismiss();
+    }
+    return accepted;
+  };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this viewport as the owner of the Ask in side chat shortcut while it is mounted
   useEffect(() => {
@@ -260,7 +279,12 @@ export function AssistantSelectionToolbar({
   const ask = () => askAbout(selection);
   const citeTooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   // One action is in the tab order; the arrow keys move between them.
-  const rovingAction = onAskInSideChat && (focusedAction === "ask" || citeTooLong) ? "ask" : "cite";
+  const rovingAction =
+    onCreateLesson && focusedAction === "lesson" && !askTooLong
+      ? "lesson"
+      : onAskInSideChat && (focusedAction === "ask" || citeTooLong)
+        ? "ask"
+        : "cite";
   const cite = () => {
     if (citeTooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
     window.getSelection()?.removeAllRanges();
@@ -315,6 +339,21 @@ export function AssistantSelectionToolbar({
           onFocus={() => setFocusedAction("ask")}
           onClick={ask}
         />
+      ) : null}
+      {onCreateLesson ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="glass"
+          disabled={askTooLong}
+          tabIndex={rovingAction === "lesson" ? 0 : -1}
+          aria-label={askTooLong ? "Shorten selection to create a lesson" : "Create a lesson"}
+          onFocus={() => setFocusedAction("lesson")}
+          onClick={createLesson}
+        >
+          <BookOpenIcon className="size-3.5" />
+          {askTooLong ? "Shorten selection" : "Create a lesson"}
+        </Button>
       ) : null}
     </div>,
     sheet ?? document.body,

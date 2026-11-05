@@ -236,6 +236,10 @@ interface MessagesTimelineProps {
         embedTitle?: string,
       ) => boolean)
     | undefined;
+  onCreateLesson?: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor,
+  ) => boolean;
   askInSideChatPending?: boolean;
   isWorking: boolean;
   runlessWorkActive?: boolean;
@@ -359,6 +363,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
   onAskInSideChat,
+  onCreateLesson,
   askInSideChatPending = false,
   isWorking,
   runlessWorkActive = false,
@@ -1361,6 +1366,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                       streamingMessageId: streamingAssistantMessageId(timelineEntries),
                     }
                   : {})}
+                {...(onCreateLesson ? { onCreateLesson } : {})}
               />
             ) : null}
             <LegendList<MessagesTimelineRow>

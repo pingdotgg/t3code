@@ -28,6 +28,7 @@ import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentP
 import * as ThreadForkService from "../orchestration-v2/ThreadForkService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as LessonService from "../orchestration-v2/lesson/LessonService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -118,6 +119,7 @@ const layerTools = Layer.mergeAll(
   McpHttpServer.layerThreadToolkit,
   McpHttpServer.layerProjectRegistration,
 ).pipe(
+  Layer.provide(Layer.mock(LessonService.LessonService)({})),
   Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(layerLaunches),
@@ -184,7 +186,6 @@ const layerTools = Layer.mergeAll(
       Layer.provide(NodeServices.layer),
     ),
   ),
-  Layer.provide(NodeServices.layer),
 );
 
 const mcpClient = McpSchema.McpServerClient.of({

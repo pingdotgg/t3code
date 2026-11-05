@@ -11,6 +11,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2LinkOrigin,
+  type OrchestrationV2Lesson,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
@@ -83,6 +84,7 @@ export interface ThreadLaunchInput {
   readonly reuseExistingThread?: boolean;
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly lesson?: OrchestrationV2Lesson;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -936,6 +938,7 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
+                ...(input.lesson === undefined ? {} : { lesson: input.lesson }),
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,

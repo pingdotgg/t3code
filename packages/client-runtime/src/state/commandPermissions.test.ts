@@ -174,6 +174,23 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires the destination orchestration grant to create a lesson", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const create = createCommandPermissions(runtime, WS_METHODS.lessonCreate);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(create.permissionAtom(env))).toBe(false);
+        expect((yield* create.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(create.permissionAtom(env))).toBe(true);
+        yield* create.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to check OTLP endpoints", () =>
     Effect.scoped(
       Effect.gen(function* () {
