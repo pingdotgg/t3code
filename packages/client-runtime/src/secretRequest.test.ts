@@ -54,6 +54,9 @@ describe("secretRequestAnswerInput", () => {
     expect(
       secretRequestAnswerInput(login as never, { type: "save", values: { email: "a@acme.dev" } }),
     ).toBe(null);
+    // An unset field named like an Object.prototype member is empty, not that member.
+    const named = { ...single, fields: [{ name: "constructor", label: "Key" }] } as const;
+    expect(secretRequestAnswerInput(named as never, { type: "save", values: {} })).toBe(null);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestPrivacyNote,
+  secretRequestValue,
   type SecretRequestInput,
   type SecretRequestItem,
 } from "@t3tools/client-runtime/secret-request";
@@ -107,7 +108,7 @@ function PendingSecretRequestForm(props: {
       input={input}
       // A single input is labelled by the card title.
       label={multiple ? input.label : undefined}
-      value={values[input.key] ?? ""}
+      value={secretRequestValue(values, input.key)}
       disabled={submitting}
       invalid={error !== null}
       describedBy={describedBy}
@@ -133,7 +134,7 @@ function PendingSecretRequestForm(props: {
         if (!(event.target instanceof Element)) return;
         if (event.target.closest("input, button, a")) return;
         if (window.getSelection()?.isCollapsed === false) return;
-        const empty = inputs.findIndex((input) => !values[input.key]?.trim());
+        const empty = inputs.findIndex((input) => !secretRequestValue(values, input.key).trim());
         document.getElementById(inputId(Math.max(empty, 0)))?.focus();
       }}
     >

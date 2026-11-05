@@ -99,25 +99,28 @@ const withService = <A, E>(
         }),
       ),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
+        // Reads yield like a real store, so two answers can both see a pending card.
         getThreadRecords: () =>
-          Effect.succeed({
-            thread: { projectId },
-            runs: [{ id: "run-1", status: options.runStatus ?? "running" }],
-            turnItems: [
-              {
-                id: turnItemId,
-                threadId: requestThreadId,
-                runId: "run-1",
-                nodeId: "node-root",
-                type: "secret_request",
-                label: "GitHub token",
-                reason: "Used as GH_TOKEN.",
-                ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
-                ...(options.fields === undefined ? {} : { fields: options.fields }),
-                secretStatus,
-              },
-            ],
-          } as never),
+          Effect.yieldNow.pipe(
+            Effect.as({
+              thread: { projectId },
+              runs: [{ id: "run-1", status: options.runStatus ?? "running" }],
+              turnItems: [
+                {
+                  id: turnItemId,
+                  threadId: requestThreadId,
+                  runId: "run-1",
+                  nodeId: "node-root",
+                  type: "secret_request",
+                  label: "GitHub token",
+                  reason: "Used as GH_TOKEN.",
+                  ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
+                  ...(options.fields === undefined ? {} : { fields: options.fields }),
+                  secretStatus,
+                },
+              ],
+            } as never),
+          ),
         dispatch: (command) => {
           if (command.type === "secret_request.record" && failedRecords > 0) {
             failedRecords -= 1;
@@ -442,6 +445,41 @@ it.effect("a fields request keeps each value apart and delivers one file per fie
         delivery: "file",
         directory,
         failedRecords: 1,
+        fields: [
+          { name: "email", label: "Email" },
+          { name: "password", label: "Password" },
+        ],
+      },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("two racing answers to a fields card never mix their values", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const answer = (who: string) =>
+            service.answer({
+              threadId,
+              turnItemId,
+              answer: { type: "save", values: { email: `${who}@acme.dev`, password: `${who}-pw` } },
+            });
+          const results = yield* Effect.forEach([answer("a"), answer("b")], Effect.result, {
+            concurrency: "unbounded",
+          });
+          assert.deepEqual(results.map((result) => result._tag).toSorted(), ["Failure", "Success"]);
+          const saved = yield* service.saveToFile({ threadId, turnItemId });
+          const files = "files" in saved ? saved.files : {};
+          const email = yield* fs.readFileString(files.email ?? "");
+          const password = yield* fs.readFileString(files.password ?? "");
+          assert.equal(password, `${email.split("@")[0]}-pw`);
+        }),
+      {
+        delivery: "file",
+        directory,
         fields: [
           { name: "email", label: "Email" },
           { name: "password", label: "Password" },

@@ -5,6 +5,7 @@ import {
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestPrivacyNote,
+  secretRequestValue,
   type SecretRequestInput,
   type SecretRequestItem,
 } from "@t3tools/client-runtime/secret-request";
@@ -120,7 +121,7 @@ function PendingSecretRequestForm(props: {
             onMount={(instance) => {
               inputRefs.current[index] = instance;
             }}
-            value={values[input.key] ?? ""}
+            value={secretRequestValue(values, input.key)}
             editable={!submitting}
             iconColor={props.iconColor}
             returnKeyType={last ? "done" : "next"}

@@ -94,6 +94,10 @@ export function secretRequestDisplay(
   }
 }
 
+/** A card value by input key. Own keys only: a field may be named `constructor`. */
+export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
+  Object.hasOwn(values, key) ? (values[key] ?? "") : "";
+
 /** `values` is keyed by `SecretRequestInput.key`; null until every input has a value. */
 export function secretRequestAnswerInput(
   item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
@@ -104,7 +108,7 @@ export function secretRequestAnswerInput(
   const base = { threadId: item.threadId, turnItemId: item.id };
   if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
   const entries = secretRequestInputs(item).map(
-    (input) => [input.key, (answer.values[input.key] ?? "").trim()] as const,
+    (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
   );
   if (entries.some(([, value]) => value.length === 0)) return null;
   if (item.fields === undefined) {

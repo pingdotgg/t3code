@@ -133,97 +133,97 @@ const make = Effect.gen(function* () {
       refFor(threadId, item.id, field).pipe(Effect.flatMap((ref) => removeLogged(storeName(ref)))),
     );
 
-  const answer: SecretRequests["Service"]["answer"] = Effect.fn("SecretRequests.answer")(
-    function* (input) {
-      yield* Effect.annotateCurrentSpan({
-        "orchestration_v2.thread_id": input.threadId,
-        "secret_request.answer": input.answer.type,
-      });
-      const records = yield* threadManagement
-        .getThreadRecords(input.threadId, ["runs", "turnItems"], {
-          turnItemTypes: ["secret_request"],
-          messageRoles: [],
-        })
-        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
-      const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
-      if (item?.type !== "secret_request" || item.runId === null || item.nodeId === null) {
-        return yield* new SecretRequestError({ reason: "not_found" });
-      }
-      if (item.secretStatus !== "pending") {
-        return yield* new SecretRequestError({ reason: "already_answered" });
-      }
-      const run = records.runs.find((candidate) => candidate.id === item.runId);
-      if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
-        return yield* new SecretRequestError({ reason: "agent_stopped" });
-      }
-      // Create before recording so racing answers cannot overwrite values or show saved before storage.
-      // Existing values on pending cards finish earlier saves whose recording failed.
-      if (input.answer.type === "save") {
-        const values = answerValues(item, input.answer);
-        if (values === undefined)
-          return yield* new SecretRequestError({ reason: "fields_mismatch" });
-        const savedAt = yield* Clock.currentTimeMillis;
-        yield* Effect.forEach(values, ([field, value]) =>
-          Effect.gen(function* () {
-            const encoded = yield* encodeStored({
-              projectId: records.thread.projectId,
-              value,
-              savedAt,
-            }).pipe(Effect.orDie);
-            yield* store
-              .create(
-                storeName(yield* refFor(input.threadId, item.id, field)),
-                new TextEncoder().encode(encoded),
-              )
-              .pipe(
-                Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void),
-                Effect.mapError(
-                  (error) => new SecretRequestError({ reason: "store_failed", cause: error }),
-                ),
-              );
-          }),
-        ).pipe(Effect.tapError(() => removeAnswered(input.threadId, item)));
-      }
-      const secretStatus = input.answer.type === "save" ? "saved" : "declined";
-      yield* threadManagement
-        .dispatch({
-          type: "secret_request.record",
-          commandId: CommandId.make(`secret-request:${item.id}:${secretStatus}`),
-          threadId: input.threadId,
-          runId: item.runId,
-          nodeId: item.nodeId,
-          turnItemId: item.id,
-          label: item.label,
-          reason: item.reason,
-          ...(item.placeholder === undefined ? {} : { placeholder: item.placeholder }),
-          ...(item.delivery === undefined ? {} : { delivery: item.delivery }),
-          ...(item.fields === undefined ? {} : { fields: item.fields }),
-          secretStatus,
-        })
-        .pipe(
-          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
-          // Clear failed saves so the pending card can be answered again.
-          Effect.tapError(() =>
-            input.answer.type === "save" ? removeAnswered(input.threadId, item) : Effect.void,
-          ),
-        );
-      if (input.answer.type !== "save") return;
-      // The wait may have closed the card; delete unrecorded answers because no one receives their refs.
-      const recorded = yield* threadManagement
-        .getThreadRecords(input.threadId, ["turnItems"], {
-          turnItemTypes: ["secret_request"],
-          messageRoles: [],
-        })
-        .pipe(
-          Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
-        );
-      const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
-      if (card?.type === "secret_request" && card.secretStatus !== "saved") {
-        yield* removeAnswered(input.threadId, item);
-        return yield* new SecretRequestError({ reason: "agent_stopped" });
-      }
-    },
-  );
+  // One answer at a time: fields are stored one by one, so two racing answers could otherwise
+  // each keep some of their values on one card.
+  const answerLock = yield* Semaphore.make(1);
+  const answer: SecretRequests["Service"]["answer"] = Effect.fn("SecretRequests.answer")(function* (
+    input,
+  ) {
+    yield* Effect.annotateCurrentSpan({
+      "orchestration_v2.thread_id": input.threadId,
+      "secret_request.answer": input.answer.type,
+    });
+    const records = yield* threadManagement
+      .getThreadRecords(input.threadId, ["runs", "turnItems"], {
+        turnItemTypes: ["secret_request"],
+        messageRoles: [],
+      })
+      .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
+    const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
+    if (item?.type !== "secret_request" || item.runId === null || item.nodeId === null) {
+      return yield* new SecretRequestError({ reason: "not_found" });
+    }
+    if (item.secretStatus !== "pending") {
+      return yield* new SecretRequestError({ reason: "already_answered" });
+    }
+    const run = records.runs.find((candidate) => candidate.id === item.runId);
+    if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
+      return yield* new SecretRequestError({ reason: "agent_stopped" });
+    }
+    // Create before recording so racing answers cannot overwrite values or show saved before storage.
+    // Existing values on pending cards finish earlier saves whose recording failed.
+    if (input.answer.type === "save") {
+      const values = answerValues(item, input.answer);
+      if (values === undefined) return yield* new SecretRequestError({ reason: "fields_mismatch" });
+      const savedAt = yield* Clock.currentTimeMillis;
+      yield* Effect.forEach(values, ([field, value]) =>
+        Effect.gen(function* () {
+          const encoded = yield* encodeStored({
+            projectId: records.thread.projectId,
+            value,
+            savedAt,
+          }).pipe(Effect.orDie);
+          yield* store
+            .create(
+              storeName(yield* refFor(input.threadId, item.id, field)),
+              new TextEncoder().encode(encoded),
+            )
+            .pipe(
+              Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void),
+              Effect.mapError(
+                (error) => new SecretRequestError({ reason: "store_failed", cause: error }),
+              ),
+            );
+        }),
+      ).pipe(Effect.tapError(() => removeAnswered(input.threadId, item)));
+    }
+    const secretStatus = input.answer.type === "save" ? "saved" : "declined";
+    yield* threadManagement
+      .dispatch({
+        type: "secret_request.record",
+        commandId: CommandId.make(`secret-request:${item.id}:${secretStatus}`),
+        threadId: input.threadId,
+        runId: item.runId,
+        nodeId: item.nodeId,
+        turnItemId: item.id,
+        label: item.label,
+        reason: item.reason,
+        ...(item.placeholder === undefined ? {} : { placeholder: item.placeholder }),
+        ...(item.delivery === undefined ? {} : { delivery: item.delivery }),
+        ...(item.fields === undefined ? {} : { fields: item.fields }),
+        secretStatus,
+      })
+      .pipe(
+        Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
+        // Clear failed saves so the pending card can be answered again.
+        Effect.tapError(() =>
+          input.answer.type === "save" ? removeAnswered(input.threadId, item) : Effect.void,
+        ),
+      );
+    if (input.answer.type !== "save") return;
+    // The wait may have closed the card; delete unrecorded answers because no one receives their refs.
+    const recorded = yield* threadManagement
+      .getThreadRecords(input.threadId, ["turnItems"], {
+        turnItemTypes: ["secret_request"],
+        messageRoles: [],
+      })
+      .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })));
+    const card = recorded.turnItems.find((candidate) => candidate.id === item.id);
+    if (card?.type === "secret_request" && card.secretStatus !== "saved") {
+      yield* removeAnswered(input.threadId, item);
+      return yield* new SecretRequestError({ reason: "agent_stopped" });
+    }
+  }, answerLock.withPermits(1));
 
   const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(
     function* (input) {
