@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { getClientSettings } from "../../../hooks/useSettings";
 import { resolveShortcutCommand } from "../../../keybindings";
 import { appAtomRegistry } from "../../../rpc/atomRegistry";
 import { registerCommands } from "../../../shortcuts/dispatcher";
@@ -201,6 +202,7 @@ function toggleDoom(): void {
 export function registerDoomCommands(): () => void {
   return registerCommands({
     "doom.toggle": (event) => {
+      if (!getClientSettings().doomEnabled) return false;
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) toggleDoom();

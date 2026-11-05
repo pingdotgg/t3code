@@ -577,6 +577,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "doom",
+    title: "Doom while agents work",
+    to: "/settings/chat",
+    searchTerms: ["doom easter egg game play waiting working freedoom"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/chat",

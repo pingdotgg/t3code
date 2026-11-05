@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useLayoutEffect, useRef } from "react";
 
+import { useClientSettings } from "../../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../../keybindings";
 import { cn } from "../../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
@@ -18,8 +19,13 @@ import {
 
 const killsLabel = (kills: number) => `${kills} ${kills === 1 ? "kill" : "kills"}`;
 
-/** Hosts the game inside the working row while an agent runs. */
+/** Hosts the game inside the working row while an agent runs, when enabled in Chat settings. */
 export function DoomSlot() {
+  const enabled = useClientSettings((settings) => settings.doomEnabled);
+  return enabled ? <EnabledDoomSlot /> : null;
+}
+
+function EnabledDoomSlot() {
   const open = useDoomStore((state) => state.open);
   const live = useDoomStore((state) => state.live);
   const savedKills = useDoomStore((state) => state.savedKills);

@@ -100,6 +100,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { quitDoom } from "../chat/doom/doomFrame";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
@@ -521,6 +522,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
+    ...(settings.doomEnabled !== DEFAULT_UNIFIED_SETTINGS.doomEnabled
+      ? ["Doom while agents work"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -642,6 +646,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      doomEnabled: DEFAULT_UNIFIED_SETTINGS.doomEnabled,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1161,7 +1166,9 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
+        <AdvancedSettings
+          targetIds={[searchableSetting("skills-in-slash-menu").id, searchableSetting("doom").id]}
+        >
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
             description="Also include skills in the / command menu. Skills always appear when you type $."
@@ -1184,6 +1191,31 @@ export function ChatSettingsPanel() {
                   updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
                 }
                 aria-label="Show skills in slash menu"
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("doom")}
+            description="Adds a Play Doom button to the working row while an agent runs. Freedoom, saved in this browser."
+            resetAction={
+              settings.doomEnabled !== DEFAULT_UNIFIED_SETTINGS.doomEnabled ? (
+                <SettingResetButton
+                  label="Doom"
+                  onClick={() => {
+                    quitDoom();
+                    updateSettings({ doomEnabled: DEFAULT_UNIFIED_SETTINGS.doomEnabled });
+                  }}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.doomEnabled}
+                onCheckedChange={(checked) => {
+                  if (!checked) quitDoom();
+                  updateSettings({ doomEnabled: Boolean(checked) });
+                }}
+                aria-label="Doom while agents work"
               />
             }
           />
