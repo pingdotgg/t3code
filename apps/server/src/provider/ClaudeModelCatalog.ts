@@ -100,12 +100,6 @@ export function scopeClaudeModelCatalog(
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
     if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
-    const hasExtendedContext = entry.capabilities.optionDescriptors?.some(
-      (descriptor) =>
-        descriptor.id === "contextWindow" &&
-        descriptor.type === "select" &&
-        descriptor.options.some((choice) => choice.id === "1m"),
-    );
     customCatalogModels.push({
       model: {
         slug: entry.slug,
@@ -113,13 +107,7 @@ export function scopeClaudeModelCatalog(
         isCustom: true,
         capabilities: entry.capabilities,
       },
-      runtime: hasExtendedContext
-        ? {
-            modelSuffixes: { contextWindow: { "1m": "[1m]" } },
-            contextWindowTokens: { "1m": 1_000_000 },
-            ...(/\[1m\]$/i.test(entry.slug) ? { fixedContextWindowTokens: 1_000_000 } : {}),
-          }
-        : {},
+      runtime: {},
       compatibility: {},
     });
   }
@@ -203,28 +191,6 @@ function resolveClaudeCatalogModel(
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
-}
-
-export function resolveClaudeCatalogModelSelection(
-  catalog: ClaudeModelCatalog,
-  instanceId: ModelSelection["instanceId"],
-  model: string,
-): ModelSelection {
-  const exact = resolveClaudeCatalogModel(catalog, model);
-  if (exact) return { instanceId, model: exact.model.slug };
-
-  for (const entry of catalog.models) {
-    for (const [id, suffixes] of Object.entries(entry.runtime.modelSuffixes ?? {})) {
-      for (const [value, suffix] of Object.entries(suffixes)) {
-        if (!suffix || !model.toLowerCase().endsWith(suffix.toLowerCase())) continue;
-        const base = resolveClaudeCatalogModel(catalog, model.slice(0, -suffix.length));
-        if (base !== entry) continue;
-        return { instanceId, model: entry.model.slug, options: [{ id, value }] };
-      }
-    }
-  }
-
-  return { instanceId, model };
 }
 
 export function getClaudeCatalogModelCapabilities(
@@ -363,9 +329,7 @@ export function resolveClaudeCatalogApiModelId(
     const value = getProviderOptionCurrentValue(
       descriptors.find((descriptor) => descriptor.id === optionId),
     );
-    const suffix =
-      typeof value === "string" && Object.hasOwn(suffixes, value) ? suffixes[value] : undefined;
-    if (suffix && !slug.toLowerCase().endsWith(suffix.toLowerCase())) return `${slug}${suffix}`;
+    if (typeof value === "string" && suffixes[value]) return `${slug}${suffixes[value]}`;
   }
   return slug;
 }
@@ -378,8 +342,5 @@ export function resolveClaudeCatalogContextWindowTokens(
   if (!entry) return undefined;
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
-  const windows = entry.runtime.contextWindowTokens;
-  return contextWindow && windows && Object.hasOwn(windows, contextWindow)
-    ? windows[contextWindow]
-    : undefined;
+  return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
 }

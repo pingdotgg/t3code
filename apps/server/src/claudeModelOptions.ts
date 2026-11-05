@@ -38,9 +38,7 @@ export function compileClaudeModelSelection(
   const fastMode = supportsBoolean("fastMode")
     ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
-  const thinking = supportsBoolean("thinking")
-    ? getModelSelectionBooleanOptionValue(selection, "thinking")
-    : undefined;
+  const thinking = getModelSelectionBooleanOptionValue(selection, "thinking");
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
