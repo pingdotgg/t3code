@@ -75,7 +75,8 @@ export function projectThreadAwarenessV2(
   if (phase === null) {
     return null;
   }
-  if (!reportsResult && phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (!reportsResult && phase === "completed" && thread.latestRunStopRequested === true)
+    return null;
   if (
     thread.background != null &&
     thread.background.reportedAt == null &&

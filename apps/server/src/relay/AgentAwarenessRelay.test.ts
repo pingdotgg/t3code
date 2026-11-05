@@ -140,7 +140,12 @@ describe("startup agent activity", () => {
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed, ThreadId.make("fresh-report")]);
+    assert.deepStrictEqual(ids, [
+      THREAD_ID,
+      newCompleted,
+      newFailed,
+      ThreadId.make("fresh-report"),
+    ]);
   });
 });
 
