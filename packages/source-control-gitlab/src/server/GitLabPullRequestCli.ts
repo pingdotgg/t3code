@@ -1762,7 +1762,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/notes`,
           method: "POST",
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          // @effect-diagnostics-next-line globalJsonInEffect:off
           stdin: JSON.stringify({ body: input.body }),
         });
       }
