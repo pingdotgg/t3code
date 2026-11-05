@@ -20,13 +20,11 @@ export const envKeys = (provider: ConfigProvider.ConfigProvider) => {
       const name = path.join("_");
       if (node._tag === "Value") return [name];
       if (node._tag !== "Record") return [];
-      const children = yield* Effect.forEach([...node.keys], (key) =>
-        walk([...path, key]),
-      );
+      const children = yield* Effect.forEach([...node.keys], (key) => walk([...path, key]));
       const own = node.value === undefined ? [] : [name];
       return [...own, ...children.flat()];
     });
-  return walk([]).pipe(Effect.catch(() => Effect.succeed([])));
+  return walk([]).pipe(Effect.orElseSucceed(() => []));
 };
 
 /** `Loaded 3 secrets from <source>: A, B, C` at debug level. Names are sorted. */

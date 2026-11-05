@@ -14,7 +14,6 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -130,7 +129,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
-import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import { getComposerDraftSnapshot, setFreshSessionPending } from "../../state/use-composer-drafts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -175,6 +174,7 @@ import type {
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
+import { FreshSessionNotice } from "./FreshSessionNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -197,6 +197,7 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
@@ -292,6 +293,7 @@ export interface ThreadDetailScreenProps {
       text: string,
       hasAttachmentsOrContext: boolean,
     ) => Promise<boolean | "responded">,
+    onWillEnqueue?: () => void,
   ) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
@@ -512,6 +514,8 @@ function ThreadDetailBody(
     }, COMPOSER_HEIGHT_SETTLE_MS);
   };
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
+  const [sendingWithKeyboard, setSendingWithKeyboard] = useState(false);
+  if (sendingWithKeyboard && !isKeyboardVisible) setSendingWithKeyboard(false);
   const feedRef = useRef<ThreadFeedHandle>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   // Keep the bottom padding fixed while the keyboard animates. Changing it at
@@ -887,6 +891,15 @@ function ThreadDetailBody(
     jumpMessageLoaded,
     selectedThreadKey,
   ]);
+  // A queued-run edit, question or approval owns the composer, and its send carries no fresh session.
+  const freshSessionAvailable =
+    !props.draftMode &&
+    props.canOperateThread &&
+    props.queuedRunEdit === null &&
+    props.activePendingApproval === null &&
+    props.activePendingUserInput === null &&
+    props.selectedThread.latestRun != null &&
+    props.serverConfig?.environment.capabilities.freshContext === true;
   const hasCompactableConversation =
     selectedThreadFeed.some(
       (entry) =>
@@ -908,6 +921,7 @@ function ThreadDetailBody(
     readonly collapsed: boolean;
   } | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
+  const questionInFlow = Platform.OS === "android" && activeUserInputRequestId !== null;
   const composerSlotHidden =
     activeUserInputRequestId !== null || props.creationState?.kind === "failed";
   const pendingMessageEditBlocked =
@@ -1011,7 +1025,7 @@ function ThreadDetailBody(
   const usageLimitsOpen = usageLimitsReport !== null && activeUserInputRequestId === null;
   const [usageLimitsLayout, setUsageLimitsLayout] = useState({ overlay: 0, panel: 0 });
   const handleComposerOverlayLayout = (event: LayoutChangeEvent) => {
-    onComposerLayout(event);
+    if (!questionInFlow) onComposerLayout(event);
     if (!usageLimitsOpen) return;
     const overlay = event.nativeEvent.layout.height;
     setUsageLimitsLayout((current) =>
@@ -1072,12 +1086,9 @@ function ThreadDetailBody(
     }
     overlayRepinTimerRef.current = setTimeout(() => {
       overlayRepinTimerRef.current = null;
-      if (!endFollowEnabledRef.current) {
-        return;
-      }
-      void scrollMessageToEnd({ animated: false, closeKeyboard: false }).catch(() => {
-        freeze.set(false);
-      });
+      const list = listRef.current;
+      if (!endFollowEnabledRef.current || !list || list.getState().isAtEnd) return;
+      void list.scrollToEnd({ animated: Platform.OS === "ios" && !reduceMotion });
     }, delayMs);
   };
   // LegendList does not re-anchor short followed conversations when floating
@@ -1101,20 +1112,24 @@ function ThreadDetailBody(
       ),
     [floatingCoverageTarget],
   );
-  // Android measures its expanded card in-flow; only iOS needs extra overlay coverage.
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
+  const questionStatusSpace = useAnimatedStyle(() => ({ height: floatingControlCoverage.value }));
   const combinedContentInsetEndAdjustment = useSharedValue(
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
   );
   useAnimatedReaction(
     () =>
-      contentInsetEndAdjustment.value +
-      floatingControlCoverage.value +
-      (userInputCoverageApplies ? userInputInsetProgress.value * userInputCardCoverage.value : 0),
+      questionInFlow
+        ? 0
+        : contentInsetEndAdjustment.value +
+          floatingControlCoverage.value +
+          (userInputCoverageApplies
+            ? userInputInsetProgress.value * userInputCardCoverage.value
+            : 0),
     (value) => {
       combinedContentInsetEndAdjustment.set(value);
     },
-    [userInputCoverageApplies],
+    [questionInFlow, userInputCoverageApplies],
   );
   const composerPopoverLift = useDerivedValue(() =>
     withTiming(
@@ -1152,11 +1167,11 @@ function ThreadDetailBody(
     }
     if (userInputCollapsed) {
       setUserInputToggle({ requestId: activeUserInputRequestId, collapsed: false });
-      scheduleOverlayRepin(USER_INPUT_TOGGLE_DURATION_MS + 50);
+      if (!questionInFlow) scheduleOverlayRepin(USER_INPUT_TOGGLE_DURATION_MS + 50);
     } else {
       Keyboard.dismiss();
       setUserInputToggle({ requestId: activeUserInputRequestId, collapsed: true });
-      scheduleOverlayRepin(60);
+      if (!questionInFlow) scheduleOverlayRepin(60);
     }
   };
   const showContent = props.showContent ?? true;
@@ -1169,7 +1184,7 @@ function ThreadDetailBody(
     ),
   );
   const layoutVariant = props.layoutVariant ?? "compact";
-  const isSplitLayout = layoutVariant === "split";
+  const isSplitLayout = layoutVariant !== "compact";
   const contentMaxWidth =
     Platform.OS === "android"
       ? ANDROID_READING_MAX_WIDTH
@@ -1264,7 +1279,18 @@ function ThreadDetailBody(
             );
           }
         : undefined;
-    const messageId = await props.onSendMessage(followUp, declineBeforeDispatch);
+    let dismissingKeyboard = false;
+    const messageId = await props.onSendMessage(followUp, declineBeforeDispatch, () => {
+      if (
+        scope.aborted ||
+        Platform.OS !== "ios" ||
+        !hasUserMessage ||
+        !KeyboardController.isVisible()
+      )
+        return;
+      setSendingWithKeyboard(true);
+      dismissingKeyboard = true;
+    });
     if (messageId === null || scope.aborted) {
       return messageId;
     }
@@ -1281,19 +1307,18 @@ function ThreadDetailBody(
     });
     feedRef.current?.resetEndFollow();
     setAnchorMessageId(nextAnchorMessageId);
-    composerEditorRef.current?.blur();
-    // The send enqueued the message optimistically, so it is in the feed or
-    // the queue by the next frame, once the new anchor has rendered.
-    if (nextAnchorMessageId === messageId && contentPresentationKind === "ready") {
+    if (!dismissingKeyboard) composerEditorRef.current?.blur();
+    const followSubmission =
+      contentPresentationKind === "ready" &&
+      (dismissingKeyboard || nextAnchorMessageId === messageId);
+    if (dismissingKeyboard || followSubmission) {
+      // Commit the optimistic row before UIKit chooses the closing scroll offset.
       requestAnimationFrame(() => {
         if (scope.aborted) return;
-        // Wait for the keyboard to finish dismissing: scrollMessageToEnd freezes
-        // keyboard-driven inset updates, and a close event swallowed by that
-        // freeze leaves a phantom bottom inset.
+        // Scrolling freezes the keyboard inset, so wait until dismissal has removed it.
         void KeyboardController.dismiss()
           .then(() => {
-            // A scroll during the dismissal turns end-follow off; leave the reader where they are.
-            if (scope.aborted || !endFollowEnabledRef.current) return;
+            if (!followSubmission || scope.aborted || !endFollowEnabledRef.current) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
           })
           .catch(() => {
@@ -1422,50 +1447,56 @@ function ThreadDetailBody(
               />
             )}
           >
-            <ThreadFeed
-              environmentId={props.environmentId}
-              threadId={props.selectedThread.id}
-              detailRef={props.selectedThreadDetailRef}
-              workspaceRoot={props.threadCwd}
-              feed={props.selectedThreadFeed}
-              pendingHandoff={props.pendingHandoff}
-              worktreeSetup={props.worktreeSetup}
-              setupWorkingStartedAt={props.setupWorkingStartedAt}
-              queuedMessages={props.queuedMessages}
-              dispatchingMessageId={props.dispatchingMessageId}
-              // A native subagent has no composer to edit a pending message in;
-              // Cancel on the edit banner would discard it.
-              onEditPendingMessage={
-                isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
-              }
-              contentPresentation={props.contentPresentation}
-              threadTitle={props.selectedThread.title}
-              latestRun={props.activityRun}
-              activeWorkStartedAt={props.activeWorkStartedAt}
-              runlessWorkActive={props.runlessWorkActive ?? false}
-              listRef={listRef}
-              freeze={freeze}
-              anchorMessageId={anchorMessageId}
-              jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
-              onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
-              ref={feedRef}
-              contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-              keyboardOffset={composerKeyboardOffset}
-              contentTopInset={0}
-              contentBottomInset={
-                estimatedOverlayHeight +
-                (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-              }
-              contentMaxWidth={contentMaxWidth}
-              historyControls={props.historyControls}
-              contentSideInsets={nativeMetrics?.safeArea}
-              layoutVariant={layoutVariant}
-              usesAutomaticContentInsets={props.usesAutomaticContentInsets}
-              onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-              onEndFollowEnabledChange={handleEndFollowEnabledChange}
-              skills={selectedProviderSkills}
-              onUseArtifactTemplate={handleUseArtifactTemplate}
-            />
+            <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
+              <ThreadFeed
+                environmentId={props.environmentId}
+                threadId={props.selectedThread.id}
+                detailRef={props.selectedThreadDetailRef}
+                workspaceRoot={props.threadCwd}
+                feed={props.selectedThreadFeed}
+                pendingHandoff={props.pendingHandoff}
+                worktreeSetup={props.worktreeSetup}
+                setupWorkingStartedAt={props.setupWorkingStartedAt}
+                queuedMessages={props.queuedMessages}
+                dispatchingMessageId={props.dispatchingMessageId}
+                // A native subagent has no composer to edit a pending message in;
+                // Cancel on the edit banner would discard it.
+                onEditPendingMessage={
+                  isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
+                }
+                contentPresentation={props.contentPresentation}
+                threadTitle={props.selectedThread.title}
+                latestRun={props.activityRun}
+                activeWorkStartedAt={props.activeWorkStartedAt}
+                runlessWorkActive={props.runlessWorkActive ?? false}
+                listRef={listRef}
+                freeze={freeze}
+                anchorMessageId={anchorMessageId}
+                jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+                onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                ref={feedRef}
+                contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                keyboardOffset={composerKeyboardOffset}
+                sendingWithKeyboard={sendingWithKeyboard}
+                fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
+                contentTopInset={0}
+                contentBottomInset={
+                  questionInFlow
+                    ? 0
+                    : estimatedOverlayHeight +
+                      (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+                }
+                contentMaxWidth={contentMaxWidth}
+                historyControls={props.historyControls}
+                contentSideInsets={nativeMetrics?.safeArea}
+                layoutVariant={layoutVariant}
+                usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+                onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+                onEndFollowEnabledChange={handleEndFollowEnabledChange}
+                skills={selectedProviderSkills}
+                onUseArtifactTemplate={handleUseArtifactTemplate}
+              />
+            </WorkspaceMutationIdProvider>
           </RenderErrorBoundary>
         </View>
       ) : (
@@ -1488,24 +1519,45 @@ function ThreadDetailBody(
         <KeyboardStickyView
           enabled={keyboardStickyEnabled}
           pointerEvents="box-none"
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
+          style={
+            questionInFlow
+              ? {
+                  marginLeft: controlInsets.left,
+                  marginRight: controlInsets.right,
+                  marginBottom: controlInsets.bottom,
+                }
+              : { position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }
+          }
           offset={{ closed: 0, opened: composerKeyboardOffset }}
         >
-          <ComposerPopoverHost hidden={composerSlotHidden} popoverHeight={composerPopoverHeight}>
+          {questionInFlow ? (
+            <Animated.View pointerEvents="none" style={questionStatusSpace} />
+          ) : null}
+          <ComposerPopoverHost
+            hidden={composerSlotHidden}
+            popoverHeight={composerPopoverHeight}
+            inFlow={questionInFlow}
+          >
             {/* The fixed sticky host gives this bottom-anchored child a stable
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
             <Animated.View
               pointerEvents="box-none"
-              style={[
-                {
-                  position: "absolute",
-                  bottom: controlInsets.bottom,
-                  left: controlInsets.left,
-                  right: controlInsets.right,
-                },
-                composerWidthStyle,
-              ]}
+              style={
+                questionInFlow
+                  ? isSplitLayout
+                    ? composerWidthStyle
+                    : undefined
+                  : [
+                      {
+                        position: "absolute",
+                        bottom: controlInsets.bottom,
+                        left: controlInsets.left,
+                        right: controlInsets.right,
+                      },
+                      composerWidthStyle,
+                    ]
+              }
             >
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
@@ -1575,10 +1627,6 @@ function ThreadDetailBody(
                       thread={props.selectedThread}
                       environmentId={props.environmentId}
                     />
-                    <ChatGptUsageLimitNotice
-                      key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
-                      thread={props.selectedThread}
-                    />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}
                       maxHeight={pendingUserInputMaxHeight}
@@ -1600,6 +1648,9 @@ function ThreadDetailBody(
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
+                    {freshSessionAvailable ? (
+                      <FreshSessionNotice threadKey={selectedThreadKey} />
+                    ) : null}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
                         threadKey={selectedThreadKey}
@@ -1763,6 +1814,11 @@ function ThreadDetailBody(
                         hasCompactableConversation={
                           hasCompactableConversation && !props.isCompacting
                         }
+                        {...(freshSessionAvailable
+                          ? {
+                              onFreshSession: () => setFreshSessionPending(selectedThreadKey, true),
+                            }
+                          : {})}
                         serverConfig={props.serverConfig}
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}

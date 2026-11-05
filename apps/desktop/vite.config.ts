@@ -41,9 +41,9 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
-      // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      // A local tsbuildinfo is leftover build state, not a typecheck input.
       typecheck: {
-        command: "tsc --noEmit",
+        command: "effect-tsgo tsrs --noEmit",
         cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
       },
     },
