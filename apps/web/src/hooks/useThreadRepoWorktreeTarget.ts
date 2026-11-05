@@ -3,6 +3,7 @@ import { resolveSelectedRepoWorktree } from "@t3tools/client-runtime/state/threa
 import type { ScopedThreadRef, ThreadRepoWorktree } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
+import { useDiffPanelStore } from "../diffPanelStore";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentThreadDetails } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -44,6 +45,10 @@ export function useThreadRepoWorktreeTarget(input: {
     selection,
     workspaceIsRepository: workspaceStatus.data?.isRepo ?? true,
   });
-  const select = (worktreePath: string | null) => setSelection(worktreePath);
+  const select = (worktreePath: string | null) => {
+    if (worktreePath === (repoWorktree?.worktreePath ?? null)) return;
+    if (input.threadRef !== null) useDiffPanelStore.getState().clearGitComparison(input.threadRef);
+    setSelection(worktreePath);
+  };
   return { repoWorktrees, repoWorktree, select };
 }

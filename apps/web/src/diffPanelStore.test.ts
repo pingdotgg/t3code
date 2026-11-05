@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveToolCallDiffTarget,
+  selectThreadBranchBaseRef,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -37,6 +38,17 @@ describe("diffPanelStore", () => {
       kind: "branch",
       baseRef: null,
     });
+  });
+
+  it("forgets a picked base ref and commit when changes move to another checkout", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "release");
+    store.selectCommit(ref, "abc123");
+    store.clearGitComparison(ref);
+    const state = useDiffPanelStore.getState();
+    expect(state.byThreadKey[scopedThreadKey(ref)]).toEqual({ kind: "branch", baseRef: null });
+    expect(selectThreadBranchBaseRef(state, ref)).toBeNull();
   });
 
   it("refreshes a live tool-call target when its source item completes", () => {
