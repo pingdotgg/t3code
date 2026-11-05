@@ -41,6 +41,7 @@ const withService = <A, E>(
   options: {
     readonly threadId?: ThreadId;
     readonly delivery?: "file";
+    readonly fields?: ReadonlyArray<{ readonly name: string; readonly label: string }>;
     readonly directory?: string;
     readonly runStatus?: string;
     readonly removeFails?: boolean;
@@ -112,6 +113,7 @@ const withService = <A, E>(
                 label: "GitHub token",
                 reason: "Used as GH_TOKEN.",
                 ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
+                ...(options.fields === undefined ? {} : { fields: options.fields }),
                 secretStatus,
               },
             ],
@@ -138,6 +140,9 @@ const withService = <A, E>(
       return yield* body({ service, stored, dispatched });
     }).pipe(Effect.provide(SecretRequests.layer.pipe(Layer.provide(layerDependencies))));
   });
+
+const singleFile = (saved: { readonly file: string } | { readonly files: unknown }) =>
+  "file" in saved ? saved.file : assert.fail("expected a single file");
 
 const valuesOf = (stored: Map<string, Uint8Array>) =>
   Array.from(stored.entries())
@@ -368,7 +373,7 @@ it.effect("a file request moves its value to an owner-only file, once", () =>
             answer: { type: "save", secret: "cf_token'$(id)" },
           });
           assert.include(dispatched[0] as object, { secretStatus: "saved", delivery: "file" });
-          const file = yield* service.saveToFile({ threadId, turnItemId });
+          const file = singleFile(yield* service.saveToFile({ threadId, turnItemId }));
           assert.equal(yield* fs.readFileString(file), "cf_token'$(id)");
           assert.deepEqual(valuesOf(stored), []);
           if ((yield* HostProcess.Platform) !== "win32") {
@@ -376,7 +381,7 @@ it.effect("a file request moves its value to an owner-only file, once", () =>
             assert.equal((yield* fs.stat(path.dirname(file))).mode & 0o777, 0o700);
           }
           // A retried request_secret gets the same file; the value is never a ref again.
-          assert.equal(yield* service.saveToFile({ threadId, turnItemId }), file);
+          assert.deepEqual(yield* service.saveToFile({ threadId, turnItemId }), { file });
           const ref = SecretRef.make(`secret-ref:${path.basename(file)}`);
           const reused = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
           assert.equal(reused.reason, "ref_unavailable");
@@ -392,6 +397,57 @@ it.effect("a file request moves its value to an owner-only file, once", () =>
     yield* TestClock.setTime(Option.getOrThrow(mtime).getTime() + SECRET_FILE_TTL_MS + 1);
     yield* withService(() => Effect.void, { directory });
     assert.isFalse(yield* fs.exists(file));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a fields request keeps each value apart and delivers one file per field", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service, stored, dispatched }) =>
+        Effect.gen(function* () {
+          const answer = (values: Record<string, string>) =>
+            service.answer({ threadId, turnItemId, answer: { type: "save", values } });
+          // An older client answers with one secret; a partial answer is just as wrong.
+          for (const wrong of [
+            service.answer({ threadId, turnItemId, answer: { type: "save", secret: "pw" } }),
+            answer({ email: "qa@acme.dev" }),
+            answer({ email: "qa@acme.dev", password: "pw", extra: "x" }),
+          ]) {
+            assert.equal((yield* wrong.pipe(Effect.flip)).reason, "fields_mismatch");
+          }
+          assert.deepEqual(valuesOf(stored), []);
+          // A failed record removes every field's value, not just the first.
+          const failed = yield* answer({ email: "qa@acme.dev", password: "pw" }).pipe(Effect.flip);
+          assert.equal(failed.reason, "record_failed");
+          assert.deepEqual(valuesOf(stored), []);
+
+          yield* answer({ email: "qa@acme.dev", password: "hunter2" });
+          assert.include(dispatched[0] as object, { secretStatus: "saved", delivery: "file" });
+          assert.deepEqual((dispatched[0] as { fields?: unknown }).fields, [
+            { name: "email", label: "Email" },
+            { name: "password", label: "Password" },
+          ]);
+          assert.notInclude(JSON.stringify(dispatched), "hunter2");
+          const saved = yield* service.saveToFile({ threadId, turnItemId });
+          assert.isTrue("files" in saved);
+          const files = "files" in saved ? saved.files : {};
+          assert.deepEqual(Object.keys(files), ["email", "password"]);
+          assert.equal(yield* fs.readFileString(files.email ?? ""), "qa@acme.dev");
+          assert.equal(yield* fs.readFileString(files.password ?? ""), "hunter2");
+          assert.deepEqual(valuesOf(stored), []);
+        }),
+      {
+        delivery: "file",
+        directory,
+        failedRecords: 1,
+        fields: [
+          { name: "email", label: "Email" },
+          { name: "password", label: "Password" },
+        ],
+      },
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -416,7 +472,7 @@ it.effect("a failed file write keeps the value, so the request can retry", () =>
           const failed = yield* service.saveToFile({ threadId, turnItemId }).pipe(Effect.flip);
           assert.equal(failed.reason, "store_failed");
           yield* fs.remove(partial, { recursive: true });
-          const file = yield* service.saveToFile({ threadId, turnItemId });
+          const file = singleFile(yield* service.saveToFile({ threadId, turnItemId }));
           assert.equal(yield* fs.readFileString(file), "cf_token");
         }),
       { delivery: "file", directory },

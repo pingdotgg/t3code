@@ -1,10 +1,11 @@
 import { pipe } from "effect/Function";
 import {
-  SECRET_REQUEST_DEFAULT_PLACEHOLDER,
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestInputs,
   secretRequestPrivacyNote,
+  type SecretRequestInput,
   type SecretRequestItem,
 } from "@t3tools/client-runtime/secret-request";
 import {
@@ -12,13 +13,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -55,7 +56,7 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
-  const inputId = useId();
+  const formId = useId();
   const errorId = useId();
   const privacyId = useId();
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
@@ -64,15 +65,18 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const [secret, setSecret] = useState("");
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
   const inFlight = useRef(false);
+  const inputs = secretRequestInputs(item);
+  const multiple = item.fields !== undefined;
+  const inputId = (index: number) => `${formId}-${index}`;
+  const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
+  const saveInput = secretRequestAnswerInput(item, { type: "save", values });
 
-  const send = async (
-    reply: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
-  ) => {
+  const send = async (reply: Parameters<typeof secretRequestAnswerInput>[1]) => {
     const input = secretRequestAnswerInput(item, reply);
     if (input === null || inFlight.current) return;
     inFlight.current = true;
@@ -83,7 +87,7 @@ function PendingSecretRequestForm(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      setSecret("");
+      setValues({});
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -93,8 +97,28 @@ function PendingSecretRequestForm(props: {
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void send({ type: "save", secret });
+    void send({ type: "save", values });
   };
+
+  const field = (input: SecretRequestInput, index: number) => (
+    <SecretRequestField
+      key={input.key}
+      id={inputId(index)}
+      input={input}
+      // A single input is labelled by the card title.
+      label={multiple ? input.label : undefined}
+      value={values[input.key] ?? ""}
+      disabled={submitting}
+      invalid={error !== null}
+      describedBy={describedBy}
+      onChange={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
+    />
+  );
+  const saveButton = (
+    <Button type="submit" disabled={submitting || saveInput === null}>
+      Save securely
+    </Button>
+  );
 
   return (
     <form
@@ -109,66 +133,120 @@ function PendingSecretRequestForm(props: {
         if (!(event.target instanceof Element)) return;
         if (event.target.closest("input, button, a")) return;
         if (window.getSelection()?.isCollapsed === false) return;
-        document.getElementById(inputId)?.focus();
+        const empty = inputs.findIndex((input) => !values[input.key]?.trim());
+        document.getElementById(inputId(Math.max(empty, 0)))?.focus();
       }}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
-          {item.label}
-        </label>
+        {multiple ? (
+          <p className="text-sm font-medium text-foreground">{item.label}</p>
+        ) : (
+          <label htmlFor={inputId(0)} className="text-sm font-medium text-foreground">
+            {item.label}
+          </label>
+        )}
         {item.reason.trim() ? (
           <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
         ) : null}
       </div>
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 flex-1">
-          <Input
-            id={inputId}
-            // Password fields prompt to save credentials; this secret is not a login.
-            type="text"
-            className="[-webkit-text-security:disc]"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            data-1p-ignore
-            data-lpignore="true"
-            data-bwignore
-            placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-            value={secret}
-            disabled={submitting}
-            aria-invalid={error !== null || undefined}
-            aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
-            onChange={(event) => setSecret(event.currentTarget.value)}
-          />
+      {multiple ? (
+        <div className="flex min-w-0 flex-col gap-2.5">{inputs.map(field)}</div>
+      ) : (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1">{inputs.map(field)}</div>
+          {saveButton}
         </div>
-        <Button type="submit" disabled={submitting || secret.trim().length === 0}>
-          Save securely
-        </Button>
-      </div>
+      )}
       {error !== null ? (
         <p id={errorId} role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}
-      <div className="flex min-w-0 items-center justify-between gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <p
           id={privacyId}
-          className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+          className="flex min-w-0 grow basis-52 items-center gap-1.5 text-xs text-muted-foreground"
         >
           <ShieldCheckIcon className="size-3.5 shrink-0" aria-hidden />
           {secretRequestPrivacyNote(item)}
         </p>
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          disabled={submitting}
-          onClick={() => void send({ type: "decline" })}
-        >
-          Decline
-        </Button>
+        <div className="ms-auto flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={submitting}
+            onClick={() => void send({ type: "decline" })}
+          >
+            Decline
+          </Button>
+          {multiple ? saveButton : null}
+        </div>
       </div>
     </form>
+  );
+}
+
+function SecretRequestField(props: {
+  readonly id: string;
+  readonly input: SecretRequestInput;
+  readonly label: string | undefined;
+  readonly value: string;
+  readonly disabled: boolean;
+  readonly invalid: boolean;
+  readonly describedBy: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const { input } = props;
+  const [revealed, setRevealed] = useState(false);
+  const masked = input.secret && !revealed;
+  const control = (
+    <InputGroup>
+      <InputGroupInput
+        id={props.id}
+        // Password fields prompt to save credentials; this secret is not a login.
+        type="text"
+        className={masked ? "[-webkit-text-security:disc]" : undefined}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        placeholder={input.placeholder}
+        value={props.value}
+        disabled={props.disabled}
+        aria-invalid={props.invalid || undefined}
+        aria-describedby={props.describedBy}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      />
+      {input.secret ? (
+        <InputGroupAddon align="inline-end">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={revealed ? `Hide ${input.label}` : `Show ${input.label}`}
+            aria-pressed={revealed}
+            disabled={props.disabled}
+            // Keep focus, and the caret, in the input.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setRevealed((current) => !current)}
+          >
+            {revealed ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
+          </Button>
+        </InputGroupAddon>
+      ) : null}
+    </InputGroup>
+  );
+  if (props.label === undefined) return control;
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <label htmlFor={props.id} className="text-xs font-medium text-muted-foreground">
+        {props.label}
+      </label>
+      {control}
+    </div>
   );
 }

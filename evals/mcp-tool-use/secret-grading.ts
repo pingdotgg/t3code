@@ -1924,8 +1924,10 @@ const parseOutput = (output: string | undefined): Readonly<Record<string, unknow
 export const savedSecrets = (run: SecretRun): ReadonlyArray<SavedSecret> =>
   run.calls.flatMap((call, index) => {
     if (call.tool !== "request_secret") return [];
-    const { status, file } = parseOutput(call.output);
-    return status === "saved" && typeof file === "string" ? [{ index, file }] : [];
+    const { status, file, files } = parseOutput(call.output);
+    if (status !== "saved") return [];
+    const saved = [file, ...(record(files) ? Object.values(files) : [])];
+    return saved.flatMap((path) => (typeof path === "string" ? [{ index, file: path }] : []));
   });
 
 /** The secret files a sample's request_secret calls returned, plus any such path a call names. */

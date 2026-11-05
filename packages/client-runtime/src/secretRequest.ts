@@ -6,11 +6,43 @@ export type SecretRequestItem = Extract<
 >;
 
 /** A `file` request lets the agent's commands read the value, so its card must not promise more. */
-export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
-  item.delivery === "file"
-    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
-    : "Stored securely, never shown to the agent";
-export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery" | "fields">) =>
+  item.delivery !== "file"
+    ? "Stored securely, never shown to the agent"
+    : item.fields === undefined
+      ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
+      : "Kept out of chat, in private files this agent's commands can read for 24 hours";
+const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+
+export interface SecretRequestInput {
+  /** Key in the card's values: the field name, or "" for a request without fields. */
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder: string;
+  /** Masked, with a toggle to show it. */
+  readonly secret: boolean;
+}
+
+export function secretRequestInputs(
+  item: Pick<SecretRequestItem, "label" | "placeholder" | "fields">,
+): ReadonlyArray<SecretRequestInput> {
+  if (item.fields === undefined) {
+    return [
+      {
+        key: "",
+        label: item.label,
+        placeholder: item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER,
+        secret: true,
+      },
+    ];
+  }
+  return item.fields.map((field) => ({
+    key: field.name,
+    label: field.label,
+    placeholder: field.placeholder ?? "",
+    secret: field.secret !== false,
+  }));
+}
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
@@ -62,16 +94,23 @@ export function secretRequestDisplay(
   }
 }
 
+/** `values` is keyed by `SecretRequestInput.key`; null until every input has a value. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId">,
-  answer: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
+  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
+  answer:
+    | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+    | { readonly type: "decline" },
 ): SecretRequestAnswerInput | null {
-  if (answer.type === "decline") {
-    return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
+  const base = { threadId: item.threadId, turnItemId: item.id };
+  if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
+  const entries = secretRequestInputs(item).map(
+    (input) => [input.key, (answer.values[input.key] ?? "").trim()] as const,
+  );
+  if (entries.some(([, value]) => value.length === 0)) return null;
+  if (item.fields === undefined) {
+    return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
   }
-  const secret = answer.secret.trim();
-  if (secret.length === 0) return null;
-  return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
+  return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
 }
 
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);

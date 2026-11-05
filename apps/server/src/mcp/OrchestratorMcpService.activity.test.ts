@@ -841,3 +841,96 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
     { status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out },
   ]);
 });
+
+it("requestSecret delivers a fields card as one file per field", async () => {
+  const dispatched: Array<{
+    readonly type: string;
+    readonly turnItemId?: string;
+    readonly secretStatus?: string;
+  }> = [];
+  const files = {
+    email: "/home/user/.t3/userdata/secrets/files/0123456789abcdef0123456789abcdef",
+    password: "/home/user/.t3/userdata/secrets/files/fedcba9876543210fedcba9876543210",
+  };
+  const projection = () => {
+    const card = dispatched.find((command) => command.type === "secret_request.record");
+    return {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [
+        { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId },
+      ],
+      visibleTurnItems: [],
+      turnItems:
+        card === undefined
+          ? []
+          : [{ type: "secret_request", id: card.turnItemId, secretStatus: "saved" }],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          getThreadShell: () =>
+            Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+          dispatch: (command) => Effect.sync(() => void dispatched.push(command) as never),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          saveToFile: () => Effect.succeed({ files }),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  const fields = [
+    { name: "email", label: "Email", secret: false },
+    { name: "password", label: "Password" },
+  ];
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const conflicting of [{ delivery: "secretRef" as const }, { value: "pw" }]) {
+      const refused = yield* service
+        .requestSecret(makeScope(), {
+          label: "Staging login",
+          reason: "Signs in the QA account.",
+          fields,
+          ...conflicting,
+        })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("invalid_request");
+    }
+    expect(dispatched).toEqual([]);
+
+    const result = yield* service.requestSecret(makeScope(), {
+      label: "Staging login",
+      reason: "Signs in the QA account.",
+      fields,
+    });
+    expect(result).toEqual({ status: "saved", files });
+    expect(dispatched[0]).toMatchObject({
+      type: "secret_request.record",
+      secretStatus: "pending",
+      delivery: "file",
+      fields,
+    });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});

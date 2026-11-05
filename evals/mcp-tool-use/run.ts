@@ -1181,8 +1181,21 @@ export const t3Default = (
         .slice(0, 32);
       const home =
         /^\/(?:home|Users)\/[^/]+/.exec(sample.base.environment.cwd)?.[0] ?? "/home/user";
+      const fileFor = (key: string) => `${home}/.t3/userdata/secrets/files/${key}`;
+      // A card with `fields` saves one file per field name.
+      if (Array.isArray(input.fields) && !pastedSecret(name, input)) {
+        const names = input.fields.flatMap((field) =>
+          isRecord(field) && typeof field.name === "string" ? [field.name] : [],
+        );
+        const fileId = (field: string) =>
+          NodeCrypto.createHash("sha256").update(`${id}:${field}`).digest("hex").slice(0, 32);
+        return {
+          status: "saved",
+          files: Object.fromEntries(names.map((field) => [field, fileFor(fileId(field))])),
+        };
+      }
       return input.delivery === "file" || pastedSecret(name, input)
-        ? { status: "saved", file: `${home}/.t3/userdata/secrets/files/${id}` }
+        ? { status: "saved", file: fileFor(id) }
         : { status: "saved", secretRef: `secret-ref:${id}` };
     }
     case "unlink_pull_request":
@@ -1525,7 +1538,11 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
 
 /** Tells the shell simulator about a file request_secret saved, so it exists for later commands. */
 const savedSecretFile = (sample: Sample, result: unknown) => {
-  if (isRecord(result) && typeof result.file === "string") sample.secretFiles.push(result.file);
+  if (!isRecord(result)) return;
+  if (typeof result.file === "string") sample.secretFiles.push(result.file);
+  if (isRecord(result.files))
+    for (const file of Object.values(result.files))
+      if (typeof file === "string") sample.secretFiles.push(file);
 };
 
 /** The result for one tool call. */

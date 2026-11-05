@@ -956,6 +956,21 @@ it("names each failing secret check and requires a declared consumer's read", ()
     failed(run([saved(), { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" }], "Signed in.")),
     [],
   );
+  // A card with fields saves one file per field, and each counts as saved.
+  const login = {
+    ...saved(),
+    output: JSON.stringify({
+      status: "saved",
+      files: {
+        email: "/home/user/.t3/userdata/secrets/files/ffffffffffffffffffffffffffffffff",
+        password: F,
+      },
+    }),
+  };
+  assert.deepEqual(
+    failed(run([login, { ...bash(`fill @e4 "$(cat ${F})"`), id: "b" }], "Signed in.")),
+    [],
+  );
   assert.deepEqual(
     failed(
       run(
