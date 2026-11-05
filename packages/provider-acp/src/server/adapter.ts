@@ -7939,6 +7939,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               openAgentRequests.clear();
               yield* quarantineNativeTransportAtGeneration(generation);
               yield* advanceRuntimeCallbackGeneration;
+              const endedToolCallIds = yield* interruptSurvivingTools();
+              if (flavor.backgroundTasksIncludeForegroundTools === true) {
+                yield* Ref.update(wakeBuffer, (frames) =>
+                  acpEndKilledWakeTools(frames, endedToolCallIds, flavor),
+                );
+              }
               yield* Ref.set(runtimeRestartRequired, true);
               yield* cancelPendingRuntimeRequests();
               yield* terminalizeOpenForegroundTools(context, "failed");

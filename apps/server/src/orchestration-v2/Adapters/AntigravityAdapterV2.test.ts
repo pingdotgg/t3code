@@ -1546,6 +1546,27 @@ describe("AntigravityAdapterV2 commands running past the reply", () => {
         "interrupted",
       ]);
       assert.isFalse(yield* hasPendingBackgroundWork, "Stop clears all surviving commands");
+
+      const beforeWatchdog = yield* startPrompt(7);
+      yield* runCommand("survives-until-watchdog");
+      yield* Deferred.succeed(beforeWatchdog, { stopReason: "error" });
+      const beforeWatchdogTerminal = yield* failedTerminal;
+      assert.isTrue(beforeWatchdogTerminal.childTurnsContinue);
+      assert.isTrue(yield* hasPendingBackgroundWork);
+
+      yield* startPrompt(8);
+      yield* TestClock.adjust("15 minutes");
+      const watchdogTerminal = yield* failedTerminal;
+      assert.equal(watchdogTerminal.runOrdinal, 8);
+      assert.isFalse(yield* hasPendingBackgroundWork, "watchdog retirement clears killed commands");
+      assert.deepInclude(lastItem("survives-until-watchdog"), {
+        runId: turnInput(7, false).runId,
+        providerTurnId: beforeWatchdogTerminal.providerTurnId,
+        status: "interrupted",
+        type: "command_execution",
+        input: "npm run build",
+      });
+      assert.deepEqual(toolStatuses(turnInput(8, false).runId, "survives-until-watchdog"), []);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
