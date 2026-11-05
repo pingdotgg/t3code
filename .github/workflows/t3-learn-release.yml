@@ -8,9 +8,11 @@ name: T3 Learn Release
 # release after install tests pass and the promote job marks it latest.
 # Builds are unsigned; macOS builds get an ad hoc signature. Upstream's
 # release.yml also matches these tags but only runs in pingdotgg/t3code.
-# Mac jobs run on GitHub's hosted Macs unless the repo variable
-# T3_LEARN_MAC_RUNNER names a self-hosted label, set only while a rented Mac
-# serves this workflow's jobs with one-job runners in throwaway VMs.
+# Mac jobs run on GitHub's hosted Macs unless a repo variable names a
+# self-hosted label: T3_LEARN_MAC_RUNNER for the desktop builds and
+# T3_LEARN_MAC_INSTALL_RUNNER for the macOS install tests. Only a host that
+# gives each job a clean machine (the rented Mac's throwaway VMs) may take the
+# install tests, because they write /Applications.
 
 on:
   push:
@@ -414,15 +416,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: fresh }
-          - { os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-26' }}", scenario: next-to-t3-code }
+          - { os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}", scenario: fresh }
           - {
-              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-26' }}",
+              scenario: next-to-t3-code,
+            }
+          - {
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
               arch: x64,
               scenario: fresh,
             }
           - {
-              os: "${{ vars.T3_LEARN_MAC_RUNNER || 'macos-15-intel' }}",
+              os: "${{ vars.T3_LEARN_MAC_INSTALL_RUNNER || 'macos-15-intel' }}",
               arch: x64,
               scenario: next-to-t3-code,
             }
