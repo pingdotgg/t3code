@@ -35,6 +35,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -1497,7 +1498,11 @@ describe("AssetAccess", () => {
   );
 
   it.effect("serves a host's credentialed media through that host's driver", () => {
-    const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    const fetched: Array<{
+      url: string;
+      headers: Readonly<Record<string, string>>;
+      repository?: string;
+    }> = [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
     const media = sourceControlDefinitions.mediaUrl(url)!;
     const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
@@ -1516,6 +1521,17 @@ describe("AssetAccess", () => {
         }),
       },
     ]);
+    // Clients that predate `repository` get the checkout's.
+    const layerIdentities = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+      resolve: () =>
+        Effect.succeed({
+          canonicalKey: "github.com/owner/repo",
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "" },
+          provider: media.definition.kind,
+          owner: "owner",
+          name: "repo",
+        }),
+    });
     return Effect.gen(function* () {
       const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
 
@@ -1539,12 +1555,21 @@ describe("AssetAccess", () => {
         range: "bytes=0-4",
         cookie: "session",
       });
-      expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+      expect(fetched).toEqual([
+        { url: media.fetchUrl, headers: { range: "bytes=0-4" }, repository: "owner/repo" },
+      ]);
       expect(response.status).toBe(206);
       // The upstream sent no type, so it comes from the file name the host gave the media.
       expect(response.headers["content-type"]).toBe("image/png");
       expect(response.headers["content-length"]).toBe("5");
-    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+
+      // A pull request's own repository wins over the checkout it is shown in.
+      yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
+      expect(fetched.at(-1)?.repository).toBe("enterprise/private");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
+      Effect.scoped,
+    );
   });
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
