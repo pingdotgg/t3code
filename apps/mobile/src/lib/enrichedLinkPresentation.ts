@@ -131,6 +131,7 @@ export function enrichedSkillInstructionsPath(skill: SelectableMarkdownSkill) {
 export function buildEnrichedModelReferences(
   providers: ReadonlyArray<{
     readonly instanceId: string;
+    readonly driver: string;
     readonly displayName?: string | undefined;
     readonly iconUrl?: string | undefined;
     readonly models: ReadonlyArray<{
@@ -164,6 +165,7 @@ export function buildEnrichedModelReferences(
           source: formatComposerModelMention(provider.instanceId, model.slug),
           label,
           providerLabel: qualifier || provider.displayName || provider.instanceId,
+          driver: provider.driver,
           iconUrl: provider.iconUrl,
         };
       }),

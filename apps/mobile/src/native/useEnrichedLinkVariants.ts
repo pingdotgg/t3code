@@ -1,3 +1,4 @@
+import { modelChipIcon } from "../lib/contextChipIconSource";
 import { useMemo } from "react";
 import { Image } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
@@ -74,12 +75,14 @@ function presentation(
       chip: { accent: contextChipPresentation("skill").accent, tintsIcon: true },
     };
   const model = enrichedModelReference(url, props.models);
-  if (model)
+  if (model) {
+    const icon = modelChipIcon(model);
     return {
       label: model.label,
-      icon: model.iconUrl ? { uri: model.iconUrl } : CONTEXT_CHIP_ICON_SOURCES.bot,
-      chip: { accent: contextChipPresentation("model").accent, tintsIcon: !model.iconUrl },
+      icon: icon.source,
+      chip: { accent: contextChipPresentation("model").accent, tintsIcon: icon.tintsIcon },
     };
+  }
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
