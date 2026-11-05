@@ -165,24 +165,28 @@ function publishPushFailureDetail(input: {
 }
 
 const CLONE_CREDENTIALS_NOTE =
-  "Clones use the Git credentials of the environment running them (a credential helper or SSH keys), not the token saved in Settings.";
+  "Clones use this environment's Git credentials, not a token saved in Settings.";
 
 // Hosts report private repositories the credentials cannot see as not found.
 const REPOSITORY_NOT_FOUND_LINE = /^fatal: repository '.+' not found$/i;
 
-// Keep Git's lines, since hosts explain rejected credentials there, and add where credentials come from.
+// Clients clamp clone errors to a few lines, so the explanation leads; Git's lines follow
+// because hosts explain rejected credentials there.
 function cloneFailureDetail(
   reason: GitCommandFailureReason | undefined,
   stderrTail: ReadonlyArray<string>,
 ): string {
   const output = stderrTail.join(" ");
-  if (reason === "authentication_failed") {
-    return `${output.length > 0 ? output : "Git could not authenticate with the remote."} ${CLONE_CREDENTIALS_NOTE}`;
+  const explanation =
+    reason === "authentication_failed"
+      ? "Git could not authenticate."
+      : stderrTail.some((line) => REPOSITORY_NOT_FOUND_LINE.test(line))
+        ? "The repository was not found, or Git's credentials cannot access it."
+        : null;
+  if (explanation === null) {
+    return output.length > 0 ? output : "The repository could not be cloned.";
   }
-  if (stderrTail.some((line) => REPOSITORY_NOT_FOUND_LINE.test(line))) {
-    return `${output} Hosts also report a private repository as not found when the credentials Git used cannot see it. ${CLONE_CREDENTIALS_NOTE}`;
-  }
-  return output.length > 0 ? output : "The repository could not be cloned.";
+  return `${explanation} ${CLONE_CREDENTIALS_NOTE}${output.length > 0 ? ` ${output}` : ""}`;
 }
 
 /**
@@ -420,11 +424,11 @@ export const make = Effect.gen(function* () {
                   new SourceControlRepositoryError({
                     operation: "cloneRepository",
                     provider: sshError.provider,
-                    detail: `${
-                      httpsError.detail.endsWith(CLONE_CREDENTIALS_NOTE)
-                        ? sshError.detail.replace(` ${CLONE_CREDENTIALS_NOTE}`, "")
-                        : sshError.detail
-                    } Cloning over HTTPS instead also failed: ${httpsError.detail}`,
+                    detail: `${sshError.detail} Cloning over HTTPS instead also failed: ${
+                      sshError.detail.includes(CLONE_CREDENTIALS_NOTE)
+                        ? httpsError.detail.replace(` ${CLONE_CREDENTIALS_NOTE}`, "")
+                        : httpsError.detail
+                    }`,
                     cause: httpsError.cause,
                   }),
               ),

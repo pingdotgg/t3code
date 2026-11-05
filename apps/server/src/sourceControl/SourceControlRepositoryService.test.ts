@@ -362,7 +362,7 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
     assert.strictEqual(urls.length, 2);
     assert.strictEqual(
       error.detail,
-      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled Clones use the Git credentials of the environment running them (a credential helper or SSH keys), not the token saved in Settings.",
+      "Git could not authenticate. Clones use this environment's Git credentials, not a token saved in Settings. git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: Git could not authenticate. fatal: could not read Username for 'https://github.com': terminal prompts disabled",
     );
   }),
 );
@@ -416,8 +416,11 @@ it.effect.each([
       );
 
       for (const line of stderrLines) assert.include(error.detail, line);
-      assert.match(error.detail, /credential/i);
-      assert.match(error.detail, /Settings/);
+      // Clients clamp the error, so the guidance must come before Git's lines.
+      const guidanceEnd = error.detail.indexOf("Settings");
+      assert.isAbove(guidanceEnd, -1);
+      assert.isBelow(guidanceEnd, error.detail.indexOf(stderrLines[0]));
+      assert.match(error.detail.slice(0, guidanceEnd), /credential/i);
     }),
 );
 
