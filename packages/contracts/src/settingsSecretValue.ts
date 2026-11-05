@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 
@@ -21,6 +22,27 @@ export const isSecretReference = Schema.is(SecretReference);
 export function settingsSecretLiteral(value: SettingsSecretValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
+
+export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
+  "SettingsSecretUnresolvedError",
+  { provider: Schema.String },
+) {
+  override get message(): string {
+    return `Could not read the credential from the secret provider "${this.provider}". Unlock or fix it in Settings, then try again.`;
+  }
+}
+
+/**
+ * The literal a credential setting holds once its secret is resolved. A reference still in place
+ * could not be read, and fails instead of passing for a missing token, so callers that would fall
+ * back to another credential cannot silently switch accounts.
+ */
+export const requireSettingsSecretLiteral = (
+  value: SettingsSecretValue | undefined,
+): Effect.Effect<string, SettingsSecretUnresolvedError> =>
+  isSecretReference(value)
+    ? Effect.fail(new SettingsSecretUnresolvedError({ provider: value.provider }))
+    : Effect.succeed(value ?? "");
 
 export function acceptsSecretReference(schema: Schema.Top): boolean {
   return Schema.resolveAnnotationsKey(schema)?.settingsSecretReference === true;
