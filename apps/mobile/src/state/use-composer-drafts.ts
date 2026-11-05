@@ -21,7 +21,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -112,20 +112,31 @@ const composerDraftResetAtom = Atom.family((_draftKey: string) =>
 );
 const NO_COMPOSER_DRAFT_RESET_ATOM = Atom.make(0);
 
-function markComposerDraftReset(draftKey: string): void {
+function nextComposerDraftReset(): number {
   lastComposerDraftReset += 1;
-  appAtomRegistry.set(composerDraftResetAtom(draftKey), lastComposerDraftReset);
+  return lastComposerDraftReset;
+}
+
+function markComposerDraftReset(draftKey: string): void {
+  appAtomRegistry.set(composerDraftResetAtom(draftKey), nextComposerDraftReset());
 }
 
 /**
- * Raised when a draft's text is replaced outright (sent, discarded). Native editor events read it
- * synchronously, so an edit the editor made before applying the reset cannot restore the text.
+ * Raised when a draft's text is replaced outright (sent, discarded), or when the editor switches
+ * drafts. iOS editor events read it synchronously, so an edit the editor made before applying the
+ * reset cannot restore the text or land in the next draft. Android ignores it.
  */
 export function useComposerDraftResetGeneration(draftKey: string | null): () => number {
   const atom = draftKey === null ? NO_COMPOSER_DRAFT_RESET_ATOM : composerDraftResetAtom(draftKey);
   // Subscribing re-renders the editor so it sends the reset even when the text did not change.
   useAtomValue(atom);
-  return () => appAtomRegistry.get(atom);
+  // The editor stays mounted across drafts (remounting drops the keyboard), so a switch takes a
+  // fresh generation; the selected draft's own, possibly older, stamp would move it backwards.
+  const [selected, setSelected] = useState({ draftKey, generation: 0 });
+  if (selected.draftKey !== draftKey) {
+    setSelected({ draftKey, generation: nextComposerDraftReset() });
+  }
+  return () => Math.max(selected.generation, appAtomRegistry.get(atom));
 }
 
 export function rememberComposerDraftSelection(
