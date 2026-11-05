@@ -5,7 +5,7 @@ description: Model-check that a T3 Learn side chat is finished at most once per 
 
 # Verify the side-chat lifecycle
 
-**Property.** Each time a side chat is open, it is finished at most once, it gets the note from that finish, and a note being written always settles. Once it is finished, nothing is queued in it and no turn runs in it, except one that is being stopped.
+**Property.** Each time a side chat is open, it is finished at most once, it gets the note from that finish, and a note being written always settles. Once it is finished, nothing is queued in it and no turn runs in it, except one that is being stopped. A message that isn't the learner's own waits, parked, until the learner's own message reopens the chat.
 
 **Harm if broken.** A finished chat writes a second note or loses its first one, the lesson gets a note about another round, or a turn keeps working in a chat the learner closed, and its answer reaches no note.
 
@@ -14,11 +14,10 @@ This complements [verify-side-chats](../verify-side-chats/SKILL.md), which drive
 ## Run it
 
 ```bash
-.agents/skills/verify-side-chat-lifecycle/run.sh                    # expect: No error has been found
-.agents/skills/verify-side-chat-lifecycle/run.sh --external-sends   # expect: the known finding below
+.agents/skills/verify-side-chat-lifecycle/run.sh   # expect: No error has been found
 ```
 
-The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla/` the first time, then runs under a 2 GB memory cap. It needs Java 11 or later. The default run explores about 119k states in about 15 s.
+The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla/` the first time, then runs under a 2 GB memory cap. It needs Java 11 or later. A run explores about 277k states in about 35 s.
 
 ## What the model is
 
@@ -30,24 +29,19 @@ The script fetches TLC (tla2tools 1.7.4, sha256-pinned) into `~/.local/share/tla
 | `Finish`                    | `finishSideChat`: `done.outcome = generating` with a new `sideChatOutcomeRequestId`, plus a `side-chat.outcome` effect                                                                                                                                                                                                                                                                                      |
 | `StopRun`                   | `stopSideChatRun`: `thread.stop` only records an interrupt request (`markStoppedRun`); queued runs are cancelled                                                                                                                                                                                                                                                                                            |
 | `UserSend(c)`, `LessonSend` | `message.dispatch` → `applySideChatUserMessage` (`reopenDoneSideChats`, then idle open side chats below finish; `keptOpen`), then `dispatchMessage` (`queueBehindRun`, `heldRunsToRelease`). `UserSend` always releases a held queue; the code does so only for web or mobile sends, not the usage-limit resume (`UsageLimitRecoveryWorker.ts`), which reopens the chat first, so it can't touch a done one |
-| `ExternalSend(c)`           | `message.dispatch` that `isUserAuthoredSideChatTrigger` (`sideChat/notes.ts`) rejects: scheduled task, notification, delegated completion, agent, and the learner's `/compact` or `/logout` (`isNativeMaintenanceCommand`, `CommandPolicy.ts`)                                                                                                                                                              |
+| `ExternalSend(c)`           | `message.dispatch` that `isUserAuthoredSideChatTrigger` (`sideChat/notes.ts`) rejects: scheduled task, notification, delegated completion, agent, and the learner's `/compact` or `/logout` (`isNativeMaintenanceCommand`, `CommandPolicy.ts`). In a done side chat, `dispatchMessage` queues it held (`parksInDoneSideChat`); the model counts it in `parked` until `Reopen` turns it into a held queue    |
 | `Stop(c)`                   | `thread.stop` on an open side chat: `holdStoppedThread` sets `queueHeld`                                                                                                                                                                                                                                                                                                                                    |
-| `RunEnds`, `QueuedStarts`   | the provider ends a run; the next unheld queued run starts                                                                                                                                                                                                                                                                                                                                                  |
+| `RunEnds`, `QueuedStarts`   | the provider ends a run; `startNextQueuedRun` starts the next unheld queued run, never in a done side chat                                                                                                                                                                                                                                                                                                  |
+| `StartParked(c)`            | a parked run whose hold was lifted while the chat was done (`/compact`'s `heldRunsToRelease`, `releaseUnattendedHolds`, `queue.resume`); only `startNextQueuedRun`'s done check stops it                                                                                                                                                                                                                    |
 | `OutcomeComplete(e)`        | `SideChatLifecycleService.writeOutcome` (`sideChat/SideChatLifecycleService.ts`) → `dispatchSideChatOutcomeComplete`: lands only on the matching `generating` request                                                                                                                                                                                                                                       |
 
 Invariants are `FinishedOnce`, `OwnOutcome` and `NothingLeftWhenDone`. `NoteSettles` is a liveness property, under fairness for the provider and the effect worker.
 
 **Bounds and assumptions.** There are 2 side chats, at most 2 queued runs each, and 6 finishes in total (`MaxRequests = 7`). Every side chat already has a user message, because an empty one is deleted, not finished. Discard and delete, archive, the note's text and nested-note delivery are left out. So are the wait cap, the steer and promote paths, and provider failures that re-hold a queue. A pass covers this model at these bounds, not the system.
 
-## Known finding (2026-11-04, filed as APP-22)
+## Fixed finding (APP-22)
 
-`run.sh --external-sends` fails `NothingLeftWhenDone`:
-
-1. The learner presses Done on A. A is `generating`, then `ready`.
-2. A message that is not the learner's own reaches A, for example a scheduled task bound to A, or a delegated task's completion. `applySideChatUserMessage` returns early, so A does not reopen, and `dispatchMessage` starts a turn.
-3. A is done with a running turn. A lesson message skips it, because it is done, so the answer is in no note.
-
-Reproduced on real code with the side-chat test harness: after Done, `harness.send(space, "[hold] …", { scheduledTaskId })` leaves `done.outcome.status = "ready"` with runs `["completed","running"]`. The default run leaves `ExternalSends` off so it checks the rest clean. When APP-22 is fixed, make `--external-sends` the default by setting `ExternalSends = TRUE` in the `.cfg` and deleting the flag from `run.sh`.
+With messages that aren't the learner's own, the model once failed `NothingLeftWhenDone`: after Done, a scheduled task bound to the side chat started a turn in it, and its answer reached no note. Now `dispatchMessage` parks such a message, held, in a done side chat, `startNextQueuedRun` never starts a queued run in a done side chat (a hold can be lifted by other paths), and the learner's own message reopens the chat and releases it. `testkit/SideChatDone.integration.test.ts` covers it (`a finished side chat parks a message that isn't yours until your own reopens it`).
 
 ## Reading a result
 
@@ -68,6 +62,8 @@ Each of these one-line breaks in the model fails the check. Rerun one after edit
 | `AutoFinishBelow` without `s.queued[c] > 0`                      | `NothingLeftWhenDone` (Stop holds the queue) |
 | `Done` without `StopRun`                                         | `NothingLeftWhenDone`                        |
 | `Finish` without adding to `pending`                             | `NoteSettles`                                |
+| `ExternalSend` without parking (`IF FALSE` for the done check)   | `NothingLeftWhenDone` (APP-22)               |
+| `StartParked` without `done[c] = "open"`                         | `NothingLeftWhenDone` (APP-22)               |
 
 The same double finish in real code (guard at `if (sideChat.done !== null)` in `dispatchSideChatDone` removed) also fails `a stale outcome completion is dropped and pressing Done twice keeps the first outcome` in `SideChatDone.integration.test.ts`. Removing `keptOpen` passes. It guards a different property, that no side chat is open below a done one, which this model doesn't check.
 
@@ -75,7 +71,7 @@ The same double finish in real code (guard at `if (sideChat.done !== null)` in `
 
 **Covered code**, all in `apps/server/src/orchestration-v2/`:
 
-- `Orchestrator.ts`: `finishSideChat`, `stopSideChatRun`, `dispatchSideChatDone`, `dispatchSideChatOutcomeComplete`, `reopenDoneSideChats`, `applySideChatUserMessage`, the `message.dispatch` case, the queue hold and release in `dispatchMessage`, `holdStoppedThread`, `markStoppedRun`, `sideChatLessonLockThreadId`.
+- `Orchestrator.ts`: `finishSideChat`, `stopSideChatRun`, `dispatchSideChatDone`, `dispatchSideChatOutcomeComplete`, `reopenDoneSideChats`, `applySideChatUserMessage`, the `message.dispatch` case, the queue hold, release and `parksInDoneSideChat` in `dispatchMessage`, `startNextQueuedRun`, `holdStoppedThread`, `markStoppedRun`, `sideChatLessonLockThreadId`.
 - `sideChat/SideChatLifecycleService.ts`: `writeOutcome`.
 - `sideChat/notes.ts`: `isUserAuthoredSideChatTrigger`.
 - `sideChat/tree.ts`: `sideChatOutcomeRequestId`.

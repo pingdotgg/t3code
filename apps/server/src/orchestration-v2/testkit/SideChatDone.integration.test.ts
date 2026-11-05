@@ -1,4 +1,10 @@
-import { CommandId, MessageId, SIDE_CHAT_WAIT_CAP_MS, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ScheduledTaskId,
+  SIDE_CHAT_WAIT_CAP_MS,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -473,6 +479,44 @@ describe("side chat Done", () => {
         );
         assert.notInclude(harness.outcomeInputFor(SPACE), "bounded action space");
         assert.equal(finished.sideChat?.done?.outcome.status, "ready");
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a finished side chat parks a message that isn't yours until your own reopens it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeSideChatHarness("side-chat-done-parks-external");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const lesson = yield* harness.createLesson("Teach me RL environments.");
+        const space = yield* harness.openSideChat({ parentThreadId: lesson, label: SPACE });
+        yield* harness.send(space, SPACE_QUESTION);
+        yield* finishWithNote(harness, space, SPACE, SPACE_NOTE);
+
+        const parked = yield* harness.send(space, "nightly check-in", {
+          scheduledTaskId: ScheduledTaskId.make("task:nightly"),
+          await: "none",
+        });
+        const parkedProjection = yield* orchestrator.getThreadProjection(space);
+        const parkedRun = parkedProjection.runs.find((run) => run.userMessageId === parked);
+        assert.equal(parkedRun?.status, "queued");
+        assert.equal(parkedRun?.queueHeld, true);
+        assert.equal(parkedProjection.thread.sideChat?.done?.outcome.status, "ready");
+
+        // The learner's /compact isn't a reopening message, so restart recovery must not start it.
+        yield* harness.send(space, "/compact", { await: "none" });
+        yield* orchestrator.resumeQueuedRuns;
+        const compacted = yield* orchestrator.getThreadProjection(space);
+        assert.deepEqual(
+          compacted.runs.filter((run) => run.status !== "completed").map((run) => run.status),
+          ["queued", "queued"],
+        );
+        assert.equal(compacted.thread.sideChat?.done?.outcome.status, "ready");
+
+        const after = yield* harness.mark;
+        yield* harness.send(space, BOX_QUESTION);
+        assert.isNull((yield* harness.thread(space)).sideChat?.done);
+        yield* harness.awaitRun(after, parked, "completed");
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),
   );

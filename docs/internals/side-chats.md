@@ -96,8 +96,11 @@ lands. Until the lesson holds one of its notes, a null answer becomes those note
 three levels down reaches the lesson. Once the lesson holds a note written with a nested note in view,
 that nested note is kept as `deliveredNestedNotes` and never fed to the writer again. `sideChatOutcomeRequestId` encodes depth so deeper writers are
 claimed first, or a parent could hold a lane slot waiting on a child that cannot start. A side chat is
-never open under a done one: a message in a done side chat, or a side chat opened under it, reopens it
-and every done ancestor. A note the lesson received is kept as `deliveredNote`, so the next says only
+never open under a done one: a learner's message in a done side chat, or a side chat opened under it,
+reopens it and every done ancestor. Any other message (a scheduled task, notification, delegated
+completion, agent send) is queued held in the done side chat, since its turn would reach no note, and
+`startNextQueuedRun` starts nothing in a done side chat, because other paths can lift a hold. The
+learner's next message there reopens it and releases the queue. A note the lesson received is kept as `deliveredNote`, so the next says only
 what is new; a nested one is not, since the parent note carrying it may be dropped. A user message also
 finishes the idle open side chats below it that have messages; busy ones stay open with their
 ancestors, and empty ones stay open because their composer may hold an unsent draft.
