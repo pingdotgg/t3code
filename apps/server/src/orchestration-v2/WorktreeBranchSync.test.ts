@@ -11,12 +11,13 @@ import * as Layer from "effect/Layer";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 
-it.effect(
-  "reconciles shared worktree branches without changing root checkouts or detached HEADs",
-  () => {
+it.effect.each([false, true])(
+  "reconciles shared worktree branches without changing root checkouts or detached HEADs, conflict=%s",
+  (conflict) => {
     const reconciled = Deferred.makeUnsafe<void>();
     const commands: OrchestrationV2ServerCommand[] = [];
     const thread = (id: string, branch: string, worktreePath: string | null) =>
@@ -69,6 +70,7 @@ it.effect(
                   workingTree: { files: [], insertions: 0, deletions: 0 },
                 },
               })),
+              Stream.ensuring(Deferred.succeed(reconciled, undefined)),
             ),
           }),
           Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -81,9 +83,14 @@ it.effect(
                 commands.push(command);
                 if (
                   command.type === "thread.metadata.update" &&
-                  command.threadId === ThreadId.make("archived")
+                  command.threadId === ThreadId.make("generated") &&
+                  conflict
                 ) {
-                  yield* Deferred.succeed(reconciled, undefined);
+                  return yield* new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Thread moved before branch metadata could be applied.",
+                  });
                 }
                 return { sequence: commands.length, storedEvents: [] };
               }),

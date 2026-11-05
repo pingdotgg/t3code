@@ -25,14 +25,24 @@ const make = Effect.gen(function* () {
     // Status events may queue behind a generated rename or another checkout.
     if ((yield* git.currentBranch(input.cwd)) !== input.refName) return;
     for (const thread of sharing) {
-      yield* threads.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make(yield* randomUuidV4),
-        threadId: thread.id,
-        branch: input.refName,
-        expectedBranch: thread.branch,
-        expectedWorktreePath: thread.worktreePath,
-      });
+      yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(yield* randomUuidV4),
+          threadId: thread.id,
+          branch: input.refName,
+          expectedBranch: thread.branch,
+          expectedWorktreePath: thread.worktreePath,
+        })
+        .pipe(
+          Effect.catchTags({
+            OrchestratorDispatchError: (cause) =>
+              Effect.logWarning("Worktree branch update was rejected", {
+                threadId: thread.id,
+                cause,
+              }),
+          }),
+        );
     }
   });
 });
