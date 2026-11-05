@@ -161,22 +161,22 @@ describe("layerSettingsWatcher", () => {
     Effect.gen(function* () {
       const changes = yield* Queue.unbounded<ServerSettings>();
       const reconciled = yield* Queue.unbounded<void>();
-      const calls: Array<"reconcile" | "reloadSecrets"> = [];
+      let reloads = 0;
       const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
-        reconcile: () =>
-          Effect.suspend(() => {
-            calls.push("reconcile");
-            return Queue.offer(reconciled, undefined);
-          }),
-        reloadSecrets: () => Effect.sync(() => void calls.push("reloadSecrets")),
+        reconcile: () => Queue.offer(reconciled, undefined),
+        reloadSecrets: () => Effect.sync(() => void reloads++),
       });
       yield* Layer.build(
         layerSettingsWatcher(Stream.fromQueue(changes), initial).pipe(Layer.provide(mutator)),
       );
       return {
-        calls,
+        reloads: () => reloads,
+        // Changes run one at a time, so the repeat's reconcile means the first one's reload decision is done.
         change: (settings: ServerSettings) =>
-          Queue.offer(changes, settings).pipe(Effect.andThen(Queue.take(reconciled))),
+          Queue.offerAll(changes, [settings, settings]).pipe(
+            Effect.andThen(Queue.take(reconciled)),
+            Effect.andThen(Queue.take(reconciled)),
+          ),
       };
     });
 
@@ -185,13 +185,14 @@ describe("layerSettingsWatcher", () => {
     () =>
       Effect.gen(function* () {
         const settings = yield* ServerSettingsService;
-        const { calls, change } = yield* watch(yield* settings.getSettings);
+        const { reloads, change } = yield* watch(yield* settings.getSettings);
 
         yield* change(yield* settings.updateSettings({ secretProviders: provider("Personal") }));
-        yield* change(yield* settings.updateSettings({ secretProviders: provider("Renamed") }));
+        expect(reloads()).toBe(1);
 
         // A label is not read by any vault, so renaming a provider retries nothing.
-        expect(calls).toEqual(["reconcile", "reloadSecrets", "reconcile"]);
+        yield* change(yield* settings.updateSettings({ secretProviders: provider("Renamed") }));
+        expect(reloads()).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
   );
 
@@ -202,11 +203,11 @@ describe("layerSettingsWatcher", () => {
         const settings = yield* ServerSettingsService;
         const started = yield* settings.getSettings;
         const saved = yield* settings.updateSettings({ secretProviders: provider("Personal") });
-        const { calls, change } = yield* watch(started);
+        const { reloads, change } = yield* watch(started);
 
         yield* change(saved);
 
-        expect(calls).toEqual(["reconcile", "reloadSecrets"]);
+        expect(reloads()).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
   );
 });
