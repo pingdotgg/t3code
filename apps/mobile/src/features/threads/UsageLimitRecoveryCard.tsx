@@ -22,9 +22,12 @@ export function UsageLimitRecoveryCard({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetAt = thread.runtime?.usageLimitResetAt ?? null;
-  const canSchedule =
+  const resetsLater =
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
+  // The server refuses recovery for settled threads until they are un-settled.
+  const settled = thread.settledOverride === "settled";
+  const canSchedule = resetsLater && !settled;
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
@@ -72,7 +75,9 @@ export function UsageLimitRecoveryCard({
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm text-warning-foreground">
         {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.${
+              resetsLater && settled ? " Un-settle to resume at reset." : ""
+            }`
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
       {canSchedule ? (

@@ -25,6 +25,8 @@ type RecoveryProps = {
   errorCode: string | null;
   resetAt: string | null;
   stoppedAt: string;
+  /** The server refuses recovery for settled threads until they are un-settled. */
+  settled: boolean;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
@@ -32,15 +34,16 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, errorCode, resetAt, stoppedAt, timestampFormat } = props;
-  const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const { runId, errorCode, resetAt, stoppedAt, settled, timestampFormat } = props;
+  const resetsLater = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const recoveryActions =
+    resetsLater && !settled ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null;
   const resetDescription = resetAt
-    ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+    ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}${
+        resetsLater && settled ? ". Un-settle to resume at reset" : ""
+      }`
     : "Reset time unavailable; retry manually";
   if (!chatGptLimit) {
     return {
