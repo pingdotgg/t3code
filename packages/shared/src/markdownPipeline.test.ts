@@ -290,3 +290,39 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
 });
+
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)(
+  "recognizes spaced thread autolinks without changing code or authored labels (%s)",
+  (_, plugins) => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(plugins)
+      .use(remarkRehype, { allowDangerousHtml: true })
+      .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+    const href = "t3-thread://v2/remote/thread:delegated-task:command%3Amcp%3A1";
+    const tree = processor.runSync(processor.parse(`See < ${href} > and [Review](${href}).`));
+    expect(tree.children[0]).toMatchObject({
+      tagName: "p",
+      children: [
+        { type: "text", value: "See " },
+        { tagName: "a", properties: { href }, children: [{ type: "text", value: href }] },
+        { type: "text", value: " and " },
+        { tagName: "a", properties: { href }, children: [{ type: "text", value: "Review" }] },
+        { type: "text", value: "." },
+      ],
+    });
+    const literal = `< ${href} >`;
+    expect(processor.runSync(processor.parse("`" + literal + "`")).children[0]).toMatchObject({
+      children: [{ tagName: "code", children: [{ value: literal }] }],
+    });
+    expect(
+      processor.runSync(processor.parse("```md\n" + literal + "\n```")).children[0],
+    ).toMatchObject({
+      tagName: "pre",
+      children: [{ tagName: "code", children: [{ value: literal + "\n" }] }],
+    });
+  },
+);

@@ -237,3 +237,14 @@ describe("hosted thread links", () => {
     ]);
   });
 });
+
+it("resolves titles and refs for spaced thread autolinks outside code", () => {
+  const href = "t3-thread://v2/there/thread:delegated-task:mcp%3A1";
+  const markdown = `< ${href} > and \`< ${href} >\``;
+  const title = titlesIn({ there: { "thread:delegated-task:mcp%3A1": "Review" } });
+  expect(threadLinkRefs(markdown, local)).toEqual([
+    ref("there", "thread:delegated-task:mcp%3A1"),
+    ref("there", "thread:delegated-task:mcp:1"),
+  ]);
+  expect(relabelThreadLinks(markdown, local, title)).toBe(`[Review](${href}) and \`< ${href} >\``);
+});

@@ -15,7 +15,7 @@ import {
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
 import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
-import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+import { parseThreadLinkHref, THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
   type?: string;
@@ -204,6 +204,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkSpacedThreadAutolinks,
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -216,6 +217,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkSpacedThreadAutolinks,
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -360,8 +362,43 @@ function remarkBreakAroundImageLines() {
   };
 }
 
+// Spaced angle brackets are prose in CommonMark, but agents also emit them around thread URLs.
+function remarkSpacedThreadAutolinks() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (!node.children || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): MarkdownAstNode[] => {
+        if (child.type !== "text" || child.value === undefined) {
+          visit(child);
+          return [child];
+        }
+        const parts: MarkdownAstNode[] = [];
+        let offset = 0;
+        for (const match of child.value.matchAll(/<[ \t]*(t3-thread:\/\/[^<>\s]+)[ \t]*>/g)) {
+          const href = match[1];
+          if (!href || !parseThreadLinkHref(href)) continue;
+          if (match.index > offset)
+            parts.push({ type: "text", value: child.value.slice(offset, match.index) });
+          parts.push({
+            type: "link",
+            url: href,
+            children: [{ type: "text", value: href }],
+          });
+          offset = match.index + match[0].length;
+        }
+        if (offset === 0) return [child];
+        if (offset < child.value.length)
+          parts.push({ type: "text", value: child.value.slice(offset) });
+        return parts;
+      });
+    };
+    visit(tree);
+  };
+}
+
 type MarkdownAstNode = {
   type?: string;
+  value?: string;
   meta?: unknown;
   url?: string;
   data?: {
