@@ -14,7 +14,10 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
-import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
+import {
+  isGeneratedUrlHandlerDesktopEntry,
+  renderUrlHandlerDesktopEntry,
+} from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
@@ -54,6 +57,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
 
 const LinuxDesktopEntryConfig = Config.all({
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
+  xdgDataDirs: Config.String("XDG_DATA_DIRS").pipe(Config.option),
   launcherPath: trimmedString("T3CODE_DESKTOP_LAUNCHER_PATH"),
   appImagePath: trimmedString("APPIMAGE"),
 });
@@ -83,56 +87,78 @@ export const make = Effect.gen(function* () {
           NodeFS.writeFileSync(path, value, "utf8");
         },
       });
-      // The portal also requires a valid desktop entry. An AppImage update may
-      // have removed the executable referenced by the previous launch's entry.
-      try {
-        const applicationsDir = NodePath.posix.join(
-          Option.getOrElse(linuxDesktopEntryConfig.xdgDataHome, () =>
-            NodePath.posix.join(homeDirectory, ".local", "share"),
-          ),
-          "applications",
+      const applicationsDir = NodePath.posix.join(
+        Option.getOrElse(linuxDesktopEntryConfig.xdgDataHome, () =>
+          NodePath.posix.join(homeDirectory, ".local", "share"),
+        ),
+        "applications",
+      );
+      const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+      const scheme = ElectronProtocol.getDesktopScheme(linux.isDevelopment);
+      // A same-named entry in $XDG_DATA_HOME would override a packaged launcher,
+      // hiding it from menus. The packaged launcher declares the scheme itself.
+      const hasInstalledDesktopEntry = DesktopEarlyElectronStartup.resolveXdgDataDirs(
+        Option.getOrUndefined(linuxDesktopEntryConfig.xdgDataDirs),
+      ).some((dataDir) => {
+        const dir = NodePath.posix.join(dataDir, "applications");
+        return (
+          dir !== applicationsDir &&
+          NodeFS.existsSync(NodePath.posix.join(dir, linux.linuxDesktopEntryName))
         );
-        NodeFS.mkdirSync(applicationsDir, { recursive: true });
-        const iconPath = Electron.app.isPackaged
-          ? NodePath.posix.join(
-              applicationsDir,
-              "..",
-              "icons",
-              `${linux.linuxDesktopEntryName}.png`,
-            )
-          : undefined;
-        if (iconPath !== undefined) {
-          try {
-            NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
-              NodePath.posix.join(
-                Electron.app.getAppPath(),
-                "apps/desktop/prod-resources/icon.png",
-              ),
-              iconPath,
-            );
-          } catch {}
-        }
-        NodeFS.writeFileSync(
-          NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
-          renderUrlHandlerDesktopEntry({
-            displayName: resolveDesktopAppBranding({
-              isDevelopment: linux.isDevelopment,
-              appVersion: Electron.app.getVersion(),
-            }).displayName,
-            execTarget:
-              Option.getOrUndefined(
-                Option.orElse(
-                  linuxDesktopEntryConfig.launcherPath,
-                  () => linuxDesktopEntryConfig.appImagePath,
+      });
+      if (hasInstalledDesktopEntry) {
+        try {
+          const existing = NodeFS.readFileSync(desktopEntryPath, "utf8");
+          if (isGeneratedUrlHandlerDesktopEntry(existing, scheme)) {
+            NodeFS.rmSync(desktopEntryPath, { force: true });
+          }
+        } catch {}
+      } else {
+        // The portal also requires a valid desktop entry. An AppImage update may
+        // have removed the executable referenced by the previous launch's entry.
+        try {
+          NodeFS.mkdirSync(applicationsDir, { recursive: true });
+          const iconPath = Electron.app.isPackaged
+            ? NodePath.posix.join(
+                applicationsDir,
+                "..",
+                "icons",
+                `${linux.linuxDesktopEntryName}.png`,
+              )
+            : undefined;
+          if (iconPath !== undefined) {
+            try {
+              NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
+              NodeFS.copyFileSync(
+                NodePath.posix.join(
+                  Electron.app.getAppPath(),
+                  "apps/desktop/prod-resources/icon.png",
                 ),
-              ) ?? process.execPath,
-            scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
-            ...(iconPath === undefined ? {} : { iconPath }),
-          }),
-          "utf8",
-        );
-      } catch {}
+                iconPath,
+              );
+            } catch {}
+          }
+          NodeFS.writeFileSync(
+            desktopEntryPath,
+            renderUrlHandlerDesktopEntry({
+              displayName: resolveDesktopAppBranding({
+                isDevelopment: linux.isDevelopment,
+                appVersion: Electron.app.getVersion(),
+              }).displayName,
+              execTarget:
+                Option.getOrUndefined(
+                  Option.orElse(
+                    linuxDesktopEntryConfig.launcherPath,
+                    () => linuxDesktopEntryConfig.appImagePath,
+                  ),
+                ) ?? process.execPath,
+              scheme,
+              ...(iconPath === undefined ? {} : { iconPath }),
+            }),
+            "utf8",
+          );
+        } catch {}
+      }
       // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {

@@ -96,6 +96,12 @@ export function renderUrlHandlerDesktopEntry(input: {
   ].join("\n");
 }
 
+// Recognizes a previous launch's entry, so a user's own override is never deleted.
+export const isGeneratedUrlHandlerDesktopEntry = (content: string, scheme: string): boolean => {
+  const lines = content.split("\n");
+  return lines.includes("NoDisplay=true") && lines.includes(`MimeType=x-scheme-handler/${scheme};`);
+};
+
 // Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
 const LINUX_THEME_ICON_SIZE = "256x256";
 
@@ -162,6 +168,34 @@ export const make = Effect.gen(function* () {
           desktopEntryPath,
           cause,
         }),
+    ),
+  );
+
+  // A same-named entry in $XDG_DATA_HOME would override a packaged launcher,
+  // hiding it from menus. The packaged launcher declares the scheme itself.
+  const hasInstalledDesktopEntry = Effect.gen(function* () {
+    for (const dir of environment.linuxSystemApplicationsDirs) {
+      if (dir === environment.linuxApplicationsDir) continue;
+      const candidate = environment.path.join(dir, environment.linuxDesktopEntryName);
+      if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  const removeGeneratedDesktopEntry = Effect.gen(function* () {
+    const existing = yield* fileSystem
+      .readFileString(desktopEntryPath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (existing === null || !isGeneratedUrlHandlerDesktopEntry(existing, scheme)) return;
+    yield* fileSystem.remove(desktopEntryPath);
+  }).pipe(
+    Effect.catch((error) =>
+      logWarning("stale URL handler entry removal failed", {
+        desktopEntryPath,
+        category: error.reason._tag,
+      }),
     ),
   );
 
@@ -290,7 +324,11 @@ export const make = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
     }
-    yield* writeDesktopEntry;
+    if (yield* hasInstalledDesktopEntry) {
+      yield* removeGeneratedDesktopEntry;
+    } else {
+      yield* writeDesktopEntry;
+    }
     if (!environment.isPackaged) return;
 
     yield* Effect.gen(function* () {
