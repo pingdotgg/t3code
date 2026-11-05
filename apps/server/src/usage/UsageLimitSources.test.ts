@@ -20,11 +20,14 @@ const decodeSourceRequest = Schema.decodeUnknownSync(
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
 
-it.effect("keeps malformed source URLs encodable for config subscribers", () =>
+it.effect("seeds hub sources at startup and keeps malformed URLs encodable for subscribers", () =>
   Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
-    yield* sources.refresh;
-    const snapshots = yield* sources.current;
+    const snapshots = yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.length > 0),
+      Stream.runHead,
+      Effect.flatMap(Effect.fromOption),
+    );
     expect(snapshots.map((source) => source.label)).toEqual([
       "local-hub",
       "opaque-hub",
@@ -104,7 +107,6 @@ it.effect("reads a management key from its secret provider", () => {
   });
   return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
-    yield* sources.refresh;
     const snapshots = yield* sources.streamChanges.pipe(
       Stream.filter((next) => next.length > 0),
       Stream.runHead,
@@ -165,8 +167,14 @@ it.effect("reads a management key from its secret provider", () => {
 
 it.effect("retains another window's account when provider-filtered usage refreshes finish", () => {
   let fail = false;
+  let includeCodex = false;
   return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
+    yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.length > 0),
+      Stream.runHead,
+    );
+    includeCodex = true;
     yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["claudeAgent"]));
     expect((yield* sources.current)[0]?.accounts.map((account) => account.driver)).toEqual([
       "claudeAgent",
@@ -221,7 +229,9 @@ it.effect("retains another window's account when provider-filtered usage refresh
                 Response.json({
                   files: [
                     { id: "claude", auth_index: "claude", provider: "claude" },
-                    { id: "codex", auth_index: "codex", provider: "codex" },
+                    ...(includeCodex
+                      ? [{ id: "codex", auth_index: "codex", provider: "codex" }]
+                      : []),
                   ],
                 }),
               );

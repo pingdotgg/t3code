@@ -163,6 +163,7 @@ export const make = Effect.gen(function* () {
     return result;
   }, refreshLock.withPermits(1));
 
+  yield* refresh.pipe(Effect.forkScoped);
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
