@@ -64,6 +64,13 @@ function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   });
 }
 
+export function setMacosWindowButtonsHidden(window: Electron.BrowserWindow, hidden: boolean): void {
+  if (window.isDestroyed()) return;
+  window.setWindowButtonVisibility(!hidden);
+  // Showing the buttons drops their custom position.
+  if (!hidden) syncMacosWindowButtons(window);
+}
+
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
@@ -776,7 +783,8 @@ export const make = Effect.gen(function* () {
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
-      if (environment.platform === "darwin") syncMacosWindowButtons(window);
+      // A reload during HTML fullscreen never reports leaving it.
+      if (environment.platform === "darwin") setMacosWindowButtonsHidden(window, false);
     });
     window.webContents.on(
       "did-fail-load",
