@@ -6981,6 +6981,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each(["resume", "fork"] as const)(
+    "%s at a per-block streamed cursor uses its persisted transcript message",
+    (consumer) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-derived-head-",
+        });
+        const promptUuid = "00000000-0000-4000-8000-0a1b2c3d4e5f";
+        const persistedUuid = "00000000-0000-4000-8000-3c5a91e0d7f2";
+        // Claude streams [thinking, text] as one message per block: uuid.slice(0, 24) + block index.
+        const streamedTextBlockUuid = `${persistedUuid.slice(0, 24)}000000000001`;
+        const projectDir = path.join(configDir, "projects", "-workspace");
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, `${WAKE_NATIVE_SESSION}.jsonl`),
+          [
+            JSON.stringify({
+              type: "user",
+              uuid: promptUuid,
+              parentUuid: null,
+              sessionId: WAKE_NATIVE_SESSION,
+              message: { role: "user", content: "Think, then answer." },
+            }),
+            JSON.stringify({
+              type: "assistant",
+              uuid: persistedUuid,
+              parentUuid: promptUuid,
+              sessionId: WAKE_NATIVE_SESSION,
+              message: {
+                id: "msg_synthetic_derived_head",
+                role: "assistant",
+                content: [
+                  { type: "thinking", thinking: "Considering.", signature: "synthetic" },
+                  { type: "text", text: "Answer." },
+                ],
+              },
+            }),
+            "",
+          ].join("\n"),
+        );
+        const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          forkSession: (input) =>
+            Effect.sync(() => {
+              forkCalls.push(input);
+              return { sessionId: "forked-native-session" };
+            }),
+        });
+        const now = yield* DateTime.now;
+        if (consumer === "resume") {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: {
+                ...harness.providerThread,
+                nativeConversationHeadRef: {
+                  driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                  nativeId: streamedTextBlockUuid,
+                  strength: "weak",
+                },
+              },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-derived-head"),
+              text: "Continue.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              nativeThreadHasTurns: true,
+            }),
+          );
+          assert.equal(harness.getOpenedOptions()?.resumeSessionAt, persistedUuid);
+          return;
+        }
+        const providerTurnId = ProviderTurnId.make("provider-turn-claude-derived-cursor");
+        yield* harness.runtime.forkThread({
+          sourceProviderThread: harness.providerThread,
+          sourceProviderTurns: [
+            {
+              id: providerTurnId,
+              providerThreadId: harness.providerThread.id,
+              nodeId: NodeId.make("node-claude-derived-cursor"),
+              runAttemptId: RunAttemptId.make("run-attempt-claude-derived-cursor"),
+              nativeTurnRef: {
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeId: streamedTextBlockUuid,
+                strength: "weak",
+              },
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          ],
+          providerTurnId,
+          targetThreadId: ThreadId.make("thread-claude-derived-cursor-fork"),
+        });
+        assert.equal(forkCalls[0]?.options.upToMessageId, persistedUuid);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("never records a subagent uuid for a turn with no main-thread assistant message", () =>
     Effect.gen(function* () {
       const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
