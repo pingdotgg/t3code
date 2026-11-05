@@ -741,7 +741,7 @@ describe("DesktopBackendConfiguration", () => {
           url: "127.0.0.1",
           bind: "127.0.0.1",
         },
-        // Mirrored: the distro reports one of the host's own addresses, and loopback is one on every host.
+        // Mirrored: the distro reports one of the host's own addresses; loopback stands in as one every runner has.
         {
           exposureBindHost: "127.0.0.1",
           distroIp: Option.some("127.0.0.1"),
