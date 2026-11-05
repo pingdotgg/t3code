@@ -58,6 +58,28 @@ jobs:
           RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: bash .github/scripts/t3-learn-release-version.sh
 
+      # Lists what changed since the release the updater last offered, so
+      # changes in an unpromoted pre-release still reach users.
+      - name: Write release notes
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+          since="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          bash .github/scripts/t3-learn-release-notes.sh "$since" "$RELEASE_COMMIT" > release-notes.md
+          cat release-notes.md
+
+      - name: Upload release notes
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 1
+
   # The server bundle, web client and Electron main are built once and handed
   # to every platform job as `js-bundle`, as in upstream's release.yml.
   build_bundle:
@@ -329,25 +351,19 @@ jobs:
           sha256sum *.dmg *.zip *.AppImage *.deb *.exe t3-*.tar.gz install.sh install.ps1 > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Write release notes
+      - name: Download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+
+      # The generic update feed carries no release body, so the desktop update
+      # prompt reads the "What's new" part from each manifest.
+      - name: Add release notes to updater manifests
         run: |
-          cat > release-notes.md <<'EOF'
-          T3 Learn installs next to T3 Code and keeps its own projects and settings, so an existing T3 Code stays exactly as it is.
-
-          **macOS and Linux**
-
-          ```sh
-          curl -fsSL https://github.com/aabdel0181/t3-learn/releases/latest/download/install.sh | sh
-          ```
-
-          **Windows** (PowerShell)
-
-          ```powershell
-          irm https://github.com/aabdel0181/t3-learn/releases/latest/download/install.ps1 | iex
-          ```
-
-          Run the same command again to update. Installed apps also update themselves.
-          EOF
+          set -euo pipefail
+          for manifest in release-assets/latest*.yml; do
+            { echo "releaseNotes: |"; sed '/^<details>/,$d; s/^/  /; s/^ *$//' release-notes.md; } >> "$manifest"
+          done
 
       - name: Publish pre-release
         uses: softprops/action-gh-release@v3
