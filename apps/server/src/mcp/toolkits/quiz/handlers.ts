@@ -12,10 +12,13 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       yield* McpInvocationContext.requireThreadScope(scope, "quiz_card");
       const card = readQuizCard(input);
-      const problem =
-        card === undefined
-          ? "Invalid quiz card: provide 2–4 wrong options and all required bounded fields."
-          : quizCardProblem(card);
+      if (card === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Invalid quiz card: provide 2–4 wrong options and all required bounded fields.",
+        });
+      }
+      const problem = quizCardProblem(card);
       if (problem !== undefined) {
         return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: problem });
       }
