@@ -314,14 +314,11 @@ export const openExternal = DesktopIpc.makeIpcMethod({
 
 const READ_MEDIA_MAX_BYTES = 256 * 1024 * 1024;
 
+// No URL field: media URLs can carry signed query tokens.
 class MediaReadError extends Schema.TaggedError<MediaReadError>()("MediaReadError", {
-  url: Schema.String,
+  message: Schema.String,
   cause: Schema.Defect(),
-}) {
-  override get message(): string {
-    return `Could not read media from ${this.url}.`;
-  }
-}
+}) {}
 
 // The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
 export const readMedia = DesktopIpc.makeIpcMethod({
@@ -360,7 +357,7 @@ export const readMedia = DesktopIpc.makeIpcMethod({
         }
         return { status: response.status, mimeType, data: Buffer.concat(chunks) };
       },
-      catch: (cause) => new MediaReadError({ url, cause }),
+      catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
     }).pipe(Effect.orElseSucceed(() => null));
   }),
 });
