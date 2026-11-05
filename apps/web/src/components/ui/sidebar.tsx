@@ -15,7 +15,12 @@ import {
   SheetPopup,
   SheetTitle,
 } from "~/components/ui/sheet";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  TooltipScrollDismissArea,
+} from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -674,6 +679,7 @@ function SidebarContent({
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
+        render={<TooltipScrollDismissArea suppressHoverWhileScrolling />}
         hideScrollbars
         scrollFade
         scrollFadePadding={false}
