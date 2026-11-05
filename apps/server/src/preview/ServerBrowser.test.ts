@@ -1658,12 +1658,17 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         `<style>
           select { position: absolute; left: 40px; width: 200px; height: 30px }
           #custom, #custom::picker(select) { appearance: base-select }
+          #half { appearance: base-select }
+          iframe { position: absolute; left: 300px; top: 20px; width: 400px; height: 200px; border: 0;
+            transform: scale(0.5); transform-origin: 0 0 }
         </style>
         <select id="relayed" style="top: 20px"><option>One</option><option>Two</option></select>
         <select id="readonly" style="top: 80px" onmousedown="return false">
           <option>One</option><option>Two</option>
         </select>
         <select id="custom" style="top: 140px"><option>One</option><option>Two</option></select>
+        <select id="half" style="top: 200px"><option>One</option><option>Two</option></select>
+        <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
         <script>
           for (const select of document.querySelectorAll("select"))
             for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
@@ -1696,12 +1701,24 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
         open: false,
       });
 
+      yield* click(140, 215);
+      expect(
+        yield* output("selectMenu"),
+        "a select without a customizable picker still opens a native one",
+      ).toHaveLength(1);
+
       yield* click(140, 155);
       expect(yield* output("selectMenu"), "a customizable select draws its own picker").toEqual([]);
       expect(
         ((yield* events("custom")) as { events: string }).events,
         "the real press reaches it",
       ).toContain("mousedown!");
+
+      yield* click(350, 27);
+      expect(
+        yield* output("selectMenu"),
+        "a transformed frame keeps the real press rather than guess a select",
+      ).toEqual([]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1712,6 +1729,7 @@ it.live("a select answer applies the option that was offered, wherever the page 
       const { viewer, click, output, evaluate } = yield* realSelectPage(
         `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
           <option hidden>Pick</option><option>One</option><option selected>Two</option>
+          <option style="display: none">Gone</option><optgroup hidden><option>Ghost</option></optgroup>
           <option>Three</option>
         </select>`,
       );
@@ -1729,7 +1747,8 @@ it.live("a select answer applies the option that was offered, wherever the page 
       });
       yield* evaluate(`(() => {
         const select = document.querySelector("select");
-        for (const option of [...select.options].reverse()) select.append(option);
+        for (const option of [...select.querySelectorAll(":scope > option")].reverse())
+          select.append(option);
       })()`);
       yield* viewer.input({ type: "selectMenu", id: offer!.id, index: 0 });
       expect(yield* value(), "the offered option, not whatever is first now").toBe("One");
@@ -1748,7 +1767,7 @@ it.live("a select answer applies the option that was offered, wherever the page 
 it.live("navigating away withdraws an offered select menu", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { page, click, output } = yield* realSelectPage(
+      const { page, viewer, click, output } = yield* realSelectPage(
         `<select style="position: absolute; left: 40px; top: 20px; width: 200px; height: 30px">
           <option>One</option><option>Two</option>
         </select>`,
@@ -1759,6 +1778,25 @@ it.live("navigating away withdraws an offered select menu", () =>
       expect(yield* output("selectMenuClosed")).toEqual([
         { _tag: "selectMenuClosed", id: offer!.id },
       ]);
+
+      yield* Effect.promise(() =>
+        page.setContent(
+          `<iframe style="position: absolute; left: 40px; top: 20px; border: 0"
+            srcdoc="<body style='margin: 0'><select style='width: 200px; height: 30px'><option>One</option></select>"></iframe>`,
+        ),
+      );
+      yield* Queue.clear(viewer.output);
+      yield* click(140, 35);
+      const [framed] = yield* output("selectMenu");
+      yield* Effect.promise(() =>
+        page.evaluate(`document.querySelector("iframe").srcdoc = "<p>Replaced</p>"`),
+      );
+      let closed = yield* Queue.take(viewer.output);
+      while (closed._tag !== "selectMenuClosed") closed = yield* Queue.take(viewer.output);
+      expect(closed, "a replaced frame document withdraws its offer").toEqual({
+        _tag: "selectMenuClosed",
+        id: framed!.id,
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );

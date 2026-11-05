@@ -143,6 +143,8 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
     }
     if (element && (element.tagName === "IFRAME" || element.tagName === "FRAME") && element.contentDocument) {
       const box = element.getBoundingClientRect();
+      // A transformed frame maps points in ways this walk does not model; it keeps the real press.
+      if (Math.abs(box.width - element.offsetWidth) > 1 || Math.abs(box.height - element.offsetHeight) > 1) return null;
       x -= box.left + element.clientLeft;
       y -= box.top + element.clientTop;
       root = element.contentDocument;
@@ -153,7 +155,11 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
     if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
     const view = element.ownerDocument.defaultView;
     // A customizable select draws its picker in the page, where the stream already shows it.
-    if (view.getComputedStyle(element).appearance === "base-select") return null;
+    if (
+      view.getComputedStyle(element).appearance === "base-select" &&
+      view.getComputedStyle(element, "::picker(select)").appearance === "base-select"
+    )
+      return null;
     if (element.options.length > optionLimit) return null;
     const init = { bubbles: true, cancelable: true, composed: true, view, clientX: x, clientY: y, button: 0, buttons: 1 };
     const pressed =
@@ -174,7 +180,11 @@ const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit) {
     top += box.top + frame.clientTop;
   }
   select.focus({ preventScroll: true });
-  this.offered = Array.from(select.options).filter((option) => !option.hidden);
+  const view = select.ownerDocument.defaultView;
+  const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
+  this.offered = Array.from(select.options).filter(
+    (option) => shown(option) && (option.parentElement.tagName !== "OPTGROUP" || shown(option.parentElement)),
+  );
   return {
     options: this.offered.map((option) => ({
       label: option.label.slice(0, labelLimit),
@@ -199,7 +209,7 @@ const RELEASE_SELECT_PRESS_SCRIPT = `function () {
 const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
   const { select, offered } = this;
   const option = offered && offered[index];
-  if (!option || !option.isConnected || option.closest("select") !== select) return;
+  if (!option || !option.isConnected || !select.ownerDocument.defaultView || option.closest("select") !== select) return;
   if (option.matches(":disabled") || select.matches(":disabled") || option.selected) return;
   option.selected = true;
   select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
@@ -2520,7 +2530,9 @@ const make = Effect.gen(function* () {
       void offer.session
         .send("Runtime.callFunctionOn", {
           objectId: offer.objectId,
-          functionDeclaration: "function () { return this.select.isConnected; }",
+          // A replaced frame document keeps its nodes connected but loses its window.
+          functionDeclaration:
+            "function () { return this.select.isConnected && this.select.ownerDocument.defaultView !== null; }",
           returnByValue: true,
         })
         .then(
