@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ExecutionEnvironmentDescriptor,
   supportsLessonSideChats,
+  supportsLessons,
   supportsSideChats,
 } from "./environment.ts";
 
@@ -63,5 +64,14 @@ describe("side-chat capabilities", () => {
       expect(supportsLessonSideChats({ serverVersion, capabilities })).toBe(lesson);
       expect(supportsSideChats({ serverVersion, capabilities })).toBe(upstream);
     }
+  });
+});
+
+describe("lesson capabilities", () => {
+  it("offers lessons only on servers that answer lesson.create", () => {
+    // 0.1.7-learn.2 has T3 Learn side chats but no lesson.create.
+    const old = { repositoryIdentity: true, sideChats: true, lessonSideChats: true };
+    expect(supportsLessons({ capabilities: old })).toBe(false);
+    expect(supportsLessons({ capabilities: { ...old, knowledgeMap: true } })).toBe(true);
   });
 });

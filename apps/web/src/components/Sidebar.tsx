@@ -55,7 +55,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   ProjectId,
-  supportsLessonSideChats,
+  supportsLessons,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -2986,7 +2986,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     newLessonProjectRef !== null &&
     canCreateLesson &&
     lessonEnvironment !== undefined &&
-    supportsLessonSideChats(lessonEnvironment);
+    supportsLessons(lessonEnvironment);
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
