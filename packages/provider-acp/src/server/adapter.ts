@@ -1332,6 +1332,91 @@ function elicitationContent(
   return content;
 }
 
+type FormFieldOption = OrchestrationV2UserInputQuestion["options"][number];
+
+function formFieldChoices(record: Record<string, unknown> | undefined): {
+  readonly options: ReadonlyArray<FormFieldOption>;
+  readonly multiSelect: boolean;
+} {
+  const isArray = record?.type === "array";
+  const source = isArray ? unknownRecord(record?.items) : record;
+  const enumValues = Array.isArray(source?.enum)
+    ? source.enum.filter((value): value is string => typeof value === "string")
+    : [];
+  const options: Array<FormFieldOption> = [
+    ...enumValues.map((value) => ({ label: value, description: value })),
+    ...(!isArray && Array.isArray(source?.oneOf) ? source.oneOf : []).flatMap((entry) => {
+      const choice = unknownRecord(entry);
+      if (typeof choice?.const !== "string") return [];
+      const label = nonEmptyText(choice.title, choice.const);
+      return [{ label, description: nonEmptyText(choice.description, label), value: choice.const }];
+    }),
+  ];
+  if (options.length === 0 && record?.type === "boolean") {
+    return {
+      options: [
+        { label: "true", description: "Yes" },
+        { label: "false", description: "No" },
+      ],
+      multiSelect: false,
+    };
+  }
+  return { options, multiSelect: isArray && options.length > 0 };
+}
+
+// Agents such as OMP pair a choice with an optional `<id>__other` text field. The client
+// already accepts custom answers, so hide the companion and route custom text into it.
+function readElicitationForm(properties: Record<string, unknown>, message: string) {
+  const fields = Object.entries(properties).map(([id, property]) => {
+    const record = unknownRecord(property);
+    return { id, record, ...formFieldChoices(record) };
+  });
+  const companions = new Map<string, string>();
+  for (const field of fields) {
+    const companion = fields.find((candidate) => candidate.id === `${field.id}__other`);
+    if (
+      field.options.length > 0 &&
+      companion?.record?.type === "string" &&
+      companion.options.length === 0
+    ) {
+      companions.set(field.id, companion.id);
+    }
+  }
+  const hidden = new Set(companions.values());
+  const questions = fields
+    .filter((field) => !hidden.has(field.id))
+    .map(({ id, record, options, multiSelect }, index): OrchestrationV2UserInputQuestion => ({
+      id,
+      header: nonEmptyText(record?.title, `Question ${index + 1}`),
+      question: nonEmptyText(record?.description, message),
+      options,
+      ...(multiSelect ? { multiSelect } : {}),
+    }));
+  const content = (answers: ProviderUserInputAnswers) => {
+    const routed: Record<string, unknown> = { ...answers };
+    for (const [id, companion] of companions) {
+      const answer = answers[id];
+      const values = new Set(
+        fields
+          .find((field) => field.id === id)
+          ?.options.map((option) => option.value ?? option.label),
+      );
+      delete routed[id];
+      if (typeof answer === "string") {
+        if (values.has(answer)) routed[id] = answer;
+        else if (answer.trim().length > 0) routed[companion] = answer;
+      } else if (Array.isArray(answer)) {
+        const strings = answer.filter((entry): entry is string => typeof entry === "string");
+        routed[id] = strings.filter((entry) => values.has(entry));
+        const custom = strings.filter((entry) => !values.has(entry) && entry.trim().length > 0);
+        if (custom.length > 0) routed[companion] = custom.join(", ");
+      }
+    }
+    return elicitationContent(routed, new Set(Object.keys(properties)));
+  };
+  return { questions, content };
+}
+
 interface ActiveTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
@@ -6695,31 +6780,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const nativeForm = flavor.extractElicitationForm?.(params);
               const elicitationScopeId =
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
-              const questions =
-                nativeForm?.questions ??
-                Object.entries(properties).map(
-                  ([id, property], index): OrchestrationV2UserInputQuestion => {
-                    const record = unknownRecord(property);
-                    const enumValues = Array.isArray(record?.enum)
-                      ? record.enum.filter((value): value is string => typeof value === "string")
-                      : [];
-                    const options =
-                      enumValues.length > 0
-                        ? enumValues.map((value) => ({ label: value, description: value }))
-                        : record?.type === "boolean"
-                          ? [
-                              { label: "true", description: "Yes" },
-                              { label: "false", description: "No" },
-                            ]
-                          : [];
-                    return {
-                      id,
-                      header: nonEmptyText(record?.title, `Question ${index + 1}`),
-                      question: nonEmptyText(record?.description, params.message),
-                      options,
-                    };
-                  },
-                );
+              const form = readElicitationForm(properties, params.message);
+              const questions = nativeForm?.questions ?? form.questions;
               const userInput = yield* requestUserInputWithAdmission(
                 handlerGeneration,
                 Effect.gen(function* () {
@@ -6740,13 +6802,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 userInput.answers === null
                   ? ({ action: "cancel" } as const)
                   : (nativeForm?.respond(userInput.answers) ??
-                    ({
-                      action: "accept",
-                      content: elicitationContent(
-                        userInput.answers,
-                        new Set(Object.keys(properties)),
-                      ),
-                    } as const));
+                    ({ action: "accept", content: form.content(userInput.answers) } as const));
               yield* userInput.acknowledgeNativeResponse;
               return response;
             }).pipe(holdingAgentRequest(handlerGeneration)),
