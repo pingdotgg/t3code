@@ -279,9 +279,7 @@ export function markdownWithHtml(markdown: string): string {
     }
   };
   visit(parser.parse(markdown), false, false);
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyMarkdownEdits(markdown, edits);
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
