@@ -149,6 +149,7 @@ const makeSecretResolver = (values: Record<string, string> = {}) =>
     read: (references) =>
       Effect.succeed(references.map((reference) => values[reference.reference])),
     invalidate: () => Effect.void,
+    label: (provider) => Effect.succeed(provider),
   });
 
 const layerWith = (secrets: Layer.Layer<SecretResolver.SecretResolver>) =>

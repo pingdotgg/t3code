@@ -55,6 +55,7 @@ it.effect("seeds hub sources at startup and keeps malformed URLs encodable for s
   }).pipe(
     Effect.provide([
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) => Effect.succeed(references.map(() => undefined)),
         invalidate: () => Effect.void,
       }),
@@ -149,6 +150,7 @@ it.effect("reads a management key from its secret provider", () => {
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
         read: (references) =>
           Effect.succeed(
             references.map((reference) =>
@@ -237,6 +239,7 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
           },
         }),
         Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
           read: () => Effect.succeed([]),
           invalidate: () => Effect.void,
         }),
@@ -390,6 +393,7 @@ it.effect.each([
           },
         }),
         Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
           read: () => Effect.succeed([]),
           invalidate: () => Effect.void,
         }),
