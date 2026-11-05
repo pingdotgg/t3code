@@ -28,28 +28,37 @@ const AT_MENTION_KIND_BY_ALIAS = {
   figma: "figma",
 } as const satisfies Record<string, ComposerTriggerKind>;
 
+export type DetectComposerTriggerOptions = {
+  readonly isWhitespaceChar?: (char: string) => boolean;
+  /** Labs: mention index. Off keeps classic bare `@` / `#` without typed filters. */
+  readonly mentionIndexEnabled?: boolean;
+};
+
 /**
  * Bare `@` keeps the classic mixed menu (threads, machines, files).
- * `@file:`, `@thread:`, `@pr:`, `@jira:`, `@issue:`, `@figma:` filter that menu by type.
- * `#` opens pull requests and GitHub issues together (`@pr:` / `@issue:` stay scoped).
+ * With the mention-index labs flag on, `@file:` / `@thread:` / `@pr:` / `@jira:` /
+ * `@issue:` / `@figma:` filter by type, and `#` opens PRs + issues together.
  */
 export function detectAtMentionTrigger(
   token: string,
   tokenStart: number,
   cursor: number,
+  mentionIndexEnabled = false,
 ): ComposerTrigger | null {
   if (!token.startsWith("@")) return null;
 
-  const scoped = /^@(file|thread|pr|jira|issue|figma):(.*)$/iu.exec(token);
-  if (scoped) {
-    const alias = scoped[1]!.toLowerCase() as keyof typeof AT_MENTION_KIND_BY_ALIAS;
-    const query = scoped[2] ?? "";
-    return {
-      kind: AT_MENTION_KIND_BY_ALIAS[alias],
-      query,
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
+  if (mentionIndexEnabled) {
+    const scoped = /^@(file|thread|pr|jira|issue|figma):(.*)$/iu.exec(token);
+    if (scoped) {
+      const alias = scoped[1]!.toLowerCase() as keyof typeof AT_MENTION_KIND_BY_ALIAS;
+      const query = scoped[2] ?? "";
+      return {
+        kind: AT_MENTION_KIND_BY_ALIAS[alias],
+        query,
+        rangeStart: tokenStart,
+        rangeEnd: cursor,
+      };
+    }
   }
 
   return {
@@ -118,15 +127,21 @@ export function isCurrencyAmountQuery(query: string): boolean {
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
-  isWhitespaceChar?: (char: string) => boolean,
+  options?: DetectComposerTriggerOptions | ((char: string) => boolean),
 ): ComposerTrigger | null {
+  const opts: DetectComposerTriggerOptions =
+    typeof options === "function" ? { isWhitespaceChar: options } : (options ?? {});
+  const mentionIndexEnabled = opts.mentionIndexEnabled === true;
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
 
   if (linePrefix.startsWith("/")) {
     const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch && isPathWord(text, lineStart, cursor, isWhitespaceChar ?? isWhitespace)) {
+    if (
+      commandMatch &&
+      isPathWord(text, lineStart, cursor, opts.isWhitespaceChar ?? isWhitespace)
+    ) {
       return null;
     }
     if (commandMatch) {
@@ -158,7 +173,7 @@ export function detectComposerTrigger(
     }
   }
 
-  const wsCheck = isWhitespaceChar ?? isWhitespace;
+  const wsCheck = opts.isWhitespaceChar ?? isWhitespace;
   let tokenIdx = cursor - 1;
   while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
     tokenIdx -= 1;
@@ -178,7 +193,7 @@ export function detectComposerTrigger(
   const hashMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
   if (hashMatch)
     return {
-      kind: "hash",
+      kind: mentionIndexEnabled ? "hash" : "pull-request",
       query: hashMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
@@ -193,7 +208,7 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  return detectAtMentionTrigger(token, tokenStart, cursor);
+  return detectAtMentionTrigger(token, tokenStart, cursor, mentionIndexEnabled);
 }
 
 export function replaceTextRange(

@@ -559,6 +559,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ? undefined
         : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
+    mentionIndexEnabled: props.serverConfig?.settings.mentionIndexEnabled === true,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });

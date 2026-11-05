@@ -28,10 +28,17 @@ function localEnvironmentId(): EnvironmentId | null {
   return appAtomRegistry.get(primaryEnvironmentIdAtom);
 }
 
+export type PastedComposerContextOptions = {
+  /** Labs mention index: rewrite pasted Jira/Figma/GitHub issue URLs into chips. */
+  readonly rewriteExternalLinks?: boolean;
+};
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
+  options?: PastedComposerContextOptions,
 ): ComposerContextClipboardFragment | null {
+  const rewriteExternalLinks = options?.rewriteExternalLinks === true;
   const pastedText = clipboardData.getData("text/plain");
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
@@ -41,7 +48,9 @@ export function readPastedComposerContext(
     decodedFragment?.records ?? [],
     threadTitle,
   );
-  const external = externalLinkContextReferences(threads.text);
+  const external = rewriteExternalLinks
+    ? externalLinkContextReferences(threads.text)
+    : { text: threads.text, records: [] as ComposerContextRecord[] };
   const localId = localEnvironmentId();
   const source =
     decodedFragment?.source ??
@@ -82,9 +91,11 @@ export function importPastedComposerText(
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
+  options?: PastedComposerContextOptions,
 ): string {
+  const rewriteExternalLinks = options?.rewriteExternalLinks === true;
   const pastedText = clipboardData.getData("text/plain");
-  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
+  const fragment = importContextFragment ? readPastedComposerContext(clipboardData, options) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
@@ -109,5 +120,7 @@ export function importPastedComposerText(
     threadTitle,
     (record) => nextId(record.contextId),
   ).text;
-  return externalLinkContextReferences(withThreads, (record) => nextId(record.contextId)).text;
+  return rewriteExternalLinks
+    ? externalLinkContextReferences(withThreads, (record) => nextId(record.contextId)).text
+    : withThreads;
 }

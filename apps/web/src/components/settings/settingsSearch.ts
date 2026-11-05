@@ -480,6 +480,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta link another machine vps peer agents work there delegate"],
   },
   {
+    id: "mention-index-beta",
+    title: "Mention index",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      "beta mentions mention index jira figma github issues pull requests @jira @figma # paste chips",
+    ],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

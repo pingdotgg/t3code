@@ -228,45 +228,84 @@ export function NewThreadSettingsSection() {
 /** Per machine, since each machine's own setting decides whether it links and answers links. */
 function BetaSettingsSection() {
   const { environments } = useEnvironments();
-  const supported = environments.filter(
+  const linkedSupported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
       environment.serverConfig?.environment.capabilities.peerLinks === true,
   );
-  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const connected = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const linkedWritable = useEnvironmentsWithScope(linkedSupported, AuthSettingsWriteScope);
+  const mentionWritable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "linked environments beta update",
+    label: "labs beta settings update",
     reportFailure: true,
   });
-  if (supported.length === 0) return null;
+  if (linkedSupported.length === 0 && connected.length === 0) return null;
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta: Linked environments">
-        {supported.map((environment) => {
-          const policy = environment.serverConfig?.managedPolicy;
-          const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
-          return (
-            <SettingsSwitchRow
-              key={environment.environmentId}
-              icon="link"
-              label={environment.label}
-              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
-              value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
-              disabled={managed || !writable.has(environment.environmentId)}
-              onValueChange={(value) =>
-                void updateSettings({
-                  environmentId: environment.environmentId,
-                  input: { patch: { linkedEnvironmentsEnabled: value } },
-                })
-              }
-            />
-          );
-        })}
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
-      </Text>
+      {linkedSupported.length > 0 ? (
+        <>
+          <SettingsSection title="Beta: Linked environments">
+            {linkedSupported.map((environment) => {
+              const policy = environment.serverConfig?.managedPolicy;
+              const managed = isManagedSettingPath(policy, "linkedEnvironmentsEnabled");
+              return (
+                <SettingsSwitchRow
+                  key={environment.environmentId}
+                  icon="link"
+                  label={environment.label}
+                  {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                  value={environment.serverConfig?.settings.linkedEnvironmentsEnabled === true}
+                  disabled={managed || !linkedWritable.has(environment.environmentId)}
+                  onValueChange={(value) =>
+                    void updateSettings({
+                      environmentId: environment.environmentId,
+                      input: { patch: { linkedEnvironmentsEnabled: value } },
+                    })
+                  }
+                />
+              );
+            })}
+          </SettingsSection>
+          <Text className="px-2 text-sm text-foreground-muted">
+            Let agents on a machine work on your other machines, and theirs on it. Turn it on for
+            each machine. While it is off, nothing new starts over a link; tasks already running
+            finish.
+          </Text>
+        </>
+      ) : null}
+      {connected.length > 0 ? (
+        <>
+          <SettingsSection title="Beta: Mention index">
+            {connected.map((environment) => {
+              const policy = environment.serverConfig?.managedPolicy;
+              const managed = isManagedSettingPath(policy, "mentionIndexEnabled");
+              return (
+                <SettingsSwitchRow
+                  key={`mention-${environment.environmentId}`}
+                  icon="magnifyingglass"
+                  label={environment.label}
+                  {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+                  value={environment.serverConfig?.settings.mentionIndexEnabled === true}
+                  disabled={managed || !mentionWritable.has(environment.environmentId)}
+                  onValueChange={(value) =>
+                    void updateSettings({
+                      environmentId: environment.environmentId,
+                      input: { patch: { mentionIndexEnabled: value } },
+                    })
+                  }
+                />
+              );
+            })}
+          </SettingsSection>
+          <Text className="px-2 text-sm text-foreground-muted">
+            Index pull requests, issues, threads, Jira, and Figma for composer mentions. While it is
+            off, @ and # stay classic.
+          </Text>
+        </>
+      ) : null}
     </View>
   );
 }

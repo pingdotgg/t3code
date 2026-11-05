@@ -253,7 +253,12 @@ export function collapseExpandedComposerCursor(
   return collapsedCursor;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  options?: { readonly mentionIndexEnabled?: boolean },
+): ComposerTrigger | null {
+  const mentionIndexEnabled = options?.mentionIndexEnabled === true;
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
@@ -269,7 +274,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   const hashMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
   if (hashMatch) {
     return {
-      kind: "hash",
+      kind: mentionIndexEnabled ? "hash" : "pull-request",
       query: hashMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
@@ -285,7 +290,12 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  return detectAtMentionTrigger(token, tokenStart, cursor) as ComposerTrigger | null;
+  return detectAtMentionTrigger(
+    token,
+    tokenStart,
+    cursor,
+    mentionIndexEnabled,
+  ) as ComposerTrigger | null;
 }
 
 export function pastedPathQueryLength(
@@ -302,6 +312,7 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  options?: { readonly mentionIndexEnabled?: boolean },
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -311,7 +322,7 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor), options),
   };
 }
 

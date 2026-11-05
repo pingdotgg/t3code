@@ -155,6 +155,8 @@ export interface ComposerPromptEditorProps {
   importContextFragment?:
     | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
     | undefined;
+  /** Labs mention index: rewrite pasted Jira/Figma/issue URLs into chips. */
+  rewriteExternalLinks?: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
@@ -936,6 +938,7 @@ function ComposerPromptEditorTiptapInner(
     contextRecords,
     buildContextClipboardFragment,
     importContextFragment,
+    rewriteExternalLinks = false,
     skills,
     disabled,
     placeholder,
@@ -977,6 +980,7 @@ function ComposerPromptEditorTiptapInner(
     onCommandKeyDown,
     isPathQueryActive,
     importContextFragment,
+    rewriteExternalLinks,
   }));
 
   // Stable so a skills refresh does not rerun the controlled-value effect.
@@ -1368,10 +1372,13 @@ function ComposerPromptEditorTiptapInner(
             );
             return true;
           }
-          const importFragment = readCallbacks().importContextFragment;
+          const { importContextFragment: importFragment, rewriteExternalLinks: rewriteLinks } =
+            readCallbacks();
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
+              ? importPastedComposerText(clipboardData, importFragment, {
+                  rewriteExternalLinks: rewriteLinks,
+                })
               : pastedText;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>

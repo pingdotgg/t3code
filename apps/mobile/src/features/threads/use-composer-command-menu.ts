@@ -232,6 +232,7 @@ export function useComposerCommandMenu({
   hasCompactableConversation,
   offersUsageLimits = false,
   enabled = true,
+  mentionIndexEnabled = false,
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
@@ -253,6 +254,7 @@ export function useComposerCommandMenu({
   readonly hasCompactableConversation: boolean;
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
+  readonly mentionIndexEnabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
@@ -304,12 +306,13 @@ export function useComposerCommandMenu({
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return detectComposerTrigger(draftMessage, selection.end, { mentionIndexEnabled });
   })();
   const wantsThreads = trigger?.kind === "path" || trigger?.kind === "thread";
   const wantsFiles = trigger?.kind === "path" || trigger?.kind === "file";
   const wantsPullRequests = trigger?.kind === "pull-request" || trigger?.kind === "hash";
-  const wantsIssues = trigger?.kind === "issue" || trigger?.kind === "hash";
+  const wantsIssues =
+    mentionIndexEnabled && (trigger?.kind === "issue" || trigger?.kind === "hash");
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: wantsFiles ? projectCwd : null,
@@ -331,7 +334,8 @@ export function useComposerCommandMenu({
   const jiraTriggerQuery = trigger?.kind === "jira" ? trigger.query : null;
   const debouncedJiraTriggerQuery = useDebouncedValue(jiraTriggerQuery, 180);
   const jiraMentionIndexLookup = useEnvironmentQuery(
-    trigger?.kind !== "jira" ||
+    !mentionIndexEnabled ||
+      trigger?.kind !== "jira" ||
       environmentId === null ||
       pullRequestProjectId === null ||
       jiraTriggerQuery !== debouncedJiraTriggerQuery
@@ -349,7 +353,8 @@ export function useComposerCommandMenu({
   const figmaTriggerQuery = trigger?.kind === "figma" ? trigger.query : null;
   const debouncedFigmaTriggerQuery = useDebouncedValue(figmaTriggerQuery, 180);
   const figmaMentionIndexLookup = useEnvironmentQuery(
-    trigger?.kind !== "figma" ||
+    !mentionIndexEnabled ||
+      trigger?.kind !== "figma" ||
       environmentId === null ||
       pullRequestProjectId === null ||
       figmaTriggerQuery !== debouncedFigmaTriggerQuery
@@ -367,7 +372,8 @@ export function useComposerCommandMenu({
   const issueTriggerQuery = wantsIssues ? (trigger?.query ?? null) : null;
   const debouncedIssueTriggerQuery = useDebouncedValue(issueTriggerQuery, 180);
   const issueMentionIndexLookup = useEnvironmentQuery(
-    !wantsIssues ||
+    !mentionIndexEnabled ||
+      !wantsIssues ||
       environmentId === null ||
       pullRequestProjectId === null ||
       issueTriggerQuery !== debouncedIssueTriggerQuery
@@ -385,7 +391,8 @@ export function useComposerCommandMenu({
   const threadTriggerQuery = wantsThreads ? (trigger?.query ?? null) : null;
   const debouncedThreadTriggerQuery = useDebouncedValue(threadTriggerQuery, 180);
   const threadMentionIndexLookup = useEnvironmentQuery(
-    !wantsThreads ||
+    !mentionIndexEnabled ||
+      !wantsThreads ||
       environmentId === null ||
       pullRequestProjectId === null ||
       threadTriggerQuery !== debouncedThreadTriggerQuery

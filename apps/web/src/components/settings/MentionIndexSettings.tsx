@@ -122,11 +122,14 @@ function withMentionIndex(
 }
 
 export function MentionIndexSettings() {
+  const enabled = useScopedSettings((settings) => settings.mentionIndexEnabled);
+  if (!enabled) return null;
   return (
     <SettingsSection id="mentions" title="Mentions">
       <p className="text-secondary-label px-4 pt-3 text-xs sm:px-5">
         Jira and Figma indexes are per project. Environment defaults apply until a project overrides
-        them. Pull requests and GitHub issues always follow the open project&apos;s repo.
+        them. Pull requests and GitHub issues always follow the open project&apos;s repo. Turn the
+        mention index off in Settings → Labs to restore classic @ and # menus.
       </p>
       <JiraMentionSettings />
       <FigmaMentionSettings />

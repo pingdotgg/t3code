@@ -435,6 +435,7 @@ const layerMentionIndex = MentionIndexService.layer.pipe(
   Layer.provide(MentionIndexMcpClient.layer),
   Layer.provide(MentionIndex.layer),
   Layer.provide(layerPullRequestService),
+  Layer.provide(layerServerSettings),
 );
 
 const layerGitManager = GitManager.layer.pipe(
