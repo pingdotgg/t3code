@@ -32,7 +32,7 @@ const handlers = {
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "animation_render");
       const manim = yield* ManimRender.ManimRender;
       const clip = yield* manim.render(input.code).pipe(Effect.mapError(toFailure));
-      const html = `<html><body style="margin:0;background:#0b0b0f"><video src="data:video/mp4;base64,${Base64.encode(clip)}" autoplay muted loop playsinline controls style="width:100%;display:block"></video></body></html>`;
+      const html = `<html><body style="margin:0;background:#0b0b0f"><video src="data:video/mp4;base64,${Base64.encode(clip)}" autoplay muted playsinline controls style="width:100%;display:block"></video></body></html>`;
       const htmlRenderService = yield* HtmlRender.HtmlRender;
       const htmlRender = yield* htmlRenderService
         .publish({

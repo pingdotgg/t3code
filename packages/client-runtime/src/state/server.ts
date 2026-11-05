@@ -1202,6 +1202,8 @@ export function createServerEnvironmentAtoms<R, E>(
   const knowledgeMap = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:knowledge-map",
     tag: WS_METHODS.knowledgeList,
+    // Lessons save to the map, so Settings refetches each time it opens.
+    staleTimeMs: 0,
   });
   const removeKnowledge = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:knowledge-remove",

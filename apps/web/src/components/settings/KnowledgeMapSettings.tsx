@@ -1,9 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
+import * as Cause from "effect/Cause";
 import { useState } from "react";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { errorMessage } from "../CommandPalette.logic";
 import { Button } from "../ui/button";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -52,11 +54,8 @@ export function KnowledgeMapSection() {
                     disabled={pending === entry.topic || !permissions[index]}
                     onClick={async () => {
                       setPending(entry.topic);
-                      try {
-                        await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
-                      } finally {
-                        setPending(null);
-                      }
+                      await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
+                      setPending(null);
                     }}
                   >
                     Remove
@@ -66,7 +65,19 @@ export function KnowledgeMapSection() {
             ))
           : [],
       )}
-      {maps.every((query) => query._tag !== "Success" || query.value.length === 0) ? (
+      {maps.flatMap((query, index) =>
+        query._tag === "Failure" ? (
+          <SettingsRow
+            key={`${ids[index]}-error`}
+            {...searchableSetting("knowledge-map")}
+            serverScoped
+            description={`Couldn't load What you know: ${errorMessage(Cause.squash(query.cause))}`}
+          />
+        ) : (
+          []
+        ),
+      )}
+      {maps.every((query) => query._tag === "Success" && query.value.length === 0) ? (
         <SettingsRow
           {...searchableSetting("knowledge-map")}
           serverScoped

@@ -72,7 +72,7 @@ export const make = Effect.fn("KnowledgeMap.make")(function* (stateDir: string) 
       Effect.gen(function* () {
         const key = normalize(input.topic);
         const entry: KnowledgeMapEntry = {
-          topic: input.topic.trim(),
+          topic: input.topic,
           explanation: input.explanation,
           buildsOn: input.buildsOn ?? [],
           doneAt: DateTime.formatIso(yield* DateTime.now),

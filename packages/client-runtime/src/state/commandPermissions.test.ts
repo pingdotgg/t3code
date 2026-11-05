@@ -154,10 +154,10 @@ describe("command permissions", () => {
         expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
 
         const sync = createCommandPermissions(runtime, WS_METHODS.serverStartChatSync);
-        const _knowledge = createCommandPermissions(runtime, WS_METHODS.knowledgeRemove);
+        const knowledge = createCommandPermissions(runtime, WS_METHODS.knowledgeRemove);
         registry.set(sessions(env), AsyncResult.success(grant(false)));
         expect(registry.get(sync.permissionAtom(env))).toBe(false);
-        expect(registry.get(_knowledge.permissionAtom(env))).toBe(false);
+        expect(registry.get(knowledge.permissionAtom(env))).toBe(false);
         registry.set(
           sessions(env),
           AsyncResult.success({
@@ -167,9 +167,9 @@ describe("command permissions", () => {
           }),
         );
         expect(registry.get(sync.permissionAtom(env))).toBe(true);
-        expect(registry.get(_knowledge.permissionAtom(env))).toBe(true);
+        expect(registry.get(knowledge.permissionAtom(env))).toBe(true);
         yield* sync.authorize(registry, env);
-        yield* _knowledge.authorize(registry, env);
+        yield* knowledge.authorize(registry, env);
       }),
     ),
   );
