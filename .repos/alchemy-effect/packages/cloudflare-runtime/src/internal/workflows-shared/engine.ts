@@ -2,7 +2,10 @@
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 // Alchemy modifications: uses Array<T> syntax for non-tuple array types to match the repository convention.
 import { DurableObject } from "cloudflare:workers";
+import type { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import type { RestartFromStep, WorkflowInstanceTerminateOptions } from "./binding.ts";
 import { Context, REDACTED_STEP_OUTPUT } from "./context.ts";
+import type { Event } from "./context.ts";
 import {
   INSTANCE_METADATA,
   InstanceEvent,
@@ -11,6 +14,7 @@ import {
   InstanceTrigger,
   toInstanceStatus,
 } from "./instance.ts";
+import type { InstanceMetadata, RawInstanceLog } from "./instance.ts";
 import { computeHash } from "./lib/cache.ts";
 import {
   ABORT_REASONS,
@@ -39,6 +43,7 @@ import {
   registerRollbackFn,
   ROLLBACK_CACHE_KEY_PREFIX,
 } from "./lib/rollback.ts";
+import type { RollbackRegistration, RollbackRegistryEntry } from "./lib/rollback.ts";
 import { normalizeForStorage } from "./lib/serialization.ts";
 import {
   createReplayReadableStream,
@@ -47,6 +52,7 @@ import {
   getStreamOutputMetaKey,
   StreamOutputState,
 } from "./lib/streams.ts";
+import type { StreamOutputMeta } from "./lib/streams.ts";
 import { TimePriorityQueue } from "./lib/timePriorityQueue.ts";
 import { MODIFIER_KEYS, WorkflowInstanceModifier } from "./modifier.ts";
 import {
@@ -55,33 +61,28 @@ import {
   WorkflowSubscriptionTarget,
 } from "./subscription.ts";
 import type {
-  RestartFromStep,
-  WorkflowInstanceTerminateOptions,
-} from "./binding.ts";
-import type { Event } from "./context.ts";
-import type { InstanceMetadata, RawInstanceLog } from "./instance.ts";
-import type {
-  RollbackRegistration,
-  RollbackRegistryEntry,
-} from "./lib/rollback.ts";
-import type { StreamOutputMeta } from "./lib/streams.ts";
-import type {
   WorkflowSubscriptionEvent,
   WorkflowSubscriptionOptions,
   WorkflowSubscriptionState,
 } from "./subscription.ts";
-import type {
-  WorkflowEntrypoint,
-  WorkflowEvent,
-  WorkflowStep,
-} from "cloudflare:workers";
 
 interface Env {
   ENGINE: DurableObjectNamespace<Engine>;
   USER_WORKFLOW: WorkflowEntrypoint;
-  MINIFLARE_LOOPBACK?: Fetcher;
   WORKFLOW_NAME?: string;
   STEP_LIMIT?: string; // JSON-encoded number from miniflare binding
+  STEP_LIMITS?: Record<string, number>;
+}
+
+/**
+ * Set by workerd when the Engine runs a Workflow exposed on `ctx.exports`. A
+ * single Engine class then serves every Workflow of a Worker, so these replace
+ * the per-Workflow `USER_WORKFLOW` and `WORKFLOW_NAME` bindings (which are then
+ * absent), and the step limit is looked up by name in `STEP_LIMITS`.
+ */
+interface EngineProps {
+  workflowClass?: WorkflowEntrypoint;
+  workflowName?: string;
 }
 
 export type DatabaseWorkflow = {
@@ -162,10 +163,7 @@ function binaryReplacer(_key: string, value: unknown): unknown {
 }
 
 function isStepSuccessEvent(event: InstanceEvent): boolean {
-  return (
-    event === InstanceEvent.STEP_SUCCESS ||
-    event === InstanceEvent.ROLLBACK_STEP_SUCCESS
-  );
+  return event === InstanceEvent.STEP_SUCCESS || event === InstanceEvent.ROLLBACK_STEP_SUCCESS;
 }
 
 type EngineWorkflowSubscriptionEvent =
@@ -174,20 +172,14 @@ type EngineWorkflowSubscriptionEvent =
       type: "internal";
     });
 
-async function readStepConfig(
-  storage: DurableObjectStorage,
-  groupKey: string | null,
-) {
+async function readStepConfig(storage: DurableObjectStorage, groupKey: string | null) {
   if (groupKey === null) {
     return undefined;
   }
   return parseResolvedStepConfig(await storage.get(`${groupKey}-config`));
 }
 
-async function readStepCompletedOutput(
-  storage: DurableObjectStorage,
-  groupKey: string | null,
-) {
+async function readStepCompletedOutput(storage: DurableObjectStorage, groupKey: string | null) {
   if (groupKey === null) {
     return undefined;
   }
@@ -206,11 +198,7 @@ async function readStepCompletedOutput(
 
   const streamMeta = stored.get(streamMetaKey) as StreamOutputMeta | undefined;
   if (streamMeta?.state === StreamOutputState.Complete) {
-    const integrityError = getInvalidStoredStreamOutputError(
-      storage,
-      groupKey,
-      streamMeta,
-    );
+    const integrityError = getInvalidStoredStreamOutputError(storage, groupKey, streamMeta);
     if (integrityError !== undefined) {
       throw createWorkflowError(
         "Step has completed but its stored stream output is corrupt or incomplete",
@@ -248,13 +236,9 @@ async function buildWorkflowSubscriptionEvent(
       event: string;
     };
   const stepEvent = (
-    createEvent: (
-      stepName: string,
-    ) => Extract<WorkflowSubscriptionEvent, { stepName: string }>,
+    createEvent: (stepName: string) => Extract<WorkflowSubscriptionEvent, { stepName: string }>,
   ): EngineWorkflowSubscriptionEvent =>
-    log.target === null
-      ? { ...common, type: "internal" }
-      : createEvent(log.target);
+    log.target === null ? { ...common, type: "internal" } : createEvent(log.target);
 
   switch (log.event) {
     case InstanceEvent.WORKFLOW_QUEUED:
@@ -270,16 +254,11 @@ async function buildWorkflowSubscriptionEvent(
     case InstanceEvent.WORKFLOW_WAITING:
       return { ...common, type: "workflow_waiting" };
     case InstanceEvent.WORKFLOW_SUCCESS: {
-      const storedOutput = await storage.get<{ value: unknown }>(
-        WORKFLOW_OUTPUT_KEY,
-      );
+      const storedOutput = await storage.get<{ value: unknown }>(WORKFLOW_OUTPUT_KEY);
       return {
         ...common,
         type: "workflow_completed",
-        output:
-          storedOutput === undefined
-            ? parseMetadata().result
-            : storedOutput.value,
+        output: storedOutput === undefined ? parseMetadata().result : storedOutput.value,
       };
     }
     case InstanceEvent.WORKFLOW_FAILURE:
@@ -336,9 +315,7 @@ async function buildWorkflowSubscriptionEvent(
         stepName,
         attempt: metadata.attempt,
         error: metadata.error,
-        ...(metadata.retryDelayMs === undefined
-          ? {}
-          : { retryDelayMs: metadata.retryDelayMs }),
+        ...(metadata.retryDelayMs === undefined ? {} : { retryDelayMs: metadata.retryDelayMs }),
       }));
     }
     case InstanceEvent.SLEEP_START:
@@ -419,9 +396,7 @@ async function buildWorkflowSubscriptionEvent(
         stepName,
         attempt: metadata.attempt,
         error: metadata.error,
-        ...(metadata.retryDelayMs === undefined
-          ? {}
-          : { retryDelayMs: metadata.retryDelayMs }),
+        ...(metadata.retryDelayMs === undefined ? {} : { retryDelayMs: metadata.retryDelayMs }),
       }));
     }
     case InstanceEvent.ROLLBACK_COMPLETE:
@@ -433,7 +408,7 @@ async function buildWorkflowSubscriptionEvent(
   }
 }
 
-export class Engine extends DurableObject<Env> {
+export class Engine extends DurableObject<Env, EngineProps> {
   logs: Array<unknown> = [];
 
   isRunning: boolean = false;
@@ -450,9 +425,7 @@ export class Engine extends DurableObject<Env> {
 
   waiters: Map<
     string,
-    Array<
-      [cacheKey: string, resolve: (event: Event | PromiseLike<Event>) => void]
-    >
+    Array<[cacheKey: string, resolve: (event: Event | PromiseLike<Event>) => void]>
   > = new Map();
   eventMap: Map<string, Array<Event>> = new Map();
 
@@ -464,9 +437,10 @@ export class Engine extends DurableObject<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
 
-    this.stepLimit = env.STEP_LIMIT
-      ? JSON.parse(env.STEP_LIMIT)
-      : DEFAULT_STEP_LIMIT;
+    const { workflowName } = this.ctx.props;
+    this.stepLimit =
+      (workflowName === undefined ? undefined : env.STEP_LIMITS?.[workflowName]) ??
+      (env.STEP_LIMIT ? JSON.parse(env.STEP_LIMIT) : DEFAULT_STEP_LIMIT);
 
     void this.ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.transactionSync(() => {
@@ -505,10 +479,7 @@ export class Engine extends DurableObject<Env> {
       });
     });
 
-    this.timeoutHandler = new GracePeriodSemaphore(
-      startGracePeriod,
-      ENGINE_TIMEOUT,
-    );
+    this.timeoutHandler = new GracePeriodSemaphore(startGracePeriod, ENGINE_TIMEOUT);
   }
 
   writeLog(
@@ -539,13 +510,10 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  readEligibleRollbackStepsDesc(
-    limit?: number,
-  ): Array<{ cacheKey: string; target: string }> {
+  readEligibleRollbackStepsDesc(limit?: number): Array<{ cacheKey: string; target: string }> {
     const rollbackTerminalGroups = new Set<string>();
     const rollbackEligibleGroups = new Set<string>();
-    const stepStartsDesc: Array<{ groupKey: string; target: string | null }> =
-      [];
+    const stepStartsDesc: Array<{ groupKey: string; target: string | null }> = [];
     const rows = [
       ...this.ctx.storage.sql.exec<{
         event: InstanceEvent;
@@ -583,10 +551,7 @@ export class Engine extends DurableObject<Env> {
       }
 
       try {
-        if (
-          (JSON.parse(row.metadata) as { hasRollback?: boolean })
-            .hasRollback === true
-        ) {
+        if ((JSON.parse(row.metadata) as { hasRollback?: boolean }).hasRollback === true) {
           rollbackEligibleGroups.add(row.groupKey);
         }
       } catch {
@@ -596,10 +561,7 @@ export class Engine extends DurableObject<Env> {
 
     const eligible: Array<{ cacheKey: string; target: string }> = [];
     for (const { groupKey, target } of stepStartsDesc) {
-      if (
-        rollbackEligibleGroups.has(groupKey) &&
-        !rollbackTerminalGroups.has(groupKey)
-      ) {
+      if (rollbackEligibleGroups.has(groupKey) && !rollbackTerminalGroups.has(groupKey)) {
         eligible.push({ cacheKey: groupKey, target: target ?? groupKey });
         if (limit !== undefined && eligible.length >= limit) {
           break;
@@ -611,9 +573,7 @@ export class Engine extends DurableObject<Env> {
   }
 
   private getEligibleRollbackSteps(limit?: number): Array<string> {
-    return this.readEligibleRollbackStepsDesc(limit).map(
-      ({ cacheKey }) => cacheKey,
-    );
+    return this.readEligibleRollbackStepsDesc(limit).map(({ cacheKey }) => cacheKey);
   }
 
   registerRollbackFn(registration: RollbackRegistration): void {
@@ -642,17 +602,11 @@ export class Engine extends DurableObject<Env> {
     return [];
   }
 
-  async subscribe(
-    options?: WorkflowSubscriptionOptions,
-  ): Promise<WorkflowSubscriptionTarget> {
+  async subscribe(options?: WorkflowSubscriptionOptions): Promise<WorkflowSubscriptionTarget> {
     const { cursor, filter } = options ?? {};
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
     const state: WorkflowSubscriptionState = {
@@ -793,9 +747,7 @@ export class Engine extends DurableObject<Env> {
         groupKey: string | null;
         target: string | null;
         metadata: string;
-      }>(
-        "SELECT id, timestamp, event, groupKey, target, metadata FROM states ORDER BY id ASC",
-      ),
+      }>("SELECT id, timestamp, event, groupKey, target, metadata FROM states ORDER BY id ASC"),
     ];
 
     return rows.map((row) => {
@@ -850,10 +802,7 @@ export class Engine extends DurableObject<Env> {
         groupKey: string | null;
         target: string | null;
         metadata: string;
-      }>(
-        "SELECT event, groupKey, target, metadata FROM states WHERE event = ?",
-        eventType,
-      ),
+      }>("SELECT event, groupKey, target, metadata FROM states WHERE event = ?", eventType),
     ];
 
     return {
@@ -868,8 +817,7 @@ export class Engine extends DurableObject<Env> {
   async getStatus(): Promise<InstanceStatus> {
     if (this.accountId === undefined) {
       // Engine could have restarted, so we try to restore from its state
-      const metadata =
-        await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+      const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
       if (metadata === undefined) {
         // metadata was never set, so we assume the engine was never started
         throw new Error("Engine was never started");
@@ -897,8 +845,7 @@ export class Engine extends DurableObject<Env> {
   }> {
     const status = await this.getStatus();
     // Read the full metadata to get the created_on timestamp
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
     let createdOn = metadata?.instance?.created_on ?? "";
 
     // Backfill for instances created before created_on was populated:
@@ -914,10 +861,10 @@ export class Engine extends DurableObject<Env> {
         }
         try {
           for (const row of this.ctx.storage.sql.exec(query)) {
-            if (row.ts) {
+            if (typeof row.ts === "string" && row.ts) {
               // SQLite DATETIME('now','subsec') returns "YYYY-MM-DD HH:MM:SS.sss"
               // which is not valid ISO 8601 (needs T separator and Z timezone).
-              const raw = String(row.ts).replace(" ", "T") + "Z";
+              const raw = row.ts.replace(" ", "T") + "Z";
               createdOn = raw;
             }
           }
@@ -934,13 +881,8 @@ export class Engine extends DurableObject<Env> {
     };
   }
 
-  async setStatus(
-    accountId: number,
-    instanceId: string,
-    status: InstanceStatus,
-  ): Promise<void> {
-    const previousStatus =
-      await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
+  async setStatus(accountId: number, instanceId: string, status: InstanceStatus): Promise<void> {
+    const previousStatus = await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
     await this.ctx.storage.put(ENGINE_STATUS_KEY, status);
 
     if (previousStatus !== status) {
@@ -966,12 +908,7 @@ export class Engine extends DurableObject<Env> {
           this.writeLog(InstanceEvent.WORKFLOW_PAUSED, null, null, {});
           break;
         case InstanceStatus.WaitingForPause:
-          this.writeLog(
-            InstanceEvent.WORKFLOW_WAITING_FOR_PAUSE,
-            null,
-            null,
-            {},
-          );
+          this.writeLog(InstanceEvent.WORKFLOW_WAITING_FOR_PAUSE, null, null, {});
           break;
         case InstanceStatus.Waiting:
           this.writeLog(InstanceEvent.WORKFLOW_WAITING, null, null, {});
@@ -989,8 +926,7 @@ export class Engine extends DurableObject<Env> {
   > = new Map();
   async waitForStatus(status: string): Promise<void> {
     const targetStatus = toInstanceStatus(status);
-    const currentStatus =
-      await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
+    const currentStatus = await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
 
     // if the workflow has already reached the desired state, resolve immediately
     if (currentStatus === targetStatus) {
@@ -1018,30 +954,21 @@ export class Engine extends DurableObject<Env> {
     switch (status) {
       case InstanceStatus.Errored: {
         // if it reaches final status "errored", then it can't be waiting for it to complete or terminate
-        const unreachableStatuses = [
-          InstanceStatus.Complete,
-          InstanceStatus.Terminated,
-        ];
+        const unreachableStatuses = [InstanceStatus.Complete, InstanceStatus.Terminated];
 
         this.rejectUnreachableStatus(status, unreachableStatuses);
         break;
       }
       case InstanceStatus.Terminated: {
         // if it reaches final status "terminated", then it can't be waiting for it to complete or error
-        const unreachableStatuses = [
-          InstanceStatus.Complete,
-          InstanceStatus.Errored,
-        ];
+        const unreachableStatuses = [InstanceStatus.Complete, InstanceStatus.Errored];
 
         this.rejectUnreachableStatus(status, unreachableStatuses);
         break;
       }
       case InstanceStatus.Complete: {
         // if it reaches final status "complete", then it can't be waiting for it to terminate or error
-        const unreachableStatuses = [
-          InstanceStatus.Terminated,
-          InstanceStatus.Errored,
-        ];
+        const unreachableStatuses = [InstanceStatus.Terminated, InstanceStatus.Errored];
 
         this.rejectUnreachableStatus(status, unreachableStatuses);
         break;
@@ -1051,10 +978,7 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  rejectUnreachableStatus(
-    reachedStatus: number,
-    unreachableStatuses: Array<number>,
-  ): void {
+  rejectUnreachableStatus(reachedStatus: number, unreachableStatuses: Array<number>): void {
     if (unreachableStatuses) {
       for (const unreachableStatus of unreachableStatuses) {
         const waiter = this.statusWaiters.get(unreachableStatus);
@@ -1107,10 +1031,7 @@ export class Engine extends DurableObject<Env> {
     string,
     { resolve: (v: unknown) => void; reject: (e: unknown) => void }
   > = new Map();
-  async waitForStepResult(
-    stepName: string,
-    stepCount?: number,
-  ): Promise<unknown> {
+  async waitForStepResult(stepName: string, stepCount?: number): Promise<unknown> {
     const hash = await computeHash(stepName);
     const count = stepCount ?? 1;
     const cacheKey = `${hash}-${count}`;
@@ -1146,11 +1067,7 @@ export class Engine extends DurableObject<Env> {
     });
   }
 
-  handleStepResultWaiter(
-    group: string,
-    event: InstanceEvent,
-    metadata: Record<string, unknown>,
-  ) {
+  handleStepResultWaiter(group: string, event: InstanceEvent, metadata: Record<string, unknown>) {
     const waiter = this.stepResultWaiters.get(group);
     if (!waiter) {
       return;
@@ -1200,9 +1117,7 @@ export class Engine extends DurableObject<Env> {
       const logs = this.readLogsFromEvent(InstanceEvent.WORKFLOW_FAILURE).logs;
       const log = logs.at(0);
       if (!log?.metadata.error) {
-        throw new Error(
-          "Cannot retrieve error: No workflow instance failure log found",
-        );
+        throw new Error("Cannot retrieve error: No workflow instance failure log found");
       }
       return log.metadata.error;
     }
@@ -1258,11 +1173,7 @@ export class Engine extends DurableObject<Env> {
     });
   }
 
-  async receiveEvent(event: {
-    timestamp: Date;
-    payload: unknown;
-    type: string;
-  }) {
+  async receiveEvent(event: { timestamp: Date; payload: unknown; type: string }) {
     // There are four possible cases here:
     // - There is a callback waiting, send it
     // - There is no callback waiting but engine is alive, store it
@@ -1296,15 +1207,12 @@ export class Engine extends DurableObject<Env> {
         }
       }
     } else {
-      const mockEvent = await this.ctx.storage.get(
-        `${MODIFIER_KEYS.MOCK_EVENT}${event.type}`,
-      );
+      const mockEvent = await this.ctx.storage.get(`${MODIFIER_KEYS.MOCK_EVENT}${event.type}`);
       if (mockEvent) {
         return;
       }
 
-      const metadata =
-        await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+      const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
       if (metadata === undefined) {
         throw new Error("Engine was never started");
@@ -1329,14 +1237,10 @@ export class Engine extends DurableObject<Env> {
     from?: RestartFromStep,
     terminateOptions?: WorkflowInstanceTerminateOptions,
   ): Promise<void> {
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
     switch (newStatus) {
@@ -1348,11 +1252,7 @@ export class Engine extends DurableObject<Env> {
         if (currentStatus === InstanceStatus.WaitingForPause) {
           // Engine is still running — cancel the pending pause
           this.timeoutHandler.cancelWaitingPromisesByType("pause");
-          await this.setStatus(
-            metadata.accountId,
-            metadata.instance.id,
-            InstanceStatus.Running,
-          );
+          await this.setStatus(metadata.accountId, metadata.instance.id, InstanceStatus.Running);
         } else if (currentStatus === InstanceStatus.Paused) {
           await this.attemptResume();
         }
@@ -1361,11 +1261,9 @@ export class Engine extends DurableObject<Env> {
       case "terminate": {
         const currentStatus = await this.getStatus();
         if (
-          [
-            InstanceStatus.Terminated,
-            InstanceStatus.Complete,
-            InstanceStatus.Errored,
-          ].includes(currentStatus)
+          [InstanceStatus.Terminated, InstanceStatus.Complete, InstanceStatus.Errored].includes(
+            currentStatus,
+          )
         ) {
           throw createWorkflowError(
             "Cannot terminate instance since its on a finite state",
@@ -1387,9 +1285,7 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  private async replayRollbackRegistry(
-    metadata: InstanceMetadata,
-  ): Promise<void> {
+  private async replayRollbackRegistry(metadata: InstanceMetadata): Promise<void> {
     if (this.rollbackRegistry.size > 0) {
       return;
     }
@@ -1403,7 +1299,7 @@ export class Engine extends DurableObject<Env> {
     const stubStep = this.createRollbackContext();
     this.setRollbackPhase("replay");
     try {
-      await this.env.USER_WORKFLOW.run(
+      await (this.ctx.props.workflowClass ?? this.env.USER_WORKFLOW).run(
         metadata.event,
         stubStep as unknown as WorkflowStep,
       );
@@ -1418,14 +1314,10 @@ export class Engine extends DurableObject<Env> {
   }
 
   async userTriggeredTerminate(options?: WorkflowInstanceTerminateOptions) {
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
     if (options?.rollback === true) {
@@ -1450,11 +1342,7 @@ export class Engine extends DurableObject<Env> {
       },
     });
 
-    await this.setStatus(
-      metadata.accountId,
-      metadata.instance.id,
-      InstanceStatus.Terminated,
-    );
+    await this.setStatus(metadata.accountId, metadata.instance.id, InstanceStatus.Terminated);
 
     await this.abort(ABORT_REASONS.USER_TERMINATE);
   }
@@ -1462,75 +1350,36 @@ export class Engine extends DurableObject<Env> {
   /** Deletes all instance state and aborts its current execution. */
   async deleteInstance(): Promise<void> {
     if ((await this.ctx.storage.get(INSTANCE_METADATA)) === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
     await this.ctx.storage.deleteAll();
-
-    if (
-      this.env.MINIFLARE_LOOPBACK !== undefined &&
-      this.env.WORKFLOW_NAME !== undefined
-    ) {
-      try {
-        const response = await this.env.MINIFLARE_LOOPBACK.fetch(
-          `http://localhost/core/workflow-storage/${encodeURIComponent(this.env.WORKFLOW_NAME)}/${this.ctx.id.toString()}?defer=1`,
-          { method: "DELETE" },
-        );
-        if (!response.ok && response.status !== 404) {
-          console.error("Failed to delete persisted workflow instance");
-        }
-      } catch (error) {
-        console.error("Failed to delete persisted workflow instance", error);
-      }
-    }
-
     await this.abort(ABORT_REASONS.USER_DELETE);
   }
 
   async userTriggeredPause() {
     const status = await this.getStatus();
 
-    if (
-      status === InstanceStatus.Paused ||
-      status === InstanceStatus.WaitingForPause
-    ) {
+    if (status === InstanceStatus.Paused || status === InstanceStatus.WaitingForPause) {
       return;
     }
 
-    if (
-      status !== InstanceStatus.Running &&
-      status !== InstanceStatus.Waiting
-    ) {
+    if (status !== InstanceStatus.Running && status !== InstanceStatus.Waiting) {
       return;
     }
 
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
-    await this.setStatus(
-      metadata.accountId,
-      metadata.instance.id,
-      InstanceStatus.WaitingForPause,
-    );
+    await this.setStatus(metadata.accountId, metadata.instance.id, InstanceStatus.WaitingForPause);
 
     void this.timeoutHandler
       .waitUntilNothingIsRunning("pause", async () => {
         await this.ctx.storage.put(PAUSE_DATETIME, new Date());
-        await this.setStatus(
-          metadata.accountId,
-          metadata.instance.id,
-          InstanceStatus.Paused,
-        );
+        await this.setStatus(metadata.accountId, metadata.instance.id, InstanceStatus.Paused);
         // Signal the pause controller to interrupt any active
         // scheduler.wait (sleep/waitForEvent). The workflow will
         // throw a pause error at the next step boundary via
@@ -1551,30 +1400,18 @@ export class Engine extends DurableObject<Env> {
 
     let groupKeysToWipe: Set<string> | null = null;
     if (restartFromStep) {
-      groupKeysToWipe = resolveGroupKeysToWipe(
-        this.ctx.storage.sql,
-        restartFromStep,
-      );
+      groupKeysToWipe = resolveGroupKeysToWipe(this.ctx.storage.sql, restartFromStep);
       if (!groupKeysToWipe) {
         throw stepNotFoundError(restartFromStep.name);
       }
     }
 
-    await wipeRestartState(
-      this.ctx.storage,
-      ENGINE_STATUS_KEY,
-      PAUSE_DATETIME,
-      groupKeysToWipe,
-    );
+    await wipeRestartState(this.ctx.storage, ENGINE_STATUS_KEY, PAUSE_DATETIME, groupKeysToWipe);
 
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
     const { accountId, workflow, version, instance, event } = metadata;
@@ -1594,18 +1431,13 @@ export class Engine extends DurableObject<Env> {
   }
 
   async attemptResume() {
-    const metadata =
-      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    const metadata = await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
     if (metadata === undefined) {
-      throw createWorkflowError(
-        "Instance does not exist",
-        "instance.not_found",
-      );
+      throw createWorkflowError("Instance does not exist", "instance.not_found");
     }
 
-    const status =
-      await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
+    const status = await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
     if (status !== InstanceStatus.Paused) {
       return;
     }
@@ -1637,6 +1469,12 @@ export class Engine extends DurableObject<Env> {
     clearRollbackRegistry(this.rollbackRegistry);
 
     void this.init(accountId, workflow, version, instance, event);
+  }
+
+  async hasInstance(): Promise<boolean> {
+    // INSTANCE_METADATA is written exactly once, by the first init() for this
+    // id, so its presence is the durable marker that the instance exists.
+    return (await this.ctx.storage.get(INSTANCE_METADATA)) !== undefined;
   }
 
   async init(
@@ -1729,11 +1567,8 @@ export class Engine extends DurableObject<Env> {
 
     void workflowRunningHandler();
     try {
-      const target = this.env.USER_WORKFLOW;
-      const result = await target.run(
-        event,
-        stubStep as unknown as WorkflowStep,
-      );
+      const target = this.ctx.props.workflowClass ?? this.env.USER_WORKFLOW;
+      const result = await target.run(event, stubStep as unknown as WorkflowStep);
       await this.ctx.storage.put(WORKFLOW_OUTPUT_KEY, {
         value: normalizeForStorage(result),
       });
@@ -1756,20 +1591,14 @@ export class Engine extends DurableObject<Env> {
 
       // Run before the terminal status so events land before WORKFLOW_FAILURE.
       try {
-        await executeRollbacks(
-          this,
-          err instanceof Error ? err : new Error(String(err)),
-        );
+        await executeRollbacks(this, err instanceof Error ? err : new Error(String(err)));
       } catch (rollbackErr) {
         console.error("Rollback execution failed:", rollbackErr);
       }
 
       let error;
       if (err instanceof Error) {
-        if (
-          err.name === "NonRetryableError" ||
-          err.message.startsWith("NonRetryableError")
-        ) {
+        if (err.name === "NonRetryableError" || err.message.startsWith("NonRetryableError")) {
           const fatalError = shouldPreserveNonRetryableError()
             ? new PreservedNonRetryableError(err)
             : new WorkflowFatalError(
