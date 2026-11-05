@@ -67,6 +67,14 @@ describe("composerContextExternalLinks", () => {
     expect(new Set(rewritten.records.map((record) => record.contextId)).size).toBe(2);
   });
 
+  it("scopes GitHub issue context ids by host", () => {
+    const rewritten = externalLinkContextReferences(
+      "https://github.com/acme/app/issues/7 https://ghe.example.com/acme/app/issues/7",
+    );
+    expect(rewritten.records).toHaveLength(2);
+    expect(new Set(rewritten.records.map((record) => record.contextId)).size).toBe(2);
+  });
+
   it("rejects Figma URLs with malformed percent escapes", () => {
     expect(parseFigmaDesignUrl("https://www.figma.com/design/AbCdEf123/%")).toBeNull();
     expect(

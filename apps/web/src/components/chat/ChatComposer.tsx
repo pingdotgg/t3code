@@ -3525,12 +3525,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? "Finding Jira issues..."
                           : composerTriggerKind === "issue"
                             ? "Finding GitHub issues..."
-                            : composerTriggerKind === "thread"
-                              ? "Finding threads..."
-                              : composerTriggerKind === "skill" ||
-                                  composerTriggerKind === "slash-command"
-                                ? "Searching workspace skills..."
-                                : "Searching workspace files..."
+                            : composerTriggerKind === "figma"
+                              ? "Finding Figma designs..."
+                              : composerTriggerKind === "thread"
+                                ? "Finding threads..."
+                                : composerTriggerKind === "skill" ||
+                                    composerTriggerKind === "slash-command"
+                                  ? "Searching workspace skills..."
+                                  : "Searching workspace files..."
                     : composerMenuEmptyState
                   : ""}
               </div>

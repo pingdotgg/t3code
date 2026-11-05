@@ -150,12 +150,18 @@ export function issueContextRecord(input: {
   readonly repository: string;
   readonly state: "open" | "closed";
 }): IssueContextRecord {
+  let host = "github.com";
+  try {
+    host = new URL(input.url).host.toLowerCase() || host;
+  } catch {
+    // Keep a stable fallback when the URL is malformed.
+  }
   return {
     version: 1,
     kind: "issue",
     contextId: toKindScopedComposerContextId(
       "issue",
-      `${input.repository.toLowerCase()}#${input.number}`,
+      `${host}:${input.repository.toLowerCase()}#${input.number}`,
     ),
     label: sanitizeComposerContextLabel(`#${input.number}`, "issue"),
     number: input.number,

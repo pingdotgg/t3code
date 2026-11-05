@@ -43,7 +43,11 @@ import {
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import { mentionSearchInput } from "@t3tools/client-runtime/state/mentions";
-import { mentionIndexEnvironment } from "../../state/pull-requests";
+import {
+  composerPullRequestsFromLinks,
+  withLinkedComposerPullRequestsFirst,
+} from "@t3tools/shared/composerPullRequestMatches";
+import { composerPullRequests, mentionIndexEnvironment } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useDebouncedValue } from "../../state/queries";
 import {
@@ -329,8 +333,65 @@ export function useComposerCommandMenu({
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
     threadPullRequests,
-    query: wantsPullRequests ? (trigger?.query ?? null) : null,
+    // Classic live list is empty when the mention index owns PR suggestions.
+    query: mentionIndexEnabled || !wantsPullRequests ? null : (trigger?.query ?? null),
   });
+  const pullRequestTriggerQuery = wantsPullRequests ? (trigger?.query ?? null) : null;
+  const debouncedPullRequestTriggerQuery = useDebouncedValue(pullRequestTriggerQuery, 180);
+  const prMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsPullRequests ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      pullRequestTriggerQuery !== debouncedPullRequestTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedPullRequestTriggerQuery ?? "",
+            limit: 12,
+            providers: ["pull-request"],
+          }),
+        }),
+  );
+  const pullRequestTriggerNumber = (() => {
+    if (!mentionIndexEnabled || !wantsPullRequests || (trigger?.query.length ?? 0) === 0) {
+      return null;
+    }
+    const number = Number(trigger?.query ?? "");
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  })();
+  const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
+  const settledPullRequestNumber =
+    pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
+  const indexHasExactPullRequest =
+    settledPullRequestNumber !== null &&
+    prMentionIndexLookup.data?.hits.some(
+      (hit) =>
+        hit.pullRequest !== undefined &&
+        hit.pullRequest.projectId === pullRequestProjectId &&
+        hit.pullRequest.repository.trim().toLowerCase() ===
+          pullRequestRepository?.trim().toLowerCase() &&
+        hit.pullRequest.number === settledPullRequestNumber,
+    ) === true;
+  const exactPullRequestLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      settledPullRequestNumber === null ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      pullRequestRepository === null ||
+      indexHasExactPullRequest
+      ? null
+      : composerPullRequests.detail({
+          environmentId,
+          input: {
+            projectId: pullRequestProjectId,
+            repository: pullRequestRepository,
+            number: settledPullRequestNumber,
+          },
+        }),
+  );
   const jiraTriggerQuery = trigger?.kind === "jira" ? trigger.query : null;
   const debouncedJiraTriggerQuery = useDebouncedValue(jiraTriggerQuery, 180);
   const jiraMentionIndexLookup = useEnvironmentQuery(
@@ -467,8 +528,77 @@ export function useComposerCommandMenu({
         ];
       });
 
-    const pullRequestItems = (): ComposerCommandItem[] =>
-      pullRequestSearch.entries.map((entry) => ({
+    const pullRequestItems = (): ComposerCommandItem[] => {
+      if (mentionIndexEnabled) {
+        if (pullRequestProjectId === null || pullRequestRepository === null) return [];
+        const exactPullRequest =
+          exactPullRequestLookup.data?.number === pullRequestTriggerNumber
+            ? [
+                {
+                  projectId: pullRequestProjectId,
+                  repository: pullRequestRepository,
+                  number: exactPullRequestLookup.data.number,
+                  title: exactPullRequestLookup.data.title,
+                  url: exactPullRequestLookup.data.url,
+                  headBranch: exactPullRequestLookup.data.headBranch,
+                  baseBranch: exactPullRequestLookup.data.baseBranch,
+                  state: exactPullRequestLookup.data.state,
+                  isDraft: exactPullRequestLookup.data.isDraft ?? false,
+                  updatedAt: exactPullRequestLookup.data.updatedAt,
+                },
+              ]
+            : [];
+        const linked = composerPullRequestsFromLinks(
+          threadPullRequests ?? [],
+          pullRequestProjectId,
+        );
+        const matches = withLinkedComposerPullRequestsFirst({
+          matches: [
+            ...exactPullRequest,
+            ...(prMentionIndexLookup.data?.hits ?? []).flatMap((hit) =>
+              hit.pullRequest === undefined
+                ? []
+                : [
+                    {
+                      projectId: hit.pullRequest.projectId,
+                      repository: hit.pullRequest.repository,
+                      number: hit.pullRequest.number,
+                      title: hit.pullRequest.title,
+                      url: hit.pullRequest.url,
+                      headBranch: hit.pullRequest.headBranch,
+                      baseBranch: hit.pullRequest.baseBranch,
+                      state: hit.pullRequest.state,
+                      isDraft: hit.pullRequest.isDraft,
+                      updatedAt: "",
+                    },
+                  ],
+            ),
+          ],
+          linked,
+          query: trigger.query,
+          limit: 12,
+        });
+        return matches.map((pullRequest) => ({
+          id: `pr:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+          type: "pull-request" as const,
+          pullRequest: {
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: pullRequest.url,
+            headBranch: pullRequest.headBranch,
+            baseBranch: pullRequest.baseBranch,
+            state: pullRequest.state,
+            isDraft: pullRequest.isDraft,
+          },
+          label: `#${pullRequest.number}`,
+          description: `${pullRequest.isDraft ? "Draft" : pullRequest.state} · ${
+            pullRequest.repository.toLowerCase() === pullRequestRepository.toLowerCase()
+              ? ""
+              : `${pullRequest.repository} · `
+          }${pullRequest.title}`,
+        }));
+      }
+      return pullRequestSearch.entries.map((entry) => ({
         id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
         type: "pull-request" as const,
         pullRequest: {
@@ -487,6 +617,7 @@ export function useComposerCommandMenu({
             : `${entry.repository} · `
         }${entry.title}`,
       }));
+    };
 
     if (trigger.kind === "issue") return issueItems();
     if (trigger.kind === "pull-request") return pullRequestItems();
@@ -892,6 +1023,8 @@ export function useComposerCommandMenu({
     }
   };
 
+  const prMentionIndexSyncingEmpty =
+    prMentionIndexLookup.data?.status === "syncing" && prMentionIndexLookup.data.hits.length === 0;
   const jiraMentionIndexSyncingEmpty =
     jiraMentionIndexLookup.data?.status === "syncing" &&
     jiraMentionIndexLookup.data.hits.length === 0;
@@ -909,6 +1042,7 @@ export function useComposerCommandMenu({
   useEffect(() => {
     const refreshers: Array<() => void> = [];
     if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (prMentionIndexSyncingEmpty) refreshers.push(prMentionIndexLookup.refresh);
     if (jiraMentionIndexSyncingEmpty) refreshers.push(jiraMentionIndexLookup.refresh);
     if (figmaMentionIndexSyncingEmpty) refreshers.push(figmaMentionIndexLookup.refresh);
     if (issueMentionIndexSyncingEmpty) refreshers.push(issueMentionIndexLookup.refresh);
@@ -919,14 +1053,30 @@ export function useComposerCommandMenu({
     return () => clearInterval(interval);
   }, [
     threadMentionIndexSyncingEmpty,
+    prMentionIndexSyncingEmpty,
     jiraMentionIndexSyncingEmpty,
     figmaMentionIndexSyncingEmpty,
     issueMentionIndexSyncingEmpty,
     threadMentionIndexLookup.refresh,
+    prMentionIndexLookup.refresh,
     jiraMentionIndexLookup.refresh,
     figmaMentionIndexLookup.refresh,
     issueMentionIndexLookup.refresh,
   ]);
+
+  const pullRequestIndexPending =
+    mentionIndexEnabled &&
+    wantsPullRequests &&
+    (prMentionIndexLookup.isPending ||
+      prMentionIndexSyncingEmpty ||
+      pullRequestTriggerQuery !== debouncedPullRequestTriggerQuery ||
+      pullRequestTriggerNumber !== debouncedPullRequestNumber ||
+      exactPullRequestLookup.isPending);
+  const pullRequestIndexError =
+    mentionIndexEnabled &&
+    (prMentionIndexLookup.error !== null || prMentionIndexLookup.data?.status === "error")
+      ? "Pull requests could not be read for this project."
+      : null;
 
   return {
     selection,
@@ -936,7 +1086,8 @@ export function useComposerCommandMenu({
     skills,
     isLoading:
       wantsPullRequests || wantsIssues
-        ? (wantsPullRequests && pullRequestSearch.isPending) ||
+        ? (wantsPullRequests &&
+            (mentionIndexEnabled ? pullRequestIndexPending : pullRequestSearch.isPending)) ||
           (wantsIssues &&
             (issueMentionIndexLookup.isPending ||
               issueMentionIndexSyncingEmpty ||
@@ -961,11 +1112,15 @@ export function useComposerCommandMenu({
       trigger?.kind === "hash"
         ? pullRequestProjectId === null || pullRequestRepository === null
           ? "Pull requests and issues are unavailable for this project."
-          : pullRequestSearch.error
+          : mentionIndexEnabled
+            ? pullRequestIndexError
+            : pullRequestSearch.error
         : trigger?.kind === "pull-request"
           ? pullRequestProjectId === null || pullRequestRepository === null
             ? "Pull requests are unavailable for this project."
-            : pullRequestSearch.error
+            : mentionIndexEnabled
+              ? pullRequestIndexError
+              : pullRequestSearch.error
           : trigger?.kind === "jira"
             ? pullRequestProjectId === null
               ? "Jira search needs an open project."
