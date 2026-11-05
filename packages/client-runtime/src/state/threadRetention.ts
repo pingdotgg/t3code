@@ -26,17 +26,18 @@ function retainedBytes(value: unknown): number {
 }
 
 /**
- * A cheap estimate of what a thread keeps in the heap, from its items, inherited rows and message
- * records, with strings counted by length. It walks one thread when the thread is left. Timeline
- * rows and parsed markdown come on top, which matters only for small threads.
+ * A cheap estimate of what a thread keeps in the heap, from its items, rows holding an item of their
+ * own and message records, with strings counted by length. It walks one thread when the thread is
+ * left. Timeline rows and parsed markdown come on top, which matters only for small threads.
  */
 export function estimateRetainedThreadBytes(projection: OrchestrationV2ThreadProjection): number {
   let bytes = retainedBytes(projection.turnItems) + retainedBytes(projection.messages);
+  const turnItems = new Set<object>(projection.turnItems);
   for (const row of projection.visibleTurnItems) {
-    bytes +=
-      row.sourceThreadId === projection.thread.id
-        ? OBJECT_OVERHEAD_BYTES
-        : retainedBytes(row.item) + OBJECT_OVERHEAD_BYTES;
+    // An inherited row, or a saved record's copy that differs from its item, holds its own.
+    bytes += turnItems.has(row.item)
+      ? OBJECT_OVERHEAD_BYTES
+      : retainedBytes(row.item) + OBJECT_OVERHEAD_BYTES;
   }
   return bytes;
 }

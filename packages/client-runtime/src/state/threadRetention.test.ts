@@ -45,4 +45,14 @@ describe("estimateRetainedThreadBytes", () => {
     } as unknown as OrchestrationV2ThreadProjection;
     expect(estimateRetainedThreadBytes(inherited)).toBeGreaterThan(1_000);
   });
+
+  it("charges a local row that holds its own copy of an item", () => {
+    const shared = withItems(1, 1_000);
+    const copied = {
+      ...shared,
+      visibleTurnItems: shared.visibleTurnItems.map((row) => ({ ...row, item: { ...row.item } })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    const extra = estimateRetainedThreadBytes(copied) - estimateRetainedThreadBytes(shared);
+    expect(extra).toBeGreaterThan(1_000);
+  });
 });
