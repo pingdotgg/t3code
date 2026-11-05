@@ -65,9 +65,11 @@ export function SideChatMap(props: {
   const mapRows = groupSideChatMapRows(rows, collapsedSections);
   const layout = layoutSideChatTree(mapRows, SIDE_CHAT_MAP_LAYOUT);
   const scale = fit ? fitSideChatMapScale(layout.width, availableWidth) : 1;
-  const tabStopId = mapRows.some((row) => row.threadId === focusedId)
-    ? focusedId
+  // A collapsed section stands in for the current side chat it hides.
+  const selectedId = mapRows.some((row) => row.threadId === currentThreadId)
+    ? currentThreadId
     : (currentSectionId ?? currentThreadId);
+  const tabStopId = mapRows.some((row) => row.threadId === focusedId) ? focusedId : selectedId;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a resize observer on the scroller whose width sets the fitted map's scale
   useEffect(() => {
@@ -157,7 +159,7 @@ export function SideChatMap(props: {
                         role="treeitem"
                         data-thread-id={row.threadId}
                         aria-level={row.depth + 1}
-                        aria-selected={current}
+                        aria-selected={row.threadId === selectedId}
                         aria-expanded={section ? !collapsed : undefined}
                         aria-description={sideChatMapNodeDescription({ ...row, collapsed })}
                         tabIndex={row.threadId === tabStopId ? 0 : -1}

@@ -28,6 +28,7 @@ function row(
   label: string,
   state: SideChatTreeRow["state"] = "open",
   noteStatus: SideChatTreeRow["noteStatus"] = null,
+  section: string | null = null,
 ): SideChatTreeRow {
   return {
     threadId: ThreadId.make(id),
@@ -36,7 +37,7 @@ function row(
     label,
     state,
     noteStatus,
-    section: null,
+    section,
   };
 }
 
@@ -84,6 +85,28 @@ it("walks the tree with arrow keys and opens the focused node with Enter", async
   expect(onOpenSideChat).toHaveBeenLastCalledWith(ThreadId.make("c"));
   await userEvent.click(node(screen, "RL environments"));
   expect(onFocusLesson).toHaveBeenCalledOnce();
+});
+
+it("keeps the tab stop on the current chat in a section until the section collapses", async () => {
+  await using screen = await render(
+    <SideChatMap
+      rows={[
+        row("lesson", null, 0, "RL environments", "lesson"),
+        row("a", "lesson", 1, "observation space", "open", null, "Lesson 1: spaces"),
+      ]}
+      currentThreadId={ThreadId.make("a")}
+      onOpenSideChat={() => {}}
+      onFocusLesson={() => {}}
+    />,
+  );
+
+  await expect.element(node(screen, "observation space")).toHaveAttribute("tabindex", "0");
+  await expect.element(node(screen, "Lesson 1: spaces")).toHaveAttribute("aria-selected", "false");
+  await userEvent.click(node(screen, "Lesson 1: spaces"));
+  await expect.element(node(screen, "Lesson 1: spaces (1)")).toHaveAttribute("tabindex", "0");
+  await expect
+    .element(node(screen, "Lesson 1: spaces (1)"))
+    .toHaveAttribute("aria-selected", "true");
 });
 
 it("marks the side chat of the tab the learner was last on", async () => {
