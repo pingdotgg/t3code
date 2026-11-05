@@ -16,6 +16,14 @@ const SNIPPET_LENGTH = 200;
 // Only real element names, so prose like Promise<void> survives. Review bots open with badge markup.
 const HTML_TAG =
   /<\/?(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])[^>]*>/gi;
+const MARKDOWN_CODE = /(```[\s\S]*?```|`[^`]*`)/;
+
+// Split keeps the captured code regions at odd indexes, and those keep their tags.
+const withoutHtmlTags = (text: string) =>
+  text
+    .split(MARKDOWN_CODE)
+    .map((part, index) => (index % 2 === 1 ? part : part.replaceAll(HTML_TAG, " ")))
+    .join("");
 
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
@@ -162,9 +170,7 @@ export function evaluatePullRequestWatch(
 }
 
 function snippet(body: string): string {
-  const text = body
-    .replaceAll(/<!--[\s\S]*?-->/g, " ")
-    .replaceAll(HTML_TAG, " ")
+  const text = withoutHtmlTags(body.replaceAll(/<!--[\s\S]*?-->/g, " "))
     .replaceAll(/\s+/g, " ")
     .trim();
   if (text.length <= SNIPPET_LENGTH) return text;
