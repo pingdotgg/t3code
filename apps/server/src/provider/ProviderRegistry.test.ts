@@ -6,6 +6,7 @@ import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -44,6 +45,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
@@ -175,6 +177,7 @@ type TestClaudeCapabilities = {
   readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models?: ReadonlyArray<ModelInfo>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -1934,6 +1937,139 @@ it.layer(
       }),
     );
 
+    it.effect("ignores a probe from an instance that settings replaced mid-refresh", () =>
+      Effect.gen(function* () {
+        const scenario = Effect.fn(function* (
+          probeFails: boolean,
+          run: (
+            registry: ProviderRegistry.ProviderRegistry["Service"],
+          ) => Effect.Effect<ReadonlyArray<ServerProvider>>,
+        ) {
+          const driver = ProviderDriverKind.make("codex");
+          const instanceId = ProviderInstanceId.make("codex");
+          const provider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "2.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const retiredProbe = {
+            ...provider,
+            status: "error",
+            installed: false,
+            version: "1.0.0",
+            message: "Codex CLI is not installed.",
+          } as const satisfies ServerProvider;
+          const probeStarted = yield* Deferred.make<void>();
+          const releaseProbe = yield* Deferred.make<void>();
+          const makeInstance = (snapshot: ServerProvider, refresh: Effect.Effect<void>) =>
+            ({
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(snapshot),
+                refresh: Effect.as(refresh, snapshot),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            }) satisfies ProviderInstance;
+          const retiredInstance = makeInstance(
+            retiredProbe,
+            Deferred.succeed(probeStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseProbe)),
+              Effect.andThen(probeFails ? Effect.die(new Error("probe failed")) : Effect.void),
+            ),
+          );
+          const rebuiltInstance = makeInstance(provider, Effect.void);
+          const instances = yield* Ref.make<ReadonlyArray<ProviderInstance>>([retiredInstance]);
+          const changes = yield* PubSub.unbounded<void>();
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (requestedId) =>
+                Ref.get(instances).pipe(
+                  Effect.map((current) =>
+                    current.find((instance) => instance.instanceId === requestedId),
+                  ),
+                ),
+              listInstances: Ref.get(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(layerUnusedMutator),
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-retired-refresh-",
+                }),
+              ),
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          return yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const rebuiltPublished = yield* Stream.toPull(
+              registry.streamChanges.pipe(
+                Stream.filter((providers) => providers[0]?.version === provider.version),
+              ),
+            );
+            const refresh = yield* run(registry).pipe(Effect.forkChild);
+            yield* Deferred.await(probeStarted);
+            yield* Ref.set(instances, [rebuiltInstance]);
+            yield* PubSub.publish(changes, undefined);
+            yield* rebuiltPublished;
+            yield* Deferred.succeed(releaseProbe, undefined);
+            return {
+              provider,
+              result: yield* Fiber.join(refresh),
+              providers: yield* registry.getProviders,
+            };
+          }).pipe(Effect.provide(runtimeServices));
+        });
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+
+        const manual = yield* scenario(false, (registry) => registry.refresh());
+        expect(manual.result).toEqual([expect.objectContaining(manual.provider)]);
+        expect(manual.providers).toEqual([expect.objectContaining(manual.provider)]);
+
+        // Neither the retired probe's failure nor its cached row can stand in for the replacement.
+        for (const probeFails of [true, false]) {
+          const afterUpdate = yield* scenario(probeFails, (registry) =>
+            registry.refreshAfterUpdate(driver, instanceId),
+          );
+          expect(afterUpdate.result).toEqual([]);
+          expect(afterUpdate.providers).toEqual([expect.objectContaining(afterUpdate.provider)]);
+        }
+      }),
+    );
+
     it.effect("keeps an enriched snapshot that streams in before a manual refresh returns", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("acpRegistry");
@@ -2905,6 +3041,72 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("adds models Claude Code reports that the catalog does not know", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          {
+            ...defaultClaudeSettings,
+            customModels: [{ slug: "gateway/kimi-3[1m]", name: "Kimi (mine)" }],
+          },
+          claudeCapabilities({
+            models: [
+              { value: "default", displayName: "Default", description: "" },
+              { value: "sonnet", displayName: "Sonnet", description: "" },
+              { value: "claude-haiku-4-5[1m]", displayName: "Haiku", description: "" },
+              {
+                value: "best",
+                resolvedModel: "claude-opus-5[1m]",
+                displayName: "Best",
+                description: "",
+              },
+              { value: "gateway/kimi-3[1m]", displayName: "Kimi 3", description: "" },
+              { value: "gateway/glm-5[1m]", displayName: "GLM 5", description: "" },
+              { value: "gateway/glm-5", displayName: "GLM 5 again", description: "" },
+              {
+                value: "gateway/claude-relay",
+                displayName: "Claude Relay",
+                description: "",
+                supportsEffort: true,
+                supportedEffortLevels: ["low", "high"],
+              },
+            ],
+          }),
+        );
+        const catalogSlugs = new Set(BUNDLED_CLAUDE_MODEL_CATALOG.models.map((m) => m.model.slug));
+        const added = status.models.filter((model) => !catalogSlugs.has(model.slug));
+
+        assert.deepStrictEqual(
+          added.map((model) => [model.slug, model.name, model.isCustom]),
+          [
+            ["gateway/glm-5[1m]", "GLM 5", false],
+            ["gateway/claude-relay", "Claude Relay", false],
+            ["gateway/kimi-3[1m]", "Kimi (mine)", true],
+          ],
+        );
+        assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
+        assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "default", label: "Default", isDefault: true },
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

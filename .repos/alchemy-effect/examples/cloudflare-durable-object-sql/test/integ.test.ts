@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -29,9 +29,7 @@ test(
     expect(yield* initial.json).toEqual({ users: [] });
 
     const created = yield* HttpClient.execute(
-      HttpClientRequest.post(teamA).pipe(
-        HttpClientRequest.bodyJsonUnsafe({ name: "Ada" }),
-      ),
+      HttpClientRequest.post(teamA).pipe(HttpClientRequest.bodyJsonUnsafe({ name: "Ada" })),
     );
     expect(created.status).toBe(201);
     const { user } = (yield* created.json) as { user: User };
@@ -51,9 +49,7 @@ test(
     expect(yield* repeated.json).toEqual({ users: [user] });
 
     const invalid = yield* HttpClient.execute(
-      HttpClientRequest.post(teamA).pipe(
-        HttpClientRequest.bodyJsonUnsafe({ name: " " }),
-      ),
+      HttpClientRequest.post(teamA).pipe(HttpClientRequest.bodyJsonUnsafe({ name: " " })),
     );
     expect(invalid.status).toBe(400);
   }),
