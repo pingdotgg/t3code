@@ -518,12 +518,15 @@ export const make = Effect.gen(function* () {
           return runRead(input, record, read, restore);
         }
         return restore(
-          activityReads.withPermits(1)(
-            Effect.uninterruptibleMask((restoreRead) =>
-              Effect.suspend(() =>
-                claim(read) ? runRead(input, record, read, restoreRead) : Effect.void,
+          Effect.raceFirst(
+            activityReads.withPermits(1)(
+              Effect.uninterruptibleMask((restoreRead) =>
+                Effect.suspend(() =>
+                  claim(read) ? runRead(input, record, read, restoreRead) : Effect.void,
+                ),
               ),
             ),
+            Deferred.await(read.done).pipe(Effect.exit),
           ),
         ).pipe(
           Effect.onInterrupt(() =>

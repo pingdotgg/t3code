@@ -339,9 +339,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
         expect(yield* cli.listThreads(pullRequest(5))).toEqual([]);
         expect(started).toBe(5);
+        expect(yield* Fiber.join(queued)).toBeNull();
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(list);
-        yield* Fiber.join(queued);
         expect(yield* Fiber.join(shared)).toEqual([]);
         expect(started).toBe(5);
       }),
