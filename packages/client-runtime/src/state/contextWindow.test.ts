@@ -204,6 +204,7 @@ describe("shouldCompactBeforeSend", () => {
     },
     { name: "within the fallback TTL", now: "2026-10-30T15:23:02.000Z", expected: false },
     { name: "under 200K", usedTokens: 150_000, expected: false },
+    { name: "at 250K of a 1M window", usedTokens: 250_000, maxTokens: 1_000_000, expected: true },
     {
       name: "a stale Claude thread at 160K of a 200K window",
       usedTokens: 160_000,
