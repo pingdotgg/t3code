@@ -230,6 +230,36 @@
   ],
   "packageOverrides": [
     {
+      "name": "@palamedes/core",
+      "version": "2.1.0",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/sebastian-software/palamedes/blob/main/LICENSE-MIT",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Sebastian Software GmbH"]
+      }
+    },
+    {
+      "name": "@palamedes/react",
+      "version": "2.1.0",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/sebastian-software/palamedes/blob/main/LICENSE-MIT",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Sebastian Software GmbH"]
+      }
+    },
+    {
+      "name": "@palamedes/runtime",
+      "version": "2.1.0",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/sebastian-software/palamedes/blob/main/LICENSE-MIT",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Sebastian Software GmbH"]
+      }
+    },
+    {
       "name": "entities",
       "version": "8.1.0",
       "license": "BSD-2-Clause",

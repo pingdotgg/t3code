@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -45,8 +46,8 @@ function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
   }
 
   return {
-    title: "Confirm action",
-    description: normalizedMessage || "This action requires your confirmation.",
+    title: t({ message: "Confirm action" }),
+    description: normalizedMessage || t({ message: "This action requires your confirmation." }),
   };
 }
 
@@ -82,9 +83,11 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            {t({ message: "Cancel" })}
+          </AlertDialogClose>
           <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+            {t({ message: "Confirm" })}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
