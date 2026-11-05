@@ -1287,10 +1287,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       openProjectSettings(projectGroup);
     },
   );
+  const scopedFolderProject = (group: SidebarProjectSnapshot) =>
+    group.memberProjects.find((member) => member.environmentId === environmentScopeId) ?? group;
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
     if (isMobile) setOpenMobile(false);
-    const project =
-      group.memberProjects.find((member) => member.environmentId === environmentScopeId) ?? group;
+    const project = scopedFolderProject(group);
     void handleNewThread(scopeProjectRef(project.environmentId, project.id));
   });
   const handleProjectFolderContextMenu = useStableCallback(
@@ -1320,9 +1321,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "new-thread":
             startThreadInProjectFolder(group);
             return;
-          case "copy-path":
-            copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
+          case "copy-path": {
+            const { workspaceRoot } = scopedFolderProject(group);
+            copyPathToClipboard(workspaceRoot, { path: workspaceRoot });
             return;
+          }
           case "pin":
           case "unpin":
             setProjectGroupPinned(group, clicked.value === "pin");
