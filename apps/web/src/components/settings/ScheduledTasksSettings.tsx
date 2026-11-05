@@ -2,9 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
 import {
+  ChevronDownIcon,
   Clock3Icon,
   CopyIcon,
   InboxIcon,
+  MessageSquareIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlayIcon,
@@ -59,9 +61,10 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects, useThreadShell, useVisibleThreadShells } from "../../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
+import { useThreadSearch } from "../../state/queries";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { threadFamilies } from "../../state/threads";
@@ -84,7 +87,10 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
+  changeDraftProject,
+  moveDraftToThread,
   scheduleDraftErrors,
+  scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
@@ -92,6 +98,7 @@ import {
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
+  unbindDraftFromThread,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
@@ -103,6 +110,15 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "..
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxTrigger,
+} from "../ui/combobox";
 import {
   Dialog,
   DialogClose,
@@ -129,6 +145,8 @@ import {
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+
+const NEW_THREAD_DESTINATION = "new-thread";
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -1143,11 +1161,19 @@ function ScheduledTaskEditorDialog({
 
 function ScheduledTaskDestination({
   environmentId,
+  projectId,
   threadId,
+  disabled,
+  onSelect,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly projectId: string;
   readonly threadId: ThreadId | null;
+  readonly disabled: boolean;
+  readonly onSelect: (thread: { id: ThreadId; projectId: ProjectId } | null) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const ref = threadId === null ? null : scopeThreadRef(environmentId, threadId);
   const shell = useThreadShell(ref);
   // The shell can omit older settled threads; their family read still carries the title.
@@ -1155,20 +1181,85 @@ function ScheduledTaskDestination({
     ref !== null && shell === null ? threadFamilies.familyAtom(environmentId, ref.threadId) : null,
   );
   const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
+  const currentLabel =
+    ref === null ? "New thread each run" : thread?.title.trim() || `Thread ${ref.threadId}`;
+  const shells = useVisibleThreadShells(open);
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch(open && projectId ? [environmentId] : [], query, {
+    titlesOnly: true,
+    projectIds: [projectId as ProjectId],
+  });
+  const threads = scheduledTaskDestinationThreads(shells, {
+    environmentId,
+    projectId,
+    currentThreadId: threadId,
+    query,
+  });
+  const search = query.trim().toLocaleLowerCase();
+  const items: ReadonlyArray<string> = [
+    ...(search ? [] : [NEW_THREAD_DESTINATION]),
+    ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(search) ? [threadId] : []),
+    ...threads.map((row) => row.id),
+  ];
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) setQuery("");
+  };
   return (
-    <Field label="Destination">
-      {ref === null ? (
-        <p className="text-sm text-muted-foreground">
-          Each run starts a new thread with the workspace and model below.
-        </p>
-      ) : (
-        <div className="space-y-1 text-sm">
-          <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
-          <p className="text-muted-foreground">
-            Each run continues this conversation, in its workspace and with its current model.
-          </p>
-        </div>
-      )}
+    <Field label="Destination" htmlFor="scheduled-task-destination">
+      <Combobox
+        items={items}
+        filteredItems={items}
+        filter={null}
+        autoHighlight
+        open={open && !disabled}
+        onOpenChange={handleOpenChange}
+        value={threadId ?? NEW_THREAD_DESTINATION}
+        onValueChange={(value) => {
+          if (value === NEW_THREAD_DESTINATION) onSelect(null);
+          const picked = threads.find((row) => row.id === value);
+          if (picked) onSelect(picked);
+          handleOpenChange(false);
+        }}
+      >
+        <ComboboxTrigger
+          id="scheduled-task-destination"
+          disabled={disabled}
+          render={<Button variant="outline" size="sm" />}
+          className="w-full justify-between"
+        >
+          <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="start" side="bottom" className="w-80">
+          <ComboboxSearchInput
+            aria-label="Search threads"
+            placeholder="Search all threads..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ComboboxEmpty>No threads found.</ComboboxEmpty>
+          <ComboboxList className="max-h-72">
+            {items.map((value, index) => (
+              <ComboboxItem key={value} index={index} value={value}>
+                <span className="block truncate">
+                  {value === NEW_THREAD_DESTINATION
+                    ? "New thread each run"
+                    : value === threadId
+                      ? currentLabel
+                      : threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                </span>
+              </ComboboxItem>
+            ))}
+          </ComboboxList>
+        </ComboboxPopup>
+      </Combobox>
+      <p className="text-sm text-muted-foreground">
+        {ref === null
+          ? "Each run starts a new thread with the workspace and model below."
+          : "Each run continues this conversation, in its workspace and with its current model."}
+      </p>
     </Field>
   );
 }
@@ -1405,7 +1496,7 @@ function ScheduledTaskEditorForm({
                 if (!next) return;
                 setEnvironmentId(next.environmentId);
                 setDraft((current) => ({
-                  ...current,
+                  ...unbindDraftFromThread(current),
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
                   modelKey: "",
                   baseModelSelection: null,
@@ -1481,7 +1572,16 @@ function ScheduledTaskEditorForm({
 
           <ScheduledTaskDestination
             environmentId={environmentId}
+            projectId={selectedProjectId}
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+            disabled={saving || !connected}
+            onSelect={(thread) =>
+              setDraft((current) =>
+                thread === null
+                  ? unbindDraftFromThread(current)
+                  : moveDraftToThread(current, thread),
+              )
+            }
           />
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1489,7 +1589,7 @@ function ScheduledTaskEditorForm({
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>
-                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+                  setDraft((current) => changeDraftProject(current, projectId ?? ""))
                 }
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">

@@ -86,8 +86,10 @@ environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
 environment is offline then, the task runs when it is back.
 
-Deleting a thread also deletes tasks that post into that thread. Tasks that start
-a new thread on each run survive deletion of their previous threads.
+To move a task, edit it and change **Destination** to another thread in its
+project, or to **New thread each run**. Deleting a thread also deletes tasks that
+post into that thread. Tasks that start a new thread on each run survive deletion
+of their previous threads.
 
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run

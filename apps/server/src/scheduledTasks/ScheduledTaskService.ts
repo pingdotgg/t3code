@@ -1199,6 +1199,30 @@ export const layer = Layer.effect(
         }),
       );
 
+    const requireDestinationThread = Effect.fn("ScheduledTaskService.requireDestinationThread")(
+      function* (threadId: ThreadId, projectId: ProjectId, taskId: ScheduledTaskId) {
+        const thread = yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not read the destination thread.", { taskId, cause }),
+            ),
+          );
+        if (thread === null || thread.deletedAt !== null) {
+          return yield* taskError("That thread no longer exists.", { taskId });
+        }
+        if (thread.archivedAt !== null) {
+          return yield* taskError(
+            "That thread is archived. Unarchive it or pick another destination.",
+            { taskId },
+          );
+        }
+        if (thread.projectId !== projectId) {
+          return yield* taskError("That thread belongs to a different project.", { taskId });
+        }
+      },
+    );
+
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
@@ -1239,6 +1263,15 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
+      if (
+        input.threadId != null &&
+        (existingTask === null ||
+          existingTask.threadId !== input.threadId ||
+          existingTask.projectId !== input.projectId)
+      ) {
+        yield* requireDestinationThread(input.threadId, input.projectId, id);
+      }
       // Keep the existing next_run_at when the schedule itself is untouched:
       // editing a title or prompt must not postpone (or resurrect) a due
       // run — only schedule/enabled changes restart the clock.
