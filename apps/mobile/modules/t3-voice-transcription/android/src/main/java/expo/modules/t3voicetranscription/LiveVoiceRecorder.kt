@@ -41,6 +41,7 @@ internal class LiveVoiceRecorder(
   @Suppress("TooGenericExceptionCaught") // Release native handles for every setup failure.
   fun prepare() {
     check(capture?.isRecording != true) { "Another voice recording is active." }
+    capture?.abort()
     pipe?.close()
     inputCanceled = false
     inferenceStarted = false
