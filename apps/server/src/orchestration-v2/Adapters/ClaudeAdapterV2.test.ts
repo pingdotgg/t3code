@@ -532,7 +532,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
       readOnlySandbox: true,
-      permissionMode: "dontAsk",
       allowedTools: [...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS],
     });
 
@@ -558,11 +557,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     );
     const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
       queryPolicy,
-      ClaudeAdapterV2.claudeMcpQueryOverrides({
-        mcpSession,
-        readOnlySandbox: false,
-        permissionMode: queryPolicy.permissionMode,
-      }),
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
     );
 
     const rotatedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
@@ -570,7 +565,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ClaudeAdapterV2.claudeMcpQueryOverrides({
         mcpSession: mcpSessionFor(threadId, "Bearer rotated-claude-token"),
         readOnlySandbox: false,
-        permissionMode: queryPolicy.permissionMode,
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
@@ -613,7 +607,6 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
       readOnlySandbox: false,
-      permissionMode: "bypassPermissions",
       allowedTools: ["Read"],
     });
     assert.deepEqual(overrides, {
@@ -4747,8 +4740,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   describe("T3 MCP tool approval", () => {
     const openMcpTurn = Effect.fn("openMcpTurn")(function* (
       runtimeMode: "approval-required" | "auto-accept-edits",
+      launchArgs?: string,
     ) {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions(
+        launchArgs === undefined
+          ? undefined
+          : { settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs } },
+      );
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment-claude-wake"),
@@ -4795,6 +4793,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             [],
             `${turn.openedOptions.permissionMode} consults canUseTool, so bare T3 MCP allowedTools shadow it`,
           );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
+    // dontAsk never calls canUseTool, so T3 tools need the allowedTools pre-approval.
+    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
+      "keeps T3 MCP pre-approval when --permission-mode dontAsk overrides %s",
+      (runtimeMode) =>
+        Effect.gen(function* () {
+          const turn = yield* openMcpTurn(runtimeMode, "--permission-mode dontAsk");
+          assert.equal(turn.openedOptions.permissionMode, "dontAsk");
+          assert.include(turn.openedOptions.allowedTools ?? [], "mcp__t3-code__*");
         }).pipe(
           Effect.scoped,
           Effect.provide(

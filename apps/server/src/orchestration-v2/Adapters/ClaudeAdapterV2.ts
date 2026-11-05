@@ -1830,16 +1830,21 @@ export function makeClaudeQueryOptions(input: {
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const permissionMode: PermissionMode =
+    (launchArgPermissionMode as PermissionMode | null | undefined) ??
+    (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
+      ? "bypassPermissions"
+      : (input.permissionMode ?? "default"));
+  const allowedTools =
+    input.canUseTool !== undefined && CLAUDE_CAN_USE_TOOL_PERMISSION_MODES.has(permissionMode)
+      ? input.allowedTools?.filter((tool) => !tool.startsWith("mcp__t3-code__"))
+      : input.allowedTools;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
     ...(input.title === undefined ? {} : { title: input.title }),
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
-    permissionMode:
-      (launchArgPermissionMode as PermissionMode | null | undefined) ??
-      (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
-        ? "bypassPermissions"
-        : (input.permissionMode ?? "default")),
+    permissionMode,
     includePartialMessages: true,
     ...(compiledSelection.effort === undefined
       ? {}
@@ -1848,7 +1853,7 @@ export function makeClaudeQueryOptions(input: {
         }),
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
-    ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
+    ...(allowedTools === undefined ? {} : { allowedTools: [...allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
@@ -2010,18 +2015,19 @@ function isClaudeAutoApprovedT3McpTool(toolName: string, readOnlySandbox: boolea
     : toolName.startsWith("mcp__t3-code__");
 }
 
-// T3 tools are auto-approved, limited to annotated read-only tools in read-only sandboxes. Bare
-// allowedTools entries skip canUseTool, so modes that consult it approve them there instead.
+// Bare allowedTools entries skip canUseTool (the SDK warns on each query), so in these modes
+// canUseTool approves T3 tools instead of allowedTools.
 const CLAUDE_CAN_USE_TOOL_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set([
   "default",
   "acceptEdits",
   "plan",
 ]);
 
+// allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
+// limited to annotated read-only tools in read-only sandboxes.
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
-  readonly permissionMode: PermissionMode;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
@@ -2031,14 +2037,11 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
-  const mcpAllowedTools = CLAUDE_CAN_USE_TOOL_PERMISSION_MODES.has(input.permissionMode)
-    ? []
-    : input.readOnlySandbox
-      ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-      : [CLAUDE_T3_MCP_TOOL_WILDCARD];
-  const allowedTools = [...new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])];
+  const mcpAllowedTools = input.readOnlySandbox
+    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
+    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
-    ...(allowedTools.length === 0 ? {} : { allowedTools }),
+    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -10761,7 +10764,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             mcpSession,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
-            permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
