@@ -141,7 +141,11 @@ export const make = Effect.fn("SecretResolver.make")(function* (options: {
 
   const label: SecretResolver["Service"]["label"] = (provider) =>
     options.secretProviders.pipe(
-      Effect.map((providers) => providers[provider]?.label.trim() || provider),
+      Effect.map(
+        (providers) =>
+          (Object.hasOwn(providers, provider) ? providers[provider]?.label.trim() : undefined) ||
+          provider,
+      ),
     );
 
   return SecretResolver.of({ read, invalidate, label });

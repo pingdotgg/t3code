@@ -260,14 +260,15 @@ it.effect("a reference to a secret provider that is not configured fails", () =>
           answer: {
             type: "reference",
             reference: {
-              provider: SecretProviderId.make("gone"),
+              // Also an Object.prototype key, which must not pass for a configured provider.
+              provider: SecretProviderId.make("constructor"),
               reference: "fake://github/token",
             },
           },
         })
         .pipe(Effect.flip);
       assert.equal(error.reason, "reference_unreadable");
-      assert.include(error.message, '"gone"');
+      assert.include(error.message, '"constructor"');
       assert.deepEqual(dispatched, []);
     }),
   ),
