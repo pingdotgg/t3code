@@ -23,8 +23,11 @@ import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   fitSideChatMapScale,
+  groupSideChatMapRows,
+  isSectionRow,
   resolveSideChatMapKeyTarget,
   SIDE_CHAT_MAP_LAYOUT,
+  sideChatMapCurrentSection,
   sideChatMapNodeDescription,
   sideChatMapNodeStatus,
 } from "./SideChatMap.logic";
@@ -52,12 +55,19 @@ export function SideChatMap(props: {
   const [fit, setFit] = useState(false);
   const [availableWidth, setAvailableWidth] = useState(0);
   const [focusedId, setFocusedId] = useState<ThreadId | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<ThreadId>>(
+    () => new Set(),
+  );
   const scrollerRef = useRef<HTMLDivElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
 
-  const layout = layoutSideChatTree(rows, SIDE_CHAT_MAP_LAYOUT);
+  const currentSectionId = sideChatMapCurrentSection(rows, currentThreadId);
+  const mapRows = groupSideChatMapRows(rows, collapsedSections);
+  const layout = layoutSideChatTree(mapRows, SIDE_CHAT_MAP_LAYOUT);
   const scale = fit ? fitSideChatMapScale(layout.width, availableWidth) : 1;
-  const tabStopId = rows.some((row) => row.threadId === focusedId) ? focusedId : currentThreadId;
+  const tabStopId = mapRows.some((row) => row.threadId === focusedId)
+    ? focusedId
+    : (currentSectionId ?? currentThreadId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a resize observer on the scroller whose width sets the fitted map's scale
   useEffect(() => {
@@ -110,7 +120,7 @@ export function SideChatMap(props: {
               }
               if (focusedId === null) return;
               event.preventDefault();
-              const target = resolveSideChatMapKeyTarget(rows, focusedId, event.key);
+              const target = resolveSideChatMapKeyTarget(mapRows, focusedId, event.key);
               if (target === null) return;
               event.currentTarget.querySelector<HTMLElement>(nodeSelector(target))?.focus();
             }}
@@ -131,11 +141,13 @@ export function SideChatMap(props: {
                 />
               ))}
             </svg>
-            {rows.map((row, index) => {
+            {mapRows.map((row, index) => {
               const box = layout.nodes[index];
               if (box === undefined) return null;
-              const current = row.threadId === currentThreadId;
+              const section = isSectionRow(row);
+              const current = row.threadId === currentThreadId || row.threadId === currentSectionId;
               const lesson = row.state === "lesson";
+              const collapsed = section && collapsedSections.has(row.threadId);
               return (
                 <Tooltip key={row.threadId}>
                   <TooltipTrigger
@@ -146,7 +158,8 @@ export function SideChatMap(props: {
                         data-thread-id={row.threadId}
                         aria-level={row.depth + 1}
                         aria-selected={current}
-                        aria-description={sideChatMapNodeDescription(row)}
+                        aria-expanded={section ? !collapsed : undefined}
+                        aria-description={sideChatMapNodeDescription({ ...row, collapsed })}
                         tabIndex={row.threadId === tabStopId ? 0 : -1}
                         data-workspace-focus-default={row.threadId === tabStopId ? "" : undefined}
                         className={cn(
@@ -156,16 +169,29 @@ export function SideChatMap(props: {
                         )}
                         style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
                         onFocus={() => setFocusedId(row.threadId)}
-                        onClick={() =>
-                          lesson ? props.onFocusLesson() : props.onOpenSideChat(row.threadId)
-                        }
+                        onClick={() => {
+                          if (section) {
+                            setCollapsedSections((previous) => {
+                              const next = new Set(previous);
+                              if (next.has(row.threadId)) next.delete(row.threadId);
+                              else next.add(row.threadId);
+                              return next;
+                            });
+                          } else if (lesson) {
+                            props.onFocusLesson();
+                          } else {
+                            props.onOpenSideChat(row.threadId);
+                          }
+                        }}
                       />
                     }
                   >
-                    <ThreadRelationshipIcon
-                      status={sideChatMapNodeStatus(row)}
-                      fallbackIcon={lesson ? BookOpenIcon : MessageCircleIcon}
-                    />
+                    {section ? null : (
+                      <ThreadRelationshipIcon
+                        status={sideChatMapNodeStatus(row)}
+                        fallbackIcon={lesson ? BookOpenIcon : MessageCircleIcon}
+                      />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{row.label}</span>
                   </TooltipTrigger>
                   <TooltipPopup side="top">{row.label}</TooltipPopup>

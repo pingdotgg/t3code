@@ -197,7 +197,11 @@ import {
   buildSideChatContextHandoff,
   pendingSideChatOpeningEffect,
 } from "./sideChat/sideChatOpening.ts";
-import { deriveSideChatLabel, extractExcerptContext } from "./sideChat/sideChatText.ts";
+import {
+  deriveSideChatLabel,
+  extractExcerptContext,
+  lessonSectionAt,
+} from "./sideChat/sideChatText.ts";
 import {
   sideChatChildren,
   sideChatDescendants,
@@ -4703,16 +4707,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* refuse("The highlight belongs to a different thread.");
     }
 
-    const anchorProjection = yield* projectionStore
-      .getThreadRecords(command.anchorThreadId, ["messages"], {
-        messageIds: [command.anchor.messageId],
-      })
+    const anchorThread = yield* projectionStore
+      .getThread(command.anchorThreadId)
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.anchorThreadId, cause }),
         ),
       );
-    const anchorThread = anchorProjection.thread;
+    const anchorProjection = yield* projectionStore
+      .getThreadRecords(
+        command.anchorThreadId,
+        ["messages"],
+        anchorThread.sideChat === undefined
+          ? { messageRoles: ["assistant"] as const }
+          : { messageIds: [command.anchor.messageId] },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.anchorThreadId, cause }),
+        ),
+      );
     if (anchorThread.archivedAt !== null || anchorThread.deletedAt !== null) {
       return yield* refuse(`Thread ${command.anchorThreadId} is not active.`);
     }
@@ -4748,6 +4762,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       sideChat: {
         lessonThreadId: anchorThread.sideChat?.lessonThreadId ?? anchorThread.id,
         anchor: command.anchor,
+        section:
+          anchorThread.sideChat === undefined
+            ? (lessonSectionAt(anchorProjection.messages, command.anchor) ?? null)
+            : (anchorThread.sideChat.section ?? null),
         excerpt: command.excerpt,
         excerptContext:
           command.anchor.embedTitle === undefined

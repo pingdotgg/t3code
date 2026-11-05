@@ -36,6 +36,7 @@ function row(
     label,
     state,
     noteStatus,
+    section: null,
   };
 }
 

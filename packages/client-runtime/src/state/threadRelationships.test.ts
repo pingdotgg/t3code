@@ -526,6 +526,7 @@ describe("side chat tree", () => {
         label: input.label,
         state: input.noteStatus === undefined ? "open" : "done",
         noteStatus: input.noteStatus ?? null,
+        section: null,
         excerptLength: input.label.length,
       },
     };
@@ -561,6 +562,7 @@ describe("side chat tree", () => {
         label: "RL environments",
         state: "lesson",
         noteStatus: null,
+        section: null,
       },
       {
         threadId: observationSpace.id,
@@ -569,6 +571,7 @@ describe("side chat tree", () => {
         label: "observation space",
         state: "open",
         noteStatus: null,
+        section: null,
       },
       {
         threadId: box.id,
@@ -577,6 +580,7 @@ describe("side chat tree", () => {
         label: "Box",
         state: "done",
         noteStatus: "ready",
+        section: null,
       },
       {
         threadId: reward.id,
@@ -585,6 +589,7 @@ describe("side chat tree", () => {
         label: "reward shaping",
         state: "done",
         noteStatus: "none",
+        section: null,
       },
     ]);
   });
@@ -627,6 +632,7 @@ describe("side chat tree", () => {
         label: "Lesson",
         state: "lesson",
         noteStatus: null,
+        section: null,
       },
       {
         threadId: orphan.id,
@@ -635,6 +641,7 @@ describe("side chat tree", () => {
         label: "orphan",
         state: "open",
         noteStatus: null,
+        section: null,
       },
     ]);
   });

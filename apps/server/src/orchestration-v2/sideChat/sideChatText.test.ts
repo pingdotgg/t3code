@@ -9,15 +9,21 @@ import {
 
 import {
   SIDE_CHAT_OPENING_FRAMING,
+  backfillSideChatSections,
   buildSideChatOpeningSummaryText,
   buildSideChatSummarizerInput,
   deriveSideChatLabel,
   extractExcerptContext,
+  lessonSectionAt,
 } from "./sideChatText.ts";
 
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
 // Long enough that two of these can never share one 1500-character context.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const lessonMessage = (id: string, role: "user" | "assistant", text: string) => ({
+  id: MessageId.make(`message:${id}`),
+  role,
+  text,
+});
 const filler = "lorem ".repeat(140).trim();
 
 it("collapses whitespace and caps the label", () => {
@@ -26,6 +32,86 @@ it("collapses whitespace and caps the label", () => {
   const label = deriveSideChatLabel("word ".repeat(40));
   assert.isAtMost(label.length, SIDE_CHAT_LABEL_MAX_CHARS);
   assert.isTrue(label.endsWith("…"));
+});
+
+it.each([
+  {
+    name: "heading in an earlier message",
+    messages: [
+      lessonMessage("a1", "assistant", "# Lesson 1: big picture"),
+      lessonMessage("a2", "assistant", "details"),
+    ],
+    anchor: { messageId: MessageId.make("message:a2"), start: 2 },
+    expected: "Lesson 1: big picture",
+  },
+  {
+    name: "heading before the anchor offset counts",
+    messages: [lessonMessage("a1", "assistant", "## Lesson 2: before\n## Lesson 3: after")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 20 },
+    expected: "Lesson 2: before",
+  },
+  {
+    name: "code heading counts",
+    messages: [lessonMessage("a1", "assistant", "## U2: copy a schematic")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 100 },
+    expected: "U2: copy a schematic",
+  },
+  {
+    name: "other headings do not count",
+    messages: [
+      lessonMessage(
+        "a1",
+        "assistant",
+        "## Part 1: x\n## 1. Anchor trial\n## Terms\n## KiCad, part 1",
+      ),
+    ],
+    anchor: { messageId: MessageId.make("message:a1"), start: 200 },
+    expected: undefined,
+  },
+  {
+    name: "no heading",
+    messages: [lessonMessage("a1", "assistant", "details")],
+    anchor: { messageId: MessageId.make("message:a1"), start: 2 },
+    expected: undefined,
+  },
+])("lessonSectionAt: $name", ({ messages, anchor, expected }) => {
+  assert.strictEqual(lessonSectionAt(messages, anchor), expected);
+});
+
+it("backfills lesson sections and nested chats inherit them", () => {
+  const result = backfillSideChatSections({
+    lessons: new Map([
+      ["lesson", [{ id: "a1", role: "assistant", text: "## Lesson 1: basics\nAnswer" }]],
+    ]),
+    sideChats: [
+      {
+        threadId: "side",
+        createdAt: "2026-01-01",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "lesson", messageId: "a1", start: 30 },
+        section: undefined,
+      },
+      {
+        threadId: "nested",
+        createdAt: "2026-01-02",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "side", messageId: "a1", start: 0 },
+        section: undefined,
+      },
+      {
+        threadId: "none",
+        createdAt: "2026-01-03",
+        lessonThreadId: "lesson",
+        anchor: { threadId: "lesson", messageId: "a1", start: 0 },
+        section: undefined,
+      },
+    ],
+  });
+  assert.deepStrictEqual(result, [
+    { threadId: "side", section: "Lesson 1: basics" },
+    { threadId: "nested", section: "Lesson 1: basics" },
+    { threadId: "none", section: null },
+  ]);
 });
 
 it("returns the highlighted paragraph with its neighbours when they fit", () => {
@@ -125,11 +211,6 @@ it("never splits an emoji when truncating labels or context", () => {
   assert.isAtMost(context.length, SIDE_CHAT_EXCERPT_CONTEXT_MAX_CHARS);
 });
 
-const lessonMessage = (id: string, role: "user" | "assistant", text: string) => ({
-  id: MessageId.make(`message:${id}`),
-  role,
-  text,
-});
 const filled = (marker: string) => `${marker} ${"x".repeat(4990)}`;
 const LESSON = [
   lessonMessage("u1", "user", "U1-TOPIC teach me RL environments"),
