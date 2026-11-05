@@ -5649,6 +5649,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     },
     {
+      name: "unreset-notification-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: { primary: { usedPercent: 99 } },
+        during: { primary: { usedPercent: 100 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
       name: "same-window-read",
       code: "usageLimitExceeded",
       notification: false,

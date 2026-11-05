@@ -263,9 +263,12 @@ function laterReport<Report extends { readonly resetsAt?: number | null }>(
   read: Report | null | undefined,
   used: (report: Report) => number,
 ): Report | null {
-  return notified &&
-    read &&
-    notified.resetsAt != null &&
+  if (!notified || !read) return notified;
+  // A notification without a reset keeps the pending read's reset for the same window.
+  if (notified.resetsAt == null && read.resetsAt != null) {
+    return { ...notified, resetsAt: read.resetsAt };
+  }
+  return notified.resetsAt != null &&
     notified.resetsAt === read.resetsAt &&
     used(read) > used(notified)
     ? read
