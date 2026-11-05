@@ -140,15 +140,24 @@ export function buildTraitsTriggerDisplay(input: {
   compactEffortLabel: string | null;
   /** "Fast" or "Ultrafast" when a speed option is on. */
   speedLabel: string | null;
+  ultracode: boolean;
 } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
+  let ultracodeLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
+      continue;
+    }
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) {
+        ultracodeLabelIndex = labels.length;
+        labels.push(descriptor.label);
+      }
       continue;
     }
     if (
@@ -197,6 +206,7 @@ export function buildTraitsTriggerDisplay(input: {
     compactEffortLabel:
       reasoningLabelIndex >= 0 ? compactEffortLabel(labels[reasoningLabelIndex]!) : null,
     speedLabel,
+    ultracode: ultracodeLabelIndex >= 0,
   };
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel, ...compact };

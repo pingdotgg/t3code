@@ -49,11 +49,13 @@ describe("buildTraitsTriggerDisplay", () => {
       label: "High Fast",
       compactEffortLabel: "H",
       speedLabel: "Fast",
+      ultracode: false,
     });
     expect(display([effort("high"), fastMode(false)])).toEqual({
       label: "High",
       compactEffortLabel: "H",
       speedLabel: null,
+      ultracode: false,
     });
   });
 });

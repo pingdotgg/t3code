@@ -16,12 +16,15 @@ import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/conf
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
   connectSubcommands,
   disconnectCloud,
   headlessFlag,
   linkEnvironmentForConnect,
+  requireConnectAllowed,
   runCloudCommand,
   waitForReachability,
 } from "./connect.ts";
@@ -168,12 +171,12 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes, serviceInstalled: boolean) =>
+const formatNextSteps = (routes: Routes, serviceInstalled: boolean, pairCommand: string) =>
   [
     ...(routes.connect
       ? ["On your other device, sign in to T3 Connect with the same account."]
       : []),
-    ...(routes.lan ? ["Run `t3 pair`. Use the code on your other device."] : []),
+    ...(routes.lan ? [`Run \`${pairCommand}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan
       ? []
       : [
@@ -194,6 +197,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 }) {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
+  const baseDirArgs = Option.match(flags.baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const { command: pairCommand } = yield* resolveHostCliCommand("pair", baseDirArgs);
   const before = yield* readSetup();
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({
@@ -236,13 +244,20 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       }, or use --yes for the default. See \`t3 up --help\`.`,
     });
   }
+  if (routes.connect && !current.connect) yield* requireConnectAllowed;
+  if (routes.lan && !current.lan) {
+    const policy = yield* ManagedPolicy.ManagedPolicy;
+    if (!ManagedLimits.allowsRemoteClients(policy)) {
+      return yield* ManagedLimits.refuseRemoteClients(policy);
+    }
+  }
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan) {
     if (current.connect || before.connectRevoked) {
       yield* disconnectCloud({ clearAuthorization: false });
     }
     if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(routes, false));
+    return yield* Console.log(formatNextSteps(routes, false, pairCommand));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -317,7 +332,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 
   const printServeCommand = Effect.fn(function* (reason: string) {
     const { command } = yield* resolveHostCliCommand("serve", [
-      ...Option.match(flags.baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+      ...baseDirArgs,
       // Explicit either way, so a T3CODE_LAN in the shell cannot override the choice.
       routes.lan ? "--lan" : "--no-lan",
     ]);
@@ -398,6 +413,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
       { connect: after.connect === true, lan: after.lan },
       after.service.installed,
+      pairCommand,
     )}`,
   );
 });

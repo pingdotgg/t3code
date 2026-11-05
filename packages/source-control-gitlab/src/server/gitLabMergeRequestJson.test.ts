@@ -5,6 +5,7 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeMergeMessagesJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
@@ -12,6 +13,7 @@ import {
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodeReviewDecisionsJson,
   decodeTriggerJobChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
@@ -371,6 +373,7 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.patch).toBe(
       [
         String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        "similarity index 100%",
         String.raw`rename from " old\\name.ts "`,
         String.raw`rename to " new\\name.ts "`,
         String.raw`--- "a/ old\\name.ts "`,
@@ -660,6 +663,80 @@ describe("decodeRepositoryBlobsJson", () => {
   });
 });
 
+describe("decodeReviewDecisionsJson", () => {
+  const decisionsOf = (enterprise: boolean | null, nodes: ReadonlyArray<unknown>) =>
+    expectSuccess(
+      decodeReviewDecisionsJson(
+        JSON.stringify({
+          data: {
+            metadata: enterprise === null ? null : { enterprise },
+            project: { mergeRequests: { nodes } },
+          },
+        }),
+      ),
+    );
+  const approvedBy = (...usernames: ReadonlyArray<string>) => ({
+    nodes: usernames.map((username) => ({ username })),
+  });
+
+  it.each([
+    {
+      reading: "an approval short of Enterprise approval rules",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy("GitLabDuo") },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules no one has approved against",
+      enterprise: true,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: "review-required",
+    },
+    {
+      reading: "Enterprise approval rules met",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Enterprise without approval rules or approvals",
+      enterprise: true,
+      approval: { approved: true, approvedBy: approvedBy() },
+      decision: null,
+    },
+    {
+      reading: "Community Edition with an approval",
+      enterprise: false,
+      approval: { approved: true, approvedBy: approvedBy("julius") },
+      decision: "approved",
+    },
+    {
+      reading: "Community Edition without approvals",
+      enterprise: false,
+      approval: { approved: false, approvedBy: approvedBy() },
+      decision: null,
+    },
+  ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
+    expect([...decisionsOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([[7, decision]]);
+  });
+
+  it("leaves out a merge request it cannot key, and a project the reader cannot see", () => {
+    expect([...decisionsOf(true, [null, { iid: "x", approved: true }])]).toEqual([]);
+    expect([
+      ...decisionsOf(null, [{ iid: "7", approved: false, approvedBy: approvedBy() }]),
+    ]).toEqual([]);
+    expect([
+      ...decisionsOf(true, [
+        { iid: "7", approved: null, approvedBy: approvedBy("julius") },
+        { iid: "8", approved: true, approvedBy: null },
+      ]),
+    ]).toEqual([]);
+    expect(
+      expectSuccess(decodeReviewDecisionsJson(JSON.stringify({ data: { project: null } }))),
+    ).toEqual(new Map());
+  });
+});
+
 describe("decodeMergeRequestStatsJson", () => {
   it("keys the counts by merge request number", () => {
     const stats = expectSuccess(
@@ -713,5 +790,20 @@ describe("decodeMergeRequestStatsJson", () => {
       truncated: false,
     });
     expect(read(2).truncated).toBe(true);
+  });
+});
+
+describe("decodeMergeMessagesJson", () => {
+  it("fails a partial response instead of reading errored fields as absent templates", () => {
+    const decoded = decodeMergeMessagesJson(
+      JSON.stringify({
+        errors: [{ message: "Internal server error", path: ["project", "mergeRequest"] }],
+        data: {
+          project: { mergeRequest: { title: "Add thing", defaultMergeCommitMessage: null } },
+        },
+      }),
+    );
+
+    expect(Result.isFailure(decoded)).toBe(true);
   });
 });

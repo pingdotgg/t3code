@@ -855,7 +855,6 @@ export function NewTaskDraftScreen(props: {
         header={
           <AppBar
             title="New thread"
-            sidebar={false}
             onBack={goBack}
             options={{
               ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
@@ -984,6 +983,7 @@ export function NewTaskDraftScreen(props: {
         onStopThread={() => {}}
         onResumeQueue={null}
         onSendMessage={handleStart}
+        offersSideChat={false}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
         onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}
