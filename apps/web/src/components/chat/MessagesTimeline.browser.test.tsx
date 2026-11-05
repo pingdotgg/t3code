@@ -487,6 +487,57 @@ describe("MessagesTimeline work rows", () => {
       .toBeInTheDocument();
   });
 
+  it("keeps the bar still when work arrives while the history collapses at the bottom", async () => {
+    const runId = RunId.make("collapse-run");
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      activeTurnStartedAt: CREATED_AT,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+    };
+    const entries = (steps: number) => [
+      ...Array.from({ length: 40 }, (_, index) =>
+        message(`Earlier ${index}`, {}, `earlier-${index}`),
+      ),
+      message("Build it", { runId }),
+      ...Array.from({ length: steps }, (_, index) =>
+        message(`Step ${index}`, { runId, role: "assistant" }, `step-${index}`),
+      ),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries(30)} />,
+    );
+    const bar = screen.getByRole("button", { name: "Open work history" });
+    await expect.element(bar).toBeVisible();
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    const barElement = bar.element();
+    await bar.click();
+    const history = screen.getByRole("region", { name: "Work history" }).element();
+    await expect.element(screen.getByText("Step 0", { exact: true })).toBeInTheDocument();
+    await Promise.all(history.getAnimations().map((animation) => animation.finished));
+    const barTop = barElement.getBoundingClientRect().top;
+    const expandedHeight = history.clientHeight;
+    const barTops = new Set<number>();
+    const resizes = new ResizeObserver(() => barTops.add(barElement.getBoundingClientRect().top));
+    resizes.observe(history);
+    using _resizes = { [Symbol.dispose]: () => resizes.disconnect() };
+    history.style.transitionDuration = "10s";
+
+    await screen.getByRole("button", { name: "Close work history" }).click();
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(expandedHeight - 20));
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries(31)} />);
+    const arrivedHeight = history.clientHeight;
+    await vi.waitFor(() => expect(history.clientHeight).toBeLessThan(arrivedHeight - 60));
+    for (const animation of history.getAnimations()) animation.finish();
+    await vi.waitFor(() =>
+      expect(history.querySelector('[data-slot="scroll-area-viewport"]')).not.toBeNull(),
+    );
+    expect([...barTops]).toEqual([barTop]);
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
