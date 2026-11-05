@@ -247,6 +247,18 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
+  it.effect("allows Cursor conversation rollback", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      yield* policy.ensureRollback({
+        commandId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        capabilities: CursorProviderCapabilitiesV2,
+      });
+    }),
+  );
+
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
