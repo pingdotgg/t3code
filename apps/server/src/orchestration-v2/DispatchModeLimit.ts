@@ -1,6 +1,7 @@
 import {
   isRuntimeModeAbove,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -27,6 +28,15 @@ export const DispatchModeLimit = Context.Reference<DispatchModeLimitValue | unde
   "t3/orchestration-v2/DispatchModeLimit",
   { defaultValue: () => undefined },
 );
+
+/** The modes a run executes in: those of its send, or the thread's for runs recorded without them. */
+export const runModes = (
+  thread: DispatchModes,
+  run: Pick<OrchestrationV2Run, "runtimeMode" | "interactionMode"> | undefined,
+): DispatchModes => ({
+  runtimeMode: run?.runtimeMode ?? thread.runtimeMode,
+  interactionMode: run?.interactionMode ?? thread.interactionMode,
+});
 
 const interactionModeRank: Record<ProviderInteractionMode, number> = { plan: 0, default: 1 };
 

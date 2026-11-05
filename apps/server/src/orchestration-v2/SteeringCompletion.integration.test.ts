@@ -23,6 +23,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -1642,6 +1643,69 @@ it.effect("keeps the thread's modes for the next send while a queued message run
             { message: "next", turn: "full-access", session: "full-access" },
           ],
         );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("refuses a capped caller's steer into a run above its modes on a thread below them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steer-run-above-caller");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const queue = (name: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(name),
+            threadId,
+            messageId: MessageId.make(`message:${name}`),
+            text: name,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        yield* queue("full-access");
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("lower"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* queue("approval-required");
+        yield* Fiber.join(yield* finishTurnAndStartNext(events, threadId, started[0]!));
+        const target = started.at(-1)!;
+        assert.equal(target.runtimePolicy.runtimeMode, "full-access");
+
+        const refused = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("capped-steer"),
+            threadId,
+            messageId: MessageId.make("message:capped-steer"),
+            text: "capped caller instruction",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "steer_active", targetRunId: target.runId },
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.provideService(DispatchModeLimit, {
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+            }),
+            Effect.flip,
+          );
+        yield* worker.drain();
+
+        assert.equal(refused._tag, "OrchestratorThreadAboveModeLimitError");
+        assert.deepEqual(steered, []);
       }).pipe(Effect.provide(layer));
     }),
   ),

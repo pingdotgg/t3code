@@ -168,6 +168,7 @@ it.effect("an answered question reports already answered instead of not found", 
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: () => Effect.succeed(shell),
             getProjectThreadRecords: () =>
               Effect.succeed({
@@ -287,6 +288,7 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: () =>
               Effect.succeed({
                 id: threadId,
@@ -331,6 +333,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: ({ threadId: id }) =>
               Effect.succeed(
@@ -383,6 +386,7 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: ({ threadId: id }) =>
               Effect.succeed(
@@ -420,6 +424,7 @@ it.effect("keeps unexpected handler defects private through the production regis
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: () => Effect.die(new Error("private-storage-path")),
           }),
         ),
@@ -538,6 +543,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: (id) =>
               Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
             getProjectThreadRecords: () =>
@@ -598,6 +604,7 @@ it.effect("a read-only client reads threads and is refused every write before it
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: () =>
               Effect.succeed({
                 id: ThreadId.make("other-project-thread"),
@@ -835,6 +842,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
               getThreadShell: () =>
                 Effect.succeed({
                   projectId: "project-a",
@@ -943,6 +951,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: McpToolAccessTestkit.runsWithoutModes,
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),

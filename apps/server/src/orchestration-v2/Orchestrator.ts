@@ -147,6 +147,7 @@ import {
   DispatchModeLimit,
   exceededDispatchModeLimit,
   narrowToCeiling,
+  runModes,
   type RuntimeModeCeiling,
   runtimeModeCeilingRefusal,
   threadsStartingWork,
@@ -6523,7 +6524,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause:
-            "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then send the message again.",
+            "The current provider session is still running background agents or commands, and replacing it would end them. Wait for them to finish, or press Stop, then send the message again.",
         });
       }
     }
@@ -13748,6 +13749,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             queuedRunModes(shell, run, followsCurrent, runtimeModeCeiling?.maxRuntimeMode),
           );
         }
+      }
+      // These hand the caller's input to the active run, which can run above the thread's modes.
+      if (
+        shell !== null &&
+        shell.activeRunId !== null &&
+        ((command.type === "message.dispatch" &&
+          (command.dispatchMode.type === "steer_active" ||
+            command.dispatchMode.type === "restart_active" ||
+            command.deliveryIntent !== undefined)) ||
+          command.type === "queued-message.promote-to-steer" ||
+          command.type === "runtime-request.respond")
+      ) {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        yield* refuseAboveDispatchModeLimit(command, threadId, runModes(shell, runs[0]));
       }
     }
 
