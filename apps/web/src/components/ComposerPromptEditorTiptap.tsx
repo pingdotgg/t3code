@@ -1123,6 +1123,9 @@ function ComposerPromptEditorTiptapInner(
             : event.key === "Home" || event.key === "End"
               ? "lineboundary"
               : null;
+          if (event.key === "Escape" && !view.composing) {
+            deadKeySelectionRef.current = null;
+          }
           if (
             (event.key === "Dead" ||
               (event.key === "Process" &&

@@ -876,25 +876,34 @@ it.each([
   { text: "'", expected: "'word'", selected: "word" },
   { text: '"', expected: '"word"', selected: "word" },
   { text: "é", expected: "é", selected: "" },
-])("resolves dead keys without composition events: %j", async ({ text, expected, selected }) => {
-  await using screen = await mountEditor("word", true);
-  const { editor } = screen;
-  await act(async () => {
-    editor.commands.setTextSelection({ from: 1, to: 5 });
-    editor.view.dom.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Dead", code: "Quote", bubbles: true }),
-    );
-    typeText(editor, 1, 1, text);
-  });
-  expect(editor.state.doc.textContent).toBe(expected);
-  expect(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)).toBe(
-    selected,
-  );
-  await act(async () => {
-    editor.commands.undo();
-  });
-  expect(editor.state.doc.textContent).toBe("word");
-});
+  { text: "a", expected: "aword", selected: "", cancel: true },
+])(
+  "resolves dead keys without composition events: %j",
+  async ({ text, expected, selected, cancel }) => {
+    await using screen = await mountEditor("word", true);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from: 1, to: 5 });
+      editor.view.dom.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Dead", code: "Quote", bubbles: true }),
+      );
+      if (cancel) {
+        editor.view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+      }
+      typeText(editor, 1, 1, text);
+    });
+    expect(editor.state.doc.textContent).toBe(expected);
+    expect(
+      editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to),
+    ).toBe(selected);
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(editor.state.doc.textContent).toBe("word");
+  },
+);
 
 it("does not restore a composition selection after the draft is replaced", async () => {
   await using screen = await mountEditor("word", true);
