@@ -719,6 +719,7 @@ function TaskForm({
     }
   };
 
+  const supportsBackground = config?.environment.capabilities.threadBackground === true;
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
@@ -794,7 +795,7 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
-      runInBackground: draft.runInBackground ?? false,
+      ...(supportsBackground ? { runInBackground: draft.runInBackground ?? false } : {}),
       threadId: draft.task?.threadId ?? null,
       workspaceStrategy:
         draft.workspace === "root"
@@ -1254,16 +1255,18 @@ function TaskForm({
               ) : null}
             </>
           )}
-          <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-            <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-              Run in background
-            </Text>
-            <ThemedSwitch
-              accessibilityLabel="Run in background"
-              value={draft.runInBackground ?? false}
-              onValueChange={(runInBackground) => setDraft({ ...draft, runInBackground })}
-            />
-          </View>
+          {supportsBackground && (
+            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+              <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                Run in background
+              </Text>
+              <ThemedSwitch
+                accessibilityLabel="Run in background"
+                value={draft.runInBackground ?? false}
+                onValueChange={(runInBackground) => setDraft({ ...draft, runInBackground })}
+              />
+            </View>
+          )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
             <Text textRole="body" className="min-w-0 flex-1 text-foreground">
               Enabled

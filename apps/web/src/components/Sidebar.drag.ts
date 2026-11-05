@@ -186,7 +186,7 @@ export function createSidebarSortingStrategy(input: {
     }
     if (items.some((item) => item.kind === "marker" && item.marker === "background-header")) {
       marker("background-header");
-      projected.push(...groups.working);
+      projected.push(...groups.background);
     }
     if (
       groups.snoozed.length > 0 ||

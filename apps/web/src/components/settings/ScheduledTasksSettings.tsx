@@ -1197,6 +1197,8 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  const supportsBackground =
+    environment?.serverConfig?.environment.capabilities.threadBackground === true;
   // Older servers reject one-time schedules, so offer Once only where it can save.
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
@@ -1361,7 +1363,7 @@ function ScheduledTaskEditorForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
-      runInBackground: draft.runInBackground ?? false,
+      ...(supportsBackground ? { runInBackground: draft.runInBackground ?? false } : {}),
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
@@ -1922,22 +1924,24 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0 space-y-1">
-              <Label htmlFor="scheduled-task-background">Run in background</Label>
-              <p className="text-sm text-muted-foreground">
-                Keep routine runs out of Active. Questions, failures, and reported results still
-                surface.
-              </p>
+          {supportsBackground && (
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="scheduled-task-background">Run in background</Label>
+                <p className="text-sm text-muted-foreground">
+                  Keep routine runs out of Active. Questions, failures, and reported results still
+                  surface.
+                </p>
+              </div>
+              <Switch
+                id="scheduled-task-background"
+                checked={draft.runInBackground ?? false}
+                onCheckedChange={(runInBackground) =>
+                  setDraft((current) => ({ ...current, runInBackground }))
+                }
+              />
             </div>
-            <Switch
-              id="scheduled-task-background"
-              checked={draft.runInBackground ?? false}
-              onCheckedChange={(runInBackground) =>
-                setDraft((current) => ({ ...current, runInBackground }))
-              }
-            />
-          </div>
+          )}
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">
               <Label htmlFor="scheduled-task-enabled">Enabled</Label>
