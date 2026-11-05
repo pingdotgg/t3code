@@ -2483,7 +2483,15 @@ const make = Effect.gen(function* () {
     viewer.pressedButtons.clear();
     const press = viewer.selectPress;
     viewer.selectPress = null;
-    if (press) releaseSelectHandle(viewer, session, press);
+    if (press) {
+      await session
+        .send("Runtime.callFunctionOn", {
+          objectId: press,
+          functionDeclaration: RELEASE_SELECT_PRESS_SCRIPT,
+        })
+        .catch(constVoid);
+      releaseSelectHandle(viewer, session, press);
+    }
     viewer.requestedSize = null;
   };
 
