@@ -10,6 +10,7 @@ import {
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -23,6 +24,7 @@ import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
+const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
@@ -131,10 +133,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "transcribe",
         Effect.fn("environment.voice.transcribe")(function* (args) {
           yield* guard(args.endpoint.name);
-          const decoded = yield* Effect.try(() => decodeSpeechPcmRequest(args.payload)).pipe(
-            Effect.catch(() => failEnvironmentInvalidRequest("invalid_audio")),
-          );
-          const text = yield* speech.transcribe(decoded.pcm, decoded.options).pipe(mapSpeechError);
+          const decoded = parseAudio(args.payload);
+          if (Option.isNone(decoded)) return yield* failEnvironmentInvalidRequest("invalid_audio");
+          const text = yield* speech
+            .transcribe(decoded.value.pcm, decoded.value.options)
+            .pipe(mapSpeechError);
           return { text };
         }),
       )
