@@ -694,17 +694,28 @@ describe("DesktopShellEnvironment", () => {
   it.effect("gives up on a Windows shell that survives the kill", () =>
     Effect.gen(function* () {
       const commands: Array<string> = [];
+      // Both PowerShell probes spawn pwsh, time out, then spawn powershell. Each probe's timeout
+      // is armed before its spawn runs, so waiting for the spawns keeps the clock in step.
+      const spawned = yield* Effect.forEach([0, 1, 2, 3], () => Deferred.make<void>());
       const fiber = yield* runShellEnvironment({
         env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
         platform: "win32",
         handler: () => "",
         processSpawner: ChildProcessSpawner.make((command) => {
+          const spawn = spawned[commands.length];
           commands.push(command._tag === "StandardCommand" ? command.command : "");
-          return Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never);
+          return (spawn ? Deferred.succeed(spawn, undefined) : Effect.void).pipe(
+            Effect.andThen(
+              Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never),
+            ),
+          );
         }),
       }).pipe(Effect.forkChild({ startImmediately: true }));
 
-      for (let probe = 0; probe < 4; probe++) yield* TestClock.adjust("5 seconds");
+      yield* Effect.forEach(spawned.slice(0, 2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.forEach(spawned.slice(2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(fiber);
       assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
     }),

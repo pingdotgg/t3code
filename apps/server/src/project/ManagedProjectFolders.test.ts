@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -306,25 +307,15 @@ const withGitEnv = <A, E, R>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const emptyConfig = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitconfig-" });
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const saved = GIT_IDENTITY_KEYS.map((key) => [key, process.env[key]] as const);
-        for (const key of GIT_IDENTITY_KEYS) delete process.env[key];
-        Object.assign(process.env, {
-          GIT_CONFIG_GLOBAL: emptyConfig,
-          GIT_CONFIG_NOSYSTEM: "1",
-          ...env,
-        });
-        return saved;
+    const hostEnv: NodeJS.ProcessEnv = { ...(yield* HostProcess.Environment) };
+    for (const key of GIT_IDENTITY_KEYS) delete hostEnv[key];
+    return yield* effect.pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...hostEnv,
+        GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_NOSYSTEM: "1",
+        ...env,
       }),
-      () => effect,
-      (saved) =>
-        Effect.sync(() => {
-          for (const [key, value] of saved) {
-            if (value === undefined) delete process.env[key];
-            else process.env[key] = value;
-          }
-        }),
     );
   });
 
@@ -349,6 +340,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
+        const attributes = path.join(baseDir, "crlf.gitattributes");
+        const crlfConfig = path.join(baseDir, "crlf.gitconfig");
+        yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.safecrlf", "true"]);
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.attributesFile", attributes]);
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = crlfConfig;
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
@@ -421,7 +418,10 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
           path.join(baseDir, "no-identity.gitconfig"),
           "[user]\n\tuseConfigOnly = true\n",
         );
-        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "no-identity.gitconfig");
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = path.join(
+          baseDir,
+          "no-identity.gitconfig",
+        );
 
         const result = yield* folders.createNamedProject({ name: "No Identity" });
 
