@@ -42,6 +42,27 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("turns updates off when the macOS app runs from a read-only volume", () => {
+    const harness = makeHarness({ platform: "darwin", readOnlyBundle: true });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "disabled");
+        assert.equal(state.enabled, false);
+        assert.isString(state.message);
+
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* flushCallbacks;
+        assert.equal(harness.checkCount(), 0);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("keeps the disabled reason available after configuration and channel changes", () => {
     const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
     const reason = "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
