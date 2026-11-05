@@ -255,6 +255,16 @@ describe("previewStateStore (single-tab)", () => {
     expect(audibleTabId()).toBeNull();
 
     applyPreviewDesktopState(ref, playing.tabId, overlay);
+    applyPreviewServerSnapshot(ref, {
+      ...playing,
+      runtime: "server",
+      headless: true,
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    });
+    expect(audibleTabId()).toBeNull();
+
+    applyPreviewServerSnapshot(ref, { ...playing, updatedAt: "2026-01-04T00:00:00.000Z" });
+    expect(audibleTabId()).toBe(playing.tabId);
     beginPreviewSessionClose(ref, playing.tabId);
     expect(audibleTabId()).toBeNull();
   });

@@ -169,10 +169,10 @@ export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): 
 
 export function selectAudiblePreviewTabId(state: ThreadPreviewState): string | null {
   return (
-    Object.keys(state.sessions).find((tabId) => {
-      const tab = state.desktopByTabId[tabId];
-      return tab?.hasWebContents && tab.audible && !tab.audioMuted;
-    }) ?? null
+    Object.values(state.sessions).find((session) => {
+      const tab = state.desktopByTabId[session.tabId];
+      return !session.headless && tab?.hasWebContents && tab.audible && !tab.audioMuted;
+    })?.tabId ?? null
   );
 }
 
