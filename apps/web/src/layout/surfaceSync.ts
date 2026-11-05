@@ -65,6 +65,11 @@ export function requestLayoutSurfacePlacement(
   }, 5000);
 }
 
+function dropPanelPlacement(threadRef: ScopedThreadRef): void {
+  const key = scopedThreadKey(threadRef);
+  if (pendingPlacements.get(key)?.kind !== "below") pendingPlacements.delete(key);
+}
+
 function isTerminalTab(tab: LayoutTab): boolean {
   return tab.content.kind === "surface" && tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID;
 }
@@ -328,6 +333,7 @@ function syncThreadSurfaces(
     if (active && focus) return;
   }
   // A user's open or pick of a surface that already has a tab shows it.
+  if (focus && missing.length === 0) dropPanelPlacement(threadRef);
   if (focus && after.activeSurfaceId !== null) {
     const tab = findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef).find(
       (location) => surfaceIdOf(location.tab) === after.activeSurfaceId,
