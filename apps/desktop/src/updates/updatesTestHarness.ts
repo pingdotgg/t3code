@@ -252,8 +252,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
   const pendingDownloadDirectory = options.pendingDownloadDirectory;
+  // The service joins with the native separator, which is a backslash on Windows runners.
   const isPendingDownloadPath = (path: string) =>
-    pendingDownloadDirectory !== undefined && path.startsWith(`${pendingDownloadDirectory}/`);
+    pendingDownloadDirectory !== undefined &&
+    (path.startsWith(`${pendingDownloadDirectory}/`) ||
+      path.startsWith(`${pendingDownloadDirectory}\\`));
   const layerFileSystem = Layer.effect(
     FileSystem.FileSystem,
     Effect.gen(function* () {
