@@ -69,7 +69,9 @@ import {
   type GitHubPullRequestWatchFingerprint,
   isSubjectOfPullRequest,
   LenientPullRequestList,
+  LenientPullRequestListEnterprise,
   LenientPullRequestSearch,
+  LenientPullRequestSearchEnterprise,
   pageRows,
   pullRequestLookup,
   toLabelCandidates,
@@ -895,7 +897,12 @@ const GRAPHQL_MERGE_METHODS = {
 
 const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestBatchesGraphQLGroup,
-  GraphQLGroup.make(LenientPullRequestSearch, LenientPullRequestList),
+  GraphQLGroup.make(
+    LenientPullRequestSearch,
+    LenientPullRequestList,
+    LenientPullRequestSearchEnterprise,
+    LenientPullRequestListEnterprise,
+  ),
   PullRequestReadsGraphQLGroup,
   PullRequestReviewsGraphQLGroup,
   PullRequestMutationsGraphQLGroup,
@@ -1386,8 +1393,22 @@ export const make = Effect.gen(function* () {
 
   /** Older Enterprise servers may lack `isRequired`. */
   const asksRequired = (host: string) => host.toLowerCase() === "github.com";
-  /** Older Enterprise servers may lack `isInMergeQueue`. */
+  /** Older Enterprise servers may lack `isInMergeQueue`, and `@include` cannot hide an unknown field. */
   const asksMergeQueue = (host: string) => host.toLowerCase() === "github.com";
+  const searchPullRequestRows = (
+    host: string,
+    variables: Parameters<typeof client.PullRequestSearch>[0],
+  ) =>
+    asksMergeQueue(host)
+      ? client.PullRequestSearch(variables)
+      : client.PullRequestSearchEnterprise(variables);
+  const listPullRequestRows = (
+    host: string,
+    variables: Parameters<typeof client.PullRequestList>[0],
+  ) =>
+    asksMergeQueue(host)
+      ? client.PullRequestList(variables)
+      : client.PullRequestListEnterprise(variables);
 
   /**
    * Every check context of the head commit, a page at a time, for a rollup the detail read cut at
@@ -1456,16 +1477,19 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
-      client.PullRequestCore({
+    const read = (requestedReviewers: number) => {
+      const variables = {
         owner,
         name,
         number: input.number,
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
-        mergeQueue: asksMergeQueue(input.host),
         requestedReviewers,
-      });
+      };
+      return asksMergeQueue(input.host)
+        ? client.PullRequestCore(variables)
+        : client.PullRequestCoreEnterprise(variables);
+    };
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
         readRequestedReviewers(input, 100, read).pipe(
@@ -1706,6 +1730,12 @@ export const make = Effect.gen(function* () {
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
+  const enterpriseSummaryResolver = GraphQLResolver.aliased(client.PullRequestSummaryEnterprise, {
+    batchKey: GitHubGraphQlClient.batchKey,
+  }).pipe(
+    RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
+    RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
+  );
   const getPullRequestSummary: GitHubPullRequestApi["Service"]["getPullRequestSummary"] = Effect.fn(
     "GitHubPullRequestApi.getPullRequestSummary",
   )(
@@ -1717,14 +1747,10 @@ export const make = Effect.gen(function* () {
           operation: "getPullRequestSummary",
         });
       }
-      const result = yield* GraphQLResolver.request(
-        {
-          ...lookup,
-          stacks: input.host.toLowerCase() === "github.com",
-          mergeQueue: asksMergeQueue(input.host),
-        },
-        summaryResolver,
-      );
+      const variables = { ...lookup, stacks: input.host.toLowerCase() === "github.com" };
+      const result = yield* asksMergeQueue(input.host)
+        ? GraphQLResolver.request(variables, summaryResolver)
+        : GraphQLResolver.request(variables, enterpriseSummaryResolver);
       const pullRequest = result.repository?.pullRequest;
       if (pullRequest == null) {
         return yield* new GitHubRequestPolicy.GitHubApiNotFoundError({
@@ -1844,33 +1870,25 @@ export const make = Effect.gen(function* () {
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
         collect(requestedRows, (after, rows) =>
           (continues
-            ? client
-                .PullRequestSearch({
-                  q: query,
-                  first: pageRows(rows),
-                  after,
-                  // Stack badges come from their own batched read below, for the rows that stay.
-                  stacks: false,
-                  mergeQueue: asksMergeQueue(input.host),
-                  stats: true,
-                })
-                .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
-            : client
-                .PullRequestList({
-                  owner,
-                  name,
-                  states: LIST_STATES[input.state],
-                  first: pageRows(rows),
-                  after,
-                  stacks: false,
-                  mergeQueue: asksMergeQueue(input.host),
-                  stats: true,
-                })
-                .pipe(
-                  Effect.map((result) =>
-                    toPage(toPullRequestRows(result.repository?.pullRequests)),
-                  ),
-                )
+            ? searchPullRequestRows(input.host, {
+                q: query,
+                first: pageRows(rows),
+                after,
+                // Stack badges come from their own batched read below, for the rows that stay.
+                stacks: false,
+                stats: true,
+              }).pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
+            : listPullRequestRows(input.host, {
+                owner,
+                name,
+                states: LIST_STATES[input.state],
+                first: pageRows(rows),
+                after,
+                stacks: false,
+                stats: true,
+              }).pipe(
+                Effect.map((result) => toPage(toPullRequestRows(result.repository?.pullRequests))),
+              )
           ).pipe(graphql(target)),
         ).pipe(
           Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
@@ -1970,27 +1988,24 @@ export const make = Effect.gen(function* () {
         });
       }
       const rows = Math.min(input.limit + 1, PULL_REQUEST_SEARCH_MAX_ROWS);
-      return yield* client
-        .PullRequestSearch({
-          q: query,
-          first: rows,
-          stacks: input.host.toLowerCase() === "github.com",
-          mergeQueue: asksMergeQueue(input.host),
-          stats: false,
-        })
-        .pipe(
-          graphql({ ...input, operation: "searchPullRequests" }),
-          Effect.map(({ search }) => {
-            const page = toPullRequestRows(search);
-            const items = page.rows.flatMap(({ item, repository }) =>
-              repository === null ? [] : [{ ...item, repository }],
-            );
-            return {
-              items: items.slice(0, input.limit),
-              truncated: page.rawCount > input.limit || page.hasNextPage,
-            };
-          }),
-        );
+      return yield* searchPullRequestRows(input.host, {
+        q: query,
+        first: rows,
+        stacks: input.host.toLowerCase() === "github.com",
+        stats: false,
+      }).pipe(
+        graphql({ ...input, operation: "searchPullRequests" }),
+        Effect.map(({ search }) => {
+          const page = toPullRequestRows(search);
+          const items = page.rows.flatMap(({ item, repository }) =>
+            repository === null ? [] : [{ ...item, repository }],
+          );
+          return {
+            items: items.slice(0, input.limit),
+            truncated: page.rawCount > input.limit || page.hasNextPage,
+          };
+        }),
+      );
     }),
 
     listPullRequestStats: Effect.fn("GitHubPullRequestApi.listPullRequestStats")(

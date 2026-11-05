@@ -47,9 +47,11 @@ import type {
 } from "./pullRequestBatches.graphql.ts";
 import {
   PageInfo as ListingPageInfo,
+  PullRequestEnterpriseRow,
   PullRequestList,
-  PullRequestRow,
+  PullRequestListEnterprise,
   PullRequestSearch,
+  PullRequestSearchEnterprise,
 } from "./pullRequestListings.graphql.ts";
 import type { PullRequestActionSummary } from "./pullRequestMutations.graphql.ts";
 import type {
@@ -59,6 +61,7 @@ import type {
   PullRequestCommitStats,
   PullRequestCheckContexts,
   PullRequestCore,
+  PullRequestCoreEnterprise,
   PullRequestFilesViewed,
   PullRequestFileStats,
   PullRequestHeads,
@@ -806,7 +809,12 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
-const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
+const decodeRow = Schema.decodeUnknownExit(
+  Schema.Struct({
+    ...PullRequestEnterpriseRow.fields,
+    isInMergeQueue: Schema.optional(Schema.Boolean),
+  }),
+);
 
 /** Decode rows individually so one invalid node cannot blank the entire listing. */
 const LenientRows = Schema.Struct({
@@ -820,9 +828,23 @@ export const LenientPullRequestSearch = GraphQL.query(PullRequestSearch.name, {
   result: Schema.Struct({ search: LenientRows }),
 });
 
+export const LenientPullRequestSearchEnterprise = GraphQL.query(PullRequestSearchEnterprise.name, {
+  document: PullRequestSearchEnterprise.document,
+  variables: PullRequestSearchEnterprise.variables,
+  result: Schema.Struct({ search: LenientRows }),
+});
+
 export const LenientPullRequestList = GraphQL.query(PullRequestList.name, {
   document: PullRequestList.document,
   variables: PullRequestList.variables,
+  result: Schema.Struct({
+    repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientRows })),
+  }),
+});
+
+export const LenientPullRequestListEnterprise = GraphQL.query(PullRequestListEnterprise.name, {
+  document: PullRequestListEnterprise.document,
+  variables: PullRequestListEnterprise.variables,
   result: Schema.Struct({
     repository: Schema.NullOr(Schema.Struct({ pullRequests: LenientRows })),
   }),
@@ -958,7 +980,9 @@ export interface GitHubPullRequestSummary {
   readonly stack?: PullRequestStackMembership | null;
 }
 
-export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullRequestSummary {
+export function toPullRequestSummary(
+  pr: Omit<SummarizedPullRequest, "isInMergeQueue"> & { readonly isInMergeQueue?: boolean },
+): GitHubPullRequestSummary {
   return {
     number: pr.number,
     title: pr.title,
@@ -1041,7 +1065,9 @@ type CoreRequestedReviewer = NonNullable<
   >["nodes"]
 >[number];
 
-export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullRequestCore | null {
+export function toPullRequestCore(
+  result: PullRequestCore.Result | PullRequestCoreEnterprise.Result,
+): GitHubPullRequestCore | null {
   const repository = result.repository;
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;

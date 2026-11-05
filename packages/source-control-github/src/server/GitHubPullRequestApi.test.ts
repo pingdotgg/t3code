@@ -63,6 +63,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         url: "https://github.com/acme/web/pull/7",
         body: "",
         isDraft: false,
+        isInMergeQueue: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
         reviewDecision: null,
@@ -240,6 +241,7 @@ const rowDefaults = {
   author: null,
   state: "OPEN",
   isDraft: false,
+  isInMergeQueue: false,
   mergeable: "UNKNOWN",
   reviewDecision: null,
   latestReviews: { nodes: [] },
@@ -469,6 +471,7 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     baseRefName: "main",
     state: "OPEN",
     isDraft: false,
+    isInMergeQueue: false,
     mergeable: "MERGEABLE",
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt,
@@ -1043,6 +1046,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
+        isInMergeQueue: false,
         mergeable: "MERGEABLE",
         reviewDecision: null,
         latestReviews: {
@@ -1117,12 +1121,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(queryAt(0)).toContain(
         "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
       );
+      expect(queryAt(0)).toContain("isInMergeQueue");
       expect(varsAt(0)).toMatchObject({
         _0_owner: "acme",
         _0_name: "web",
         _0_number: 7,
         _0_stacks: true,
-        _0_mergeQueue: true,
         _1_number: 8,
       });
     }),
@@ -1148,6 +1152,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       headRefName: "feat/eight",
                       state: "OPEN",
                       isDraft: false,
+                      isInMergeQueue: false,
                       mergeable: "MERGEABLE",
                       reviewDecision: null,
                       latestReviews: { nodes: [] },
@@ -2894,7 +2899,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
+          call.kind === "graphql" && call.operationName === "PullRequestListEnterprise"
             ? emptyList()
             : emptySearch(),
         ),
@@ -2916,6 +2921,43 @@ layer("GitHubPullRequestApi.layer", (it) => {
         new Set(["github.acme.dev"]),
       );
       expect(searchOfCall(0)).toContain("repo:acme/web");
+    }),
+  );
+
+  // GraphQL validates a field before `@include` runs, so only leaving it out is safe.
+  it.effect("keeps isInMergeQueue out of every document sent to an Enterprise host", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.operationName === "PullRequestListEnterprise"
+            ? emptyList()
+            : emptySearch(),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const target = { cwd: "/w", repository: "acme/web", host: "github.acme.dev" };
+
+      yield* cli.listPullRequests({
+        ...target,
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+      yield* Effect.exit(cli.getPullRequestDetail({ ...target, number: 7 }));
+      const summary = yield* Effect.exit(cli.getPullRequestSummary({ ...target, number: 7 })).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("10 millis");
+      yield* Fiber.join(summary);
+
+      const operations = mockedExecute.mock.calls.flatMap(([call]) =>
+        call.kind === "graphql" ? [call] : [],
+      );
+      expect(operations.some((call) => call.query.includes("isInMergeQueue"))).toBe(false);
+      for (const needle of ["PullRequestCoreEnterprise", "PullRequestSummaryEnterprise"]) {
+        expect(operations.some((call) => call.query.includes(needle))).toBe(true);
+      }
     }),
   );
 

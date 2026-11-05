@@ -70,11 +70,11 @@ export const PullRequestReviewConnection = Schema.Struct({
 export interface PullRequestReviewConnection extends Schema.Struct.Type<typeof PullRequestReviewConnection.fields> {}
 
 /** A repository contains the content for a project. */
-export const PullRequestRowRepositoryRepository = Schema.Struct({
+export const PullRequestEnterpriseRowRepositoryRepository = Schema.Struct({
   /** The repository's name with owner. */
   nameWithOwner: Schema.String
 })
-export interface PullRequestRowRepositoryRepository extends Schema.Struct.Type<typeof PullRequestRowRepositoryRepository.fields> {}
+export interface PullRequestEnterpriseRowRepositoryRepository extends Schema.Struct.Type<typeof PullRequestEnterpriseRowRepositoryRepository.fields> {}
 
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const RequestedReviewerUser = Schema.Struct({
@@ -161,11 +161,11 @@ export const PullRequestCommitConnection = Schema.Struct({
 export interface PullRequestCommitConnection extends Schema.Struct.Type<typeof PullRequestCommitConnection.fields> {}
 
 /**
- * `fragment PullRequestRow on PullRequest`
+ * `fragment PullRequestEnterpriseRow on PullRequest`
  *
  * A repository pull request.
  */
-export const PullRequestRow = Schema.Struct({
+export const PullRequestEnterpriseRow = Schema.Struct({
   /** The stack this Pull Request belongs to, or null if it is not part of a stack */
   stack: Schema.optionalKey(Schema.NullOr(PullRequestStack)),
   /** The stack entry for this Pull Request, or null if it is not part of a stack */
@@ -189,8 +189,6 @@ export const PullRequestRow = Schema.Struct({
   state: GraphQL.enumLiterals(Shared.PullRequestState.literals),
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
-  /** Indicates whether the pull request is in a merge queue */
-  isInMergeQueue: Schema.optionalKey(Schema.Boolean),
   /** Whether or not the pull request can be merged based on the existence of merge conflicts. */
   mergeable: GraphQL.enumLiterals(Shared.MergeableState.literals),
   /** The current status of this pull request with respect to code review. */
@@ -208,13 +206,25 @@ export const PullRequestRow = Schema.Struct({
   /** The date and time that the pull request was merged. */
   mergedAt: Schema.NullOr(Shared.DateTime),
   /** The repository associated with this node. */
-  repository: PullRequestRowRepositoryRepository,
+  repository: PullRequestEnterpriseRowRepositoryRepository,
   /** A list of review requests associated with the pull request. */
   reviewRequests: Schema.NullOr(ReviewRequestConnection),
   /** A list of labels associated with the object. */
   labels: Schema.NullOr(LabelConnection),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestCommitConnection
+})
+export interface PullRequestEnterpriseRow extends Schema.Struct.Type<typeof PullRequestEnterpriseRow.fields> {}
+
+/**
+ * `fragment PullRequestRow on PullRequest`
+ *
+ * A repository pull request.
+ */
+export const PullRequestRow = Schema.Struct({
+  ...PullRequestEnterpriseRow.fields,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.Boolean
 })
 export interface PullRequestRow extends Schema.Struct.Type<typeof PullRequestRow.fields> {}
 
@@ -228,11 +238,11 @@ export const PageInfo = Schema.Struct({
 export interface PageInfo extends Schema.Struct.Type<typeof PageInfo.fields> {}
 
 /** A repository pull request. */
-export const PullRequest = Schema.Struct({
+export const PullRequestSearchSearchNodesPullRequest = Schema.Struct({
   __typename: Schema.Literal("PullRequest"),
   ...PullRequestRow.fields
 })
-export interface PullRequest extends Schema.Struct.Type<typeof PullRequest.fields> {}
+export interface PullRequestSearchSearchNodesPullRequest extends Schema.Struct.Type<typeof PullRequestSearchSearchNodesPullRequest.fields> {}
 
 /** The results of a search. */
 export const SearchResultItemOther = Schema.Struct({
@@ -245,16 +255,16 @@ export interface SearchResultItemOther extends Schema.Struct.Type<typeof SearchR
  * of matches, a maximum of 1,000 results will be available across all types,
  * potentially split across many pages.
  */
-export const SearchResultItemConnection = Schema.Struct({
+export const PullRequestSearchSearchSearchResultItemConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
-    PullRequest,
+    PullRequestSearchSearchNodesPullRequest,
     SearchResultItemOther
   ]))))
 })
-export interface SearchResultItemConnection extends Schema.Struct.Type<typeof SearchResultItemConnection.fields> {}
+export interface PullRequestSearchSearchSearchResultItemConnection extends Schema.Struct.Type<typeof PullRequestSearchSearchSearchResultItemConnection.fields> {}
 
 /** `query PullRequestSearch` */
 export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
@@ -264,14 +274,14 @@ export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
       { name: "first", body: "Int!" },
       { name: "after", body: "String" },
       { name: "stacks", body: "Boolean!" },
-      { name: "mergeQueue", body: "Boolean!" },
       { name: "stats", body: "Boolean!" }
     ],
     selections: [
       { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "first", " after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{__typename...", "PullRequestRow", "}}"] }
     ],
     fragments: [
-      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft isInMergeQueue@include(if:$", "mergeQueue", ")mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+      { name: "PullRequestRow", body: ["on PullRequest{...", "PullRequestEnterpriseRow", " isInMergeQueue}"] },
+      { name: "PullRequestEnterpriseRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {
@@ -279,12 +289,11 @@ export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
     first: Shared.Int,
     after: Schema.optional(Schema.NullOr(Schema.String)),
     stacks: Schema.Boolean,
-    mergeQueue: Schema.Boolean,
     stats: Schema.Boolean
   },
   result: Schema.Struct({
     /** Perform a search across resources, returning a maximum of 1,000 results. */
-    search: SearchResultItemConnection
+    search: PullRequestSearchSearchSearchResultItemConnection
   })
 })
 export declare namespace PullRequestSearch {
@@ -292,19 +301,76 @@ export declare namespace PullRequestSearch {
   export type Result = typeof PullRequestSearch.result.Type
 }
 
+/** A repository pull request. */
+export const PullRequestSearchEnterpriseSearchNodesPullRequest = Schema.Struct({
+  __typename: Schema.Literal("PullRequest"),
+  ...PullRequestEnterpriseRow.fields
+})
+export interface PullRequestSearchEnterpriseSearchNodesPullRequest extends Schema.Struct.Type<typeof PullRequestSearchEnterpriseSearchNodesPullRequest.fields> {}
+
+/**
+ * A list of results that matched against a search query. Regardless of the number
+ * of matches, a maximum of 1,000 results will be available across all types,
+ * potentially split across many pages.
+ */
+export const PullRequestSearchEnterpriseSearchSearchResultItemConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: PageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
+    PullRequestSearchEnterpriseSearchNodesPullRequest,
+    SearchResultItemOther
+  ]))))
+})
+export interface PullRequestSearchEnterpriseSearchSearchResultItemConnection extends Schema.Struct.Type<typeof PullRequestSearchEnterpriseSearchSearchResultItemConnection.fields> {}
+
+/** `query PullRequestSearchEnterprise` */
+export const PullRequestSearchEnterprise = GraphQL.query("PullRequestSearchEnterprise", {
+  document: {
+    variables: [
+      { name: "q", body: "String!" },
+      { name: "first", body: "Int!" },
+      { name: "after", body: "String" },
+      { name: "stacks", body: "Boolean!" },
+      { name: "stats", body: "Boolean!" }
+    ],
+    selections: [
+      { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "first", " after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{__typename...", "PullRequestEnterpriseRow", "}}"] }
+    ],
+    fragments: [
+      { name: "PullRequestEnterpriseRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+    ]
+  },
+  variables: {
+    q: Schema.String,
+    first: Shared.Int,
+    after: Schema.optional(Schema.NullOr(Schema.String)),
+    stacks: Schema.Boolean,
+    stats: Schema.Boolean
+  },
+  result: Schema.Struct({
+    /** Perform a search across resources, returning a maximum of 1,000 results. */
+    search: PullRequestSearchEnterpriseSearchSearchResultItemConnection
+  })
+})
+export declare namespace PullRequestSearchEnterprise {
+  export type Variables = typeof PullRequestSearchEnterprise.variables.Type
+  export type Result = typeof PullRequestSearchEnterprise.result.Type
+}
+
 /** The connection type for PullRequest. */
-export const PullRequestConnection = Schema.Struct({
+export const PullRequestListRepositoryPullRequestsPullRequestConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestRow)))
 })
-export interface PullRequestConnection extends Schema.Struct.Type<typeof PullRequestConnection.fields> {}
+export interface PullRequestListRepositoryPullRequestsPullRequestConnection extends Schema.Struct.Type<typeof PullRequestListRepositoryPullRequestsPullRequestConnection.fields> {}
 
 /** A repository contains the content for a project. */
 export const PullRequestListRepositoryRepository = Schema.Struct({
   /** A list of pull requests that have been opened in the repository. */
-  pullRequests: PullRequestConnection
+  pullRequests: PullRequestListRepositoryPullRequestsPullRequestConnection
 })
 export interface PullRequestListRepositoryRepository extends Schema.Struct.Type<typeof PullRequestListRepositoryRepository.fields> {}
 
@@ -318,14 +384,14 @@ export const PullRequestList = GraphQL.query("PullRequestList", {
       { name: "first", body: "Int!" },
       { name: "after", body: "String" },
       { name: "stacks", body: "Boolean!" },
-      { name: "mergeQueue", body: "Boolean!" },
       { name: "stats", body: "Boolean!" }
     ],
     selections: [
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(first:$", "first", " after:$", "after", " states:$", "states", " orderBy:{field:CREATED_AT direction:DESC}){pageInfo{hasNextPage endCursor}nodes{...", "PullRequestRow", "}}}"] }
     ],
     fragments: [
-      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft isInMergeQueue@include(if:$", "mergeQueue", ")mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+      { name: "PullRequestRow", body: ["on PullRequest{...", "PullRequestEnterpriseRow", " isInMergeQueue}"] },
+      { name: "PullRequestEnterpriseRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {
@@ -335,7 +401,6 @@ export const PullRequestList = GraphQL.query("PullRequestList", {
     first: Shared.Int,
     after: Schema.optional(Schema.NullOr(Schema.String)),
     stacks: Schema.Boolean,
-    mergeQueue: Schema.Boolean,
     stats: Schema.Boolean
   },
   result: Schema.Struct({
@@ -348,5 +413,59 @@ export declare namespace PullRequestList {
   export type Result = typeof PullRequestList.result.Type
 }
 
+/** The connection type for PullRequest. */
+export const PullRequestListEnterpriseRepositoryPullRequestsPullRequestConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: PageInfo,
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestEnterpriseRow)))
+})
+export interface PullRequestListEnterpriseRepositoryPullRequestsPullRequestConnection extends Schema.Struct.Type<typeof PullRequestListEnterpriseRepositoryPullRequestsPullRequestConnection.fields> {}
+
+/** A repository contains the content for a project. */
+export const PullRequestListEnterpriseRepositoryRepository = Schema.Struct({
+  /** A list of pull requests that have been opened in the repository. */
+  pullRequests: PullRequestListEnterpriseRepositoryPullRequestsPullRequestConnection
+})
+export interface PullRequestListEnterpriseRepositoryRepository extends Schema.Struct.Type<typeof PullRequestListEnterpriseRepositoryRepository.fields> {}
+
+/** `query PullRequestListEnterprise` */
+export const PullRequestListEnterprise = GraphQL.query("PullRequestListEnterprise", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "states", body: "[PullRequestState!]" },
+      { name: "first", body: "Int!" },
+      { name: "after", body: "String" },
+      { name: "stacks", body: "Boolean!" },
+      { name: "stats", body: "Boolean!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(first:$", "first", " after:$", "after", " states:$", "states", " orderBy:{field:CREATED_AT direction:DESC}){pageInfo{hasNextPage endCursor}nodes{...", "PullRequestEnterpriseRow", "}}}"] }
+    ],
+    fragments: [
+      { name: "PullRequestEnterpriseRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state isMinimized author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+    ]
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    states: Schema.optional(Schema.NullOr(Schema.Array(Shared.PullRequestState))),
+    first: Shared.Int,
+    after: Schema.optional(Schema.NullOr(Schema.String)),
+    stacks: Schema.Boolean,
+    stats: Schema.Boolean
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(PullRequestListEnterpriseRepositoryRepository)
+  })
+})
+export declare namespace PullRequestListEnterprise {
+  export type Variables = typeof PullRequestListEnterprise.variables.Type
+  export type Result = typeof PullRequestListEnterprise.result.Type
+}
+
 /** Every operation in pullRequestListings.graphql. */
-export const PullRequestListingsGraphQLGroup = GraphQLGroup.make(PullRequestSearch, PullRequestList)
+export const PullRequestListingsGraphQLGroup = GraphQLGroup.make(PullRequestSearch, PullRequestSearchEnterprise, PullRequestList, PullRequestListEnterprise)

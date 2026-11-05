@@ -8,9 +8,8 @@
 # `additions` and `deletions` are asked for only with `$stats`: measured over twelve repositories
 # at a hundred rows, a search answers in ~4.0s without them and ~7.1s with them, for two numbers at
 # the end of a row. The cross-repository search reads them afterwards, in `PullRequestStats`.
-# `stack` and `stackEntry` exist on github.com only (`$stacks`). `isInMergeQueue` is asked for there
-# only (`$mergeQueue`): an older Enterprise server may not know it, which fails the whole read.
-fragment PullRequestRow on PullRequest {
+# `stack` and `stackEntry` exist on github.com only (`$stacks`).
+fragment PullRequestEnterpriseRow on PullRequest {
   stack @include(if: $stacks) {
     number
     size
@@ -33,7 +32,6 @@ fragment PullRequestRow on PullRequest {
   baseRefName
   state
   isDraft
-  isInMergeQueue @include(if: $mergeQueue)
   mergeable
   reviewDecision
   latestReviews(first: 20) {
@@ -84,6 +82,13 @@ fragment PullRequestRow on PullRequest {
   }
 }
 
+# A github.com row. GraphQL validates a field before `@include` runs, so `isInMergeQueue` stays out
+# of the Enterprise documents entirely: a server that does not know it would refuse the read.
+fragment PullRequestRow on PullRequest {
+  ...PullRequestEnterpriseRow
+  isInMergeQueue
+}
+
 # Every repository of a host in one read, which is what makes a listing one request rather than
 # one per repository. `$first` is at most 100: `search` refuses anything larger with
 # EXCESSIVE_PAGINATION.
@@ -92,7 +97,6 @@ query PullRequestSearch(
   $first: Int!
   $after: String
   $stacks: Boolean!
-  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
@@ -106,6 +110,24 @@ query PullRequestSearch(
   }
 }
 
+query PullRequestSearchEnterprise(
+  $q: String!
+  $first: Int!
+  $after: String
+  $stacks: Boolean!
+  $stats: Boolean!
+) {
+  search(query: $q, type: ISSUE, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ...PullRequestEnterpriseRow
+    }
+  }
+}
+
 # A repository's pull requests without search, newest created first: the order `gh pr list` lists
 # in when it does not search, for a repository GitHub's search index does not cover.
 query PullRequestList(
@@ -115,7 +137,6 @@ query PullRequestList(
   $first: Int!
   $after: String
   $stacks: Boolean!
-  $mergeQueue: Boolean!
   $stats: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
@@ -131,6 +152,33 @@ query PullRequestList(
       }
       nodes {
         ...PullRequestRow
+      }
+    }
+  }
+}
+
+query PullRequestListEnterprise(
+  $owner: String!
+  $name: String!
+  $states: [PullRequestState!]
+  $first: Int!
+  $after: String
+  $stacks: Boolean!
+  $stats: Boolean!
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(
+      first: $first
+      after: $after
+      states: $states
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ...PullRequestEnterpriseRow
       }
     }
   }
