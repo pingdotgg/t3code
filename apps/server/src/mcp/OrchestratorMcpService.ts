@@ -30,6 +30,7 @@ import {
   type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
+  type OrchestratorMcpScheduledTaskTarget,
   type OrchestratorMcpTarget,
   type OrchestratorMcpTaskCancelInput,
   type OrchestratorMcpTaskCancelResult,
@@ -267,6 +268,18 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     enabled: task.enabled,
     projectId: task.projectId,
     boundThreadId: task.threadId,
+    // A bound run follows its thread's current model, so the stored one would mislead.
+    ...(task.threadId !== null
+      ? {}
+      : {
+          target: {
+            providerInstanceId: task.modelSelection.instanceId,
+            model: task.modelSelection.model,
+            ...(task.modelSelection.options === undefined
+              ? {}
+              : { options: task.modelSelection.options }),
+          },
+        }),
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
@@ -1330,7 +1343,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "modelSelection" | "projectId"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -1985,6 +2003,40 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  /** A given target resolves against `base`, the selection and mode the task would otherwise keep. */
+  const scheduledTaskTarget = Effect.fn("OrchestratorMcpService.scheduledTaskTarget")(function* (
+    projectId: ProjectId,
+    bound: boolean,
+    base: { readonly modelSelection: ModelSelection; readonly runtimeMode: RuntimeMode },
+    target: OrchestratorMcpScheduledTaskTarget | undefined,
+  ) {
+    if (target === undefined) return base;
+    // Bound runs follow the thread's current model, so a target would never run.
+    if (bound) {
+      return yield* failure(
+        "invalid_request",
+        "A bound task runs on its thread's current model. Pass bindToCurrentThread=false to choose one.",
+      );
+    }
+    const resolved = yield* resolveTargetRechecking({
+      parent: { thread: { modelSelection: base.modelSelection, projectId } },
+      target,
+      providers: yield* loadProviders,
+    });
+    // Launch refuses a provider the project disables, so every run would fail.
+    const instanceId = resolved.modelSelection.instanceId;
+    if (!(yield* threadManagement.isProviderInstanceEnabledForProject({ projectId, instanceId }))) {
+      return yield* failure(
+        "provider_unavailable",
+        `Provider instance ${instanceId} is not enabled for this project.`,
+      );
+    }
+    return {
+      modelSelection: resolved.modelSelection,
+      runtimeMode: yield* resolveRuntimeMode(base.runtimeMode, undefined, resolved),
+    };
+  });
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope);
@@ -2002,8 +2054,20 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      const { modelSelection, runtimeMode } = yield* scheduledTaskTarget(
+        projectId,
+        bindToCurrentThread,
+        {
+          modelSelection:
+            parent?.thread.modelSelection ??
+            project.defaultModelSelection ??
+            (input.target?.providerInstanceId !== undefined && input.target.model !== undefined
+              ? { instanceId: input.target.providerInstanceId, model: input.target.model }
+              : yield* projectDefaultModelSelection(project)),
+          runtimeMode: limits.runtimeMode,
+        },
+        input.target,
+      );
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2021,7 +2085,7 @@ const make = Effect.gen(function* () {
             : "new_thread",
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
-        runtimeMode: limits.runtimeMode,
+        runtimeMode,
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
@@ -2104,6 +2168,12 @@ const make = Effect.gen(function* () {
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
             : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
+        const { modelSelection, runtimeMode } = yield* scheduledTaskTarget(
+          existing.projectId,
+          threadId !== null,
+          existing,
+          input.target,
+        );
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2125,8 +2195,8 @@ const make = Effect.gen(function* () {
                   ? "new_thread"
                   : "continue",
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
-          runtimeMode: existing.runtimeMode,
+          modelSelection,
+          runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,

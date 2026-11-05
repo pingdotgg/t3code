@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -125,6 +126,12 @@ export const OrchestratorMcpTarget = Schema.Struct({
   ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
+
+/** A task runs in its own project's environment, which `schedule_task` names at the top level. */
+export const OrchestratorMcpScheduledTaskTarget = OrchestratorMcpTarget.mapFields(
+  Struct.omit(["environmentId", "projectId"]),
+);
+export type OrchestratorMcpScheduledTaskTarget = typeof OrchestratorMcpScheduledTaskTarget.Type;
 
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
 export type OrchestratorMcpRuntimeMode = typeof OrchestratorMcpRuntimeMode.Type;
@@ -667,6 +674,11 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
       description: "Default true: runs post in this thread. False: new thread per run.",
     }),
   ),
+  target: Schema.optional(
+    OrchestratorMcpScheduledTaskTarget.annotate({
+      description: "As in `delegate_task`. Unbound tasks only.",
+    }),
+  ),
   freshSession: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -694,6 +706,13 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
+  target: Schema.optional(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      model: Schema.String,
+      options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+    }),
+  ).annotate({ description: "Absent for a bound task, which runs on its thread's model." }),
   freshSession: Schema.Boolean,
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
@@ -737,6 +756,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  target: Schema.optional(OrchestratorMcpScheduledTaskTarget),
   freshSession: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
