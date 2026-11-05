@@ -69,7 +69,7 @@ export function secretRequestAnswerInput(
   if (answer.type === "decline") {
     return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
   }
-  const secret = answer.secret.trim();
+  const { secret } = answer;
   if (secret.length === 0) return null;
   return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
 }

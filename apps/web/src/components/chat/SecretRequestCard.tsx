@@ -142,7 +142,7 @@ function PendingSecretRequestForm(props: {
             onChange={(event) => setSecret(event.currentTarget.value)}
           />
         </div>
-        <Button type="submit" disabled={submitting || secret.trim().length === 0}>
+        <Button type="submit" disabled={submitting || secret.length === 0}>
           Save securely
         </Button>
       </div>
