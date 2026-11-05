@@ -11,10 +11,13 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ResourceTelemetryHistory,
+  type ResourceTelemetrySnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -31,11 +35,13 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
+import { vi } from "vite-plus/test";
 
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1310,6 +1316,107 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("resource telemetry history", () => {
+  it.effect("re-reads a mounted history while live samples arrive", () =>
+    Effect.gen(function* () {
+      // Query refreshes run on timers outside Effect; leave setImmediate to Effect's scheduler.
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "Date"] }),
+        ),
+        () => Effect.sync(() => vi.useRealTimers()),
+      );
+      const samples = yield* Queue.unbounded<ResourceTelemetrySnapshot>();
+      const historyRead = yield* Deferred.make<void>();
+      let sampled = 0;
+      const client = {
+        [WS_METHODS.subscribeResourceTelemetry]: () => Stream.fromQueue(samples),
+        [WS_METHODS.serverGetResourceTelemetryHistory]: () =>
+          Deferred.succeed(historyRead, undefined).pipe(
+            Effect.as({ retainedSampleCount: sampled } as ResourceTelemetryHistory),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "connected",
+        }),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+            followStream: (_environmentId, stream) =>
+              Stream.provideService(
+                stream,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const environmentId = TARGET.environmentId;
+      // The diagnostics page keeps both the live process tree and the timeline mounted.
+      const live = atoms.resourceTelemetry({ environmentId, input: {} });
+      const history = atoms.resourceTelemetryHistory({
+        environmentId,
+        input: { windowMs: 15 * 60_000, bucketMs: 15_000 },
+      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => [registry.mount(live), registry.mount(history)]),
+        (unmounts) => Effect.sync(() => unmounts.forEach((unmount) => unmount())),
+      );
+      yield* Deferred.await(historyRead);
+
+      for (let second = 1; second <= 120; second += 1) {
+        sampled += 1;
+        const readAt = DateTime.makeUnsafe(second * 1_000);
+        yield* Queue.offer(samples, { readAt } as ResourceTelemetrySnapshot);
+        yield* AtomRegistry.toStream(registry, live).pipe(
+          Stream.filter(
+            (result) => AsyncResult.isSuccess(result) && result.value.readAt === readAt,
+          ),
+          Stream.runHead,
+        );
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      }
+
+      const timeline = yield* AtomRegistry.toStream(registry, history).pipe(
+        Stream.filterMap((result) =>
+          AsyncResult.isSuccess(result) && !result.waiting
+            ? Result.succeed(result.value)
+            : Result.failVoid,
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      // Two minutes of live samples later, the timeline is at most a minute behind them.
+      expect(timeline.retainedSampleCount).toBeGreaterThanOrEqual(sampled - 60);
+    }).pipe(Effect.scoped),
   );
 });
 
