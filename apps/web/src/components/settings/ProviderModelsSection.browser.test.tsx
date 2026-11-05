@@ -56,3 +56,16 @@ it("keeps a model in place when it is shown again after disabling all", async ()
 
   expect(rowSlugs(screen.container)).toEqual(order);
 });
+
+it("regroups the list when all models are disabled and enabled again", async () => {
+  await using screen = await render(<StatefulModelsSection />);
+  const toggle = screen.getByRole("switch", { name: "Show Model C in the model picker" });
+  await toggle.click();
+  await expect.element(toggle).toBeChecked();
+
+  await screen.getByRole("button", { name: "Disable all" }).click();
+  await screen.getByRole("button", { name: "Enable all" }).click();
+  await expect.element(toggle).toBeChecked();
+
+  expect(rowSlugs(screen.container)).toEqual(models.map((model) => model.slug));
+});
