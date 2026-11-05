@@ -1407,6 +1407,10 @@ function EnvironmentTasks({
   const visibleTasks = tasks.data?.tasks.filter(
     (task) => projectIds === null || projectIds.includes(task.projectId),
   );
+  const tasksDenial = managedCapabilityDenial(
+    useEnvironmentServerConfig(environmentId)?.managedPolicy,
+    "scheduledTasks",
+  );
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -1452,6 +1456,9 @@ function EnvironmentTasks({
         />
       }
     >
+      {tasksDenial !== undefined ? (
+        <Text className="px-4 pt-4 text-sm text-foreground-muted">{tasksDenial}</Text>
+      ) : null}
       {tasks.error ? (
         <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
       ) : !tasks.data ? (

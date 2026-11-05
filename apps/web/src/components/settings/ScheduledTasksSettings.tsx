@@ -363,6 +363,16 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
+function ScheduledTasksPolicyNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const denial = managedCapabilityDenial(useManagedPolicy(environmentId), "scheduledTasks");
+  if (denial === undefined) return null;
+  return (
+    <div className="px-3 py-2.5 sm:px-4">
+      <ManagedNotice>{denial}</ManagedNotice>
+    </div>
+  );
+}
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -577,6 +587,7 @@ function ScheduledTaskEnvironmentList({
                 {connectionStatusTitle(environment.connection)}
               </span>
             </EnvironmentRow>
+            <ScheduledTasksPolicyNotice environmentId={environment.environmentId} />
             {tasks?.map((task) => (
               <ScheduledTaskRow
                 key={task.id}
@@ -688,6 +699,7 @@ function ScheduledTaskEnvironmentSection({
         <SettingsRow title="Loading scheduled tasks…" role="status" />
       ) : (
         <>
+          <ScheduledTasksPolicyNotice environmentId={environment.environmentId} />
           {taskId && !linkedTask ? (
             <SettingsRow
               title="Task unavailable"
