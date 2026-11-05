@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
+  buildCodexComputerUseInstructions,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
 
@@ -95,3 +96,16 @@ describe("Codex device context", () => {
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
 }
+
+it("keeps available and withdrawn native locators within the byte cap", () => {
+  for (const availability of [
+    { status: "available", skillPath: "/" + '界"'.repeat(350) + "/SKILL.md" },
+    { status: "available", skillPath: "/" + "界".repeat(4_000) + "/SKILL.md" },
+    { status: "unavailable" },
+  ] as const) {
+    NodeAssert.ok(
+      Buffer.byteLength(buildCodexComputerUseInstructions(availability), "utf8") <=
+        CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+    );
+  }
+});

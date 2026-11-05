@@ -1,4 +1,6 @@
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
+import type { CodexComputerUseAvailability } from "./CodexComputerUse.ts";
+import * as Schema from "effect/Schema";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import {
@@ -57,4 +59,19 @@ export function buildCodexAdditionalContext(
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
   };
+}
+
+const encodeSkillPath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+export function buildCodexComputerUseInstructions(
+  availability: CodexComputerUseAvailability,
+): string {
+  if (availability.status === "unavailable") {
+    return "T3 has not verified native Computer Use for this turn. This supersedes any earlier T3 locator. Do not use native Computer Use or the node_repl sky service this turn, even if its instructions remain in the conversation. For Mac-app UI requests, report that Computer Use is unavailable. Do not install or reconfigure Computer Use unless the user explicitly asks.";
+  }
+  const path = encodeSkillPath(availability.skillPath);
+  const instructions = `Native Codex Computer Use is configured on the server environment's Mac, including when your client is remote. For Mac-app UI work, first read the entire installed skill at ${path} and follow it, including its confirmation policy. Use its node_repl workflow. Normal coding does not need Computer Use. Configuration does not guarantee usability. If native Computer Use fails, report it. Do not install or reconfigure Computer Use unless the user explicitly asks.`;
+  return Buffer.byteLength(instructions, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES
+    ? instructions
+    : buildCodexComputerUseInstructions({ status: "unavailable" });
 }

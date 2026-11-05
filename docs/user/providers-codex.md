@@ -124,6 +124,13 @@ If you do not want to answer, dismiss the question from its panel. Dismissing
 closes it without sending anything to Codex. This requires a Codex version that
 supports async questions.
 
+## Use Mac apps
+
+If your Codex instance already has native Computer Use configured and enabled,
+ask it to work in a Mac app, such as Calculator. Computer Use controls the server
+environment's Mac, even when you connect from another computer or your phone.
+Native permissions and confirmation requests still apply.
+
 ## Approve app access
 
 Codex tools can request access to another app. Respond to the named app's request

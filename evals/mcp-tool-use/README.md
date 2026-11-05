@@ -239,3 +239,25 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 2. From `evals/`, run `pnpm mcp-tool-use:trim-capture <claude|codex> <capture.json> mcp-tool-use/templates/<claude|codex>.json.gz`. It keeps only what `run.ts` reads, and removes user instructions, the user's own skills and agents, account ids, and home paths.
 3. Read the output for user data before you commit it: `zcat <file> | less`.
 4. Run the full eval on the old and new templates, and compare.
+
+## Native Computer Use cases
+
+`cases/native-computer-use.ndjson` checks the Codex locator with an empty skill
+catalog, ordinary coding, and unavailable Computer Use. The fixture imports
+`buildCodexComputerUseInstructions` from the product. It supplies an authored
+skill and a synthetic `node_repl` tool. The grader requires a successful full-file
+read in an earlier model step before the first native call. Excerpts and failed
+or late reads do not pass.
+These cases do not control an app or prove native permissions, approvals, resume,
+or screenshot freshness.
+
+For a paired baseline, copy the cases and set
+`setup.nativeComputerUseContext` to `false`. This omits only the product locator
+while keeping the same native tool and skill fixture. Run both files on the same
+Codex model, starting with one sample, then several samples per case. Run the full
+suite on each evaluated model before merging, as required by the eval guide.
+
+```sh
+pnpm mcp-tool-use --model gpt-6.1-sol --cases mcp-tool-use/cases/native-computer-use.ndjson --case native-cua-calculator --dry-run
+pnpm mcp-tool-use --model gpt-6.1-sol --cases mcp-tool-use/cases/native-computer-use.ndjson --case native-cua-calculator --samples 1 --out runs/native-cua-smoke
+```

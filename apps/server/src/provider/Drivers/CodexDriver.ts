@@ -294,6 +294,7 @@ export const CodexDriver: ProviderDriver<
         config,
       },
       {
+        enableComputerUse: true,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
         compatibility: installation.compatibility,
         resolveRuntime,

@@ -47,7 +47,10 @@ import {
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
-import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
+import {
+  buildCodexAdditionalContext,
+  buildCodexComputerUseInstructions,
+} from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
@@ -79,6 +82,14 @@ import {
   decideGitHubCommand,
 } from "../../apps/server/src/sourceControl/agentGitHubReads.ts";
 import { agentShellCommands } from "../../apps/server/src/sourceControl/agentShellCommands.ts";
+import {
+  gradeNativeComputerUse,
+  isFullNativeSkillRead,
+  NativeComputerUseExpect,
+  SYNTHETIC_COMPUTER_USE_SKILL,
+  NATIVE_COMPUTER_USE_SKILL_PATH,
+  NATIVE_COMPUTER_USE_TOOL,
+} from "./native-computer-use.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
@@ -218,6 +229,7 @@ const McpToolUseExpect = Schema.Struct({
    * files request_secret returned were read. See `SecretExpect` in secret-grading.ts.
    */
   secret: Schema.optional(SecretExpect),
+  nativeComputerUse: Schema.optional(NativeComputerUseExpect),
 });
 
 /**
@@ -283,6 +295,8 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    nativeComputerUse: Schema.optional(Schema.Literals(["available", "unavailable"])),
+    nativeComputerUseContext: Schema.optional(Schema.Boolean),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
@@ -403,6 +417,7 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   web__run: "WebFetch",
 };
 export const normalizeToolName = (name: string) => {
+  if (name === NATIVE_COMPUTER_USE_TOOL) return name;
   const bare = name.slice(name.lastIndexOf(".") + 1);
   return isT3Name(bare)
     ? bare.slice(T3_PREFIX.length)
@@ -678,6 +693,12 @@ type Base = ReturnType<typeof buildBase> & {
   readonly subagentContext?: string;
 };
 
+const message = (value: string, role = "developer") => ({
+  type: "message",
+  role,
+  content: [{ type: "input_text", text: value }],
+});
+
 /** Keep the captured harness prompt and tools; replace app-owned context and the real user. */
 const buildCodexBase = (
   template: typeof ResponsesRequest.Type,
@@ -703,11 +724,6 @@ const buildCodexBase = (
   const home = /^\/(?:home|Users)\/[^/]+/.exec(cwd)?.[0];
   const clean = (s: string) => (home ? s.replaceAll(home, home.replace(/[^/]+$/, "user")) : s);
   const effort = options.effort ?? template.reasoning.effort;
-  const message = (value: string, role = "developer") => ({
-    type: "message",
-    role,
-    content: [{ type: "input_text", text: value }],
-  });
   // The captured <collaboration_mode> message stays: Codex supplies its own mode text natively.
   const input = template.input.flatMap((item) => {
     const content = contentText(item);
@@ -837,7 +853,37 @@ type Sample = {
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
 
-export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
+export const makeSample = (testCase: McpToolUseCase, initialBase: Base): Sample => {
+  const native = testCase.setup.nativeComputerUse;
+  let base = initialBase;
+  if (native !== undefined && base.codex) {
+    const tool = {
+      name: NATIVE_COMPUTER_USE_TOOL,
+      description:
+        "Execute JavaScript in the configured persistent native node_repl. Input is { code: string, title?: string }.",
+    };
+    const instructions = buildCodexComputerUseInstructions(
+      native === "available"
+        ? { status: native, skillPath: NATIVE_COMPUTER_USE_SKILL_PATH }
+        : { status: native },
+    );
+    base = {
+      ...base,
+      nativeTools: [...base.nativeTools, tool],
+      codex: {
+        ...base.codex,
+        input: [
+          ...base.codex.input,
+          message(
+            `Native tool available through functions.exec: tools.${tool.name}({ code, title }). ${tool.description}`,
+          ),
+          ...(testCase.setup.nativeComputerUseContext === false
+            ? []
+            : [message(`<t3_code_computer_use>${instructions}</t3_code_computer_use>`)]),
+        ],
+      },
+    };
+  }
   const prior = testCase.setup.priorTurns ?? [];
   const priorCalls = prior.flatMap((turn) => turn.toolCalls ?? []);
   const repo = testCase.setup.world?.repo ?? "acme/app";
@@ -1511,6 +1557,11 @@ type Config = {
  * bypass the launcher, and its argv gate cannot see a surrounding shell loop.
  */
 export const cannedOutput = (sample: Sample, command: string) => {
+  if (
+    sample.testCase.setup.nativeComputerUse !== undefined &&
+    isFullNativeSkillRead("Bash", { command })
+  )
+    return SYNTHETIC_COMPUTER_USE_SKILL;
   if (!sample.base.codex) {
     const decision = decideGitHubCommand(command);
     if (!decision.allow) return `<tool_use_error>${decision.reason}</tool_use_error>`;
@@ -1538,7 +1589,13 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   call: Omit<ShellEntry, "output">,
 ) {
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
-  let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
+  let output =
+    sample.testCase.setup.nativeComputerUse !== undefined &&
+    isFullNativeSkillRead(call.tool, call.input)
+      ? SYNTHETIC_COMPUTER_USE_SKILL
+      : typeof command === "string"
+        ? cannedOutput(sample, command)
+        : undefined;
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
     const response = isPricedModel(config.shellModel)
@@ -1625,6 +1682,14 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     return toolResult(call.id, {
       current_time: `${base.environment.date ?? "2026-01-01"} 12:00:00 UTC`,
     });
+  if (name === NATIVE_COMPUTER_USE_TOOL && testCase.setup.nativeComputerUse !== undefined) {
+    return testCase.setup.nativeComputerUse === "available"
+      ? toolResult(
+          call.id,
+          "Synthetic native fixture. Calculator state shows 42; screenshot /tmp/acme-calculator.png. No real app was controlled.",
+        )
+      : failed("Native Computer Use is unavailable in this synthetic environment.");
+  }
   if (!SHELL_TOOLS.has(name)) return toolResult(call.id, nativeResult(name, input));
   const output = yield* simulate(sample, config, { tool: name, input });
   // Claude Code marks a failed command or file call as an error.
@@ -1776,6 +1841,7 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   }
   checks.push(...gradeDevice(expect.device, run));
   checks.push(...gradeSecret(expect.secret, run, pasted));
+  checks.push(...gradeNativeComputerUse(expect.nativeComputerUse, run.calls));
   return checks;
 };
 
@@ -1856,6 +1922,9 @@ export const executeCodex = async (
 };
 
 const codexCatalog = (base: Base) => [
+  ...base.nativeTools
+    .filter((tool) => tool.name === NATIVE_COMPUTER_USE_TOOL)
+    .map((tool) => ({ name: tool.name, description: valueText(tool.description) })),
   ...base.t3.map((tool) => ({
     name: tool.name.replace("mcp__t3-code__", "mcp__t3_code__"),
     description: `${valueText(tool.description)}\nInput JSON schema: ${JSON.stringify(tool.input_schema)}`,
@@ -2008,10 +2077,11 @@ export const ranCalls = (
 const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   testCase: McpToolUseCase,
   config: Config,
-  base: Base,
+  initialBase: Base,
   spent: { readonly usage: Usage; readonly shellUsage: Usage },
 ) {
-  const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
+  const sample = { ...makeSample(testCase, initialBase), shellUsage: spent.shellUsage };
+  const base = sample.base;
   yield* withDevices(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);

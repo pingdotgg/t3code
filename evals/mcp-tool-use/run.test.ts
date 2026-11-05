@@ -1,5 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import {
+  SYNTHETIC_COMPUTER_USE_SKILL,
+  NATIVE_COMPUTER_USE_SKILL_PATH,
+  NATIVE_COMPUTER_USE_TOOL,
+} from "./native-computer-use.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
@@ -4330,4 +4335,36 @@ it.each([
     }),
     [],
   );
+});
+
+it("requires a complete native skill read before sky and rejects excerpts, failed reads, and late reads", () => {
+  const read = {
+    step: 0,
+    tool: "Bash",
+    input: { command: `cat '${NATIVE_COMPUTER_USE_SKILL_PATH}'` },
+    output: SYNTHETIC_COMPUTER_USE_SKILL,
+  };
+  const sky = {
+    step: 1,
+    tool: NATIVE_COMPUTER_USE_TOOL,
+    input: {
+      code: "const sky = (await import('@oai/sky')).sky; await sky.get_app_state({app:'com.apple.calculator'});",
+    },
+  };
+  const grade = (calls: SampleRun["calls"], expectation: "use" | "avoid" = "use") =>
+    failed({ nativeComputerUse: expectation }, { calls, text: "", stopReason: "end_turn" });
+  assert.deepEqual(grade([read, sky]), []);
+  for (const calls of [
+    [read, { ...sky, step: 0 }],
+    [sky, read],
+    [{ ...read, failed: true }, sky],
+    [{ ...read, output: "excerpt" }, sky],
+    [{ ...read, input: { command: `head -40 '${NATIVE_COMPUTER_USE_SKILL_PATH}'` } }, sky],
+    [{ ...read, input: { command: `echo cat '${NATIVE_COMPUTER_USE_SKILL_PATH}'` } }, sky],
+  ]) {
+    assert.deepEqual(grade(calls), ["nativeComputerUse use"]);
+  }
+  assert.deepEqual(grade([], "avoid"), []);
+  assert.deepEqual(grade([read], "avoid"), ["nativeComputerUse avoid"]);
+  assert.deepEqual(grade([sky], "avoid"), ["nativeComputerUse avoid"]);
 });

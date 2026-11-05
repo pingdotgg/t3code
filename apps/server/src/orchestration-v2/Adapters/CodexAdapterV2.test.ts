@@ -4,6 +4,7 @@ import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
 } from "./ProviderTextDeltaCoalescer.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -60,6 +61,8 @@ import * as Cause from "effect/Cause";
 import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
+import { buildCodexComputerUseInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -184,6 +187,49 @@ describe("CodexAdapterV2 runtime policy", () => {
           }
         }
       }),
+  );
+
+  it.effect.each([false, true])("adds per-turn Computer Use context with hasT3Mcp=%s", (hasT3Mcp) =>
+    Effect.gen(function* () {
+      const input = [
+        { type: "text", text: "work" },
+        { type: "image", url: "data:image/png;base64,AA==" },
+      ] as const;
+      const base = {
+        nativeThreadId: "native-cua",
+        codexInput: input,
+        runtimePolicy: {
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: "/project",
+        } as const,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+          options: [{ id: "serviceTier", value: "fast" }],
+        },
+        hasT3Mcp,
+        appContext: [{ key: "app", text: "untrusted app data" }],
+      };
+      const before = yield* CodexAdapterV2.buildCodexTurnStartParams(base);
+      for (const computerUse of [
+        { status: "available", skillPath: "/installed/SKILL.md" },
+        { status: "unavailable" },
+      ] as const) {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({ ...base, computerUse });
+        assert.deepEqual(params.input, input);
+        assert.deepEqual(params, {
+          ...before,
+          additionalContext: {
+            ...before.additionalContext,
+            t3_code_computer_use: {
+              kind: "application",
+              value: buildCodexComputerUseInstructions(computerUse),
+            },
+          },
+        });
+      }
+    }),
   );
 
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
@@ -556,6 +602,34 @@ function makeCodexTestTurnInput(input: {
     runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
   };
 }
+
+const computerUseReplayResources = "/custom/Acme.app/Contents/Resources";
+const computerUseReplaySkill = `${computerUseReplayResources}/plugins/openai-bundled/plugins/computer-use/skills/computer-use/SKILL.md`;
+const computerUseReplayOptions = () => ({
+  enableComputerUse: true,
+  computerUseConfig: {
+    plugins: { "computer-use@openai-bundled": { enabled: true } },
+    mcp_servers: {
+      node_repl: {
+        command: `${computerUseReplayResources}/cua_node/bin/node_repl`,
+        env: {
+          NODE_REPL_TRUSTED_SERVICES: '{"sky":"@oai/sky/service"}',
+          NODE_REPL_NODE_MODULE_DIRS: `${computerUseReplayResources}/cua_node/lib/node_modules`,
+          SKY_CUA_SERVICE_PATH: "/custom-home/Computer Use.app",
+        },
+      },
+    },
+  },
+  fileSystem: FileSystem.makeNoop({
+    access: () => Effect.void,
+    readFileString: (path) =>
+      Effect.succeed(
+        path.endsWith("package.json")
+          ? '{"name":"@oai/sky","exports":{"./service":"./service.js"}}'
+          : "---\nname: computer-use\n---\nInstalled instructions.",
+      ),
+  }),
+});
 
 function makeCodexReplayTurn(input: {
   readonly id: string;
@@ -1235,12 +1309,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     runtimeOptions: Partial<
-      Pick<CodexAdapterV2.CodexAdapterV2Options, "settings" | "resolveRuntime" | "environment">
-    > & { readonly modelProvider?: string | null; readonly shellPath?: string } = {},
+      Pick<
+        CodexAdapterV2.CodexAdapterV2Options,
+        "settings" | "resolveRuntime" | "environment" | "enableComputerUse" | "fileSystem"
+      >
+    > & {
+      readonly modelProvider?: string | null;
+      readonly shellPath?: string;
+      readonly computerUseConfig?: Record<string, unknown>;
+      readonly computerUseFailure?: boolean;
+    } = {},
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
   ) =>
     Effect.gen(function* () {
-      const { modelProvider = null, shellPath, ...adapterRuntimeOptions } = runtimeOptions;
+      const {
+        modelProvider = null,
+        shellPath,
+        computerUseConfig,
+        computerUseFailure,
+        ...adapterRuntimeOptions
+      } = runtimeOptions;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(
@@ -1283,6 +1371,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                                 return {
                                   config: {
                                     model_provider: modelProvider,
+                                    ...computerUseConfig,
                                     ...(shellPath === undefined
                                       ? {}
                                       : { shell_environment_policy: { set: { PATH: shellPath } } }),
@@ -1290,9 +1379,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                                   origins: {},
                                 };
                               })
-                            : onRequest(method, params).pipe(
-                                Effect.andThen(client.raw.request(method, params)),
-                              ),
+                            : computerUseConfig !== undefined &&
+                                (method === "configRequirements/read" || method === "skills/list")
+                              ? onRequest(method, params).pipe(
+                                  Effect.andThen(
+                                    computerUseFailure
+                                      ? Effect.fail(
+                                          new CodexError.CodexAppServerTransportError({
+                                            operation: "write-output-stream",
+                                            cause: "fixture",
+                                          }),
+                                        )
+                                      : Effect.succeed(
+                                          method === "configRequirements/read"
+                                            ? { requirements: null }
+                                            : {
+                                                data: [
+                                                  { cwd: "/workspace", skills: [], errors: [] },
+                                                ],
+                                              },
+                                        ),
+                                  ),
+                                )
+                              : onRequest(method, params).pipe(
+                                  Effect.andThen(client.raw.request(method, params)),
+                                ),
                       },
                       request: (method, params) =>
                         onRequest(method, params).pipe(
@@ -1312,7 +1423,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ...adapterRuntimeOptions,
         clientFactory,
         digest: yield* Digest.Digest,
-        fileSystem,
+        fileSystem: adapterRuntimeOptions.fileSystem ?? fileSystem,
         idAllocator,
         serverConfig,
         continuationRequests: {
@@ -2380,97 +2491,130 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("preserves T3 context on the wire and restores it after compaction", () =>
-    Effect.scoped(
+  it.effect.each([false, true])(
+    "rechecks Computer Use after unload and resume with discovery failure=%s",
+    (computerUseFailure) =>
       Effect.gen(function* () {
-        const nativeThreadId = "context-thread";
-        const nativeTurnId = "context-turn";
-        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        const nativeThreadId = "cua-resume-thread";
+        const options = { ...computerUseReplayOptions(), computerUseFailure };
+        const contextFor = (status: "available" | "unavailable") =>
+          CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: "work" }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            computerUse:
+              status === "available" ? { status, skillPath: computerUseReplaySkill } : { status },
+          });
+        const first = yield* contextFor(computerUseFailure ? "unavailable" : "available");
+        const second = yield* contextFor("unavailable");
+        const preamble = codexReplayPreamble({
           nativeThreadId,
-          codexInput: [{ type: "text", text: "work" }],
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          hasT3Mcp: true,
+          nativeTurnId: "cua-first",
+          prompt: "work",
         });
-        assert.include(
-          params.additionalContext?.t3_code_orchestration_01?.value ?? "",
-          "delegate_task",
-        );
-        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+        const completed = (id: string): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: id,
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id, status: "completed" }),
+            },
+          },
+        });
         const transcript = makeCodexReplayTranscript({
-          scenario: "restore-context",
+          scenario: "cua-resume",
           entries: [
-            ...entries.slice(0, 5),
+            ...preamble.slice(0, 5),
             {
               type: "expect_outbound",
-              label: "context turn",
-              frame: { id: 3, method: "turn/start", params },
+              label: "first locator",
+              frame: { id: 3, method: "turn/start", params: first },
             },
-            ...entries.slice(6),
+            ...preamble.slice(6),
+            completed("cua-first"),
+            {
+              type: "expect_outbound",
+              label: "unload",
+              frame: { id: 4, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+            },
             {
               type: "emit_inbound",
-              label: "compacted",
-              frame: {
-                method: "item/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turnId: nativeTurnId,
-                  item: { type: "contextCompaction", id: "compact-context" },
-                },
-              },
+              label: "unloaded",
+              frame: { id: 4, result: { status: "unsubscribed" } },
             },
             {
               type: "expect_outbound",
-              label: "restore context",
+              label: "resume",
               frame: {
-                id: 4,
-                method: "thread/inject_items",
+                id: 5,
+                method: "thread/resume",
                 params: {
                   threadId: nativeThreadId,
-                  items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
-                    type: "message",
-                    role: "developer",
-                    content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
-                  })),
+                  modelProvider: "openai",
+                  model: "gpt-5.4",
+                  cwd: "/workspace",
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },
               },
             },
-            { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
             {
               type: "emit_inbound",
-              label: "done",
+              label: "resumed",
+              frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+            {
+              type: "expect_outbound",
+              label: "withdrawn locator",
+              frame: { id: 6, method: "turn/start", params: second },
+            },
+            {
+              type: "emit_inbound",
+              label: "second started",
               frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
+                id: 6,
+                result: { turn: makeCodexReplayTurn({ id: "cua-second", status: "inProgress" }) },
               },
             },
+            completed("cua-second"),
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        yield* (yield* McpProviderSessions.McpProviderSessions).set({
-          environmentId: EnvironmentId.make("test"),
-          threadId: harness.threadId,
-          providerSessionId: "context-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: "Bearer test",
-          browserToolsAvailable: true,
-        });
-        yield* harness.runtime.startTurn(
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          options,
+        );
+        const turn = (attempt: string, providerThread = harness.providerThread) =>
           makeCodexTestTurnInput({
             threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("context-attempt"),
+            providerThread,
+            now: DateTime.makeUnsafe("2026-11-04T00:00:00Z"),
+            attemptId: RunAttemptId.make(attempt),
             text: "work",
-          }),
-        );
+          });
+        yield* harness.runtime.startTurn(turn("cua-first"));
         yield* harness.firstTerminal;
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        options.computerUseConfig.plugins["computer-use@openai-bundled"].enabled = false;
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        yield* harness.runtime.startTurn(turn("cua-second", resumed));
+        yield* harness.awaitTerminal(2);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed", "completed"],
+        );
       }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,
@@ -2480,7 +2624,118 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
-    ),
+  );
+
+  it.effect.each([false, true])(
+    "preserves T3 context on the wire and restores it after compaction with MCP=%s",
+    (hasT3Mcp) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "context-thread";
+          const nativeTurnId = "context-turn";
+          const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: "work" }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            hasT3Mcp,
+            computerUse: { status: "available", skillPath: computerUseReplaySkill },
+          });
+          assert.isDefined(params.additionalContext?.t3_code_computer_use);
+          assert.equal(params.additionalContext?.t3_code_runtime !== undefined, hasT3Mcp);
+          const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "restore-context",
+            entries: [
+              ...entries.slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "context turn",
+                frame: { id: 3, method: "turn/start", params },
+              },
+              ...entries.slice(6),
+              {
+                type: "emit_inbound",
+                label: "compacted",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: { type: "contextCompaction", id: "compact-context" },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "restore context",
+                frame: {
+                  id: 4,
+                  method: "thread/inject_items",
+                  params: {
+                    threadId: nativeThreadId,
+                    items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                      type: "message",
+                      role: "developer",
+                      content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+                    })),
+                  },
+                },
+              },
+              { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+              {
+                type: "emit_inbound",
+                label: "done",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            computerUseReplayOptions(),
+          );
+          if (hasT3Mcp)
+            yield* (yield* McpProviderSessions.McpProviderSessions).set({
+              environmentId: EnvironmentId.make("test"),
+              threadId: harness.threadId,
+              providerSessionId: "context-session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: "Bearer test",
+              browserToolsAvailable: true,
+            });
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("context-attempt"),
+              text: "work",
+            }),
+          );
+          yield* harness.firstTerminal;
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
