@@ -172,9 +172,10 @@ function withoutHtmlComments(body: string): string {
   let text = "";
   let from = 0;
   for (let open = body.indexOf("<!--"); open !== -1; open = body.indexOf("<!--", from)) {
-    text += `${body.slice(from, open)} `;
     const close = body.indexOf("-->", open + 4);
-    if (close === -1) return text;
+    // An unclosed opener is usually prose about `<!--`, so the rest stays.
+    if (close === -1) return text + body.slice(from);
+    text += `${body.slice(from, open)} `;
     from = close + 3;
   }
   return text + body.slice(from);
