@@ -257,3 +257,114 @@ it.effect("retains another window's account when provider-filtered usage refresh
     Effect.scoped,
   );
 });
+
+it.effect.each(["reset", "already_redeemed", "no_credit"] as const)(
+  "removes retained credits after %s when account listing fails",
+  (code) => {
+    let consumed = false;
+    const sourceId = UsageLimitSourceId.make("hub");
+    const otherId = UsageLimitSourceId.make("other-hub");
+    return Effect.gen(function* () {
+      const sources = yield* UsageLimitSources.make;
+      const initial = yield* sources.streamChanges.pipe(
+        Stream.filter((next) => next.length === 2),
+        Stream.runHead,
+        Effect.flatMap(Effect.fromOption),
+      );
+      const before = initial.find((source) => source.id === sourceId)!;
+      expect(before.accounts[0]?.usageLimits.resetCredits?.nextCreditId).toBe("credit");
+      const outcome =
+        code === "reset" ? "reset" : code === "already_redeemed" ? "alreadyRedeemed" : "noCredit";
+      expect(
+        yield* sources.consumeResetCredit({ sourceId, accountId: "first", creditId: "credit" }),
+      ).toEqual({ outcome });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const snapshots = yield* sources.current;
+        const after = snapshots.find((source) => source.id === sourceId)!;
+        expect(after.error).toContain("503");
+        expect(after.accounts[0]?.usageLimits.stale).toBe(true);
+        expect(after.accounts[0]?.usageLimits.windows).toEqual(
+          before.accounts[0]?.usageLimits.windows,
+        );
+        expect(after.accounts[0]?.usageLimits.resetCredits).toBeUndefined();
+        expect(after.accounts[1]?.usageLimits.resetCredits).toEqual(
+          before.accounts[1]?.usageLimits.resetCredits,
+        );
+        expect(snapshots.find((source) => source.id === otherId)?.accounts).toEqual(
+          initial.find((source) => source.id === otherId)?.accounts,
+        );
+        if (attempt === 0) yield* sources.refresh;
+      }
+    }).pipe(
+      Effect.provide([
+        ServerSettings.layerTest({
+          usageLimitSources: {
+            [sourceId]: {
+              kind: "cliproxy",
+              url: "https://hub.test",
+              managementKey: "key",
+              enabled: true,
+            },
+            [otherId]: {
+              kind: "cliproxy",
+              url: "https://other.test",
+              managementKey: "key",
+              enabled: true,
+            },
+          },
+        }),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          read: () => Effect.succeed([]),
+          invalidate: () => Effect.void,
+        }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              if (request.url.endsWith("/auth-files"))
+                return HttpClientResponse.fromWeb(
+                  request,
+                  consumed && new URL(request.url).host === "hub.test"
+                    ? Response.json({}, { status: 503 })
+                    : Response.json({
+                        files: [
+                          { id: "first", auth_index: "a", provider: "codex" },
+                          { id: "second", auth_index: "b", provider: "codex" },
+                        ],
+                      }),
+                );
+              if (request.url.endsWith("/reset-quota"))
+                return HttpClientResponse.fromWeb(request, Response.json({}));
+              const input = decodeSourceRequest(
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "{}",
+              );
+              if (input.url.endsWith("/consume")) consumed = true;
+              const body = input.url.endsWith("/consume")
+                ? { code }
+                : input.url.endsWith("/rate-limit-reset-credits")
+                  ? {
+                      credits: [
+                        {
+                          id: "credit",
+                          expires_at: "2099-01-01T00:00:00Z",
+                          status: "available",
+                          reset_type: "codex_rate_limits",
+                        },
+                      ],
+                    }
+                  : { rate_limit: { primary_window: { used_percent: 20 } } };
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ status_code: 200, body: encodeSourceBody(body) }),
+              );
+            }),
+          ),
+        ),
+        NodeCrypto.layer,
+      ]),
+      Effect.scoped,
+    );
+  },
+);

@@ -70,6 +70,11 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  const sourceCacheKey = (
+    id: UsageLimitSourceId,
+    config: UsageLimitSourceConfig,
+    managementKey: string,
+  ) => `${id}\0${config.url}\0${managementKey}`;
   const lastGoodSources = new Map<
     string,
     readonly UsageLimitSourceSnapshot["accounts"][number][]
@@ -84,7 +89,7 @@ export const make = Effect.gen(function* () {
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
-    const accountKey = `${id}\0${config.url}\0${managementKey}`;
+    const accountKey = sourceCacheKey(id, config, managementKey);
     const providers = yield* UsageProviderFilter;
     const accounts = yield* api
       .readAccounts({ url: config.url, managementKey }, providers)
@@ -157,6 +162,23 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
+    if (
+      result.outcome === "reset" ||
+      result.outcome === "alreadyRedeemed" ||
+      result.outcome === "noCredit"
+    ) {
+      const cacheKey = sourceCacheKey(input.sourceId, config, managementKey);
+      const retained = lastGoodSources.get(cacheKey);
+      if (retained)
+        lastGoodSources.set(
+          cacheKey,
+          retained.map((account) => {
+            if (account.id !== input.accountId || account.driver !== "codex") return account;
+            const { resetCredits: _resetCredits, ...usageLimits } = account.usageLimits;
+            return { ...account, usageLimits };
+          }),
+        );
+    }
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
