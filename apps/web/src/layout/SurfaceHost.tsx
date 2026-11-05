@@ -1133,9 +1133,24 @@ export function LayoutSurfaceHost({
   // from this very frame. After the motion above, so they start where it does.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reposition external browser surfaces after committed pane geometry and transforms change.
   useLayoutEffect(() => kickBrowserSurfaceTracking({ now: true }));
-  const paneStyleById = new Map(
-    [...slotByTabId.values()].map(({ slot, style }) => [slot.paneId, style]),
-  );
+  const paneStyleById = new Map([
+    ...shown.workspaces.flatMap((candidate) => {
+      if (candidate.columns.length === 0) return [];
+      const own = selectShownSlots(
+        candidate,
+        { width: viewportWidth, whenNoRoom },
+        narrow,
+        maximizedTabId,
+      );
+      return own.slots.map((slot) => {
+        const { width, height } = slotStyle(slot, own.stripWidth * viewportWidth);
+        return [slot.paneId, { width, height }] as const;
+      });
+    }),
+    ...[...slotByTabId.values()].map(
+      ({ slot, style }) => [slot.paneId, { width: style.width, height: style.height }] as const,
+    ),
+  ]);
   const renderedTabIds = [
     ...new Set([
       ...mountedTabIds,
@@ -1514,7 +1529,7 @@ function LayoutChatSurface({
         // of the window: Electron keeps applying its stale window drag regions.
         !visible &&
           "pointer-events-none -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
-        !visible && paneStyle === undefined && "inset-0",
+        !visible && (paneStyle === undefined ? "inset-0" : "top-0 left-0"),
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
