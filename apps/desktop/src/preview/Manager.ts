@@ -35,7 +35,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -464,10 +464,10 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
-const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
+const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platform): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
-  (input.meta || input.control) &&
+  (platform === "darwin" ? input.meta && !input.control : input.control && !input.meta) &&
   !input.shift &&
   !input.alt;
 
@@ -523,7 +523,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const hostPlatform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
@@ -1488,7 +1488,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         return;
       }
-      if (isPreviewRefreshShortcut(input)) {
+      if (isPreviewRefreshShortcut(input, hostPlatform)) {
         event.preventDefault();
         runFork(
           attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
@@ -1685,6 +1685,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
+    if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
         [
@@ -1893,6 +1894,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
     wc.once("destroyed", () => {
+      runFork(hideDestroyedGuest(webContentsId));
       runFork(detachControlSession(webContentsId));
     });
     yield* ensureControlSession(wc).pipe(
@@ -2346,6 +2348,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* applyColorScheme(tabId, wc, colorScheme);
   });
 
+  const setShown = Effect.fn("PreviewManager.setShown")(function* (tabId: string, shown: boolean) {
+    const serverTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.serverTab;
+    if (serverTab) browserHost.setShown(serverTab, shown);
+  });
+
+  // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
+  // The renderer reports again once a new guest registers.
+  const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
+    for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
+      if (tab.webContentsId === webContentsId && tab.serverTab) {
+        browserHost.setShown(tab.serverTab, false);
+      }
+    }
+  });
+
   const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
     tabId: string,
     audioMuted: boolean,
@@ -2390,7 +2407,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
       ),
     ]);
-    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const uuid = yield* random.uuidV4();
     const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.png`);
     const data = image.toPNG();
@@ -3307,6 +3324,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAnnotationSendEnabled,
     setAudioMuted,
+    setShown,
     setColorScheme,
     setMainWindow,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
@@ -3512,6 +3530,7 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
@@ -3652,6 +3671,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
+    setShown: operations.setShown,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession

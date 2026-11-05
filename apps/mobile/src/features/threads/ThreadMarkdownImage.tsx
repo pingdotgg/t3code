@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import { createContext, useContext, useId, useState } from "react";
@@ -19,6 +19,7 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
+import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
@@ -32,7 +33,9 @@ export const MarkdownImageAvailableWidthContext = createContext(0);
 
 type ImageSize = { readonly width: number; readonly height: number };
 
-class SvgLoadError extends Data.TaggedError("SvgLoadError")<{ readonly cause: unknown }> {}
+class SvgLoadError extends Schema.TaggedError<SvgLoadError>()("SvgLoadError", {
+  cause: Schema.Defect(),
+}) {}
 
 async function readSvgXml(uri: string, signal: AbortSignal): Promise<string> {
   if (uri.startsWith("data:image/svg+xml")) {
@@ -277,7 +280,12 @@ export function ThreadMarkdownImage(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const workspaceMutationId = useContext(WorkspaceMutationIdContext);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    props.resource,
+    props.resource._tag === "media-file" ? workspaceMutationId : undefined,
+  );
   const resourceKey =
     props.resource._tag === "attachment"
       ? `attachment:${props.resource.attachmentId}`
