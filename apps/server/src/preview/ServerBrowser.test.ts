@@ -2465,11 +2465,25 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
           input: { reuseExistingTab: false, open: false },
         });
       };
+      const popupEvents = yield* manager.subscribeEvents;
+      const popup = makeContext(undefined, "https://example.com/popout");
       const opened: Array<string> = [];
-      for (let index = 0; index < 32; index++) {
+      // The 32nd slot holds the native popup window of agent-3's first tab.
+      for (let index = 0; index < 31; index++) {
         now.mockReturnValue(index);
+        if (index === 24) desktopPopupsNext.push(popup);
         opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
       }
+      let popupOpened = yield* PubSub.take(popupEvents);
+      while (popupOpened.type !== "opened" || !popupOpened.snapshot.headless)
+        popupOpened = yield* PubSub.take(popupEvents);
+      const popupTabId = popupOpened.snapshot.tabId;
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-3"),
+        operation: "status",
+        tabId: PreviewTabId.make(popupTabId),
+        input: {},
+      });
 
       now.mockReturnValue(100);
       yield* broker.invoke<PreviewAutomationStatus>({
@@ -2486,12 +2500,17 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
 
       now.mockReturnValue(31 * 60 * 1000);
       // A session at its own limit couldn't use a freed slot, so nothing closes for it.
-      expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(yield* open("agent-2").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
       expect(releasedDesktopTabs).toEqual([]);
       // Tabs a desktop window shows keep their slots however long they sit idle.
       for (const tabId of opened) shownDesktopTabs.add(tabId);
       expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
       expect(releasedDesktopTabs).toEqual([]);
+      // So does a hidden tab whose popup window is still open on the desktop.
+      shownDesktopTabs.delete(opened[24]!);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      expect(popup.page.close).not.toHaveBeenCalled();
       shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
       const events = yield* manager.subscribeEvents;
@@ -2511,7 +2530,7 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(releasedDesktopTabs).toEqual([opened[2]]);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
-        [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
+        [...opened.filter((tabId) => tabId !== opened[2]), popupTabId, fresh.tabId!].toSorted(),
       );
     }),
   ).pipe(Effect.provide(layer)),

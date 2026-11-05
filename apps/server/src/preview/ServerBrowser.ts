@@ -1445,10 +1445,23 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
+  // A desktop popup is the person's own window, and closing its opener destroys it too.
+  const isNativePopup = (tab: ServerTab) => tab.desktop !== null && tab.openerTabId !== undefined;
+  const holdsNativePopup = (tab: ServerTab) =>
+    isNativePopup(tab) ||
+    [...tabs.values()].some(
+      (other) =>
+        isNativePopup(other) && other.threadId === tab.threadId && other.openerTabId === tab.tabId,
+    );
+
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
+      (tab) =>
+        tab.control.agentId !== null &&
+        !isVisible(tab) &&
+        tab.usedAt < cutoff &&
+        !holdsNativePopup(tab),
     );
   };
 
