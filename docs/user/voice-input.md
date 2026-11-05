@@ -2,8 +2,9 @@
 
 Dictate into the composer instead of typing. The transcript lands in your draft
 for review, and only sending the message sends anything to an agent. Dictation
-also works in citation comments, diff and file annotations, and pull request
-comments, replies, and review summaries.
+also works in citation comments, diff and file annotations, pull request
+comments, replies, and review summaries, and in the desktop app's browser
+annotation editor.
 
 On iPhone and Android, voice input transcribes on the device. See
 [Voice input on mobile](./composer.md#voice-input-on-mobile).
@@ -47,9 +48,11 @@ when recording started, and the editor is read-only while dictation runs.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In
-the other editors, Save, Comment, Reply, or Submit review works the same way,
-and the shortcut targets the editor that has focus, or the composer when none
-does.
+the other editors, Save, Comment, Reply, Submit review, or Attach works the
+same way, and the shortcut targets the editor that has focus, or the composer
+when none does. In the desktop browser's annotation editor, the microphone and
+the shortcut work while the page has focus; the page you are annotating never
+sees the recording, which runs in T3 Code itself.
 
 **Dictation shortcut** in Voice settings picks how the keybinding behaves:
 **Auto** tap-toggles or records while held, **Hold** records only while the keys

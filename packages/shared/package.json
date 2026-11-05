@@ -243,6 +243,10 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
+    "./keybindingMatching": {
+      "types": "./src/keybindingMatching.ts",
+      "import": "./src/keybindingMatching.ts"
+    },
     "./threadTranscript": {
       "types": "./src/threadTranscript.ts",
       "import": "./src/threadTranscript.ts"
