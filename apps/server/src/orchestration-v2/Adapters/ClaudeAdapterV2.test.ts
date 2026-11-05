@@ -1620,8 +1620,8 @@ describe("ClaudeAdapterV2 resumeThread", () => {
               runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
             });
             const terminal = yield* runtime.events.pipe(
-              Stream.filter((event) => event.type === "turn.terminal"),
-              Stream.runHead,
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
               Effect.forkScoped,
             );
             yield* runtime.startTurn(
@@ -1635,13 +1635,23 @@ describe("ClaudeAdapterV2 resumeThread", () => {
                 providerTurnOrdinal: 2,
               }),
             );
-            const settled = yield* Fiber.join(terminal);
+            const events = yield* Fiber.join(terminal);
+            const settled = events.at(-1);
             assert.equal(openedOptions[0]?.resume, nativeId);
-            assert.isTrue(
-              Option.isSome(settled) &&
-                settled.value.type === "turn.terminal" &&
-                settled.value.status === "failed",
+            assert.isTrue(settled?.type === "turn.terminal" && settled.status === "failed");
+            // The session manager skips resumeThread for a loaded thread unless it errored.
+            assert.equal(
+              events
+                .flatMap((event) =>
+                  event.type === "provider_thread.updated" ? [event.providerThread.status] : [],
+                )
+                .at(-1),
+              "error",
             );
+            const sameSession = yield* runtime
+              .resumeThread({ providerThread })
+              .pipe(Effect.match({ onSuccess: () => "resumed", onFailure: (error) => error._tag }));
+            assert.equal(sameSession, "ProviderAdapterResumeThreadError");
             return providerThread;
           }),
         );
