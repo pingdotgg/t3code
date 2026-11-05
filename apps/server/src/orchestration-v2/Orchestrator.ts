@@ -3053,7 +3053,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           events,
         );
       } else if (
-        command.keepActiveRun !== true &&
+        !(command.type === "thread.pull-request.unlink" && command.keepActiveRun === true) &&
         ["preparing", "starting", "running", "waiting"].includes(run.status)
       ) {
         cancelUnsettledEffects = yield* dispatchRunInterrupt(

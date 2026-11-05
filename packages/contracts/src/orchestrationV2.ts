@@ -3073,6 +3073,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
+    /** An agent unlinking finishes its run; a user unlinking under agent merge interrupts it. */
     keepActiveRun: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
@@ -3090,8 +3091,6 @@ export const OrchestrationV2Command = Schema.Union([
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
     agentMerge: Schema.optional(ThreadPullRequestAgentMerge),
-    /** An agent handing back finishes its run; a user withdrawing agent merge interrupts it. */
-    keepActiveRun: Schema.optional(Schema.Boolean),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,

@@ -46,6 +46,7 @@ import {
   PullRequestProjectNotFoundError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
+  AGENT_MERGE_WATCH_NEXT,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
@@ -275,6 +276,17 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestWatchFromSubagentError();
     }
     const before = watchedLink(thread);
+    if (before?.watch?.agentMerge !== undefined) {
+      return {
+        host: target.host,
+        repository: target.repository,
+        number: target.number,
+        url: target.url,
+        watching: true,
+        wasWatching: true,
+        next: AGENT_MERGE_WATCH_NEXT,
+      };
+    }
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
@@ -287,9 +299,7 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
-        ...(watching
-          ? { link: { url: target.url, source: "agent" as const } }
-          : { keepActiveRun: true }),
+        ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     const after = yield* requireThread(PullRequestWatchFailedError, thread.id);

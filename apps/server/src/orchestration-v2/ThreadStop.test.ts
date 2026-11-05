@@ -976,7 +976,7 @@ const agentMerge = (
     });
   });
 
-const stopWatching = (threadId: ThreadId, number: number, keepActiveRun?: true) =>
+const stopWatching = (threadId: ThreadId, number: number) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
@@ -985,7 +985,6 @@ const stopWatching = (threadId: ThreadId, number: number, keepActiveRun?: true) 
       threadId,
       ...pullRequest(number),
       watching: false,
-      ...(keepActiveRun === undefined ? {} : { keepActiveRun }),
     });
   });
 
@@ -1072,17 +1071,23 @@ it.effect("stopping agent merge interrupts the run carrying its brief", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("an agent handing back from its brief keeps the run it is finishing", () =>
+it.effect("an agent unlinking from its brief keeps the run it is finishing", () =>
   Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const threadId = ThreadId.make("thread:withdraw:handback");
     yield* createWatchingThread(threadId, 4);
     yield* agentMerge(threadId, 4, "merge", "merge:handback");
     const before = (yield* threadState(threadId)).runs;
 
-    yield* stopWatching(threadId, 4, true);
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.unlink",
+      commandId: CommandId.make("unlink:handback"),
+      threadId,
+      ...pullRequest(4),
+      keepActiveRun: true,
+    });
 
-    const after = yield* threadState(threadId);
-    assert.deepEqual(after, { runs: before, watched: [] });
+    assert.deepEqual(yield* threadState(threadId), { runs: before, watched: [] });
   }).pipe(Effect.provide(layerTest)),
 );
 

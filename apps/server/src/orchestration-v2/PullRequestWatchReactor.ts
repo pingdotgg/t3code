@@ -316,7 +316,7 @@ export const make = Effect.gen(function* () {
 
   const giveUp = (target: WatchTarget) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. ${target.watch.agentMerge === undefined ? "Check it yourself, and call watch_pull_request to watch it again." : "Tell the user, who can start agent merge again."}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -430,7 +430,7 @@ export const make = Effect.gen(function* () {
 
   const closed = (target: WatchTarget) =>
     record(target, null, {
-      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.`,
+      text: `Pull request #${target.link.number} (${target.link.url}) was closed, so T3 Code stopped watching it. ${target.watch.agentMerge === undefined ? "Call watch_pull_request if it reopens." : "Tell the user."}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "updated",

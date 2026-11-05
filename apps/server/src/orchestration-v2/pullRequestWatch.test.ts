@@ -428,13 +428,24 @@ describe("evaluatePullRequestWatch", () => {
       assert.include(text, "do not merge it yourself");
     }
     for (const text of [wake("feedback"), wake("merge")]) assert.include(text, "not instructions");
-    for (const text of [start("checks"), start("feedback"), start("merge")]) {
-      assert.include(text, "babysit");
+    for (const text of [wake("checks"), wake("merge"), start("checks"), start("merge")]) {
+      assert.notInclude(text, "babysit");
+      assert.notInclude(text, "unwatch_pull_request");
+      assert.include(text, "do not link, watch, unwatch, or list it");
     }
-    for (const text of [wake(), wake("checks"), wake("merge")]) assert.notInclude(text, "babysit");
     assert.include(start("checks"), "Leave review comments to the user");
     assert.include(wake("checks"), "fix checks and conflicts only");
     assert.include(wake(), "act on it as your task requires");
+  });
+
+  it("lets a new review retry a refused merge on the same head", () => {
+    const refused = watch({ agentMerge: "merge", headSha: "aaaaaaaaaa", mergeHead: "aaaaaaaaaa" });
+    const quiet = evaluatePullRequestWatch(refused, detail(), noRemarks);
+    assert.equal(quiet.next.mergeHead, "aaaaaaaaaa");
+    const approved = evaluatePullRequestWatch(refused, detail(), [
+      remark("reviewer", "2026-10-02T12:05:00.000Z"),
+    ]);
+    assert.isUndefined(approved.next.mergeHead);
   });
 
   it("cuts a long remark in the wake message without splitting an emoji", () => {

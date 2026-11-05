@@ -327,10 +327,12 @@ no reviewer requested changes. CodeRabbit is never waited for. It waits until th
 it stops watching and tells you, or with **Fix and merge when ready** it merges with your project's
 merge method, or the first one the repository allows. It merges only the commit it judged, and it
 never merges a stacked review or one you lack write access to; those are reported ready instead. If
-the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why.
+the host refuses, such as for a missing approval or an out-of-date branch, the agent is told why,
+and T3 Code tries again after a new push or review.
 
-Agent merge starts right away, even if the agent is idle: it first reviews where the pull request
-stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
+T3 Code runs the watch and prompts the agent on each change, so the agent cannot watch or stop
+watching a pull request under agent merge. Agent merge starts right away, even if the agent is idle:
+it first reviews where the pull request stands. Pick another option to change it, or stop it the same way you stop a watch. Stopping,
 changing, or unlinking cancels anything the agent has not started yet and interrupts a turn already
 working on agent merge. Permission to merge belongs to T3 Code, so it ends the moment you stop. All
 the limits above apply, and agent merge checks the host on every sweep while it is on. Starting it
