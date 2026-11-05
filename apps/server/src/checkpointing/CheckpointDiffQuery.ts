@@ -239,7 +239,13 @@ export const make = Effect.gen(function* () {
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
           : fromCheckpoint?.ref;
-      const hasRepositories = toCheckpoint.repositories !== undefined;
+      const repositoryEntries = latestRepositoryEntries(
+        projection,
+        toCheckpoint,
+        input.fromTurnCount,
+      );
+      const hasRepositories =
+        toCheckpoint.repositories !== undefined || repositoryEntries.length > 0;
       if (fromCheckpointRef === undefined && !hasRepositories) {
         return yield* new CheckpointRefUnavailableError({
           operation,
@@ -314,9 +320,7 @@ export const make = Effect.gen(function* () {
             )
           : yield* diffPart(workspaceComparison, remainingBytes());
       }
-      for (const { entry, ordinal } of hasRepositories
-        ? latestRepositoryEntries(projection, toCheckpoint, input.fromTurnCount)
-        : []) {
+      for (const { entry, ordinal } of repositoryEntries) {
         if (remainingBytes() < 0) break;
         const cwd = (yield* fileSystem
           .exists(entry.worktreePath)
