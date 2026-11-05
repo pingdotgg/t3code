@@ -606,6 +606,7 @@ function RightPanelTab(
                     "cursor-pointer flex min-w-0 items-center",
                     active && surface.kind === "diff" && "shrink-0",
                   )}
+                  aria-label={surface.kind === "terminal" && threadTitle ? `${title}, ${threadTitle}` : undefined}
                   onClick={() => onActivate(surface)}
                 >
                   <span
