@@ -106,9 +106,11 @@ const layerDesktopEnvironment = Layer.unwrap(
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const { feedUrl } = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
+    const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
       resolveCliRunner: Effect.succeed(
-        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment),
+        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, { feedUrl, env }),
       ),
     });
   }),
@@ -203,7 +205,7 @@ const layerDesktopApplication = Layer.mergeAll(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(
     DesktopUpdates.layer.pipe(
-      Layer.provide(DesktopUpdatePolicy.layer),
+      Layer.provideMerge(DesktopUpdatePolicy.layer),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
     ),

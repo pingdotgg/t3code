@@ -3,6 +3,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { resolveSshTarget } from "@t3tools/ssh/command";
@@ -77,6 +78,7 @@ export interface DesktopSshEnvironmentLayerOptions {
 
 export const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  release: { readonly feedUrl: string | undefined; readonly env: NodeJS.ProcessEnv },
 ): SshTunnel.RemoteT3RunnerOptions => {
   const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
   if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
@@ -85,7 +87,12 @@ export const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  const releaseBaseUrl =
+    release.feedUrl ?? (release.env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined);
+  return {
+    archiveVersion: environment.appVersion,
+    ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+  };
 };
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
