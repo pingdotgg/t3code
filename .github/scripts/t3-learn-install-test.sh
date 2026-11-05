@@ -135,11 +135,13 @@ if [ "$os" = Darwin ] && [ "$scenario" = fresh ] && [ -n "$previous" ] && [ "$pr
   executable="$(defaults read "$app/Contents/Info.plist" CFBundleExecutable)"
   node scripts/t3-learn-update-check.ts --executable "$app/Contents/MacOS/$executable" \
     --feed-port 8765 --expect "$version"
+  # The swap moves the bundle away for a moment; a failed stat is not a new bundle.
+  replaced() { now="$(stat -f %i "$app" 2>/dev/null)" && [ "$now" != "$before" ]; }
   for _ in $(seq 1 120); do
-    [ -d "$app" ] && [ "$(stat -f %i "$app")" != "$before" ] && break
+    replaced && break
     sleep 1
   done
-  [ -d "$app" ] && [ "$(stat -f %i "$app")" != "$before" ] || fail "the app bundle was not replaced"
+  replaced || fail "the app bundle was not replaced"
   wait_for_server "$HOME/.t3-learn" "$version" >/dev/null
   ls -d "/Applications/.t3-learn-update."* 2>/dev/null && fail "the update left its staging folder"
   codesign --verify --deep "$app" || fail "the updated app's signature does not verify"
