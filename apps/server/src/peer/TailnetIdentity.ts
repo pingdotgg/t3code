@@ -42,17 +42,25 @@ export const locateTailnetTarget = (url: string, tailnet: Tailnet): TailnetTarge
   return address === undefined ? null : { origin: parsed.origin, address };
 };
 
+// Phones and TVs never host a T3 server, and each dead probe wakes their tunnel extension.
+const NON_HOST_OS = new Set(["ios", "tvos", "android"]);
+
 /** The Serve ports T3 picks, then its own port on the tailnet address. */
-const probeUrlsFor = (peer: TailnetPeer): ReadonlyArray<string> => [
-  ...(peer.magicDnsName === null
+export const probeUrlsFor = (peer: TailnetPeer): ReadonlyArray<string> =>
+  peer.os !== null && NON_HOST_OS.has(peer.os.toLowerCase())
     ? []
-    : [443, 8443, 3443].map((port) =>
-        port === 443 ? `https://${peer.magicDnsName}` : `https://${peer.magicDnsName}:${port}`,
-      )),
-  ...peer.tailnetAddresses
-    .filter((address) => NodeNet.isIPv4(address))
-    .map((address) => `http://${address}:${DEFAULT_PORT}`),
-];
+    : [
+        ...(peer.magicDnsName === null
+          ? []
+          : [443, 8443, 3443].map((port) =>
+              port === 443
+                ? `https://${peer.magicDnsName}`
+                : `https://${peer.magicDnsName}:${port}`,
+            )),
+        ...peer.tailnetAddresses
+          .filter((address) => NodeNet.isIPv4(address))
+          .map((address) => `http://${address}:${DEFAULT_PORT}`),
+      ];
 
 /** What Tailscale says about this node and the others, which the tailnet device handshake trusts. */
 export class TailnetIdentity extends Context.Service<

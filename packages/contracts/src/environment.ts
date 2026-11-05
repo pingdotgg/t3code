@@ -14,6 +14,8 @@ export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
 export const ORCHESTRATION_PROTOCOL_QUERY_PARAM = "orchestrationProtocol";
 export const ORCHESTRATION_PROTOCOL_HEADER = "x-t3-orchestration-protocol";
+/** Asks the server to deflate large RPC frames itself, for WebSocket stacks without permessage-deflate (iOS). */
+export const DEFLATED_RPC_FRAMES_QUERY_PARAM = "deflatedFrames";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",

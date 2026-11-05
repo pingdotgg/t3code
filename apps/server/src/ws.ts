@@ -196,6 +196,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as WsClientLiveness from "./wsClientLiveness.ts";
+import { deflatedJson, wantsDeflatedFrames } from "./wsDeflatedFrames.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -3589,7 +3590,12 @@ export const layer = Layer.unwrap(
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
-          const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
+          const { protocol, httpEffect } =
+            yield* RpcServer.makeProtocolWithHttpEffectWebsocket.pipe(
+              wantsDeflatedFrames(requestUrl.value, request.headers)
+                ? Effect.provideService(RpcSerialization.RpcSerialization, deflatedJson)
+                : (effect) => effect,
+            );
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(
               RpcServer.Protocol,
