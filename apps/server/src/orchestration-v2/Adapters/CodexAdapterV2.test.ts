@@ -5669,7 +5669,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       notification: false,
       expectedClass: "usage_limit",
       race: {
-        before: {},
+        before: { primary: { usedPercent: 100 } },
         during: [
           { primary: { usedPercent: 99, resetsAt: 2000100000 } },
           { primary: { usedPercent: 100 } },

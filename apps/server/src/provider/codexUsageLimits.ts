@@ -221,7 +221,9 @@ export function reconcileCodexRateLimitsRead(
     ...(rateLimitReachedType !== sent?.rateLimitReachedType && rateLimitReachedType !== undefined
       ? { rateLimitReachedType }
       : {}),
-    ...(!sameWindow(primary, sent?.primary) && primary !== undefined
+    ...((!sameWindow(primary, sent?.primary) ||
+      (primary?.resetsAt == null && notifiedResets.has("primary"))) &&
+    primary !== undefined
       ? {
           primary: laterWindow(
             primary,
@@ -230,7 +232,9 @@ export function reconcileCodexRateLimitsRead(
           ),
         }
       : {}),
-    ...(!sameWindow(secondary, sent?.secondary) && secondary !== undefined
+    ...((!sameWindow(secondary, sent?.secondary) ||
+      (secondary?.resetsAt == null && notifiedResets.has("secondary"))) &&
+    secondary !== undefined
       ? {
           secondary: laterWindow(
             secondary,
@@ -309,12 +313,9 @@ function laterReport<Report extends { readonly resetsAt?: number | null }>(
   read: Report | null | undefined,
   used: (report: Report) => number,
 ): Report | null {
-  if (!notified || !read) return notified;
-  // A notification without a reset keeps the pending read's reset for the same window.
-  if (notified.resetsAt == null && read.resetsAt != null) {
-    return { ...notified, resetsAt: read.resetsAt };
-  }
-  return notified.resetsAt != null &&
+  return notified &&
+    read &&
+    notified.resetsAt != null &&
     notified.resetsAt === read.resetsAt &&
     used(read) > used(notified)
     ? read
