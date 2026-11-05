@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { serverEnvironment } from "../../state/server";
@@ -36,7 +37,14 @@ export function KnowledgeMapSection() {
                 {...searchableSetting("knowledge-map")}
                 serverScoped
                 description={`${entry.explanation} · ${new Date(entry.doneAt).toLocaleDateString()}`}
-                status={<a href={`/threads/${ids[index]}/${entry.threadId}`}>Thread</a>}
+                status={
+                  <Link
+                    to="/$environmentId/$threadId"
+                    params={{ environmentId: ids[index]!, threadId: entry.threadId }}
+                  >
+                    Lesson
+                  </Link>
+                }
                 control={
                   <Button
                     variant="outline"
@@ -44,8 +52,11 @@ export function KnowledgeMapSection() {
                     disabled={pending === entry.topic || !permissions[index]}
                     onClick={async () => {
                       setPending(entry.topic);
-                      await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
-                      setPending(null);
+                      try {
+                        await remove({ environmentId: ids[index]!, input: { topic: entry.topic } });
+                      } finally {
+                        setPending(null);
+                      }
                     }}
                   >
                     Remove

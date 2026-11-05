@@ -58,10 +58,12 @@ import {
 } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { buildSideChatOpeningSummaryText } from "../../apps/server/src/orchestration-v2/sideChat/sideChatText.ts";
 import { sideChatOpeningHandoffId } from "../../apps/server/src/orchestration-v2/sideChat/sideChatOpening.ts";
+import { AnimationToolkit } from "../../apps/server/src/mcp/toolkits/animation/tools.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { KnowledgeToolkit } from "../../apps/server/src/mcp/toolkits/knowledge/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -440,6 +442,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  AnimationToolkit,
+  KnowledgeToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
