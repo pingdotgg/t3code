@@ -101,8 +101,6 @@ import {
   MessageSquareIcon,
   MessagesSquareIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
@@ -1856,25 +1854,21 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
   return (
     <div>
-      <button
-        type="button"
-        aria-expanded={row.expanded}
-        data-scroll-anchor-ignore
-        data-superseded-attempt-id={row.attemptId}
-        onClick={toggle}
-        aria-busy={loading}
-        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-card border border-transparent surface-card px-2.5 py-2 text-left transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      >
-        <MorphIcon
-          className="size-3.5 shrink-0 text-muted-foreground"
-          icon={row.expanded ? ChevronDown : ChevronRight}
-        />
-        <span className="text-xs font-medium text-foreground">
-          {row.label}
-          {error ? <span className="block text-error-foreground">{error}</span> : null}
-        </span>
-        <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
-      </button>
+      <div className={WORKING_BAR_CLASS_NAME}>
+        <WorkFoldToggle
+          togglable
+          expanded={row.expanded}
+          data-superseded-attempt-id={row.attemptId}
+          onClick={toggle}
+          aria-busy={loading}
+        >
+          <span>
+            {row.label}
+            {error ? <span className="block text-error-foreground">{error}</span> : null}
+          </span>
+        </WorkFoldToggle>
+        <span className="text-meta text-muted-foreground">Cut off by a steer</span>
+      </div>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>
   );
