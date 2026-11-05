@@ -769,9 +769,7 @@ describe("side chat opening context", () => {
   it.effect("includes the lesson's latest items when its turn is still running", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeSideChatHarness("side-chat-opening-busy-lesson", {
-          worktreePath: null,
-        });
+        const harness = yield* makeSideChatHarness("side-chat-opening-busy-lesson");
         yield* Effect.gen(function* () {
           const lesson = yield* harness.createLesson(LESSON_TOPIC);
           yield* harness.send(lesson, "[hold] Explain reward shaping.");

@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
+import { buildSideChatOpeningSummaryText } from "./sideChat/sideChatText.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
@@ -243,16 +244,33 @@ it.effect("caps the side chat context block without summarizing discarded parent
   }).pipe(Effect.provide(layerTest)),
 );
 
-it("summarizes newest turn items within the supplied budget", () => {
-  const { lines, omitted } = ContextHandoffService.summarizeTurnItems(
-    Array.from({ length: 40 }, (_, index) => `- Assistant: item-${index} ${"x".repeat(100)}`),
-    4_000 - "- Earlier items truncated.".length - 1,
+it("caps a busy lesson's digest in the side-chat opening at 4,000 characters", () => {
+  const opening = (runningTurnItems: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    buildSideChatOpeningSummaryText({
+      opening: { status: "ready", text: "LESSON SUMMARY", requestId: "request:opening" },
+      excerpt: "observation space",
+      excerptContext: "",
+      lessonTopic: null,
+      parentOpeningText: null,
+      runningTurnItems,
+    });
+  const items = Array.from({ length: 40 }, (_, index) =>
+    importedItem({
+      role: "assistant",
+      id: `busy-${index}`,
+      text: `item-${index} ${"x".repeat(300)}`,
+      ordinal: index,
+    }),
   );
+  const block = opening(items)
+    .split("\n\n")
+    .find((section) => section.startsWith("The lesson is still answering. So far:"));
 
-  assert.isTrue(omitted);
-  assert.include(lines.at(-1), "item-39");
-  assert.notInclude(lines.join("\n"), "item-0");
-  assert.isAtMost(["- Earlier items truncated.", ...lines].join("\n").length, 4_000);
+  assert.isDefined(block);
+  assert.isAtMost(block.length, 4_000);
+  assert.include(block, "- Earlier items truncated.");
+  assert.include(block.split("\n").at(-1), "item-39");
+  assert.notInclude(opening([]), "The lesson is still answering.");
 });
 
 it("covers the run range of a very long delta", () => {

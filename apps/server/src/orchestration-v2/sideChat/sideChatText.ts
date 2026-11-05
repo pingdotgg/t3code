@@ -473,7 +473,9 @@ export function buildSideChatOpeningSummaryText(input: {
       runningTurnItems,
       BUSY_LESSON_DIGEST_MAX_CHARS - [BUSY_LESSON_HEADER, truncated].join("\n").length,
     );
-    sections.push([BUSY_LESSON_HEADER, ...(omitted ? [truncated] : []), ...lines].join("\n"));
+    if (lines.length > 0) {
+      sections.push([BUSY_LESSON_HEADER, ...(omitted ? [truncated] : []), ...lines].join("\n"));
+    }
   }
   sections.push(
     referenceBlock(
