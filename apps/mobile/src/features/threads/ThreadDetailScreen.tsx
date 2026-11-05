@@ -1019,6 +1019,16 @@ function ThreadDetailBody(
     maxHeight: pendingUserInputMaxHeight.value,
     flexGrow: 0,
   }));
+  // Questions overlay the composer on iOS; an approval sits above it, so it gives up its height.
+  const approvalHeightStyle = useAnimatedStyle(() => ({
+    maxHeight: derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
+      navigationHeaderHeight,
+      composerOverlapHeight,
+    }),
+    flexGrow: 0,
+  }));
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
@@ -1718,12 +1728,19 @@ function ThreadDetailBody(
                         exiting={FadeOut.duration(140)}
                       >
                         {props.activePendingApproval ? (
-                          <PendingApprovalCard
-                            canOperateThread={props.canOperateThread}
-                            approval={props.activePendingApproval}
-                            respondingApprovalId={props.respondingApprovalId}
-                            onRespond={props.onRespondToApproval}
-                          />
+                          <Animated.ScrollView
+                            key={props.activePendingApproval.requestId}
+                            style={approvalHeightStyle}
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                          >
+                            <PendingApprovalCard
+                              canOperateThread={props.canOperateThread}
+                              approval={props.activePendingApproval}
+                              respondingApprovalId={props.respondingApprovalId}
+                              onRespond={props.onRespondToApproval}
+                            />
+                          </Animated.ScrollView>
                         ) : null}
                         {props.activePendingUserInput ? (
                           <PendingUserInputCard
