@@ -1314,9 +1314,14 @@ function stringEnum(schema: Record<string, unknown> | undefined): ReadonlyArray<
     : [];
 }
 
-function enumOption(value: string) {
-  const label = value.trim() || JSON.stringify(value);
-  return { label, description: label, ...(label === value ? {} : { value }) };
+function enumOptions(values: ReadonlyArray<string>) {
+  const trimmed = values.map((value) => value.trim());
+  return values.map((value, index) => {
+    const plain = trimmed[index]!;
+    const unique = plain !== "" && trimmed.indexOf(plain) === trimmed.lastIndexOf(plain);
+    const label = unique ? plain : JSON.stringify(value);
+    return { label, description: label, ...(label === value ? {} : { value }) };
+  });
 }
 
 export function elicitationFormQuestion(
@@ -1330,7 +1335,7 @@ export function elicitationFormQuestion(
   const enumValues = stringEnum(isArray ? unknownRecord(record.items) : record);
   const options =
     enumValues.length > 0
-      ? enumValues.map(enumOption)
+      ? enumOptions(enumValues)
       : record?.type === "boolean"
         ? [
             { label: "true", description: "Yes" },

@@ -37,6 +37,20 @@ describe("elicitationFormQuestion", () => {
     ]);
   });
 
+  it("quotes enum values whose trimmed labels would collide", () => {
+    const question = elicitationFormQuestion(
+      "v",
+      { type: "string", enum: [" a", "a", "b"] },
+      0,
+      "Pick",
+    );
+    assert.deepStrictEqual(question.options, [
+      { label: '" a"', description: '" a"', value: " a" },
+      { label: '"a"', description: '"a"', value: "a" },
+      { label: "b", description: "b" },
+    ]);
+  });
+
   it("keeps single-choice enums, booleans and free text as before", () => {
     const single = elicitationFormQuestion("db", { type: "string", enum: ["a", "b"] }, 0, "Pick");
     assert.deepStrictEqual(single.options, [
