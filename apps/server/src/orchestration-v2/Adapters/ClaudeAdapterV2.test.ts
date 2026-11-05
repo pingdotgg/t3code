@@ -96,7 +96,6 @@ import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutab
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
-  scopeClaudeModelCatalog,
 } from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -14900,54 +14899,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    { source: "custom model", harness: { settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS } },
+    {
+      source: "custom model",
+      model: "claude-custom-tuned",
+      harness: { settings: ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS },
+    },
     {
       source: "downloaded catalog",
+      model: "claude-sonnet-5",
       harness: {
-        modelCatalog: Effect.succeed(
-          scopeClaudeModelCatalog(
-            BUNDLED_CLAUDE_MODEL_CATALOG,
-            ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS.customModels,
+        modelCatalog: Effect.succeed({
+          models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) =>
+            entry.model.slug === "claude-sonnet-5"
+              ? {
+                  ...entry,
+                  model: {
+                    ...entry.model,
+                    capabilities: {
+                      optionDescriptors: [
+                        ...(entry.model.capabilities?.optionDescriptors ?? []),
+                        { id: "ultracode", label: "Ultracode", type: "boolean" as const },
+                      ],
+                    },
+                  },
+                }
+              : entry,
           ),
-        ),
+        }),
       },
     },
-  ])("sends Ultracode with any effort on a model from the $source", ({ harness: harnessOptions }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarnessWithOptions(harnessOptions);
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-custom-ultracode"),
-            text: "Plan the work.",
-            attachments: [],
-            modelSelection: {
-              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-              model: "claude-custom-tuned",
-              options: [
-                { id: "effort", value: "high" },
-                { id: "ultracode", value: true },
-              ],
-            },
-          }),
-        );
-        const options = harness.getOpenedOptions()!;
-        assert.equal(options.effort, "high");
-        assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+  ])(
+    "sends Ultracode with any effort on a model from the $source",
+    ({ harness: harnessOptions, model }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions(harnessOptions);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-custom-ultracode"),
+              text: "Plan the work.",
+              attachments: [],
+              modelSelection: {
+                instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                model,
+                options: [
+                  { id: "effort", value: "high" },
+                  { id: "ultracode", value: true },
+                ],
+              },
+            }),
+          );
+          const options = harness.getOpenedOptions()!;
+          assert.equal(options.effort, "high");
+          assert.equal((options.settings as { ultracode?: boolean }).ultracode, true);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
