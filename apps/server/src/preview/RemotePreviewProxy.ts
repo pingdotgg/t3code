@@ -77,7 +77,11 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   // Revocation only needs to outlive the grant's TTL, so memory is enough.
   const revoked = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  const revocations = new Map<string, Deferred.Deferred<void>>();
+  // One entry per grant with open tunnels; the last tunnel to end removes it.
+  const revocations = new Map<
+    string,
+    { readonly signal: Deferred.Deferred<void>; tunnels: number }
+  >();
 
   const secret = secrets
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
@@ -150,13 +154,13 @@ const make = Effect.gen(function* () {
     return active ? claims : Option.none();
   });
 
-  const revocationFor = Effect.fnUntraced(function* (gid: string) {
+  const revocationFor = (gid: string) => {
     const existing = revocations.get(gid);
     if (existing) return existing;
-    const created = yield* Deferred.make<void>();
+    const created = { signal: Deferred.makeUnsafe<void>(), tunnels: 0 };
     revocations.set(gid, created);
     return created;
-  });
+  };
 
   return RemotePreviewProxy.of({
     issueGrant,
@@ -187,16 +191,31 @@ const make = Effect.gen(function* () {
         next.set(gid, now.epochMilliseconds + Duration.toMillis(GRANT_TTL));
         return next;
       });
-      yield* Deferred.succeed(yield* revocationFor(gid), undefined);
+      yield* Deferred.succeed(revocationFor(gid).signal, undefined);
       // Open tunnels already hold the completed deferred; new ones are refused by `revoked`.
       revocations.delete(gid);
     }),
     awaitRevocation: Effect.fn("RemotePreviewProxy.awaitRevocation")(function* (claims) {
       // A tunnel verified just before a revocation must still see it.
       if ((yield* Ref.get(revoked)).has(claims.gid)) return;
-      yield* Effect.raceFirst(
-        Effect.flatMap(revocationFor(claims.gid), Deferred.await),
-        sessions.awaitInvalidation(claims.sid, claims.pkt).pipe(Effect.ignore),
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const entry = revocationFor(claims.gid);
+          entry.tunnels += 1;
+          return entry;
+        }),
+        (entry) =>
+          Effect.raceFirst(
+            Deferred.await(entry.signal),
+            sessions.awaitInvalidation(claims.sid, claims.pkt).pipe(Effect.ignore),
+          ),
+        (entry) =>
+          Effect.sync(() => {
+            entry.tunnels -= 1;
+            if (entry.tunnels === 0 && revocations.get(claims.gid) === entry) {
+              revocations.delete(claims.gid);
+            }
+          }),
       );
     }),
   });

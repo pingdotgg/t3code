@@ -377,13 +377,16 @@ it.effect("concurrent first use attaches sessions to the configured environment 
     const session = () =>
       ({
         setProxy: async (config: ProxyConfig) => {
-          sessionPorts.push(Number(new URL(config.proxyRules!).port));
+          sessionPorts.push(
+            config.mode === "direct" ? 0 : Number(new URL(config.proxyRules!).port),
+          );
         },
         closeAllConnections: async () => {},
       }) as Session;
+    const first = session();
     const [, , endpoint] = yield* Effect.all(
       [
-        proxy.attachSession(ENV_A, session()),
+        proxy.attachSession(ENV_A, first),
         proxy.attachSession(ENV_A, session()),
         configure(proxy, environment, ENV_A, "grant-a", [appPort]),
       ],
@@ -401,6 +404,11 @@ it.effect("concurrent first use attaches sessions to the configured environment 
       expect(page.status).toBe(200);
       expect(page.body.toString()).toBe(`remote-app host=localhost:${appPort} cookie= proxyauth=`);
     }
+
+    // A partition reused for a direct target leaves the proxy, and can be routed through it again.
+    yield* proxy.detachSession(ENV_A, first);
+    yield* proxy.attachSession(ENV_A, first);
+    expect(sessionPorts.slice(2)).toEqual([0, endpoint.port]);
   }).pipe(Effect.scoped),
 );
 
@@ -484,6 +492,31 @@ it.effect("does not reuse a pooled HTTP tunnel after the environment closes it",
     expect((yield* proxiedRequest(endpoint, url)).status).toBe(200);
     yield* Effect.promise(() => environment.disconnectTunnels!());
     expect((yield* proxiedRequest(endpoint, url)).status).toBe(200);
+  }),
+);
+
+it.effect("drops pooled tunnels when the environment's route changes", () =>
+  Effect.gen(function* () {
+    const { proxy } = yield* makeProxy;
+    const lan = yield* fakeEnvironment;
+    const relay = yield* fakeEnvironment;
+    const appPort = yield* listen(appServer("via-lan").server);
+    lan.loopback.set(appPort, appPort);
+    relay.loopback.set(appPort, yield* listen(appServer("via-relay").server));
+    const endpoint = yield* configure(proxy, lan, ENV_A, "grant-lan", [appPort]);
+    const url = `http://localhost:${appPort}/`;
+    expect((yield* proxiedRequest(endpoint, url)).body.toString()).toMatch(/^via-lan /);
+
+    relay.grants.set("grant-relay", new Set([appPort]));
+    yield* proxy.configure({
+      environmentId: ENV_A,
+      label: "environment env-a",
+      httpBaseUrl: relay.origin,
+      grant: "grant-relay",
+      expiresAt: (yield* Clock.currentTimeMillis) + TEN_MINUTES,
+      ports: [appPort],
+    });
+    expect((yield* proxiedRequest(endpoint, url)).body.toString()).toMatch(/^via-relay /);
   }),
 );
 
@@ -862,6 +895,30 @@ it.effect("a configuration queued behind another environment cannot undo a later
       `http://localhost:${appPort}/`,
     );
     expect(page.status).toBe(503);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("stopping external access is not undone by a copy queued before it", () =>
+  Effect.gen(function* () {
+    const { proxy } = yield* makeProxy;
+    const environment = yield* fakeEnvironment;
+    const appPort = yield* listen(appServer("remote-app").server);
+    environment.loopback.set(appPort, appPort);
+    yield* configure(proxy, environment, ENV_A, "grant-a", [appPort]);
+    const session = {
+      setProxy: async () => {},
+      closeAllConnections: async () => {},
+    } as unknown as Session;
+    yield* Effect.all(
+      [
+        proxy.attachSession(ENV_B, session),
+        proxy.issueExternalAccess(ENV_A),
+        proxy.revokeExternalAccess(ENV_A),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    expect((yield* proxy.status(ENV_A))?.externalAccess).toBeNull();
   }).pipe(Effect.scoped),
 );
 

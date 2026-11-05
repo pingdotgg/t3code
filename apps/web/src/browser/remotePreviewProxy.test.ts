@@ -140,3 +140,22 @@ it("moves a running proxy to the newly selected route without waiting for grant 
   expect(mocks.command).toHaveBeenCalledTimes(count);
   stop();
 });
+
+it("refuses a port beyond the grant limit and keeps the ports already approved", async () => {
+  using h = await setup();
+  mocks.command.mockImplementation(
+    async (_registry, _command, args: { input: { ports: number[] } }) => ({
+      _tag: "Success",
+      value: { grant: "g", ports: args.input.ports, expiresAt: DateTime.makeUnsafe(600_000) },
+    }),
+  );
+  const ports = Array.from({ length: 16 }, (_, index) => 3000 + index);
+  await h.module.approveRemotePreviewPorts(ENV, ports);
+  const issued = mocks.command.mock.calls.length;
+
+  await expect(h.module.approveRemotePreviewPorts(ENV, [4000])).rejects.toThrow(/at most 16/);
+  expect(mocks.command).toHaveBeenCalledTimes(issued);
+
+  await h.module.approveRemotePreviewPorts(ENV, [], { refresh: true });
+  expect(mocks.command.mock.lastCall?.[2].input.ports.toSorted()).toEqual(ports);
+});

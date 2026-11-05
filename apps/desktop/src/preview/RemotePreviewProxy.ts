@@ -98,6 +98,11 @@ export class RemotePreviewProxy extends Context.Service<
       environmentId: EnvironmentId,
       session: Session,
     ) => Effect.Effect<void, RemotePreviewProxyStartError | RemotePreviewProxySessionError>;
+    /** Returns a partition to direct connections once its environment no longer needs the proxy. */
+    readonly detachSession: (
+      environmentId: EnvironmentId,
+      session: Session,
+    ) => Effect.Effect<void, RemotePreviewProxySessionError>;
     readonly configure: (
       input: DesktopRemotePreviewProxyConfigureInput,
     ) => Effect.Effect<DesktopRemotePreviewProxyStatus, RemotePreviewProxyStartError>;
@@ -271,6 +276,10 @@ const make = Effect.gen(function* () {
     input: DesktopRemotePreviewProxyConfigureInput,
   ) {
     const entry = yield* ensureEntry(input.environmentId);
+    // Pooled tunnels still dial the old route; a same-route renewal keeps them.
+    if (entry.httpBaseUrl !== null && entry.httpBaseUrl !== input.httpBaseUrl) {
+      entry.server.resetConnections();
+    }
     entry.label = input.label;
     entry.httpBaseUrl = input.httpBaseUrl;
     entry.route = {
@@ -343,6 +352,21 @@ const make = Effect.gen(function* () {
       });
       entry.sessions.add(session);
     }, serialized),
+    detachSession: Effect.fn("RemotePreviewProxy.detachSession")(function* (
+      environmentId,
+      session,
+    ) {
+      const entry = entries.get(environmentId);
+      if (!entry || !entry.sessions.has(session)) return;
+      yield* Effect.tryPromise({
+        try: async () => {
+          await session.setProxy({ mode: "direct" });
+          await session.closeAllConnections();
+        },
+        catch: (cause) => new RemotePreviewProxySessionError({ environmentId, cause }),
+      });
+      entry.sessions.delete(session);
+    }, serialized),
     configure,
     status: Effect.fn("RemotePreviewProxy.status")((environmentId) =>
       Effect.sync(() => {
@@ -385,15 +409,17 @@ const make = Effect.gen(function* () {
         expiresAt,
       };
     }, serialized),
-    revokeExternalAccess: Effect.fn("RemotePreviewProxy.revokeExternalAccess")((environmentId) =>
-      Effect.sync(() => {
-        const entry = entries.get(environmentId);
-        if (!entry || entry.external === null) return;
-        // Tunnels already open through the old credential end with it; embedded ones stay.
-        entry.server.closeTunnelsFor(entry.external.credential);
-        entry.external = null;
-        publish(entry);
-      }),
+    revokeExternalAccess: Effect.fn("RemotePreviewProxy.revokeExternalAccess")(
+      (environmentId) =>
+        Effect.sync(() => {
+          const entry = entries.get(environmentId);
+          if (!entry || entry.external === null) return;
+          // Tunnels already open through the old credential end with it; embedded ones stay.
+          entry.server.closeTunnelsFor(entry.external.credential);
+          entry.external = null;
+          publish(entry);
+        }),
+      serialized,
     ),
     revoke,
     embeddedCredentialForPort: (port) => {

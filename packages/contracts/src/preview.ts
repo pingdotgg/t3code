@@ -325,9 +325,14 @@ export const PreviewStopLocalServerInput = Schema.Struct({
 });
 export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
 
+export const PREVIEW_PROXY_MAX_PORTS = 16;
+
 /** Loopback ports on the environment that one desktop may reach through its preview proxy. */
 export const PreviewProxyGrantInput = Schema.Struct({
-  ports: Schema.Array(LocalServerPort).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+  ports: Schema.Array(LocalServerPort).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PREVIEW_PROXY_MAX_PORTS),
+  ),
 });
 export type PreviewProxyGrantInput = typeof PreviewProxyGrantInput.Type;
 

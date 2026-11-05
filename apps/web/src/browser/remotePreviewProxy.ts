@@ -1,8 +1,9 @@
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  DesktopRemotePreviewProxyBridge,
-  DesktopRemotePreviewProxyStatus,
-  EnvironmentId,
+import {
+  PREVIEW_PROXY_MAX_PORTS,
+  type DesktopRemotePreviewProxyBridge,
+  type DesktopRemotePreviewProxyStatus,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { remotePreviewProxyDialHost } from "@t3tools/shared/remotePreviewProxy";
 import * as DateTime from "effect/DateTime";
@@ -126,7 +127,8 @@ export function approveRemotePreviewPorts(
   if (bridge === null) return Promise.resolve(null);
   const generation = generationOf(environmentId);
   const wantedPorts = wanted.get(environmentId) ?? new Set<number>();
-  for (const port of ports) wantedPorts.add(port);
+  const added = ports.filter((port) => !wantedPorts.has(port));
+  for (const port of added) wantedPorts.add(port);
   wanted.set(environmentId, wantedPorts);
   const previous = pending.get(environmentId) ?? Promise.resolve(null);
   const next = previous
@@ -138,6 +140,13 @@ export function approveRemotePreviewPorts(
       const approved = new Set(status?.ports ?? []);
       const all = new Set([...approved, ...wantedPorts]);
       if (all.size === 0) return status ?? null;
+      if (all.size > PREVIEW_PROXY_MAX_PORTS) {
+        // Keep the earlier ports working; only this request is refused.
+        for (const port of added) wantedPorts.delete(port);
+        throw new Error(
+          `Remote preview can open at most ${PREVIEW_PROXY_MAX_PORTS} ports per environment. Turn off remote access to start over.`,
+        );
+      }
       if (
         status?.state === "ready" &&
         options.refresh !== true &&
