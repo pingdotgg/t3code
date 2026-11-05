@@ -13,7 +13,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   deriveLatestContextWindowSnapshot,
   latestProviderTurnTokenUsage,
-} from "../../lib/contextWindow";
+} from "@t3tools/client-runtime/state/context-window";
 import { useQuietThreadProjection } from "../../state/entities";
 import { useRetainedValue } from "../Sidebar.logic";
 import { newMessageId } from "../../lib/utils";
