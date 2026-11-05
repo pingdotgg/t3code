@@ -131,7 +131,7 @@ export function threadPullRequestSearchTerms(thread: {
 
 const PULL_REQUEST_NUMBER_QUERY = /^#?\d+$/;
 const PULL_REQUEST_REPO_NUMBER_QUERY = /^[\w.-]+\/[\w.-]+#\d+$/;
-const PULL_REQUEST_URL_NUMBER = /\/pulls?\/\d+/i;
+const PULL_REQUEST_URL_NUMBER = /^\S*\/pulls?\/\d+(?:[/?#]\S*)?$/i;
 /** Same floor as palette reference matching: short URL prefixes hit too many threads. */
 const PULL_REQUEST_REFERENCE_PREFIX_MIN = 8;
 /** Same stripping as palette field queries for numbered pull-request lookups. */
