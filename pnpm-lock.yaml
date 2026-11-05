@@ -1506,6 +1506,9 @@ importers:
       '@t3tools/provider-pi':
         specifier: workspace:*
         version: link:../provider-pi
+      '@t3tools/secret-provider-definitions':
+        specifier: workspace:*
+        version: link:../secret-provider-definitions
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
