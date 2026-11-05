@@ -714,6 +714,100 @@ function queryRunnerError(cause: unknown, method: string): ClaudeAgentSdkQueryRu
     : new ClaudeAgentSdkQueryRunnerError({ cause, method });
 }
 
+const CLAUDE_MCP_REDACTED = "[redacted]";
+// Shorter values (flags such as "1" or "true") would scrub unrelated words from the diagnostic.
+const CLAUDE_MCP_MIN_SECRET_LENGTH = 4;
+const CLAUDE_MCP_MAX_CAUSE_DEPTH = 3;
+
+// MCP configs carry credentials in headers, env, and URLs, and SDK errors can echo any of them.
+function claudeMcpSecrets(mcpServers: Record<string, unknown>): ReadonlyArray<string> {
+  const secrets = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    // An "Authorization: Bearer <token>" value can be echoed as the bare token.
+    for (const candidate of [trimmed, /^\S+\s+(\S+)$/.exec(trimmed)?.[1]]) {
+      if (candidate !== undefined && candidate.length >= CLAUDE_MCP_MIN_SECRET_LENGTH) {
+        secrets.add(candidate);
+      }
+    }
+  };
+  for (const config of Object.values(mcpServers)) {
+    if (typeof config !== "object" || config === null) continue;
+    const { headers, env, url } = config as {
+      readonly headers?: unknown;
+      readonly env?: unknown;
+      readonly url?: unknown;
+    };
+    for (const values of [headers, env]) {
+      if (typeof values === "object" && values !== null) Object.values(values).forEach(add);
+    }
+    if (typeof url !== "string") continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      continue;
+    }
+    for (const value of [parsed.username, parsed.password]) {
+      add(value);
+      try {
+        add(decodeURIComponent(value));
+      } catch {
+        // Malformed percent-encoding: the raw value above is what an error would echo.
+      }
+    }
+    parsed.searchParams.forEach((value) => {
+      add(value);
+      add(encodeURIComponent(value));
+    });
+  }
+  // Longest first, so a value that contains another is redacted whole.
+  return [...secrets].toSorted((left, right) => right.length - left.length);
+}
+
+function redactClaudeMcpText(text: string, secrets: ReadonlyArray<string>): string {
+  let redacted = text;
+  for (const secret of secrets) redacted = redacted.replaceAll(secret, CLAUDE_MCP_REDACTED);
+  // Also catch credentials the config did not name, such as ones a server added.
+  return redacted
+    .replace(/\b(Bearer|Basic)\s+(?!\[redacted\])[^\s"',;}]+/gi, `$1 ${CLAUDE_MCP_REDACTED}`)
+    .replace(
+      /(authorization["']?\s*[:=]\s*["']?)(?!Bearer\b|Basic\b|\[redacted\])[^\s"',;}]+/gi,
+      `$1${CLAUDE_MCP_REDACTED}`,
+    );
+}
+
+/**
+ * Rebuilds an MCP registration failure from redacted parts. Logs and trace spans record the
+ * cause's message, stack, and nested causes, so none of the original object is kept.
+ */
+function sanitizedClaudeMcpError(cause: unknown, secrets: ReadonlyArray<string>, depth = 0): Error {
+  const redact = (text: string) => redactClaudeMcpText(text, secrets);
+  const source: {
+    readonly name?: unknown;
+    readonly message?: unknown;
+    readonly stack?: unknown;
+    readonly code?: unknown;
+    readonly cause?: unknown;
+  } = typeof cause === "object" && cause !== null ? cause : {};
+  const error = new Error(
+    redact(typeof source.message === "string" ? source.message : String(cause)),
+  );
+  if (typeof source.name === "string") error.name = redact(source.name);
+  error.stack =
+    typeof source.stack === "string" ? redact(source.stack) : `${error.name}: ${error.message}`;
+  if (typeof source.code === "string" || typeof source.code === "number") {
+    Object.assign(error, {
+      code: typeof source.code === "string" ? redact(source.code) : source.code,
+    });
+  }
+  if (source.cause !== undefined && depth < CLAUDE_MCP_MAX_CAUSE_DEPTH) {
+    Object.assign(error, { cause: sanitizedClaudeMcpError(source.cause, secrets, depth + 1) });
+  }
+  return error;
+}
+
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   return Effect.try({
     try: () => queryRuntime.close(),
@@ -1286,10 +1380,15 @@ export const layerQueryRunner: Layer.Layer<
                 restore(
                   Effect.gen(function* () {
                     if (mcpServers !== undefined) {
-                      // Errors and mcp_status can echo headers; log only server names.
+                      // Errors and mcp_status can echo headers; log only server names, and keep
+                      // a rejection only as a redacted copy for the stream failure below.
                       const failed = yield* Effect.tryPromise({
                         try: () => queryRuntime.setMcpServers(mcpServers),
-                        catch: (cause) => queryRunnerError(cause, "setMcpServers"),
+                        catch: (cause) =>
+                          queryRunnerError(
+                            sanitizedClaudeMcpError(cause, claudeMcpSecrets(mcpServers)),
+                            "setMcpServers",
+                          ),
                       }).pipe(
                         Effect.map((result) => Object.keys(result.errors)),
                         Effect.catch((error) =>

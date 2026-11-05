@@ -509,6 +509,35 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
   ),
 );
 
+function mockRejectedMcpRegistration(
+  rejection: unknown,
+  pending: Array<Record<string, unknown>> = [],
+) {
+  const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+    () =>
+      ({
+        setMcpServers: () => Promise.reject(rejection),
+        next: async () => {
+          const value = pending.shift();
+          return value === undefined ? { done: true, value: undefined } : { done: false, value };
+        },
+        return: async () => ({ done: true, value: undefined }),
+        close: vi.fn(),
+        [Symbol.asyncDispose]: async () => {},
+      }) as unknown as ClaudeSdk.Query,
+  );
+  return Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+}
+
+const collectRegistrationFailure = Effect.fn("collectRegistrationFailure")(function* (
+  input: ClaudeAgentSdkQueryOpenInput,
+) {
+  const runner = yield* ClaudeAgentSdkQueryRunner;
+  const session = yield* runner.open(input);
+  yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+  return yield* Stream.runCollect(session.messages).pipe(Effect.exit);
+});
+
 // The SDK can end a CLI that closed during startup as a clean, empty stream; the rejected
 // registration is then the only cause the turn failure can carry.
 it.effect.each([
@@ -517,30 +546,11 @@ it.effect.each([
 ])("keeps a rejected MCP registration and $case", (testCase) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const rejection = new Error("Query closed before response received");
-      const pending = testCase.answered
-        ? [{ type: "system", subtype: "init", session_id: FORK_SESSION_ID }]
-        : [];
-      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-        () =>
-          ({
-            setMcpServers: () => Promise.reject(rejection),
-            next: async () => {
-              const value = pending.shift();
-              return value === undefined
-                ? { done: true, value: undefined }
-                : { done: false, value };
-            },
-            return: async () => ({ done: true, value: undefined }),
-            close: vi.fn(),
-            [Symbol.asyncDispose]: async () => {},
-          }) as unknown as ClaudeSdk.Query,
+      yield* mockRejectedMcpRegistration(
+        new Error("Query closed before response received"),
+        testCase.answered ? [{ type: "system", subtype: "init", session_id: FORK_SESSION_ID }] : [],
       );
-      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
-      const runner = yield* ClaudeAgentSdkQueryRunner;
-      const session = yield* runner.open(resumedMcpQueryInput);
-      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
-      const exit = yield* Stream.runCollect(session.messages).pipe(Effect.exit);
+      const exit = yield* collectRegistrationFailure(resumedMcpQueryInput);
 
       if (testCase.answered) {
         assert.isTrue(Exit.isSuccess(exit));
@@ -551,12 +561,85 @@ it.effect.each([
       const error = Cause.squash(exit.cause);
       assert.instanceOf(error, ClaudeAgentSdkQueryRunnerError);
       assert.equal((error as ClaudeAgentSdkQueryRunnerError).method, "setMcpServers");
-      assert.strictEqual((error as ClaudeAgentSdkQueryRunnerError).cause, rejection);
+      const cause = (error as ClaudeAgentSdkQueryRunnerError).cause;
+      assert.instanceOf(cause, Error);
+      assert.equal((cause as Error).message, "Query closed before response received");
       // The cause is for logs and traces; the turn failure the client shows stays curated.
       assert.equal(
         makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message,
         "Provider turn failed.",
       );
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+// The registration cause reaches the stream-failure log and trace spans, so configured MCP
+// credentials echoed anywhere in it must not survive.
+it.effect("redacts configured MCP credentials from a rejected MCP registration", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const secrets = [
+        "test-mcp-credential",
+        "url-user",
+        "url-password",
+        "url-query-token",
+        "stdio-env-secret",
+        "unlisted-bearer-token",
+      ];
+      const echoed = [
+        "ProcessTransport is not ready for writing",
+        "headers={ Authorization: 'Bearer test-mcp-credential' }",
+        "url=http://url-user:url-password@localhost:3773/mcp?token=url-query-token",
+        "env={ API_KEY: 'stdio-env-secret' }",
+        "retry Authorization: Bearer unlisted-bearer-token",
+      ].join(" ");
+      const rejection = Object.assign(new Error(echoed), {
+        name: "TransportError",
+        code: "EPIPE",
+        cause: new Error(`inner ${echoed}`),
+        // Not an Error field; nothing outside the rebuilt fields may be kept.
+        headers: { Authorization: "Bearer test-mcp-credential" },
+      });
+      yield* mockRejectedMcpRegistration(rejection);
+      const exit = yield* collectRegistrationFailure({
+        ...resumedMcpQueryInput,
+        options: {
+          ...resumedMcpQueryInput.options,
+          mcpServers: {
+            ...resumedMcpQueryInput.options.mcpServers,
+            remote: {
+              type: "http",
+              url: "http://url-user:url-password@localhost:3773/mcp?token=url-query-token",
+            },
+            local: { type: "stdio", command: "mcp-server", env: { API_KEY: "stdio-env-secret" } },
+          },
+        },
+      });
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (!Exit.isFailure(exit)) return;
+      const error = Cause.squash(exit.cause) as ClaudeAgentSdkQueryRunnerError;
+      assert.equal(error.method, "setMcpServers");
+      const cause = error.cause as Error & { readonly code?: unknown };
+      assert.instanceOf(cause, Error);
+      assert.notStrictEqual(cause, rejection);
+      assert.equal(cause.name, "TransportError");
+      assert.equal(cause.code, "EPIPE");
+      assert.include(cause.message, "ProcessTransport is not ready for writing");
+      assert.include(cause.message, "Bearer [redacted]");
+      assert.include(cause.message, "localhost:3773/mcp");
+      assert.isUndefined((cause as unknown as { readonly headers?: unknown }).headers);
+      const inner = cause.cause as Error;
+      assert.instanceOf(inner, Error);
+      assert.include(inner.message, "ProcessTransport is not ready for writing");
+      const recorded = [
+        cause.message,
+        cause.stack,
+        inner.message,
+        inner.stack,
+        Cause.pretty(exit.cause),
+      ].join("\n");
+      for (const secret of secrets) assert.notInclude(recorded, secret);
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
