@@ -4,6 +4,7 @@ import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -279,7 +280,8 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { awaitingUser, isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
+  const workingShimmer = useClientSettings((settings) => settings.chatWorkingShimmer);
+  const shimmer = isPreparingWorktree || compacting || (workingShimmer && !awaitingUser);
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : compacting ? (

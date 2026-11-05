@@ -530,6 +530,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting
       ? ["Quiet stop button"]
       : []),
+    ...(settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer
+      ? ["Working shimmer"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -652,6 +655,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
       composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1087,6 +1091,31 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("chat-working-shimmer")}
+          description="Run a shimmer across the chat's Working row while an agent works."
+          resetAction={
+            settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer ? (
+              <SettingResetButton
+                label="working shimmer"
+                onClick={() =>
+                  updateSettings({
+                    chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.chatWorkingShimmer}
+              onCheckedChange={(checked) =>
+                updateSettings({ chatWorkingShimmer: Boolean(checked) })
+              }
+              aria-label="Working shimmer"
+            />
           }
         />
       </SettingsSection>

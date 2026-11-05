@@ -546,6 +546,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "chat-working-shimmer",
+    title: "Working shimmer",
+    to: "/settings/general",
+    searchTerms: ["shimmer animation working row motion chat timeline"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
