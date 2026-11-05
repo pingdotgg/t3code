@@ -38,6 +38,7 @@ export function DelegationApprovalCard(props: {
     return (
       <WorkLogRow
         data-v2-item-type={item.type}
+        wrapLabel
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>

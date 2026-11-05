@@ -44,7 +44,7 @@ export function DelegationApprovalCard(props: {
   return (
     <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
       <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
-      <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
+      <Text className="flex-1 font-sans text-sm text-foreground-muted">
         Delegate to {delegationSelectionLabel(item.proposed)}
         {item.environmentId === undefined ? "" : ` · ${item.environmentId}`} · {display.label}
       </Text>
