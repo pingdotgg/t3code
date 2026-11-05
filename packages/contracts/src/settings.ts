@@ -58,6 +58,7 @@ import {
   SpeechAcceleration,
   SpeechCustomWords,
   SpeechLanguage,
+  SpeechModelDirectories,
   SpeechModelUnloadTimeout,
 } from "./speech.ts";
 
@@ -1363,6 +1364,9 @@ export const ServerSettings = Schema.Struct({
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  speechModelDirectories: SpeechModelDirectories.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechPostProcessingEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1799,6 +1803,7 @@ export const ServerSettingsPatch = Schema.Struct({
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
+  speechModelDirectories: Schema.optionalKey(SpeechModelDirectories),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingEnabled: Schema.optionalKey(Schema.Boolean),
   speechCorrectionWord: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(50))),

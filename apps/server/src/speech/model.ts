@@ -253,7 +253,7 @@ export const effectiveSpeechLanguage = (model: SpeechModel, intent: string): str
   if (model.supportsLanguageDetection) return "auto";
   return model.languages.find((language) => language === "en") ?? model.languages[0]!;
 };
-export const speechModelPath = (directory: string, model: SpeechModel): string =>
+const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 
 async function hasExpectedFile(
@@ -278,9 +278,20 @@ async function hasExpectedFile(
   }
 }
 
-export async function isSpeechModelReady(directory: string, model: SpeechModel): Promise<boolean> {
-  const stat = await NodeFSP.stat(speechModelPath(directory, model)).catch(() => null);
+const isInstalledFile = async (path: string, model: SpeechModel) => {
+  const stat = await NodeFSP.stat(path).catch(() => null);
   return stat?.isFile() === true && stat.size === model.size;
+};
+
+export async function findInstalledSpeechModel(
+  directories: readonly string[],
+  model: SpeechModel,
+): Promise<string | undefined> {
+  for (const directory of directories) {
+    const candidate = speechModelPath(directory, model);
+    if (await isInstalledFile(candidate, model)) return candidate;
+  }
+  return undefined;
 }
 
 export async function downloadSpeechModel(
