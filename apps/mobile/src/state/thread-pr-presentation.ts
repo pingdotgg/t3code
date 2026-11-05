@@ -106,7 +106,7 @@ export function presentThreadLinkedPullRequests(
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
   const state = isMultiple
-    ? badge.state === "draft"
+    ? badge.state === "draft" || badge.state === "queued"
       ? "open"
       : badge.state
     : (snapshot?.state ?? null);
@@ -120,12 +120,9 @@ export function presentThreadLinkedPullRequests(
       isDraft,
       mergeability: snapshot?.mergeability,
     });
-  const isInMergeQueue =
-    !isMultiple &&
-    state === "open" &&
-    !isDraft &&
-    !conflicting &&
-    snapshot?.isInMergeQueue === true;
+  const isInMergeQueue = isMultiple
+    ? badge.state === "queued"
+    : state === "open" && !isDraft && !conflicting && snapshot?.isInMergeQueue === true;
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
@@ -155,7 +152,7 @@ export function presentThreadLinkedPullRequests(
     label,
     accessibilityLabel:
       badge.kind === "stack"
-        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
+        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : isInMergeQueue ? "queued" : (state ?? "status pending")}`
         : linkedCount !== null
           ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
           : `#${link.number} ${changeRequest.singular} ${statusLabel}`,

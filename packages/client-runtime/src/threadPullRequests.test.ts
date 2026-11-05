@@ -406,6 +406,30 @@ describe("chain selection and badge state", () => {
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
 
+  it("reads a group as queued only when every open pull request is queued", () => {
+    const merged = link(1, { snapshot: snapshot({ state: "merged", headBranch: "base" }) });
+    const middle = link(2, {
+      snapshot: snapshot({ headBranch: "middle", baseBranch: "base", isInMergeQueue: true }),
+    });
+    const queuedTop = link(3, {
+      snapshot: snapshot({ baseBranch: "middle", isInMergeQueue: true }),
+    });
+    const openTop = link(3, { snapshot: snapshot({ baseBranch: "middle" }) });
+    const stateOf = (links: ReadonlyArray<ThreadPullRequestLink>) =>
+      resolveThreadPullRequestBadge(links)?.state;
+
+    expect(resolveThreadPullRequestBadge([merged, middle, queuedTop])).toEqual({
+      kind: "stack",
+      layers: 3,
+      state: "queued",
+    });
+    expect(resolveThreadPullRequestBadge([middle, link(9, { snapshot: middle.snapshot })])).toEqual(
+      { kind: "pull-request", others: 1, state: "queued" },
+    );
+    expect(stateOf([merged, middle, openTop])).toBe("open");
+    expect(stateOf([merged, middle, { ...queuedTop, snapshot: null }])).toBe("open");
+  });
+
   it("keeps branch matching case-sensitive while ignoring repository case", () => {
     const bottom = link(1, {
       repository: "PingDotGG/T3code",

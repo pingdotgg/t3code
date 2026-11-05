@@ -41,7 +41,15 @@ export function savedPullRequestStack(
         )[0]?.snapshot;
       return {
         ...layer,
-        ...(snapshot ? { title: snapshot.title, isDraft: snapshot.isDraft } : {}),
+        ...(snapshot
+          ? {
+              title: snapshot.title,
+              isDraft: snapshot.isDraft,
+              ...(snapshot.isInMergeQueue === undefined
+                ? {}
+                : { isInMergeQueue: snapshot.isInMergeQueue }),
+            }
+          : {}),
       };
     }),
   };

@@ -47,6 +47,13 @@ describe("saved stack navigation", () => {
     ]);
     expect(savedPullRequestStack([link], { ...reference, number: 1 })?.number).toBe(3);
   });
+  it("keeps a linked layer's queue state", () => {
+    const queued = { ...link, snapshot: { ...link.snapshot!, isInMergeQueue: true } };
+    expect(savedPullRequestStack([queued], reference)?.layers[1]).toMatchObject({
+      number: 2,
+      isInMergeQueue: true,
+    });
+  });
   it("does not borrow stacks across hosts or repositories", () => {
     expect(savedPullRequestStack([link], { ...reference, host: "enterprise.example" })).toBeNull();
     expect(savedPullRequestStack([link], { ...reference, repository: "other/web" })).toBeNull();

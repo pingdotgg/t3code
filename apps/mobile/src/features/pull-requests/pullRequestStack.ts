@@ -20,9 +20,11 @@ export function pullRequestStackMerge(
           ? "Reopen the closed layers before merging this stack."
           : layers.some((layer) => layer.isDraft)
             ? "Mark every layer being merged ready for review."
-            : heads.length !== layers.length
-              ? "Refresh the stack to load its latest revisions before merging."
-              : null;
+            : layers.some((layer) => layer.isInMergeQueue)
+              ? "A layer being merged is already in the merge queue."
+              : heads.length !== layers.length
+                ? "Refresh the stack to load its latest revisions before merging."
+                : null;
   return { position: position + 1, layers, heads, reason };
 }
 
@@ -61,7 +63,15 @@ export function savedPullRequestStack(
         number: layer.number,
         headBranch: layer.headBranch,
         state: layer.state,
-        ...(snapshot ? { title: snapshot.title, isDraft: snapshot.isDraft } : {}),
+        ...(snapshot
+          ? {
+              title: snapshot.title,
+              isDraft: snapshot.isDraft,
+              ...(snapshot.isInMergeQueue === undefined
+                ? {}
+                : { isInMergeQueue: snapshot.isInMergeQueue }),
+            }
+          : {}),
       };
     }),
   };
