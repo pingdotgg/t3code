@@ -2363,8 +2363,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const isRecoveryCompaction = (message: OrchestrationV2ConversationMessage) =>
     message.creationSource === "server" && idleCompactionOf(message) === "onReturn";
 
-  // A full native session is compacted in place, then continued. Both steps start by id so a
-  // held queue cannot strand them; queued work waits behind them instead of failing in turn.
+  // A full native session is compacted in place, then continued. Both steps jump the queue (and
+  // start by id if a hold left them queued) so queued work waits behind them instead of failing.
   const compactionRecoveryRun = Effect.fn("Orchestrator.compactionRecoveryRun")(function* (
     threadId: ThreadId,
     run: OrchestrationV2Run,
@@ -2386,23 +2386,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.turnItems.some((item) => item.type === "run_interrupt_request")
     )
       return undefined;
-    if (failed) {
-      if (
-        latestRootProviderFailure(run, projection.turnItems)?.code !==
+    if (
+      failed &&
+      latestRootProviderFailure(run, projection.turnItems)?.code !==
         CONTEXT_COMPACTION_REQUIRED_CODE
-      )
-        return undefined;
-      const queued = projection.runs.filter((candidate) => candidate.status === "queued");
-      const { messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
-        messageIds: queued.map((candidate) => candidate.userMessageId),
-      });
-      const recoveryMessageIds = new Set(
-        messages.filter(isRecoveryCompaction).map((message) => message.id),
-      );
-      // Work that slipped in ahead of the compaction fails the same way; one compaction covers both.
-      const pending = queued.find((candidate) => recoveryMessageIds.has(candidate.userMessageId));
-      if (pending !== undefined) return pending.id;
-    }
+    )
+      return undefined;
     const messageId = MessageId.make(
       failed ? `context-compact:${run.id}` : `context-compact-continue:${run.id}`,
     );
