@@ -19,6 +19,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
@@ -286,7 +287,11 @@ export function useThreadListActions(): {
     });
   const settleThread = async (thread: EnvironmentThreadShell) => {
     const openPullRequests = openLinkedThreadPullRequests(thread.pullRequests);
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const closePullRequestsOnSettle =
+      AsyncResult.isSuccess(preferences) && preferences.value.closePullRequestsOnSettle === true;
     const askToClose =
+      closePullRequestsOnSettle &&
       openPullRequests.length > 0 &&
       readEnvironmentScope(thread.environmentId, AuthSourceControlWriteScope);
     const performSettle = async (shouldClosePullRequests: boolean) => {

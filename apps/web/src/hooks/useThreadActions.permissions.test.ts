@@ -166,6 +166,7 @@ vi.mock("./useSettings", () => ({
       sidebarThreadSortOrder: "createdAt",
       confirmThreadDelete: true,
       confirmThreadUnpin: true,
+      closePullRequestsOnSettle: false,
     }),
 }));
 

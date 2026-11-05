@@ -51,6 +51,7 @@ const state = vi.hoisted(() => ({
   }[],
   afterRequest: undefined as (() => void) | undefined,
   closeFailures: new Set<number>(),
+  closePullRequestsOnSettle: true,
 }));
 
 vi.mock("react", () => ({
@@ -113,6 +114,9 @@ vi.mock("../../state/presentation", () => ({
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
 }));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: "mobile-preferences",
+}));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     set: (_atom: string, value: boolean) => {
@@ -127,22 +131,26 @@ vi.mock("../../state/atom-registry", () => ({
             ? state.shells
             : atom === "queued-thread-keys"
               ? new Set<string>()
-              : new Map(
-                  [...state.scopes.keys()].map((environmentId) => [
-                    environmentId,
-                    {
-                      environment: {
-                        capabilities: {
-                          threadSettlement: true,
-                          threadSnooze: true,
-                          threadPinning: true,
-                          threadPinReorder: true,
-                          threadTitleRegeneration: true,
+              : atom === "mobile-preferences"
+                ? AsyncResult.success({
+                    closePullRequestsOnSettle: state.closePullRequestsOnSettle,
+                  })
+                : new Map(
+                    [...state.scopes.keys()].map((environmentId) => [
+                      environmentId,
+                      {
+                        environment: {
+                          capabilities: {
+                            threadSettlement: true,
+                            threadSnooze: true,
+                            threadPinning: true,
+                            threadPinReorder: true,
+                            threadTitleRegeneration: true,
+                          },
                         },
                       },
-                    },
-                  ]),
-                ),
+                    ]),
+                  ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -247,6 +255,7 @@ beforeEach(() => {
   state.alerts = [];
   state.afterRequest = undefined;
   state.closeFailures = new Set();
+  state.closePullRequestsOnSettle = true;
 });
 
 afterEach(() => {
@@ -655,6 +664,17 @@ describe("settleThread close open pull requests", () => {
             openPullRequestLink(1, { snapshot: pullRequestSnapshot({ state: "merged" }) }),
           ],
         }),
+      ),
+    ).toBe(true);
+    expect(state.dialogs).toEqual([]);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle"]);
+  });
+
+  it("settles without asking when the setting is off", async () => {
+    state.closePullRequestsOnSettle = false;
+    expect(
+      await useThreadListActions().settleThread(
+        makeThread({ pullRequests: [openPullRequestLink(2)] }),
       ),
     ).toBe(true);
     expect(state.dialogs).toEqual([]);

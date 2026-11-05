@@ -339,6 +339,9 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
+  const closePullRequestsOnSettle = useClientSettings(
+    (settings) => settings.closePullRequestsOnSettle,
+  );
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -767,6 +770,7 @@ export function useThreadActions() {
     let shouldClosePullRequests = false;
     const localApi = readLocalApi();
     if (
+      closePullRequestsOnSettle &&
       openPullRequests.length > 0 &&
       localApi &&
       readEnvironmentScope(target.environmentId, AuthSourceControlWriteScope)

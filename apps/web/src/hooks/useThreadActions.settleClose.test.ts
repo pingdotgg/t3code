@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   close: vi.fn(),
   toasts: [] as { type?: string; title?: string; description?: string }[],
   pullRequests: [] as ThreadPullRequestLink[],
+  closePullRequestsOnSettle: true,
 }));
 
 vi.mock("react", async (original) => ({
@@ -61,7 +62,10 @@ vi.mock("../components/ui/toast", () => ({
     },
   },
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
+vi.mock("./useSettings", () => ({
+  useClientSettings: (select: (settings: { closePullRequestsOnSettle: boolean }) => unknown) =>
+    select({ closePullRequestsOnSettle: state.closePullRequestsOnSettle }),
+}));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => async () => {} }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
@@ -127,11 +131,21 @@ beforeEach(() => {
   state.close.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.toasts = [];
   state.pullRequests = [];
+  state.closePullRequestsOnSettle = true;
 });
 
 describe("settleThread close open pull requests", () => {
   it("settles without asking when there are no open pull requests", async () => {
     state.pullRequests = [link(1, { snapshot: snapshot({ state: "merged" }) })];
+    await useThreadActions().settleThread(target);
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.settle).toHaveBeenCalledOnce();
+    expect(state.close).not.toHaveBeenCalled();
+  });
+
+  it("settles without asking when the setting is off", async () => {
+    state.closePullRequestsOnSettle = false;
+    state.pullRequests = [link(1)];
     await useThreadActions().settleThread(target);
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.settle).toHaveBeenCalledOnce();
