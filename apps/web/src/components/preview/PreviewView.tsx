@@ -71,7 +71,7 @@ import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -243,7 +243,7 @@ export function PreviewView({
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      if (error instanceof BrowserSettingsReadError) {
+      if (isBrowserSettingsReadError(error)) {
         toastManager.add({
           type: "error",
           title: "Unable to open browser",
@@ -860,7 +860,14 @@ export function PreviewView({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
     if (!visible) return;
-    return subscribePreviewAction((action) => onPreviewAction(action));
+    const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
+    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
+      if (action === "preview.focusUrl") onPreviewAction("focus-url");
+    });
+    return () => {
+      unsubscribeAction();
+      unsubscribeMenu?.();
+    };
   }, [visible]);
 
   return (

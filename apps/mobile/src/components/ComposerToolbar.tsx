@@ -12,7 +12,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
@@ -43,6 +43,7 @@ export function ComposerInlineControl(props: {
   readonly showChevron?: boolean;
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
+  const reducedMotion = useReducedMotion();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
@@ -85,7 +86,7 @@ export function ComposerInlineControl(props: {
         {props.iconOnly ? null : (
           <Animated.View
             className="shrink"
-            entering={animatesLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+            entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
           >
             <Text
               className={cn(
@@ -273,7 +274,7 @@ export function ComposerActionButton(props: {
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
-              ? "bg-primary/15"
+              ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
@@ -282,7 +283,11 @@ export function ComposerActionButton(props: {
           size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
           tintColorClassName={
-            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
+            props.variant === "danger"
+              ? "accent-danger-foreground"
+              : props.disabled
+                ? "accent-foreground/38"
+                : "accent-primary-foreground"
           }
           type="monochrome"
         />

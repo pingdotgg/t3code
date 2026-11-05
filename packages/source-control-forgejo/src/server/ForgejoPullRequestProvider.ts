@@ -308,16 +308,22 @@ export const make = Effect.gen(function* () {
         const firstIndex = Math.floor(offset / pageSize) + 1;
         let consumed = 0;
         let more = true;
-        for (let index = firstIndex; more && consumed < input.limit; index++) {
+        // Forgejo has no `merged` list state: `state=closed` returns merged and
+        // closed-unmerged rows alike, so rows are filtered by their mapped state and
+        // only matching rows count toward the requested limit.
+        for (let index = firstIndex; more && items.length < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
           const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
           for (const row of rows.slice(start)) {
-            if (consumed >= input.limit) break;
+            if (items.length >= input.limit) break;
             consumed++;
-            if (row) items.push(forgejoChangeRequest(row));
+            if (!row) continue;
+            const changeRequest = forgejoChangeRequest(row);
+            if (input.state !== "all" && changeRequest.state !== input.state) continue;
+            items.push(changeRequest);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }

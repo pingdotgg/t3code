@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ContextTransferId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -160,34 +161,87 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
   );
 });
 
-it("caps the side chat context block, keeping the newest parent items", () => {
-  const parentThreadId = ThreadId.make("thread:side-chat-parent");
-  const digest = Array.from({ length: 60 }, (_, index) =>
-    ContextHandoffService.summarizeDeltaItem(
-      importedItem({
+it.effect("caps the side chat context block without summarizing discarded parent history", () =>
+  Effect.gen(function* () {
+    const parentThreadId = ThreadId.make("thread:side-chat-parent");
+    let summarizedItems = 0;
+    const parentItems = Array.from({ length: 60 }, (_, index) => ({
+      ...importedItem({
         role: index % 2 === 0 ? "user" : "assistant",
         id: `parent-${index}`,
-        text: `item-${index} ${"x".repeat(300)}`,
+        text: `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`,
         ordinal: index,
       }),
-    )!,
-  );
-  const context = ContextHandoffService.makeSideChatContext({ parentThreadId, digest });
+      get text() {
+        summarizedItems++;
+        return `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`;
+      },
+    }));
+    const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+    const handoff = yield* service.prepareSideChatContext({
+      parentThreadId,
+      threadId: ThreadId.make("thread:side-chat"),
+      targetRunId: RunId.make("run:side-chat"),
+      transferId: ContextTransferId.make("transfer:side-chat"),
+      toProviderThreadId: ProviderThreadId.make("provider-thread:side-chat"),
+      fromProviderInstanceId: ProviderInstanceId.make("codex"),
+      toProviderInstanceId: ProviderInstanceId.make("codex"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      parentItems,
+      createdAt: DateTime.makeUnsafe(0),
+    });
+    const context = handoff.summaryText;
+    assert.isBelow(summarizedItems, parentItems.length);
 
-  assert.include(context, "- Earlier items truncated.");
-  assert.notInclude(context, "item-0 ");
-  assert.include(context, "- Assistant: item-59 ");
-  assert.isAtMost(context.length, 8_000);
-  assert.isTrue(
-    context.endsWith(
-      `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
-    ),
-  );
+    assert.include(context, "- Earlier items truncated.");
+    assert.notInclude(context, "item-0 ");
+    assert.include(context, "- Assistant: item-59 ");
+    assert.isAtMost(context.length, 8_000);
+    assert.isTrue(context.isWellFormed());
+    assert.isTrue(
+      context.endsWith(
+        `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
+      ),
+    );
 
-  const framingOnly = ContextHandoffService.makeSideChatContext({ parentThreadId, digest: [] });
-  assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
-  assert.notInclude(framingOnly, "Main thread activity");
-});
+    const framingOnly = ContextHandoffService.makeSideChatContext({
+      parentThreadId,
+      digest: [],
+    });
+    assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
+    assert.notInclude(framingOnly, "Main thread activity");
+
+    const multiFilePatch = ContextHandoffService.makeSideChatContext({
+      parentThreadId,
+      digest: [
+        {
+          id: TurnItemId.make("turn-item:patch"),
+          threadId: parentThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 60,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: DateTime.makeUnsafe(0),
+          type: "file_change",
+          fileName: "src/a.ts",
+          changes: [
+            { operation: "update", path: "src/a.ts" },
+            { operation: "add", path: "src/b.ts" },
+            { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+          ],
+        },
+      ],
+    });
+    assert.include(multiFilePatch, "- File change: src/a.ts, src/b.ts, src/new.ts");
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it("covers the run range of a very long delta", () => {
   const runs = [
