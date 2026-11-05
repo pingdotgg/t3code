@@ -7,7 +7,11 @@ export function formatWorkingTimer(startIso: string, endIso: string): string | n
     return null;
   }
 
-  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
+  return formatWorkingDuration(endedAtMs - startedAtMs);
+}
+
+export function formatWorkingDuration(elapsedMs: number): string {
+  const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   if (elapsedSeconds < 60) {
     return `${elapsedSeconds}s`;
   }

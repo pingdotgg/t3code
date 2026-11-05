@@ -59,6 +59,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -119,7 +120,7 @@ function ThreadLineageRowList(props: {
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
         aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 flex max-h-64 flex-col gap-0.5 list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -162,7 +163,15 @@ function ThreadLineageGroup(props: {
   if (!props.label) return rows;
   return (
     <Menu open={expanded} onOpenChange={setExpanded}>
-      <MenuTrigger render={<ThreadDetailsControl part="choice" aria-label="Previous agents" />}>
+      <MenuTrigger
+        render={
+          <ThreadDetailsControl
+            part="choice"
+            className="h-8 min-h-8 sm:min-h-8"
+            aria-label="Previous agents"
+          />
+        }
+      >
         <HistoryIcon />
         <MenuItemLabel className="min-w-0 flex-1">
           {props.rows.length}{" "}
@@ -260,7 +269,7 @@ function RemoteSubagentRow(props: {
     isSubagent: true,
   });
   return (
-    <li className="group relative flex h-8 items-center rounded-lg">
+    <li className="group relative flex min-h-9 items-center rounded-lg">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -269,6 +278,7 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
+              className="h-9 min-h-9 sm:min-h-9"
               aria-disabled={environment === null || undefined}
               onClick={() => {
                 if (environment === null) return;
@@ -293,9 +303,9 @@ function RemoteSubagentRow(props: {
             <span className="block truncate text-left text-label text-foreground/85">{title}</span>
           </span>
           <span
-            className={`shrink-0 text-meta ${failed ? "text-destructive" : "text-muted-foreground"}`}
+            className={`ms-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-meta ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
-            <span className="inline-flex flex-col">
+            <span className="inline-flex items-center gap-1.5">
               <span>on {remoteChild.label}</span>
               <span>{threadRelationshipStatusLabel(status)}</span>
             </span>
@@ -333,7 +343,7 @@ function DelegatedFromRow(props: {
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
   return (
-    <li className="group relative flex h-8 items-center rounded-lg">
+    <li className="group relative flex min-h-9 items-center rounded-lg">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -342,6 +352,7 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
+              className="h-9 min-h-9 sm:min-h-9"
               aria-disabled={environment === null || undefined}
               onClick={() => {
                 if (environment === null) return;
@@ -360,7 +371,9 @@ function DelegatedFromRow(props: {
             </span>
           </span>
           {label ? (
-            <span className="shrink-0 text-caption text-muted-foreground">on {label}</span>
+            <span className="shrink-0 whitespace-nowrap text-caption text-muted-foreground">
+              on {label}
+            </span>
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -810,27 +823,27 @@ export function ThreadRelationshipsPanel(props: {
       node?.thread?.modelSelection.model ?? agent?.modelSelection?.model ?? agent?.model;
     const relationshipContent = (
       <>
-        <RelationshipIcon className="size-4 shrink-0 text-muted-foreground" />
+        {providerDriver ? (
+          <ProviderInstanceIcon
+            driverKind={providerDriver}
+            displayName={providerEntry?.displayName ?? provider?.displayName ?? providerDriver}
+            accentColor={providerEntry?.accentColor}
+            acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl ?? provider?.iconUrl}
+            showBadge={
+              providerEntry !== undefined && shouldShowInstanceBadge(providerEntry, providerEntries)
+            }
+            size="compact"
+            iconClassName="size-4"
+            className="z-auto"
+          />
+        ) : (
+          <RelationshipIcon className="size-4 shrink-0 text-muted-foreground" />
+        )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-label leading-4">{threadTitle}</span>
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
             <span className="shrink-0">{relationship}</span>
-            {providerDriver ? (
-              <ProviderInstanceIcon
-                driverKind={providerDriver}
-                displayName={providerEntry?.displayName ?? provider?.displayName ?? providerDriver}
-                accentColor={providerEntry?.accentColor}
-                acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-                acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl ?? provider?.iconUrl}
-                showBadge={
-                  providerEntry !== undefined &&
-                  shouldShowInstanceBadge(providerEntry, providerEntries)
-                }
-                size="compact"
-                iconClassName="size-3"
-                className="z-auto"
-              />
-            ) : null}
             {relationshipModel ? (
               <span className="min-w-0 truncate">
                 {lineageModelLabel(relationshipModel, providerEntry)}
@@ -875,7 +888,7 @@ export function ThreadRelationshipsPanel(props: {
               variant="ghost"
               part="row"
               multiline
-              className={workflowGroup ? "flex-1" : undefined}
+              className={cn("min-h-10 sm:min-h-10", workflowGroup && "flex-1")}
               aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
               render={
                 groups
@@ -1005,6 +1018,7 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           title="Lineage"
+          spacing="relaxed"
           summary={
             unlinkedRunningCount +
               (groups.find((group) => group.id === "active")?.rows.length ?? 0) >
@@ -1048,27 +1062,28 @@ export function ThreadRelationshipsPanel(props: {
             ))}
           {currentThread ? (
             <div
-              className="flex min-h-9 items-center gap-2.5 rounded-md bg-foreground/4 ps-2.5 pe-1"
+              className="flex min-h-10 items-center gap-2.5 rounded-md bg-foreground/4 ps-2.5 pe-1 py-0.5"
               aria-current="true"
             >
-              <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
+              {currentProviderEntry ? (
+                <ProviderInstanceIcon
+                  driverKind={currentProviderEntry.driverKind}
+                  displayName={currentProviderEntry.displayName}
+                  accentColor={currentProviderEntry.accentColor}
+                  acpRegistryAgentId={currentProviderEntry.acpRegistryAgentId}
+                  acpRegistryIconUrl={currentProviderEntry.acpRegistryIconUrl}
+                  showBadge={shouldShowInstanceBadge(currentProviderEntry, providerEntries)}
+                  size="compact"
+                  iconClassName="size-4"
+                  className="z-auto"
+                />
+              ) : (
+                <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
+              )}
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-label leading-4">{currentThread.title}</span>
                 <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
                   <span className="shrink-0">This thread</span>
-                  {currentProviderEntry ? (
-                    <ProviderInstanceIcon
-                      driverKind={currentProviderEntry.driverKind}
-                      displayName={currentProviderEntry.displayName}
-                      accentColor={currentProviderEntry.accentColor}
-                      acpRegistryAgentId={currentProviderEntry.acpRegistryAgentId}
-                      acpRegistryIconUrl={currentProviderEntry.acpRegistryIconUrl}
-                      showBadge={shouldShowInstanceBadge(currentProviderEntry, providerEntries)}
-                      size="compact"
-                      iconClassName="size-3"
-                      className="z-auto"
-                    />
-                  ) : null}
                   <span className="min-w-0 truncate">
                     {lineageModelLabel(currentThread.modelSelection.model, currentProviderEntry)}
                   </span>
@@ -1079,9 +1094,11 @@ export function ThreadRelationshipsPanel(props: {
           {groups
             .filter((group) => group.id === "previous")
             .map((group) => (
-              <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-                {(visibleRows) => visibleRows.map(renderRelationshipRow)}
-              </ThreadLineageGroup>
+              <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
+                <ThreadLineageGroup {...group}>
+                  {(visibleRows) => visibleRows.map(renderRelationshipRow)}
+                </ThreadLineageGroup>
+              </div>
             ))}
           {remoteSubagents.length > 0 ? (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
