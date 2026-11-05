@@ -5,9 +5,9 @@ import { View } from "react-native";
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
-import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
+import { useWorkspaceTabs } from "../../layout/workspace/WorkspaceTabsContext";
 import { useDeviceType } from "../../../native/native-layout-metrics";
-import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
+import { useCompactWorkspaceTabs } from "../../layout/workspace/useSystemWorkspaceTabBar";
 import { useSettingsPageBack } from "../useSettingsPageBack";
 import {
   ScreenScrollViewBottomInset,

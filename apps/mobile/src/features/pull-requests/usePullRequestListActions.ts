@@ -21,7 +21,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 
 export function usePullRequestListActions(

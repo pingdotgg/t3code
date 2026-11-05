@@ -35,15 +35,15 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import {
   WorkspaceNativeTabs,
   WorkspaceSidebarTabsFooter,
-} from "../workspace/WorkspaceNativeTabs.ios";
-import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
+} from "./workspace/WorkspaceNativeTabs.ios";
+import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
-import { setNativelyPoppingWorkspaceRoute } from "../workspace/workspace-detail-selection";
+import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";

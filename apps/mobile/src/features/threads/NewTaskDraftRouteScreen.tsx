@@ -31,7 +31,7 @@ import {
 } from "./new-task-branch-checkout";
 import { liveNewTaskFlowKeys, newTaskFlowKey } from "./new-task-flow-state";
 import { AppBar } from "../../components/ui/AppBar";
-import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 
 import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";

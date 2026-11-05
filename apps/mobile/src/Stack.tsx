@@ -18,15 +18,15 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/ui/AppText";
 import { androidWorkspaceDestinationAnimation } from "./lib/android-workspace-navigation";
-import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
+import { getCompactBrandHeaderOptions } from "./features/layout/workspace/brand-header-options";
 import { WorkspaceConnectionStatusProvider } from "./features/home/WorkspaceConnectionTitle";
-import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
+import { WorkspaceRootScreen } from "./features/layout/workspace/WorkspaceRootScreen";
 import {
   recordHomeFocus,
   recordHomeTransitionEnd,
   recordHomeTransitionStart,
 } from "./features/home/home-route-visibility";
-import { AndroidWorkspaceTabsProvider } from "./features/workspace/AndroidWorkspaceTabsProvider";
+import { AndroidWorkspaceTabsProvider } from "./features/layout/workspace/AndroidWorkspaceTabsProvider";
 import {
   PullRequestRouteScreen,
   PullRequestFileRouteScreen,
@@ -128,7 +128,7 @@ import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
-import { DEFAULT_SETTINGS_PAGE } from "./features/workspace/workspace-tab-navigation";
+import { DEFAULT_SETTINGS_PAGE } from "./features/layout/workspace/workspace-tab-navigation";
 import {
   isWorkspaceOverlayRoute,
   registerPresentedRoutes,
@@ -138,7 +138,7 @@ import { immersiveRoute, modalRoute, pageRoute, sheetRoute } from "./features/la
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
-import { workspaceDetailRouter } from "./features/workspace/workspace-detail-selection";
+import { workspaceDetailRouter } from "./features/layout/workspace/workspace-detail-selection";
 
 const settingsPage = (title: string) => pageRoute({ title, itemStyle: "standard" });
 
