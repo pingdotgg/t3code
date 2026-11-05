@@ -402,6 +402,7 @@ export interface ThreadManagementServiceShape {
     ProjectionRecords<K>,
     ThreadManagementProjectionLoadError | ThreadManagementThreadNotFoundError
   >;
+  readonly getAgentAwarenessSnapshot: Orchestrator.OrchestratorV2["Service"]["getAgentAwarenessSnapshot"];
   readonly getShellSnapshot: (
     options?: Pick<
       ShellSnapshotOptions,
@@ -420,6 +421,7 @@ export interface ThreadManagementServiceShape {
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
@@ -1520,6 +1522,7 @@ const make = Effect.gen(function* () {
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
+    getAgentAwarenessSnapshot: orchestrator.getAgentAwarenessSnapshot,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,
@@ -1534,6 +1537,7 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    getThreadTitles: orchestrator.getThreadTitles,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,

@@ -673,10 +673,9 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
-  // Control state (checkpoint file lists, the latest task list) cannot be paged, so it may claim at most
-  // half the budget; past that the window would shrink to the one row every page admits.
+  // Keep the control-only window minimum, but required dependency cards claim their reserve first.
   const windowBudget = Math.max(
-    policy.maxEncodedBytes / 2,
+    dependencyReserve === 0 ? policy.maxEncodedBytes / 2 : 0,
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = { ...policy, maxEncodedBytes: windowBudget };
