@@ -22,7 +22,10 @@ export function androidHeaderMenuActions(items: ReadonlyArray<AppBarMenuItem>): 
             image: item.icon,
             imageColor: item.iconColor,
             state: item.selected ? "on" : undefined,
-            attributes: item.disabled ? { disabled: true } : undefined,
+            attributes:
+              item.disabled || item.destructive
+                ? { disabled: item.disabled, destructive: item.destructive }
+                : undefined,
           },
         ],
   );

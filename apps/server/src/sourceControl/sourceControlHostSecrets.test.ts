@@ -150,8 +150,20 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         accessToken: source("expo#token"),
       },
     ];
+    const simlockDeviceHosts = [
+      {
+        kind: "simlock" as const,
+        id: DeviceHostId.make("pool"),
+        label: "Pool",
+        gatewayUrl: "https://simlock.test:4700",
+        agentToken: source("simlock#token"),
+        maxLeases: 2,
+        maxLeaseMinutes: 60,
+      },
+    ];
     cache.set("cliproxy#key", "stale");
     cache.set("expo#token", "stale");
+    cache.set("simlock#token", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "stale",
@@ -159,10 +171,16 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     current = "rotated";
     yield* invalidateSettingsSecrets(
       resolver,
-      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources, easDeviceHosts }),
+      Effect.succeed({
+        sourceControlHosts: hosts,
+        usageLimitSources,
+        easDeviceHosts,
+        simlockDeviceHosts,
+      }),
     );
     assert.isFalse(cache.has("cliproxy#key"));
     assert.isFalse(cache.has("expo#token"));
+    assert.isFalse(cache.has("simlock#token"));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",
