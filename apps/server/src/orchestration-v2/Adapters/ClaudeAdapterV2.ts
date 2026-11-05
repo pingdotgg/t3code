@@ -1225,6 +1225,8 @@ export const layerQueryRunner: Layer.Layer<
           let stderrTail = "";
           let stderrClosed: Promise<void> = Promise.resolve();
           let answered = false;
+          // A CLI that closes during startup can end the SDK stream cleanly; this rejection says why.
+          let registrationFailure: ClaudeAgentSdkQueryRunnerError | undefined;
           const appendStderr = (text: string) => {
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
@@ -1285,11 +1287,17 @@ export const layerQueryRunner: Layer.Layer<
                   Effect.gen(function* () {
                     if (mcpServers !== undefined) {
                       // Errors and mcp_status can echo headers; log only server names.
-                      const failed = yield* Effect.tryPromise(() =>
-                        queryRuntime.setMcpServers(mcpServers),
-                      ).pipe(
+                      const failed = yield* Effect.tryPromise({
+                        try: () => queryRuntime.setMcpServers(mcpServers),
+                        catch: (cause) => queryRunnerError(cause, "setMcpServers"),
+                      }).pipe(
                         Effect.map((result) => Object.keys(result.errors)),
-                        Effect.orElseSucceed(() => Object.keys(mcpServers)),
+                        Effect.catch((error) =>
+                          Effect.sync(() => {
+                            registrationFailure = error;
+                            return Object.keys(mcpServers);
+                          }),
+                        ),
                         Effect.timeoutOrElse({
                           duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
                           orElse: () =>
@@ -1381,6 +1389,13 @@ export const layerQueryRunner: Layer.Layer<
                 Effect.sync(() => {
                   answered = true;
                 }),
+              ),
+              Stream.concat(
+                Stream.suspend(() =>
+                  answered || registrationFailure === undefined
+                    ? Stream.empty
+                    : Stream.fail(registrationFailure),
+                ),
               ),
               Stream.tap((message) =>
                 logProtocolEvent({
@@ -8290,7 +8305,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
+        const finalizeActiveTurnAfterQueryExit = Effect.fn(
+          "ClaudeAdapterV2.finalizeActiveTurnAfterQueryExit",
+        )(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
@@ -8303,6 +8320,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Finalization can yield to a replacement process; capture ownership and outcomes first.
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
+          if (cause !== undefined) {
+            yield* Effect.logWarning(
+              "orchestration-v2.claude-query-stream-failed",
+              {
+                providerSessionId: input.providerSessionId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+              },
+              cause,
+            );
+          }
           if (current === context) {
             yield* finalizeActiveTurn({
               context,
@@ -8333,14 +8361,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next.delete(context.providerTurnId);
             return next;
           });
-          if (cause !== undefined) {
-            yield* Effect.logWarning("orchestration-v2.claude-query-stream-failed", {
-              providerSessionId: input.providerSessionId,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              cause,
-            });
-          }
         });
 
         const applyWorkflowProgressWithoutTurn = Effect.fnUntraced(function* (message: SDKMessage) {

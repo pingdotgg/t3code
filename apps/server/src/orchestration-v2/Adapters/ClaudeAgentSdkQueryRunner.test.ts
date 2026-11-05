@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -29,6 +30,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import {
   ClaudeAgentSdkQueryRunner,
+  ClaudeAgentSdkQueryRunnerError,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
   spawnClaudeProcessGroup,
@@ -503,6 +505,58 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
       assert.equal(result._tag, "Failure");
       assert.equal(querySpy.mock.calls.length, 1);
       assert.equal(disposed.mock.calls.length, 1);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+// The SDK can end a CLI that closed during startup as a clean, empty stream; the rejected
+// registration is then the only cause the turn failure can carry.
+it.effect.each([
+  { case: "fails an empty stream with it", answered: false },
+  { case: "leaves an answered stream alone", answered: true },
+])("keeps a rejected MCP registration and $case", (testCase) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const rejection = new Error("Query closed before response received");
+      const pending = testCase.answered
+        ? [{ type: "system", subtype: "init", session_id: FORK_SESSION_ID }]
+        : [];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            setMcpServers: () => Promise.reject(rejection),
+            next: async () => {
+              const value = pending.shift();
+              return value === undefined
+                ? { done: true, value: undefined }
+                : { done: false, value };
+            },
+            return: async () => ({ done: true, value: undefined }),
+            close: vi.fn(),
+            [Symbol.asyncDispose]: async () => {},
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const session = yield* runner.open(resumedMcpQueryInput);
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      const exit = yield* Stream.runCollect(session.messages).pipe(Effect.exit);
+
+      if (testCase.answered) {
+        assert.isTrue(Exit.isSuccess(exit));
+        return;
+      }
+      assert.isTrue(Exit.isFailure(exit));
+      if (!Exit.isFailure(exit)) return;
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, ClaudeAgentSdkQueryRunnerError);
+      assert.equal((error as ClaudeAgentSdkQueryRunnerError).method, "setMcpServers");
+      assert.strictEqual((error as ClaudeAgentSdkQueryRunnerError).cause, rejection);
+      // The cause is for logs and traces; the turn failure the client shows stays curated.
+      assert.equal(
+        makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message,
+        "Provider turn failed.",
+      );
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
