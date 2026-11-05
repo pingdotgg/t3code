@@ -6,6 +6,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
+import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
@@ -184,7 +185,7 @@ import {
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
-  BrowserSettingsReadError,
+  isBrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -321,17 +322,6 @@ function CodexArtifactTemplateCard(props: {
 }
 
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-
-function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
-  const firstLineEnd = markdown.indexOf("\n", listItemStart);
-  const firstLine = markdown.slice(
-    listItemStart,
-    firstLineEnd === -1 ? markdown.length : firstLineEnd,
-  );
-  const match = firstLine.match(/^(?:\s*(?:[-+*]|\d+[.)])\s+)(\[[ xX]\])/);
-  if (!match?.[1]) return null;
-  return listItemStart + firstLine.indexOf(match[1]);
-}
 
 function orderedListGutterStyle(
   itemCount: number,
@@ -724,7 +714,7 @@ function useChatMarkdownState({
       if (result._tag === "Success") recordVisitForThread(threadRef, url);
       else if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        if (error instanceof BrowserSettingsReadError) {
+        if (isBrowserSettingsReadError(error)) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -1038,7 +1028,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <input
           {...props}
           type={type}
-          checked={checked}
+          checked={type === "checkbox" ? checked === true : checked}
           disabled={_disabled}
           readOnly={type === "checkbox"}
         />
@@ -1050,11 +1040,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
         type="checkbox"
         name="markdown-task"
         aria-label="Toggle task"
-        checked={checked}
+        checked={checked === true}
         onChange={(event) => {
           const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
           if (!Number.isSafeInteger(listItemStart)) return;
-          const markerOffset = findTaskListMarkerOffset(text, listItemStart);
+          const markerOffset = taskListMarkerOffset(text, listItemStart);
           if (markerOffset === null) return;
           onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
         }}
@@ -1217,7 +1207,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 { operation: "open-link-in-preview", target: href },
                 result.cause,
               );
-              if (squashAtomCommandFailure(result) instanceof BrowserSettingsReadError) return;
+              if (isBrowserSettingsReadError(squashAtomCommandFailure(result))) return;
               void readLocalApi()?.shell.openExternal(href);
             });
           }}
@@ -1384,6 +1374,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       workspaceMutationId,
       renderContextReference,
       fileLinkChip,
+      resolvedTheme,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
@@ -1395,10 +1386,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    const localSrc = node?.properties?.dataLocalSrc;
+    // A `<picture>`'s source for this theme, resolved like any other image.
+    const themeSrc = node?.properties?.[resolvedTheme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
+    const localSrc = typeof themeSrc === "string" ? undefined : node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
     const standalone = node?.properties?.dataStandalone === true;
-    const authoredSrc = typeof localSrc === "string" ? localSrc : src;
+    const authoredSrc =
+      typeof themeSrc === "string" ? themeSrc : typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
     const srcString =
       typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";

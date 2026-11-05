@@ -68,6 +68,7 @@ export function PullRequestMarkdown({
   threadRef,
   lineBreaks,
   className,
+  onTaskListChange,
 }: {
   text: string;
   cwd: string;
@@ -75,6 +76,8 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   lineBreaks?: boolean;
   className?: string;
+  /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
@@ -101,6 +104,15 @@ export function PullRequestMarkdown({
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
               sourceControlMediaRepositoryUrl={context?.repositoryUrl}
+              onTaskListChange={
+                onTaskListChange && segment.kind === "markdown"
+                  ? ({ markerOffset, checked }) =>
+                      onTaskListChange({
+                        markerOffset: segment.sourceOffset + markerOffset,
+                        checked,
+                      })
+                  : undefined
+              }
             />
           );
         }
