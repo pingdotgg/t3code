@@ -12,9 +12,9 @@ import {
 } from "./composerContextReferences.ts";
 
 const JIRA_URL = /https?:\/\/([a-z0-9-]+\.)?atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\b/giu;
-/** Stop before whitespace and closing punctuation so `url).` keeps the trailing `).`. */
+/** Stop before whitespace and closing/sentence punctuation so `url).` / `url.` stay outside. */
 const FIGMA_URL =
-  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#)]*))?(?:\?([^#\s)]*))?(?:#([^\s)]*))?/giu;
+  /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#).,;:!]*))?(?:\?([^#\s).,;:!]*))?(?:#([^\s).,;:!]*))?/giu;
 const GITHUB_ISSUE_URL =
   /https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)\b(?:\/?[^\s]*)?/giu;
 
@@ -38,7 +38,7 @@ export function parseFigmaDesignUrl(value: string): {
   readonly nodeId?: string;
 } | null {
   const match =
-    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#)]*))?(?:\?([^#\s)]*))?(?:#([^\s)]*))?/iu.exec(
+    /https?:\/\/(?:www\.)?figma\.com\/(file|design)\/([A-Za-z0-9]+)(?:\/([^?\s#).,;:!]*))?(?:\?([^#\s).,;:!]*))?(?:#([^\s).,;:!]*))?/iu.exec(
       value.trim(),
     );
   if (!match) return null;

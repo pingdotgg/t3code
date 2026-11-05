@@ -33,6 +33,11 @@ describe("composerContextExternalLinks", () => {
     expect(rewritten.records).toHaveLength(1);
     expect(rewritten.records[0]).toMatchObject({ kind: "figma", nodeId: "1:2" });
     expect(rewritten.text.endsWith(").")).toBe(true);
+    const withPeriod = externalLinkContextReferences(
+      "See https://www.figma.com/design/AbCdEf123/Flow?node-id=1-2.",
+    );
+    expect(withPeriod.records[0]).toMatchObject({ kind: "figma", nodeId: "1:2" });
+    expect(withPeriod.text.endsWith(".")).toBe(true);
   });
 
   it("scopes Jira context ids by site host", () => {

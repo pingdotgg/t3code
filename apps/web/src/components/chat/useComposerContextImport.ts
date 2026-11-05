@@ -358,6 +358,8 @@ export function useComposerContextImport(input: {
         isSameComposerContextPayload(existingRecord, record) &&
         (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
       ) {
+        // Paste rewrite needs the identity map even when the chip already exists.
+        rewritten.set(record.contextId, existingRecord.contextId);
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
@@ -397,7 +399,19 @@ export function useComposerContextImport(input: {
             state: record.state,
             isDraft: record.isDraft,
           });
-          const comment = conflicts ? { ...imported, id: randomUUID() } : imported;
+          // Handoff/legacy ids can differ from `pr-reference:${url}`; collide on the URL id too.
+          const reconstructedContextId = reviewCommentContextReference(imported).contextId;
+          const existingByUrl = composerContextRecords.get(reconstructedContextId);
+          const existingUrlRecord =
+            existingByUrl?.kind === "pull-request"
+              ? reviewCommentContextRecord(existingByUrl.record)
+              : undefined;
+          if (existingUrlRecord && isSameComposerContextPayload(existingUrlRecord, record)) {
+            rewritten.set(record.contextId, existingUrlRecord.contextId);
+            break;
+          }
+          const comment =
+            conflicts || existingByUrl !== undefined ? { ...imported, id: randomUUID() } : imported;
           addComposerDraftReviewComment(composerDraftTarget, comment, {
             appendReference: false,
           });
