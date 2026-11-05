@@ -254,6 +254,36 @@ it("presents completion notifications and sound as soon as the shell completes",
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
 });
 
+it("presents a completed side chat while the user is on another thread", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  state.inApp = true;
+  focused = true;
+  const sideChat = (latestTurn: typeof thread.latestTurn) => ({
+    ...toV2ThreadShell({ ...thread, id: "side", title: "Side chat", latestTurn }),
+    lineage: {
+      rootThreadId: "thread",
+      parentThreadId: "thread",
+      relationshipToParent: "fork",
+      sideChat: true,
+    },
+  });
+  const withSideChat = (latestTurn: typeof thread.latestTurn) => ({
+    status: "live",
+    snapshot: Option.some({ threads: [toV2ThreadShell(thread), sideChat(latestTurn)] }),
+  });
+  state.shells.set("one", withSideChat(thread.latestTurn));
+  app.start();
+  state.shells.set(
+    "one",
+    withSideChat({ turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" }),
+  );
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Thread completed", description: "Side chat" }),
+  );
+  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies for offline completion and %s once across reconnects",
   async (flag) => {
