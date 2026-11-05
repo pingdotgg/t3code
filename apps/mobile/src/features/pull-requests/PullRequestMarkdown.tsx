@@ -1,4 +1,5 @@
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import { markdownTaskMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -11,7 +12,10 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
-import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ReferenceAutolink,
+} from "@t3tools/client-runtime/source-control-clients";
 import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -27,10 +31,12 @@ import {
 } from "../../components/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
 );
+const LineBreaksContext = createContext(false);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -44,6 +50,7 @@ export function PullRequestMarkdownRepository(props: {
     provider === undefined || url === undefined
       ? null
       : changeRequestReferenceAutolinker({ provider, url });
+  const lineBreaks = sourceControlClients.find(provider ?? "")?.hardLineBreaks ?? false;
   const target = pullRequestTarget(props.params);
   const project = useProject({
     environmentId: target.environmentId,
@@ -53,7 +60,9 @@ export function PullRequestMarkdownRepository(props: {
   const media = cwd ? { environmentId: target.environmentId, cwd } : null;
   return (
     <AutolinksContext value={autolinks}>
-      <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      <LineBreaksContext value={lineBreaks}>
+        <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      </LineBreaksContext>
     </AutolinksContext>
   );
 }
@@ -70,6 +79,7 @@ function MarkdownImage(props: {
     <ThreadMarkdownImageView
       uri={media.uri}
       sourceKey={props.href}
+      cacheKey={media.cacheKey}
       unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
       alt={props.alt}
       onPressPreview={(source) =>
@@ -88,16 +98,47 @@ function MarkdownImage(props: {
 export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
+  readonly lineBreaks?: boolean;
+  /**
+   * `markerOffset` is into `markdown`. Returning false, or a tap that can't be traced back to
+   * the source, undoes the tick the renderer already drew.
+   */
+  readonly onTaskListChange?: (input: {
+    readonly markerOffset: number;
+    readonly checked: boolean;
+  }) => boolean;
 }) {
+  const { onTaskListChange } = props;
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const [undoneTicks, setUndoneTicks] = useState(0);
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
         segment.kind === "markdown" ? (
           <PullRequestMarkdownContent
-            key={segment.id}
+            key={`${segment.id}:${undoneTicks}`}
             markdown={segment.text}
             imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
+            lineBreaks={props.lineBreaks}
+            onTaskListItemPress={
+              onTaskListChange
+                ? (event) => {
+                    const offset = markdownTaskMarkerOffset(
+                      segment.text,
+                      event.index,
+                      event.text,
+                      event.checked,
+                    );
+                    const kept =
+                      offset !== null &&
+                      onTaskListChange({
+                        markerOffset: segment.sourceOffset + offset,
+                        checked: event.checked,
+                      });
+                    if (!kept) setUndoneTicks((count) => count + 1);
+                  }
+                : undefined
+            }
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />
@@ -110,7 +151,10 @@ export function PullRequestMarkdown(props: {
 function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
+  readonly lineBreaks: boolean | undefined;
+  readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
+  const hostLineBreaks = useContext(LineBreaksContext);
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const markdown = linkReferenceAutolinks(props.markdown, autolinks);
@@ -136,10 +180,12 @@ function PullRequestMarkdownContent(props: {
     <FilePreviewGallery value={gallery}>
       <SelectableMarkdownText
         markdown={markdown}
+        preserveSoftBreaks={props.lineBreaks ?? hostLineBreaks}
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
         onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onTaskListItemPress={props.onTaskListItemPress}
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>

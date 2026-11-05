@@ -175,7 +175,9 @@ describe("orchestration V2 wire projection", () => {
   });
 
   it("truncates detail at a UTF-8 boundary without changing the source", () => {
-    const progress = "a".repeat(32_767) + "😀" + "x".repeat(100_000);
+    const marker = "\n… output truncated for transport";
+    const prefixBytes = 32_768 - Buffer.byteLength(marker);
+    const progress = "a".repeat(prefixBytes - 1) + "😀" + "x".repeat(100_000);
     const item = {
       ...base,
       type: "subagent" as const,
@@ -184,13 +186,17 @@ describe("orchestration V2 wire projection", () => {
       driver: ProviderDriverKind.make("codex"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       childThreadId: null,
-      prompt: "Inspect code",
+      prompt: "漢".repeat(12_000),
       result: null,
       progress,
     };
     const projected = projectTurnItemForWire(item);
+    expect(projectTurnItemForWire(projected)).toEqual(projected);
+    expect(
+      Buffer.byteLength(projected.type === "subagent" ? projected.prompt : ""),
+    ).toBeLessThanOrEqual(32_768);
     expect(projected.type === "subagent" ? projected.progress : null).toBe(
-      "a".repeat(32_767) + "\n… output truncated for transport",
+      "a".repeat(prefixBytes - 1) + marker,
     );
     expect(item.progress).toBe(progress);
   });
@@ -259,6 +265,21 @@ describe("orchestration V2 wire projection", () => {
       outputIndicatesFailure: true,
       exitCode: 2,
     });
+  });
+
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output: %s", (output) => {
+    const projected = projectTurnItemForWire({
+      ...base,
+      type: "command_execution" as const,
+      input: "rg -n error logs fixtures",
+      output,
+      exitCode: 0,
+    });
+    expect(projected).not.toHaveProperty("outputIndicatesFailure");
+    expect(projected).toMatchObject({ exitCode: 0, outputOmitted: true });
   });
 
   it("omits inline file bodies but preserves file identity and change counts", () => {

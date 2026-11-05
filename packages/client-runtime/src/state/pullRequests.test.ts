@@ -510,7 +510,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
         client[WS_METHODS.pullRequestsInvalidate] ?? (() => Effect.void),
     },
     initialConfig: client[WS_METHODS.serverGetConfig]?.({}).pipe(Effect.orDie) ?? Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -1177,6 +1177,59 @@ it.effect("keeps hover previews fresh after edits and turns", () =>
   ),
 );
 
+it.effect("shares one refresh stream between independently created pull request readers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const revision = yield* SubscriptionRef.make(0);
+      let subscriptions = 0;
+      let title = "Original title";
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              subscriptions++;
+              return SubscriptionRef.changes(revision);
+            }),
+          ),
+        [WS_METHODS.pullRequestsSummary]: () => Effect.sync(() => ({ title, state: "open" })),
+        [WS_METHODS.pullRequestsDetail]: () => Effect.sync(() => ({ title, state: "open" })),
+      } as unknown as WsRpcProtocolClient;
+      const { runtime, atoms, registry } = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+      };
+      const summary = createLinkedPullRequestSummaryAtomFamily(runtime)(target);
+      const detail = atoms.detail(target);
+      for (const atom of [summary, detail]) {
+        const unmount = registry.mount(atom);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        expect((yield* AtomRegistry.getResult(registry, atom)).title).toBe(title);
+      }
+      yield* AtomRegistry.getResult(
+        registry,
+        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
+      );
+      expect(subscriptions).toBe(1);
+
+      const changed = [summary, detail].map((atom) => {
+        const ready = Latch.makeUnsafe();
+        const stop = registry.subscribe(atom, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.title === "Updated title") {
+            ready.openUnsafe();
+          }
+        });
+        return { ready, stop };
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => changed.forEach(({ stop }) => stop())));
+      title = "Updated title";
+      yield* SubscriptionRef.update(revision, (value) => value + 1);
+      for (const { ready } of changed) yield* ready.await;
+      expect(subscriptions).toBe(1);
+    }),
+  ),
+);
+
 it.effect("shares close, reopen, and merge with an untouched client's mounted PR readers", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1310,20 +1363,80 @@ it.effect("shares checks reads across reference property order", () =>
 it.effect("keeps live detail reads separate from reads that allow stale data", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      let reads = 0;
+      let hostStamp: number | undefined;
+      let hold = false;
+      const readStarted = yield* Latch.make();
+      const releaseRead = yield* Latch.make();
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
         [WS_METHODS.pullRequestsDetail]: (input: { allowStale?: boolean }) =>
-          Effect.succeed({ title: input.allowStale === false ? "latest checks" : "cached checks" }),
+          Effect.gen(function* () {
+            reads++;
+            if (hold) {
+              yield* readStarted.open;
+              yield* releaseRead.await;
+            }
+            return {
+              title: input.allowStale === false ? "latest checks" : "cached checks",
+              ...(hostStamp === undefined ? {} : { observedAt: hostStamp }),
+            };
+          }),
       } as unknown as WsRpcProtocolClient;
-      const { atoms, registry } = yield* makeTestRuntime(client);
+      const { atoms, registry, supervisor } = yield* makeTestRuntime(client);
       const target = {
         environmentId: TARGET.environmentId,
         input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
       };
       const cached = atoms.detail(target);
       const live = atoms.detail({ ...target, input: { ...target.input, allowStale: false } });
-      expect((yield* AtomRegistry.getResult(registry, cached)).title).toBe("cached checks");
+      const first = yield* AtomRegistry.getResult(registry, cached);
+      expect(first.title).toBe("cached checks");
+      expect(first.observedAt).toBeUndefined();
+      const reading = atoms.detailReadVersion(target);
+      const firstVersion = registry.get(reading);
+      expect(firstVersion).toBeGreaterThan(0);
       expect((yield* AtomRegistry.getResult(registry, live)).title).toBe("latest checks");
+      expect(reads).toBe(2);
+      hold = true;
+      registry.refresh(cached);
+      yield* readStarted.await;
+      expect(registry.get(reading)).toBe(firstVersion);
+      yield* releaseRead.open;
+      expect(yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).toBe(
+        first,
+      );
+      const settledVersion = registry.get(reading);
+      expect(settledVersion).toBeGreaterThan(firstVersion);
+      hold = false;
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "offline" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const offline = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(offline.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBe(settledVersion);
+      expect(reads).toBe(3);
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "connected" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const reread = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(reread).toBe(first);
+      expect(reread.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBeGreaterThan(settledVersion);
+
+      hostStamp = 27;
+      registry.refresh(cached);
+      expect(
+        (yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).observedAt,
+      ).toBe(hostStamp);
     }),
   ),
 );

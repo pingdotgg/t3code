@@ -135,7 +135,7 @@ export interface BaseRuntimeContext {
 
 Server-style platforms don't write this from scratch —
 `createHostRuntimeContext` in
-[`Server/Process.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Server/Process.ts)
+[`Runtime/Process.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Runtime/Process.ts)
 is the shared implementation used by `AWS.ECS.Task` and
 `AWS.EC2.Instance`. It folds `run` (background loops) and `serve`
 (HTTP handlers) into one list of runners:
@@ -337,8 +337,8 @@ The finished runtime reads like any other Function — infrastructure
 props, a constructor Effect, a `{ fetch }` handler:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
-import { ServerHost } from "alchemy/Server";
+import * as AWS from "@alchemy.run/aws";
+import { ServerHost } from "alchemy/Runtime/Process";
 import * as Effect from "effect/Effect";
 
 export default class ApiTask extends AWS.ECS.Task<ApiTask>()(
