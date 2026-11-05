@@ -15,6 +15,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ServerConfig from "../../../config.ts";
 import { AnimationToolkit } from "./tools.ts";
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const INVALID_REQUEST_ERRORS = new Set([
   "ManimUnavailableError",
   "ManimFailedError",
@@ -105,7 +106,7 @@ const handlers = {
             yield* fs.makeDirectory(cacheDir, { recursive: true });
             yield* fs.writeFile(path.join(cacheDir, "clip.mp4"), clip);
             yield* fs.writeFileString(path.join(cacheDir, "scene.py"), code);
-            const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(meta);
+            const json = yield* encodeJson(meta);
             yield* fs.writeFileString(path.join(cacheDir, "meta.json"), `${json}\n`);
           }).pipe(
             Effect.catch((error) => Effect.logWarning("Could not cache the animation clip", error)),
