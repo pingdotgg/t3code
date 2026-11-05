@@ -4,7 +4,7 @@ import type { MobileThemeVariables } from "../../lib/mobileTheme";
 export const THREAD_LIST_V2_MONO_FONT = "monospace";
 export const THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME = "px-3 py-3";
 export const THREAD_LIST_V2_ROW_DIVIDERS = false;
-export const THREAD_LIST_V2_ROW_DIVIDER_INSET_CLASS_NAME = "ml-[68px]";
+export const THREAD_LIST_V2_ROW_DIVIDER_INSET = 40;
 export const THREAD_LIST_V2_SIDEBAR_ROW_STYLE = {
   borderRadius: 20,
   paddingHorizontal: 12,
