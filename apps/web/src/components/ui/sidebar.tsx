@@ -519,6 +519,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
             suppressClick.current = false;
             return;
           }
+          if (!near) return;
           setOpen(true);
         }}
       />
