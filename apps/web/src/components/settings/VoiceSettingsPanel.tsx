@@ -34,7 +34,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
@@ -57,7 +57,7 @@ import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
+import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
@@ -75,6 +75,7 @@ import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
+  SettingsSearchTarget,
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -113,7 +114,7 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
   return model.recommended ? 3 : 4;
 };
 
-function ModelCard(props: {
+type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
   readonly busy: boolean;
   readonly canCancel: boolean;
@@ -121,12 +122,16 @@ function ModelCard(props: {
   readonly onSelect: () => void;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
-}) {
+  readonly testControls?: ReactNode;
+  readonly children?: ReactNode;
+};
+
+function ModelCard(props: ModelCardProps) {
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5 sm:px-4">
+    <div className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
@@ -180,7 +185,7 @@ function ModelCard(props: {
           </div>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
         {downloading ? (
           <Button
             size="icon-sm"
@@ -206,6 +211,7 @@ function ModelCard(props: {
             Use model
           </Button>
         )}
+        {props.testControls}
         {model.state === "installed" ? (
           <Button
             size="icon-sm"
@@ -218,6 +224,7 @@ function ModelCard(props: {
           </Button>
         ) : null}
       </div>
+      {props.children}
     </div>
   );
 }
@@ -485,6 +492,9 @@ function EnvironmentModelsSection(props: {
   readonly prepared: PreparedConnection;
   readonly status: EnvironmentSpeechStatus | null;
   readonly onStatus: (connection: PreparedConnection, status: EnvironmentSpeechStatus) => void;
+  readonly testEnvironmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+  readonly projectName: string | null;
 }) {
   const { prepared, status, onStatus } = props;
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
@@ -702,40 +712,45 @@ function EnvironmentModelsSection(props: {
             <p className="px-4 py-2 text-sm text-muted-foreground">No matching models.</p>
           ) : null}
           <div className="divide-y divide-border/60" aria-label="Transcription models">
-            {sortedModels.map((model) => (
-              <ModelCard
-                key={model.id}
-                model={
+            {sortedModels.map((model) => {
+              const card: ModelCardProps = {
+                model:
                   model.id === requestedDownload && model.state === "downloadable"
                     ? { ...model, state: "downloading" }
-                    : model
-                }
-                busy={controlsDisabled}
-                canCancel={canManage && !busy}
-                onDownload={() =>
+                    : model,
+                busy: controlsDisabled,
+                canCancel: canManage && !busy,
+                onDownload: () =>
                   void run(
                     "Could not download the model",
                     () => runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
                     model.id,
-                  )
-                }
-                onSelect={() =>
+                  ),
+                onSelect: () =>
                   void run("Could not select the model", () =>
                     runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                  )
-                }
-                onCancel={() =>
+                  ),
+                onCancel: () =>
                   void run("Could not cancel the download", () =>
                     runtime.runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id)),
-                  )
-                }
-                onDelete={() =>
+                  ),
+                onDelete: () =>
                   void run("Could not delete the model", () =>
                     runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
-                  )
-                }
-              />
-            ))}
+                  ),
+              };
+              return model.active ? (
+                <TranscriptionTest
+                  key={model.id}
+                  card={card}
+                  environmentId={props.testEnvironmentId}
+                  projectId={props.projectId}
+                  projectName={props.projectName}
+                />
+              ) : (
+                <ModelCard key={model.id} {...card} />
+              );
+            })}
           </div>
         </>
       ) : null}
@@ -748,12 +763,13 @@ function EnvironmentModelsSection(props: {
  * never the cleanup provider: this checks the model, the loopback test checks the mic.
  */
 function TranscriptionTest(props: {
+  readonly card: ModelCardProps;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly projectName: string | null;
-  readonly modelName: string | null;
 }) {
   const [draft, setDraft] = useState("");
+  const [showTranscript, setShowTranscript] = useState(false);
   const draftRef = useRef(draft);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft to the asynchronous transcription controller
   useEffect(() => {
@@ -773,51 +789,79 @@ function TranscriptionTest(props: {
     commitDraft: (text) => setDraft(text),
   });
   return (
-    <SettingsRow
-      {...searchableSetting("transcription-test")}
-      title="Test model"
-      description={`Dictate a sentence with ${props.modelName ?? "the selected model"} on the chosen environment, using the language and dictionary above. Transcript cleanup is skipped so you see what the model heard. The result stays on this page.`}
-      control={
-        <div className="flex items-center gap-1">
-          <ComposerSpeechRecordingPill
-            state={speech.state}
-            progress={null}
-            level={speech.level}
-            onStart={() => void speech.start()}
-            onStop={() => void speech.stop()}
-            onCancel={() => speech.cancel()}
-            onSkipPostProcessing={() => speech.skipPostProcessing()}
-          />
-          {speech.available ? (
-            <ComposerSpeechButton
+    <SettingsSearchTarget {...searchableSetting("transcription-test")}>
+      <ModelCard
+        {...props.card}
+        testControls={
+          <div className="flex min-w-0 max-w-full items-center gap-1">
+            <ComposerSpeechRecordingPill
               state={speech.state}
               progress={null}
+              level={speech.level}
               onStart={() => void speech.start()}
+              onStop={() => void speech.stop()}
               onCancel={() => speech.cancel()}
+              onSkipPostProcessing={() => speech.skipPostProcessing()}
             />
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              {speech.status?.supported === false
-                ? speech.status.reason
-                : "Waiting for the environment"}
-            </span>
-          )}
-        </div>
-      }
-    >
-      {speech.preview ? (
-        <p role="status" className="mt-2 text-sm text-muted-foreground">
-          {speech.preview.committed}
-          <span className="opacity-70">{speech.preview.tentative}</span>
-        </p>
-      ) : null}
-      <Textarea
-        aria-label="Test transcript"
-        className="mt-2"
-        value={draft}
-        placeholder="The transcript appears here."
-        onChange={(event) => setDraft(event.target.value)}
-      />
+            {speech.available ? (
+              speech.state.phase === "idle" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setShowTranscript(true);
+                    void speech.start();
+                  }}
+                >
+                  <MicIcon />
+                  Test model
+                </Button>
+              ) : null
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {speech.status?.supported === false
+                  ? speech.status.reason
+                  : "Waiting for the environment"}
+              </span>
+            )}
+          </div>
+        }
+      >
+        {showTranscript ? (
+          <div className="w-full">
+            <div className="flex items-start gap-2">
+              <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+                Dictate a sentence using the language and dictionary above. Transcript cleanup is
+                skipped so you see what the model heard. The result stays on this page.
+              </p>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Close model test"
+                onClick={() => {
+                  speech.cancel();
+                  setShowTranscript(false);
+                }}
+              >
+                <XIcon />
+              </Button>
+            </div>
+            {speech.preview ? (
+              <p role="status" className="mt-2 text-sm text-muted-foreground">
+                {speech.preview.committed}
+                <span className="opacity-70">{speech.preview.tentative}</span>
+              </p>
+            ) : null}
+            <Textarea
+              aria-label="Test transcript"
+              className="mt-2"
+              value={draft}
+              placeholder="The transcript appears here."
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </div>
+        ) : null}
+      </ModelCard>
       <VoiceInputSetup
         environmentId={speech.transcriptionEnvironmentId}
         open={speech.setup.open}
@@ -831,7 +875,7 @@ function TranscriptionTest(props: {
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => void speech.setup.startRecording()}
       />
-    </SettingsRow>
+    </SettingsSearchTarget>
   );
 }
 
@@ -891,9 +935,11 @@ export function VoiceSettingsPanel() {
     <SettingsPageContainer
       searchTargetFallbacks={{
         "speech-models": prepared ? undefined : "voice-transcription-destination",
-        "transcription-test": destination.environmentId
-          ? undefined
-          : "voice-transcription-destination",
+        "transcription-test": !prepared
+          ? "voice-transcription-destination"
+          : !model || model.state === "missing-model"
+            ? "speech-models"
+            : undefined,
         "speech-post-processing-model":
           cleanupEnabled && settingsScope ? undefined : "speech-post-processing",
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
@@ -955,40 +1001,45 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("voice-microphone")}
           title="Microphone"
-          description="System default follows the operating system when devices change."
+          description="System default follows the operating system when devices change. Test a ten-second recording and play it back here. Test audio stays on this device and is never transcribed."
           control={
-            <div className="flex items-center gap-1.5">
-              <Select
-                value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
-                onValueChange={(value) => {
-                  if (value)
-                    void updateClientSettings({
-                      voiceMicrophone:
-                        value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
-                    });
-                }}
-              >
-                <SelectTrigger size="sm" aria-label="Microphone" className="max-w-64">
-                  <SelectValue>{selectedMicrophoneLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
-                  {microphones.map((device) => (
-                    <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                      {device.label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Refresh microphones"
-                onClick={() => void refreshMicrophones()}
-              >
-                <RefreshCwIcon className="size-3.5" />
-              </Button>
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Select
+                  value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
+                  onValueChange={(value) => {
+                    if (value)
+                      void updateClientSettings({
+                        voiceMicrophone:
+                          value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
+                      });
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Microphone" className="max-w-64">
+                    <SelectValue>{selectedMicrophoneLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
+                    {microphones.map((device) => (
+                      <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
+                        {device.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh microphones"
+                  onClick={() => void refreshMicrophones()}
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                </Button>
+              </div>
+              <SettingsSearchTarget {...searchableSetting("microphone-test")}>
+                <MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />
+              </SettingsSearchTarget>
             </div>
           }
         />
@@ -1191,31 +1242,13 @@ export function VoiceSettingsPanel() {
           prepared={prepared}
           status={modelStatus}
           onStatus={(connection, status) => setCatalog({ connection, status })}
+          testEnvironmentId={
+            project?.environmentId ?? target?.environmentId ?? prepared.environmentId
+          }
+          projectId={project?.id ?? null}
+          projectName={project?.title ?? null}
         />
       ) : null}
-      <SettingsSection id="voice-tests" title="Test">
-        <SettingsRow
-          {...searchableSetting("microphone-test")}
-          title="Test microphone"
-          description="Record up to ten seconds and play it back here. The audio stays in this browser and is never transcribed, so a silent playback means the microphone, not the model."
-          control={<MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />}
-        />
-        {destination.environmentId ? (
-          <TranscriptionTest
-            environmentId={
-              project?.environmentId ?? target?.environmentId ?? destination.environmentId
-            }
-            projectId={project?.id ?? null}
-            projectName={project?.title ?? null}
-            modelName={model?.model ?? null}
-          />
-        ) : (
-          <p className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground sm:px-4">
-            <MicIcon className="size-3.5" />
-            Choose where to send microphone audio to test the model.
-          </p>
-        )}
-      </SettingsSection>
     </SettingsPageContainer>
   );
 }
