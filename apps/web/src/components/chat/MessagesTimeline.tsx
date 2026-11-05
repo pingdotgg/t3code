@@ -68,7 +68,7 @@ function ThreadArtifactsSection({
                   </div>
                 ) : null}
                 {summary ? (
-                  <div className="truncate text-xs text-muted-foreground/90" title={summary}>
+                  <div className="truncate text-xs text-muted-foreground/90">
                     {summary}
                   </div>
                 ) : null}
