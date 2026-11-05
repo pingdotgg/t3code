@@ -204,13 +204,14 @@ export function reconcileCodexRateLimitsRead(
     ...(rateLimitReachedType !== sent?.rateLimitReachedType && rateLimitReachedType !== undefined
       ? { rateLimitReachedType }
       : {}),
-    ...(primary !== sent?.primary && primary !== undefined
+    ...(!sameWindow(primary, sent?.primary) && primary !== undefined
       ? { primary: laterReport(primary, read.primary, usedPercent) }
       : {}),
-    ...(secondary !== sent?.secondary && secondary !== undefined
+    ...(!sameWindow(secondary, sent?.secondary) && secondary !== undefined
       ? { secondary: laterReport(secondary, read.secondary, usedPercent) }
       : {}),
-    ...(individualLimit !== sent?.individualLimit && individualLimit !== undefined
+    ...(!sameIndividualLimit(individualLimit, sent?.individualLimit) &&
+    individualLimit !== undefined
       ? {
           individualLimit: laterReport(
             individualLimit,
@@ -220,6 +221,37 @@ export function reconcileCodexRateLimitsRead(
         }
       : {}),
   });
+}
+
+function sameWindow(
+  left: CodexRateLimitSnapshot["primary"],
+  right: CodexRateLimitSnapshot["primary"],
+): boolean {
+  return (
+    left === right ||
+    !!(
+      left &&
+      right &&
+      left.usedPercent === right.usedPercent &&
+      left.resetsAt === right.resetsAt &&
+      left.windowDurationMins === right.windowDurationMins
+    )
+  );
+}
+
+function sameIndividualLimit(
+  left: CodexRateLimitSnapshot["individualLimit"],
+  right: CodexRateLimitSnapshot["individualLimit"],
+): boolean {
+  return (
+    left === right ||
+    !!(
+      left &&
+      right &&
+      left.remainingPercent === right.remainingPercent &&
+      left.resetsAt === right.resetsAt
+    )
+  );
 }
 
 const usedPercent = (window: CodexRateLimitWindow) => window.usedPercent;

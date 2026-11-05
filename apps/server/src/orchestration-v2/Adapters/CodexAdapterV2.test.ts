@@ -5607,6 +5607,48 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     },
     {
+      name: "unchanged-window-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: { primary: { usedPercent: 100 } },
+        during: { primary: { usedPercent: 100 } },
+        read: { primary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
+      name: "unchanged-secondary-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: { secondary: { usedPercent: 100 } },
+        during: { secondary: { usedPercent: 100 } },
+        read: { secondary: { usedPercent: 100, resetsAt: 2000100000 } },
+        resetAt: "2033-05-19T07:20:00.000Z",
+      },
+    },
+    {
+      name: "unchanged-individual-read",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+      race: {
+        before: {
+          primary: { usedPercent: 100 },
+          individualLimit: { ...individualLimit, remainingPercent: 0 },
+        },
+        during: { individualLimit: { ...individualLimit, remainingPercent: 0 } },
+        read: {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          individualLimit: null,
+        },
+        resetAt: "2033-05-18T03:33:20.000Z",
+      },
+    },
+    {
       name: "same-window-read",
       code: "usageLimitExceeded",
       notification: false,
