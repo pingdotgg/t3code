@@ -1,11 +1,12 @@
 #!/bin/bash
-# Copies T3 Code's chats into the T3 Learn server on this Linux machine (t3learn.service, ~/.t3-learn).
-# T3 Code's data folder is opened read-only and never changed. The copy replaces T3 Learn's chats,
-# side chats and paired devices, so it refuses once a device has paired unless --force is given.
+# Adds T3 Code's new chats to the T3 Learn server on this Linux machine (t3learn.service, ~/.t3-learn).
+# T3 Code's data folder is opened read-only and never changed. Chats T3 Learn already has, including
+# ones continued or deleted there, are never replaced; nor are side chats, settings or paired devices.
 #
 # The copy is built and booted in a staging folder with no provider reachable, so runs that were in
-# flight in T3 Code are stopped there instead of continuing. Only a copy with nothing in flight is
-# swapped in. A failure before the swap leaves T3 Learn as it was.
+# flight in T3 Code are stopped there instead of continuing. New chats are added only from a copy with
+# nothing in flight, and only while T3 Learn is idle; the unit is stopped for the few seconds the
+# merge takes. A failure leaves T3 Learn as it was.
 #
 # Run it from a checkout of this repository at the tag of the installed T3 Learn server
 # (git checkout v<version>), after `vp i`, or point T3_LEARN_CHECKOUT at such a checkout.
@@ -36,13 +37,8 @@ VERSION=$(basename "$(dirname "$T3")")
 say() { printf '%s %s\n' "$(date +%T)" "$*"; }
 count() { sqlite3 -readonly "$1" "$2"; }
 
-# CLI and MCP bearer sessions (subject mcp-client) are not paired devices.
-sessions=$(count "$LEARN/userdata/statev2.sqlite" \
-  "SELECT COUNT(*) FROM auth_sessions WHERE revoked_at IS NULL AND subject <> 'mcp-client'")
-if [ "$sessions" != 0 ] && [ "${1:-}" != --force ]; then
-  echo "$ME: $sessions paired device session(s) would be wiped; pass --force" >&2
-  exit 1
-fi
+target=$LEARN/userdata/statev2.sqlite
+[ -e "$target" ] || { echo "$ME: no T3 Learn database at $LEARN; start $UNIT once first" >&2; exit 1; }
 
 # The import runs this checkout's migrations, so they must be the running server's.
 tag_tree=$(git -C "$CHECKOUT" rev-parse "v$VERSION^{tree}")
@@ -119,34 +115,73 @@ in_flight=$(count "$db" "SELECT
 + (SELECT COUNT(*) FROM scheduled_tasks)")
 [ "$in_flight" = 0 ] || { echo "copy still has $in_flight in-flight items; not swapping" >&2; exit 1; }
 
+# Whole thread families (a chat with its forks and subagents) whose root T3 Learn lacks are added.
+# Rows keep their ids; event logs get fresh sequence numbers. Outbox effects are left behind.
+inserts=$(count "$db" "SELECT 'INSERT OR IGNORE INTO main.\"' || m.name || '\" (' || cols || ') SELECT ' || cols
+    || ' FROM src.\"' || m.name || '\" WHERE thread_id IN (SELECT thread_id FROM new_threads)'
+    || CASE WHEN cols NOT LIKE '%\"sequence\"%' AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'sequence') THEN ' ORDER BY sequence' ELSE '' END || ';'
+  FROM (SELECT name, (SELECT group_concat('\"' || name || '\"', ',') FROM pragma_table_info(t.name)
+                      WHERE NOT (pk = 1 AND name = 'sequence')) AS cols
+        FROM sqlite_master t WHERE type = 'table' AND sql NOT LIKE 'CREATE VIRTUAL%') m
+  WHERE EXISTS (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'thread_id')
+    AND m.name NOT IN ('orchestration_v2_effect_outbox', 'scheduled_tasks')")
+event_cols=$(count "$db" "SELECT group_concat('\"' || name || '\"', ',') FROM pragma_table_info('orchestration_events') WHERE name <> 'sequence'")
+merge_sql="
+ATTACH DATABASE '$db' AS src;
+BEGIN IMMEDIATE;
+CREATE TEMP TABLE new_threads AS SELECT thread_id FROM src.orchestration_v2_projection_threads
+  WHERE COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id)
+    NOT IN (SELECT thread_id FROM main.orchestration_v2_projection_threads);
+CREATE TEMP TABLE new_projects AS SELECT project_id FROM src.projection_projects
+  WHERE project_id IN (SELECT project_id FROM src.orchestration_v2_projection_threads
+                       WHERE thread_id IN (SELECT thread_id FROM new_threads))
+    AND project_id NOT IN (SELECT project_id FROM main.projection_projects);
+INSERT INTO main.projection_projects SELECT * FROM src.projection_projects
+  WHERE project_id IN (SELECT project_id FROM new_projects);
+INSERT OR IGNORE INTO main.orchestration_events ($event_cols) SELECT $event_cols FROM src.orchestration_events
+  WHERE (aggregate_kind = 'thread' AND stream_id IN (SELECT thread_id FROM new_threads))
+     OR (aggregate_kind = 'project' AND stream_id IN (SELECT project_id FROM new_projects))
+  ORDER BY sequence;
+$inserts
+INSERT OR IGNORE INTO main.orchestration_v2_projection_context_transfers
+  SELECT * FROM src.orchestration_v2_projection_context_transfers
+  WHERE target_thread_id IN (SELECT thread_id FROM new_threads);
+SELECT (SELECT COUNT(*) FROM new_threads) || ' chats, ' || (SELECT COUNT(*) FROM new_projects) || ' projects';
+COMMIT;"
+
+new=$(sqlite3 -readonly "$target" "ATTACH DATABASE '$db' AS src;
+  SELECT COUNT(*) FROM src.orchestration_v2_projection_threads
+  WHERE COALESCE(json_extract(payload_json, '\$.lineage.rootThreadId'), thread_id)
+    NOT IN (SELECT thread_id FROM main.orchestration_v2_projection_threads)")
+if [ "$new" = 0 ]; then
+  say "T3 Learn already has every T3 Code chat; nothing to add."
+  rm -rf "$STAGE"
+  exit 0
+fi
+
 # Files are copied before the stop, so a missing folder or full disk can't leave the unit down.
 for dir in attachments browser-artifacts; do
   mkdir -p "$LEARN/userdata/$dir"
   [ ! -d "$SOURCE/userdata/$dir" ] || cp -a "$SOURCE/userdata/$dir/." "$LEARN/userdata/$dir/"
 done
-
-say "Swapping the new copy into $UNIT..."
-# Restart on any failure, but not on a missing database: a rerun would then delete .previous.
-trap '[ ! -e "$LEARN/userdata/statev2.sqlite" ] || systemctl --user start "$UNIT"' EXIT
-systemctl --user stop "$UNIT"
-rm -f "$LEARN"/userdata/statev2.sqlite.previous*
-for suffix in "" -wal -shm; do
-  if [ -e "$LEARN/userdata/statev2.sqlite$suffix" ]; then
-    mv "$LEARN/userdata/statev2.sqlite$suffix" "$LEARN/userdata/statev2.sqlite.previous$suffix"
-  fi
-  if [ -e "$db$suffix" ]; then mv "$db$suffix" "$LEARN/userdata/statev2.sqlite$suffix"; fi
-done
 [ -e "$LEARN/userdata/settings.json" ] || cp "$STAGE/userdata/settings.json" "$LEARN/userdata/settings.json"
-started=$(date -u +%Y-%m-%dT%H:%M:%S)
+
+# Stopping cuts off whatever T3 Learn is running, so a busy T3 Learn waits for the next run.
+busy=$(count "$target" "SELECT
+  (SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE status IN ('preparing','starting','running','waiting'))
++ (SELECT COUNT(*) FROM orchestration_v2_projection_provider_threads WHERE status='active')
++ (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending')")
+if [ "$busy" != 0 ]; then
+  say "T3 Learn has $busy item(s) running; nothing added. Run again when it is idle."
+  rm -rf "$STAGE"
+  exit 0
+fi
+
+say "Adding new chats to $UNIT..."
+trap 'systemctl --user start "$UNIT"' EXIT
+systemctl --user stop "$UNIT"
+added=$(sqlite3 -bail "$target" "$merge_sql")
 trap - EXIT
 systemctl --user start "$UNIT"
-for _ in $(seq 1 120); do
-  ss -H -ltn "sport = :$PORT" | grep -q . && break
-  sleep 1
-done
-sleep 5
 rm -rf "$STAGE"
-started_runs=$(count "$LEARN/userdata/statev2.sqlite" \
-  "SELECT COUNT(*) FROM orchestration_v2_projection_runs WHERE requested_at >= '$started'")
-say "Done. $UNIT is $(systemctl --user is-active "$UNIT"); runs started since swap: $started_runs."
-say "Previous copy kept at $LEARN/userdata/statev2.sqlite.previous."
+say "Done. Added $added. $UNIT is $(systemctl --user is-active "$UNIT")."

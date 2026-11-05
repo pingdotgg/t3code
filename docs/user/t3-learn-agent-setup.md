@@ -51,9 +51,9 @@ Do this on a Linux machine that runs T3 Code as a background service, so the use
    systemctl --user restart t3learn.service
    ```
 
-3. Check out this repository at the tag of the installed server (`git checkout v<version>`), run `vp i`, and run `scripts/t3-learn-copy-chats.sh`. If that tag predates the script, run it from a newer checkout with `T3_LEARN_CHECKOUT=<path to the tag checkout>`. It needs `sqlite3`, `python3` and `node`. It reads T3 Code's database read-only, builds a copy in a staging folder, boots that copy with no provider reachable so runs that were in flight are stopped instead of continuing, and swaps the copy into `t3learn.service` only when nothing is in flight. The old copy is kept as `~/.t3-learn/userdata/statev2.sqlite.previous`.
+3. Check out this repository at the tag of the installed server (`git checkout v<version>`), run `vp i`, and run `scripts/t3-learn-copy-chats.sh`. If that tag predates the script, run it from a newer checkout with `T3_LEARN_CHECKOUT=<path to the tag checkout>`. It needs `sqlite3`, `python3` and `node`. It reads T3 Code's database read-only, builds a copy in a staging folder, boots that copy with no provider reachable so runs that were in flight are stopped instead of continuing, and adds the chats T3 Learn doesn't have yet. It stops `t3learn.service` for the few seconds that takes, and skips the run if T3 Learn has anything running.
 
-The copy is a snapshot. New T3 Code messages don't appear in T3 Learn. Run the script again to refresh, before the first device pairs: it refuses afterwards because a refresh would wipe the user's side chats. Pass `--force` only if the user says that's fine.
+Run the script again to bring over chats started in T3 Code since. It only adds: a chat T3 Learn already has is never replaced, so new messages in it don't come across, and chats, side chats, settings and paired devices in T3 Learn are kept.
 
 Make `t3 pair` and `t3 thread` easy to run with the right home by wrapping them, for example in `~/.local/bin/t3-learn`:
 
