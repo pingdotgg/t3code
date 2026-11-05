@@ -70,9 +70,14 @@ describe("parseChatSyncStatus", () => {
     [
       "succeeded",
       "inactive",
-      "Starting old\n20:00:00 old\nFinished old\nStarting new\n12:00:00 new result",
-      { state: "succeeded", message: "new result", addedChats: null },
+      "Starting old\n20:00:00 Done. Added 3 chats, 1 projects.\nFinished old\nStarting new\n12:00:00 T3 Learn already has every T3 Code chat; nothing to add.",
+      {
+        state: "succeeded",
+        message: "T3 Learn already has every T3 Code chat; nothing to add.",
+        addedChats: 0,
+      },
     ],
+    ["running", "activating", "", { state: "running", message: null, addedChats: null }],
   ] as const)("parses %s", (name, activeState, journal, expected) => {
     expect(
       parseChatSyncStatus(

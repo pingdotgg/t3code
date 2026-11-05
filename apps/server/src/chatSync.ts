@@ -16,9 +16,10 @@ export function parseChatSyncStatus(
   journal: string,
   unitName = unit,
 ): ChatSyncStatus {
+  const running = activeState === "activating" || activeState === "deactivating";
   const lines = journal.split(/\r?\n/);
   const start = lines.findLastIndex((line) => line.startsWith("Starting "));
-  if (start < 0) return { state: "never", message: null, addedChats: null };
+  if (start < 0) return { state: running ? "running" : "never", message: null, addedChats: null };
   const runLines = lines
     .slice(start + 1)
     .filter(
@@ -39,12 +40,7 @@ export function parseChatSyncStatus(
         ? 0
         : null
       : Number(added);
-  const state =
-    activeState === "activating" || activeState === "deactivating"
-      ? "running"
-      : result === "success"
-        ? "succeeded"
-        : "failed";
+  const state = running ? "running" : result === "success" ? "succeeded" : "failed";
   return { state, message, addedChats };
 }
 
@@ -97,7 +93,7 @@ export const layer = Layer.effect(
       const [stateOutput, journalOutput] = yield* Effect.all([
         run({
           command: "systemctl",
-          args: ["--user", "show", unit, "-p", "ActiveState,Result"],
+          args: ["--user", "show", unit, "-p", "ActiveState,Result,Job"],
         }),
         run({
           command: "journalctl",
@@ -113,7 +109,8 @@ export const layer = Layer.effect(
         }),
       );
       return parseChatSyncStatus(
-        values.ActiveState ?? "",
+        // A start queued by --no-block is a job before the unit turns activating.
+        values.Job ? "activating" : (values.ActiveState ?? ""),
         values.Result ?? "",
         journalOutput.stdout,
       );

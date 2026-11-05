@@ -2,10 +2,6 @@ import type { ChatSyncStatus } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -29,17 +25,16 @@ function statusText(status: ChatSyncStatus): string {
   if (status.state === "succeeded") {
     if (status.addedChats !== null) {
       return status.addedChats === 0
-        ? "No new chats"
-        : `${status.addedChats} new ${status.addedChats === 1 ? "chat" : "chats"}`;
+        ? "Last sync: no new chats"
+        : `Last sync: ${status.addedChats} new ${status.addedChats === 1 ? "chat" : "chats"}`;
     }
-    return status.message ?? "Sync finished";
+    return `Last sync: ${status.message ?? "finished"}`;
   }
-  return status.state === "failed" ? `Sync failed: ${status.message ?? "Unknown error"}` : "";
+  return status.state === "failed" ? `Last sync failed: ${status.message ?? "unknown error"}` : "";
 }
 
 export function ChatSyncSection() {
   const { connectedEnvironments } = useSettingsScope();
-  const [startError, setStartError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const start = useAtomCommand(serverEnvironment.startChatSync);
   const supported = connectedEnvironments.filter(
@@ -53,25 +48,14 @@ export function ChatSyncSection() {
     (query) => query._tag === "Success" && query.value.state === "running",
   );
   const run = async () => {
-    if (pending) return;
     setPending(true);
-    setStartError(null);
-    const results = await Promise.all(
-      supported.map(async (environment, index) => {
-        if (permissions[index] !== true) return null;
-        const result = await start({ environmentId: environment.environmentId, input: {} });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          return String(squashAtomCommandFailure(result));
-        }
-        return null;
-      }),
-    ).catch((error: unknown) => {
-      setStartError(String(error));
-      return null;
-    });
-    if (results !== null) {
-      setStartError(results.find((message) => message !== null) ?? null);
-    }
+    await Promise.all(
+      supported.map((environment, index) =>
+        permissions[index] === true
+          ? start({ environmentId: environment.environmentId, input: {} })
+          : null,
+      ),
+    );
     setPending(false);
   };
   const text = statuses
@@ -83,7 +67,7 @@ export function ChatSyncSection() {
         {...searchableSetting("chat-sync")}
         serverScoped
         description="Adds the T3 Code chats this server doesn't have yet. Chats active in the last hour wait for a later sync."
-        status={startError ?? text}
+        status={text}
         control={
           <Button
             variant="outline"
