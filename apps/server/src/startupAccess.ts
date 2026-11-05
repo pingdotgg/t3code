@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import { isPrivateNetworkHost, isSharedAddressSpaceHost } from "@t3tools/shared/hostClassification";
 import { QrCode } from "@t3tools/shared/qrCode";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -73,19 +74,42 @@ export const acceptsPrivateNetworkConnection = (socket: {
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
 
-/** Closing is silent to the client, so each closed connection is logged with both addresses. */
-export const closeNonPrivateNetworkConnections = Effect.fn("closeNonPrivateNetworkConnections")(
-  function* (server: NodeHttp.Server) {
-    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
-    server.on("connection", (socket) => {
-      if (acceptsPrivateNetworkConnection(socket)) return;
-      // Read before destroy: Node forgets localAddress once the handle closes.
-      const addresses = { localAddress: socket.localAddress, remoteAddress: socket.remoteAddress };
-      socket.destroy();
-      runSync(Effect.logWarning("closed a connection outside the private network", addresses));
-    });
-  },
-);
+const CLOSED_CONNECTION_LOG_INTERVAL_MS = 60_000;
+
+/**
+ * Closing is silent to the client, so closed connections are logged with both
+ * addresses: the first at once, then at most one line a minute with a count, so
+ * a connect flood from outside cannot grow the service log without bound.
+ */
+// Untraced: the captured context would otherwise tie every later warning to a span that ended at startup.
+export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
+  server: NodeHttp.Server,
+) {
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+  let nextLogAt = 0;
+  let closedSinceLastLog = 0;
+  server.on("connection", (socket) => {
+    if (acceptsPrivateNetworkConnection(socket)) return;
+    // Read before destroy: Node forgets localAddress once the handle closes.
+    const addresses = { localAddress: socket.localAddress, remoteAddress: socket.remoteAddress };
+    socket.destroy();
+    runSync(
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (now < nextLogAt) {
+          closedSinceLastLog += 1;
+          return;
+        }
+        nextLogAt = now + CLOSED_CONNECTION_LOG_INTERVAL_MS;
+        yield* Effect.logWarning("closed a connection outside the private network", {
+          ...addresses,
+          ...(closedSinceLastLog > 0 ? { closedSinceLastLog } : {}),
+        });
+        closedSinceLastLog = 0;
+      }),
+    );
+  });
+});
 
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   address._tag === "InetAddressV6" && NetAddress.isLoopback(address.address)

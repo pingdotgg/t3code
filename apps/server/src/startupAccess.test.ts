@@ -6,6 +6,7 @@ import type * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   acceptsPrivateNetworkConnection,
@@ -100,8 +101,30 @@ describe("closeNonPrivateNetworkConnections", () => {
       expect(socket.destroyed).toBe(true);
       expect(warnings.map((entry) => entry.logLevel)).toEqual(["Warn"]);
       const line = Logger.formatLogFmt.log(warnings[0]!);
-      expect(line).toMatch(/local\w*\W+undefined/i);
-      expect(line).toMatch(/remote\w*\W+undefined/i);
+      expect(line).toMatch(/localAddress\W+undefined/);
+      expect(line).toMatch(/remoteAddress\W+undefined/);
+    }),
+  );
+
+  it.effect("logs a flood of closed connections at most once a minute, with a count", () =>
+    Effect.gen(function* () {
+      const warnings: Array<Logger.Options<unknown>> = [];
+      const server = NodeHttp.createServer();
+      yield* closeNonPrivateNetworkConnections(server).pipe(
+        Effect.provide(
+          Logger.layer([Logger.make((entry) => warnings.push(entry))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      const sockets = Array.from({ length: 1000 }, () => new NodeNet.Socket());
+      for (const socket of sockets) server.emit("connection", socket);
+      yield* TestClock.adjust("1 minute");
+      server.emit("connection", new NodeNet.Socket());
+
+      expect(sockets.every((socket) => socket.destroyed)).toBe(true);
+      expect(warnings).toHaveLength(2);
+      expect(Logger.formatLogFmt.log(warnings[1]!)).toMatch(/closedSinceLastLog\W+999/);
     }),
   );
 });
