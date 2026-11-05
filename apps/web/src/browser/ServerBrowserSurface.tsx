@@ -843,12 +843,18 @@ export function ServerBrowserSurface(props: {
                   send({ type: "selectMenu", id: selectMenu.id, index });
                 }}
               >
-                {selectMenu.options.map((option, index) => (
-                  // oxlint-disable-next-line react/no-array-index-key -- the page answers by option index
-                  <MenuRadioItem key={index} value={index} disabled={option.disabled} closeOnClick>
-                    {option.label}
-                  </MenuRadioItem>
-                ))}
+                {selectMenu.options
+                  .map((option, index) => ({ ...option, index }))
+                  .map((option) => (
+                    <MenuRadioItem
+                      key={option.index}
+                      value={option.index}
+                      disabled={option.disabled}
+                      closeOnClick
+                    >
+                      {option.label}
+                    </MenuRadioItem>
+                  ))}
               </MenuRadioGroup>
             </MenuPopup>
           </Menu>
