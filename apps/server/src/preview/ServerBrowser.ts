@@ -496,7 +496,12 @@ const make = Effect.gen(function* () {
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<
     string,
-    { readonly page: Page; readonly openerTabId: string; readonly native: boolean }
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly native: boolean;
+      readonly pendingDialog?: { current: Dialog | null };
+    }
   >();
   /** A desktop popup can reach adoption from both its `popup` event and the connect sweep. */
   const adoptedPopups = new WeakSet<Page>();
@@ -853,6 +858,12 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
+    const pendingDialog = adopted?.pendingDialog;
+    if (pendingDialog) {
+      cdp.on("Page.javascriptDialogClosed", () => {
+        pendingDialog.current = null;
+      });
+    }
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
@@ -890,7 +901,7 @@ const make = Effect.gen(function* () {
       openerTabId: adopted?.openerTabId,
       downloads: [],
       fileChooser: null,
-      dialog: null,
+      dialog: adopted?.pendingDialog?.current ?? null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
@@ -907,6 +918,16 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
+    page.on("dialog", (dialog) => {
+      tab.dialog = dialog;
+      broadcastControl(tab);
+    });
+    if (desktop) {
+      cdp.on("Page.javascriptDialogClosed", () => {
+        tab.dialog = null;
+        if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
+      });
+    }
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
@@ -919,11 +940,6 @@ const make = Effect.gen(function* () {
       cdp.on("Page.frameResized", remeasure);
       // A read a navigation broke has a fresh page to measure.
       cdp.on("Page.loadEventFired", remeasure);
-      // Closing a dialog resizes nothing, and the host can close it without us.
-      cdp.on("Page.javascriptDialogClosed", () => {
-        tab.dialog = null;
-        return remeasure();
-      });
       await cdp.send("Page.enable");
     }
     const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
@@ -1012,10 +1028,6 @@ const make = Effect.gen(function* () {
         text: ServerBrowserPage.consoleText(message).slice(0, 2_000),
         timestamp: new Date().toISOString(),
       });
-    });
-    page.on("dialog", (dialog) => {
-      tab.dialog = dialog;
-      broadcastControl(tab);
     });
     page.on("download", (download) => void saveDownload(tab, download));
     updateFileChooserInterception(tab);
@@ -1359,9 +1371,12 @@ const make = Effect.gen(function* () {
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     if (adoptedPopups.has(popup) || popup.isClosed()) return;
     adoptedPopups.add(popup);
+    const pendingDialog: { current: Dialog | null } = { current: null };
     if (opener.desktop !== null) {
       // Keep native dialogs pending even when this popup never becomes an automation tab.
-      popup.on("dialog", constVoid);
+      popup.on("dialog", (dialog) => {
+        pendingDialog.current = dialog;
+      });
     }
     if (opener.closing) {
       await popup.close().catch(constVoid);
@@ -1388,6 +1403,7 @@ const make = Effect.gen(function* () {
             page: popup,
             openerTabId: opener.tabId,
             native: opener.desktop !== null,
+            ...(opener.desktop === null ? {} : { pendingDialog }),
           }),
       }),
     ).then(

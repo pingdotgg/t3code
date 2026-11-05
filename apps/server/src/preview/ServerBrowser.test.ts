@@ -182,9 +182,17 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     dialogAutoDismissed,
     // Playwright dismisses a dialog nothing listens for before the page shows it.
     openDialog: () => {
-      if (!events.emit("dialog", { type: () => "alert", message: () => "hello" })) {
+      const dialog = {
+        type: () => "alert",
+        message: () => "hello",
+        defaultValue: () => "",
+        accept: vi.fn(async () => {}),
+        dismiss: vi.fn(async () => {}),
+      };
+      if (!events.emit("dialog", dialog)) {
         dialogAutoDismissed();
       }
+      return dialog;
     },
     openFileChooser: () => {
       if (
@@ -2271,124 +2279,171 @@ it.live("profiles reported by one client survive another client's report", () =>
 );
 
 it.live.each([
-  { budget: "agent", limit: 8, host: "server" },
-  { budget: "server", limit: 32, host: "server" },
-  { budget: "agent", limit: 8, host: "desktop" },
-  { budget: "server", limit: 32, host: "desktop" },
-])("reserves the $budget budget for opens and $host popups", ({ budget, limit, host }) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      desktopRendersNext = host === "desktop";
-      const { broker, browser, tabId } = yield* ready;
-      const openerPage =
-        host === "desktop" ? desktopConnections[0]!.context.page : contexts[0]!.page;
-      const manager = yield* Manager.PreviewManager;
-      const open = (target = scope) =>
-        broker.invoke<PreviewAutomationStatus>({
-          scope: target,
+  { budget: "agent", limit: 8, host: "server", dialogState: "pending" },
+  { budget: "server", limit: 32, host: "server", dialogState: "pending" },
+  { budget: "agent", limit: 8, host: "desktop", dialogState: "pending" },
+  { budget: "server", limit: 32, host: "desktop", dialogState: "pending" },
+  { budget: "agent", limit: 8, host: "desktop", dialogState: "closedBeforeTab" },
+  { budget: "agent", limit: 8, host: "desktop", dialogState: "closedDuringSetup" },
+  { budget: "agent", limit: 8, host: "desktop", dialogState: "openedDuringSetup" },
+])(
+  "reserves the $budget budget for opens and $host popups ($dialogState dialog)",
+  ({ budget, limit, host, dialogState }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = host === "desktop";
+        const { broker, browser, tabId } = yield* ready;
+        const openerPage =
+          host === "desktop" ? desktopConnections[0]!.context.page : contexts[0]!.page;
+        const manager = yield* Manager.PreviewManager;
+        const open = (target = scope) =>
+          broker.invoke<PreviewAutomationStatus>({
+            scope: target,
+            operation: "open",
+            input: { reuseExistingTab: false, show: false },
+          });
+        for (let index = 1; index < limit - 3; index++) {
+          yield* open(budget === "agent" ? scope : asSession(`other-${Math.floor(index / 8)}`));
+        }
+
+        const sessionGate = Promise.withResolvers<void>();
+        const launchGate = (contextGate = Promise.withResolvers<void>());
+        const sessionStarted = Promise.withResolvers<void>();
+        const realOpen = manager.open;
+        const delayedOpen = vi.spyOn(manager, "open").mockImplementation((input) =>
+          Effect.promise(() => {
+            sessionStarted.resolve();
+            return sessionGate.promise;
+          }).pipe(Effect.andThen(realOpen(input))),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            sessionGate.resolve();
+            launchGate.resolve();
+            delayedOpen.mockRestore();
+          }),
+        );
+        const events = yield* manager.subscribeEvents;
+        const first = yield* open().pipe(Effect.result, Effect.forkScoped);
+        yield* Effect.promise(() => sessionStarted.promise);
+        const popup = makeContext();
+        const resized = Promise.withResolvers<void>();
+        const setViewportSize = popup.page.setViewportSize;
+        popup.page.setViewportSize = vi.fn(async (size) => {
+          await setViewportSize(size);
+          if (size?.width === 900) resized.resolve();
+        });
+        const newCDPSession = popup.newCDPSession;
+        let pendingDialog: ReturnType<typeof popup.page.openDialog>;
+        let changedDialog = false;
+        popup.newCDPSession = async (target) => {
+          await launchGate.promise;
+          const session = await newCDPSession(target);
+          const send = session.send.getMockImplementation()!;
+          session.send.mockImplementation(async (method, input) => {
+            if (!changedDialog) {
+              if (method === "Runtime.evaluate" && dialogState === "closedBeforeTab") {
+                changedDialog = true;
+                session.emit("Page.javascriptDialogClosed");
+              }
+              if (method === "Page.enable") {
+                changedDialog = true;
+                if (dialogState === "closedDuringSetup")
+                  session.emit("Page.javascriptDialogClosed");
+                if (dialogState === "openedDuringSetup") pendingDialog = popup.page.openDialog();
+              }
+            }
+            return send(method, input);
+          });
+          return session;
+        };
+        openerPage.emit("popup", popup.page);
+        // A native window's dialog waits for the person while its tab is still being set up.
+        pendingDialog = popup.page.openDialog();
+        expect(popup.page.dialogAutoDismissed).toHaveBeenCalledTimes(host === "desktop" ? 0 : 1);
+        const last = yield* open().pipe(Effect.result, Effect.forkScoped);
+        const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
+        // The host processes this after the opens, while manager creation is blocked.
+        const reused = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
           operation: "open",
-          input: { reuseExistingTab: false, show: false },
+          input: { show: false },
         });
-      for (let index = 1; index < limit - 3; index++) {
-        yield* open(budget === "agent" ? scope : asSession(`other-${Math.floor(index / 8)}`));
-      }
+        expect(reused.tabId).toBe(tabId);
+        expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(
+          limit - 3,
+        );
 
-      const sessionGate = Promise.withResolvers<void>();
-      const launchGate = (contextGate = Promise.withResolvers<void>());
-      const sessionStarted = Promise.withResolvers<void>();
-      const realOpen = manager.open;
-      const delayedOpen = vi.spyOn(manager, "open").mockImplementation((input) =>
-        Effect.promise(() => {
-          sessionStarted.resolve();
-          return sessionGate.promise;
-        }).pipe(Effect.andThen(realOpen(input))),
-      );
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          sessionGate.resolve();
-          launchGate.resolve();
-          delayedOpen.mockRestore();
-        }),
-      );
-      const events = yield* manager.subscribeEvents;
-      const first = yield* open().pipe(Effect.result, Effect.forkScoped);
-      yield* Effect.promise(() => sessionStarted.promise);
-      const popup = makeContext();
-      const resized = Promise.withResolvers<void>();
-      const setViewportSize = popup.page.setViewportSize;
-      popup.page.setViewportSize = vi.fn(async (size) => {
-        await setViewportSize(size);
-        if (size?.width === 900) resized.resolve();
-      });
-      const newCDPSession = popup.newCDPSession;
-      popup.newCDPSession = async (target) => {
-        await launchGate.promise;
-        return newCDPSession(target);
-      };
-      openerPage.emit("popup", popup.page);
-      // A native window's dialog waits for the person while its tab is still being set up.
-      popup.page.openDialog();
-      expect(popup.page.dialogAutoDismissed).toHaveBeenCalledTimes(host === "desktop" ? 0 : 1);
-      const last = yield* open().pipe(Effect.result, Effect.forkScoped);
-      const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
-      // The host processes this after the opens, while manager creation is blocked.
-      const reused = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "open",
-        input: { show: false },
-      });
-      expect(reused.tabId).toBe(tabId);
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(
-        limit - 3,
-      );
+        sessionGate.resolve();
+        for (let count = 0; count < 3; count++) {
+          let event = yield* PubSub.take(events);
+          while (event.type !== "opened") event = yield* PubSub.take(events);
+          yield* manager.resize({
+            threadId: scope.thread.threadId,
+            tabId: event.tabId,
+            viewport: { _tag: "freeform", width: 900, height: 700 },
+          });
+        }
+        // The same slots must stay reserved after publication, while pages are still opening.
+        const duringLaunch = yield* open().pipe(Effect.result, Effect.forkScoped);
+        const rejectedPopup = makeContext();
+        openerPage.emit("popup", rejectedPopup.page);
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        launchGate.resolve();
 
-      sessionGate.resolve();
-      for (let count = 0; count < 3; count++) {
-        let event = yield* PubSub.take(events);
-        while (event.type !== "opened") event = yield* PubSub.take(events);
-        yield* manager.resize({
-          threadId: scope.thread.threadId,
-          tabId: event.tabId,
-          viewport: { _tag: "freeform", width: 900, height: 700 },
+        expect((yield* Fiber.join(first))._tag).toBe("Success");
+        expect((yield* Fiber.join(last))._tag).toBe("Success");
+        for (const fiber of [overflow, duringLaunch]) {
+          expect(yield* Fiber.join(fiber)).toMatchObject({
+            _tag: "Failure",
+            failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
+          });
+        }
+        if (host === "server") yield* Effect.promise(() => resized.promise);
+        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+        for (const session of sessions)
+          yield* browser.attachViewer(viewerInput(session.tabId, false));
+        expect(sessions).toHaveLength(limit);
+        expect(popup.page.isClosed()).toBe(false);
+        expect(rejectedPopup.page.isClosed()).toBe(host === "server");
+        if (host === "desktop") {
+          // No tab answers the window it could not adopt, so its dialogs stay the person's.
+          rejectedPopup.page.openDialog();
+          expect(rejectedPopup.page.dialogAutoDismissed).not.toHaveBeenCalled();
+        }
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
         });
-      }
-      // The same slots must stay reserved after publication, while pages are still opening.
-      const duringLaunch = yield* open().pipe(Effect.result, Effect.forkScoped);
-      const rejectedPopup = makeContext();
-      openerPage.emit("popup", rejectedPopup.page);
-      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-      launchGate.resolve();
-
-      expect((yield* Fiber.join(first))._tag).toBe("Success");
-      expect((yield* Fiber.join(last))._tag).toBe("Success");
-      for (const fiber of [overflow, duringLaunch]) {
-        expect(yield* Fiber.join(fiber)).toMatchObject({
-          _tag: "Failure",
-          failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
-        });
-      }
-      if (host === "server") yield* Effect.promise(() => resized.promise);
-      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-      for (const session of sessions)
-        yield* browser.attachViewer(viewerInput(session.tabId, false));
-      expect(sessions).toHaveLength(limit);
-      expect(popup.page.isClosed()).toBe(false);
-      expect(rejectedPopup.page.isClosed()).toBe(host === "server");
-      if (host === "desktop") {
-        // No tab answers the window it could not adopt, so its dialogs stay the person's.
-        rejectedPopup.page.openDialog();
-        expect(rejectedPopup.page.dialogAutoDismissed).not.toHaveBeenCalled();
-      }
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        tabId,
-        operation: "status",
-        input: {},
-      });
-      expect(status.tabs).toHaveLength(limit);
-    }),
-  ).pipe(Effect.provide(layer)),
+        expect(status.tabs).toHaveLength(limit);
+        if (host === "desktop") {
+          const adopted = status.tabs!.find((tab) => tab.openerTabId === tabId)!;
+          const popupStatus = yield* broker.invoke<PreviewAutomationStatus>({
+            scope,
+            tabId: adopted.tabId,
+            operation: "status",
+            input: {},
+          });
+          if (dialogState.startsWith("closed")) {
+            expect(popupStatus.dialog).toBeNull();
+            expect(pendingDialog.accept).not.toHaveBeenCalled();
+          } else {
+            expect(popupStatus.dialog).toMatchObject({ type: "alert", message: "hello" });
+            yield* broker.invoke({
+              scope,
+              tabId: adopted.tabId,
+              operation: "dialog",
+              input: { accept: true },
+            });
+            expect(pendingDialog.accept).toHaveBeenCalledTimes(1);
+          }
+          expect(pendingDialog.dismiss).not.toHaveBeenCalled();
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("failed session and browser launches release capacity, as does closing a tab", () =>
