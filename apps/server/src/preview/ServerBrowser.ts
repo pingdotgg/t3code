@@ -299,6 +299,7 @@ interface ServerTab {
   readonly isolatedContext: boolean;
 
   readonly desktop: { readonly close: () => Promise<void> } | null;
+  readonly nativePopups: Set<Page>;
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
 
@@ -877,6 +878,7 @@ const make = Effect.gen(function* () {
       },
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
+      nativePopups: new Set(),
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
       downloads: [],
@@ -1344,10 +1346,14 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
-    if (adoptedPopups.has(popup)) return;
+    if (adoptedPopups.has(popup) || popup.isClosed()) return;
     adoptedPopups.add(popup);
-    // Playwright dismisses dialogs nothing listens for; a native window's are the person's to answer.
-    if (opener.desktop !== null) popup.on("dialog", constVoid);
+    if (opener.desktop !== null) {
+      // Keep native dialogs pending even when this popup never becomes an automation tab.
+      popup.on("dialog", constVoid);
+      opener.nativePopups.add(popup);
+      popup.once("close", () => opener.nativePopups.delete(popup));
+    }
     if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
@@ -1447,12 +1453,7 @@ const make = Effect.gen(function* () {
 
   // A desktop popup is the person's own window, and closing its opener destroys it too.
   const isNativePopup = (tab: ServerTab) => tab.desktop !== null && tab.openerTabId !== undefined;
-  const holdsNativePopup = (tab: ServerTab) =>
-    isNativePopup(tab) ||
-    [...tabs.values()].some(
-      (other) =>
-        isNativePopup(other) && other.threadId === tab.threadId && other.openerTabId === tab.tabId,
-    );
+  const holdsNativePopup = (tab: ServerTab) => isNativePopup(tab) || tab.nativePopups.size > 0;
 
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;

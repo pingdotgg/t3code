@@ -2484,6 +2484,8 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
         tabId: PreviewTabId.make(popupTabId),
         input: {},
       });
+      const refused = makeContext(undefined, "https://example.com/retained");
+      desktopConnections[8]!.context.page.emit("popup", refused.page);
 
       now.mockReturnValue(100);
       yield* broker.invoke<PreviewAutomationStatus>({
@@ -2511,6 +2513,11 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
       expect(releasedDesktopTabs).toEqual([]);
       expect(popup.page.close).not.toHaveBeenCalled();
+      shownDesktopTabs.add(opened[24]!);
+      shownDesktopTabs.delete(opened[8]!);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      expect(refused.page.close).not.toHaveBeenCalled();
       shownDesktopTabs.clear();
       shownDesktopTabs.add(opened[1]!);
       const events = yield* manager.subscribeEvents;
@@ -2532,6 +2539,11 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), popupTabId, fresh.tabId!].toSorted(),
       );
+      yield* Effect.promise(() => refused.page.close());
+      for (const session of sessions) shownDesktopTabs.add(session.tabId);
+      shownDesktopTabs.delete(opened[8]!);
+      yield* open("agent-new");
+      expect(yield* Queue.take(releases)).toBe(opened[8]);
     }),
   ).pipe(Effect.provide(layer)),
 );
