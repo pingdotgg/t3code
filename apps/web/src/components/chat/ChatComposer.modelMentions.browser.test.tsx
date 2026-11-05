@@ -245,10 +245,10 @@ it("inserts the picked model as a chip without switching the thread's model", as
   await userEvent.keyboard("@gpt");
   expect(props.promptRef.current).toBe("before @gpt after");
   await userEvent.keyboard("{Enter}");
-  await expect.poll(() => props.promptRef.current).toBe("before model:codex/gpt-5.4 after");
   await expect
     .element(screen.getByRole("button", { name: "Model GPT-5.4. Show details" }))
     .toBeVisible();
+  expect(props.promptRef.current).toBe("before model:codex/gpt-5.4 after");
   expect(element).not.toHaveTextContent("model:");
   await userEvent.keyboard("X");
   await expect.element(element).toHaveTextContent("before GPT-5.4 Xafter");
