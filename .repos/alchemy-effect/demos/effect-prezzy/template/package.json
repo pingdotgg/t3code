@@ -1,0 +1,23 @@
+{
+  "name": "my-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@tailwindcss/vite": "^4.1.18",
+    "@vitejs/plugin-react": "^6.0.2",
+    "alchemy": "2.0.0-beta.79",
+    "effect": "4.0.0-rc.115",
+    "tailwindcss": "^4.1.18",
+    "vite": "^8.0.7"
+  }
+}
