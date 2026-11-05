@@ -6,6 +6,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import {
   ContextTransferId,
   EnvironmentId,
+  ForwardCompatibleArray,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -42,6 +43,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -326,6 +328,36 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
       "Linked environment to act in. Omit for this one. Ids are then that environment's.",
   }),
 );
+
+export const OrchestratorMcpUsageLimitsInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+});
+export type OrchestratorMcpUsageLimitsInput = typeof OrchestratorMcpUsageLimitsInput.Type;
+
+const OrchestratorMcpProviderUsageLimits = Schema.Struct({
+  checkedAt: IsoDateTime,
+  windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  unavailable: Schema.optional(
+    Schema.Struct({ reason: Schema.Literals(["unsupported", "probeFailed"]) }),
+  ),
+});
+
+export const OrchestratorMcpUsageLimitsResult = Schema.Struct({
+  environmentId: EnvironmentId,
+  checkedAt: IsoDateTime,
+  providers: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      driver: ProviderDriverKind,
+      label: TrimmedNonEmptyString,
+      providerInstanceId: Schema.optional(ProviderInstanceId),
+      sourceLabel: Schema.optional(TrimmedNonEmptyString),
+      limits: OrchestratorMcpProviderUsageLimits,
+    }),
+  ),
+  notices: Schema.Array(TrimmedNonEmptyString),
+});
+export type OrchestratorMcpUsageLimitsResult = typeof OrchestratorMcpUsageLimitsResult.Type;
 
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

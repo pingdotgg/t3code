@@ -7,6 +7,17 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("labels completed and failed provider usage reads", () => {
+    expect(summarizeT3ToolCalls("usage-limits", [completed({})])).toEqual({
+      label: "Read provider usage limits 1 time",
+      failedCount: 0,
+    });
+    expect(summarizeT3ToolCalls("usage-limits", [completed({}, { isError: true })])).toEqual({
+      label: "Tried to read provider usage limits 1 time",
+      failedCount: 1,
+    });
+  });
+
   it("reads provider result envelopes without treating JSON in the message as result data", () => {
     const result = { messageId: "message-1", threadId: "actual-thread" };
     const json = JSON.stringify(result);

@@ -19,6 +19,23 @@ const handlers = {
       return yield* service.capabilities(scope, input);
     }),
   ),
+  orchestrator_usage_limits: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const target = PeerForwarding.remoteTarget(scope, input.environmentId);
+      if (target !== undefined) {
+        const forwarding = yield* PeerForwarding.PeerForwarding;
+        return yield* forwarding.call(
+          scope,
+          OrchestratorToolkit.tools.orchestrator_usage_limits,
+          target,
+          input,
+        );
+      }
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.usageLimits(scope);
+    }),
+  ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
