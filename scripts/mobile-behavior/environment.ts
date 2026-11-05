@@ -7,7 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   CommandId,
   EnvironmentId,
@@ -22,7 +22,7 @@ import {
   WsRpcGroup,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -34,7 +34,7 @@ const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../..");
 export const EVAL_INSTANCE = ProviderInstanceId.make("evalbot");
 export const EVAL_MODEL = "eval/scripted";
 
-export const uuid = Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4());
+export const uuid = Effect.flatMap(SecureRandom.SecureRandom, (random) => random.uuidV4());
 
 export class EnvironmentError extends Schema.TaggedError<EnvironmentError>()("EnvironmentError", {
   message: Schema.String,
@@ -226,7 +226,7 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
         ),
       ),
       Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(NodeSocket.layerWebSocketConstructorWS),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
     ),
   );
   const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));

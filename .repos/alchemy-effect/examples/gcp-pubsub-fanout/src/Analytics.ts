@@ -1,12 +1,8 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import {
-  decodeOrderEvent,
-  OrderEvents,
-  OrderEventsTable,
-} from "./resources.ts";
+import * as Stream from "effect/Stream";
+import { decodeOrderEvent, OrderEvents, OrderEventsTable } from "./resources.ts";
 
 /**
  * Records every order event, of every type, as a row in BigQuery.
@@ -54,7 +50,5 @@ export default class Analytics extends GCP.Function<Analytics>()(
     return {
       fetch: Effect.succeed(HttpServerResponse.text("ok")),
     };
-  }).pipe(
-    Effect.provide([GCP.Run.TopicEventSource, GCP.BigQuery.WriteTableHttp]),
-  ),
+  }).pipe(Effect.provide([GCP.Run.TopicEventSource, GCP.BigQuery.WriteTableHttp])),
 ) {}
