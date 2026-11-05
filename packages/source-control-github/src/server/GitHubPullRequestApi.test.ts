@@ -2730,7 +2730,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("reads one files page when GitHub refuses the diff, and says it is the last", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(2, 1))));
+      mockedExecute.mockImplementationOnce((call) => {
+        if (call.kind !== "rest") throw new Error("Expected a REST request");
+        const perPage = Number(
+          new URL(call.path, "https://github.acme.dev").searchParams.get("per_page"),
+        );
+        return Effect.succeed(
+          output(
+            encodeJson([
+              {
+                filename: "src/file1.ts",
+                status: "modified",
+                patch: "@@ -1 +1 @@\n-old\n+new",
+              },
+              {
+                filename: "src/file2.ts",
+                status: "added",
+                additions: perPage <= 30 ? 1 : 0,
+                deletions: 0,
+                // GitHub can omit patches and zero counts when a files page is too large.
+                ...(perPage <= 30 ? { patch: "@@ -0,0 +1 @@\n+hello" } : {}),
+              },
+            ]),
+          ),
+        );
+      });
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       const diff = yield* cli.getPullRequestDiff({
@@ -2744,28 +2768,59 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.isNull(diff.nextCursor);
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
+      expect(diff.patch).toContain("+++ b/src/file2.ts\n@@ -0,0 +1 @@\n+hello\n");
       assert.strictEqual(callAt(1).host, "github.acme.dev");
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
     }),
   );
 
-  it.effect("hands back a cursor for the next page rather than walking on by itself", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+  it.effect.each([undefined, "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"])(
+    "reads the next files page only when its cursor is requested (commit: %s)",
+    (commit) =>
+      Effect.gen(function* () {
+        if (commit === undefined) {
+          mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
+        }
+        const firstPage = pullRequestFiles(30, 0);
+        const lastPage = pullRequestFiles(2, 30);
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(commit === undefined ? firstPage : `{"files":${firstPage}}`)),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(commit === undefined ? lastPage : `{"files":${lastPage}}`)),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const input = {
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          ...(commit === undefined ? {} : { commit }),
+        };
 
-      const diff = yield* cli.getPullRequestDiff({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+        const diff = yield* cli.getPullRequestDiff(input);
 
-      assert.isFalse(diff.truncated);
-      assert.isNotNull(diff.nextCursor);
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-    }),
+        assert.isFalse(diff.truncated);
+        assert.strictEqual(diff.nextCursor, "2");
+        expect(diff.patch).toContain("diff --git a/src/file29.ts b/src/file29.ts");
+        expect(diff.patch).not.toContain("src/file30.ts");
+        assert.strictEqual(mockedExecute.mock.calls.length, commit === undefined ? 2 : 1);
+
+        const next = yield* cli.getPullRequestDiff({
+          ...input,
+          cursor: diff.nextCursor ?? undefined,
+        });
+
+        assert.isFalse(next.truncated);
+        assert.isNull(next.nextCursor);
+        expect(next.patch).toContain("diff --git a/src/file30.ts b/src/file30.ts");
+        expect(next.patch).toContain("diff --git a/src/file31.ts b/src/file31.ts");
+        const endpoint = commit === undefined ? "pulls/7/files" : `commits/${commit}`;
+        assert.strictEqual(
+          pathAt(mockedExecute.mock.calls.length - 1),
+          `repos/acme/web/${endpoint}?per_page=30&page=2`,
+        );
+      }),
   );
 
   it.effect("refuses a cursor it never handed out rather than reading it into a request", () =>
@@ -2807,7 +2862,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       assert.strictEqual(
         pathAt(0),
-        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=100&page=1",
+        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=30&page=1",
       );
     }),
   );
@@ -3581,7 +3636,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);

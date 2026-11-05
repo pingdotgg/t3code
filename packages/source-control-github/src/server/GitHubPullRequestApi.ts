@@ -350,7 +350,8 @@ interface GitHubPullRequestListPage {
 
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
 
-const DIFF_FILES_PAGE_SIZE = 100;
+// Larger GitHub files pages can silently omit patches and zero their line counts.
+const DIFF_FILES_PAGE_SIZE = 30;
 const FILES_VIEWED_MAX_PAGES = 5;
 const FILES_VIEWED_PER_REQUEST = 100;
 
