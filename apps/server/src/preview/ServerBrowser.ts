@@ -180,8 +180,9 @@ const PRESS_SELECT_AT_POINT_SCRIPT = `(x, y, modifiers, optionLimit) => {
 /** Describes a pressed select in top-level viewport CSS px and keeps the offered options. */
 const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
   const select = this.select;
-  // Page handlers ran in between and may have added options.
-  if (!this.pressed || select.options.length > optionLimit) return null;
+  // Page handlers ran in between: they may have added options or removed the select.
+  if (!this.pressed || !select.isConnected || !select.ownerDocument.defaultView) return null;
+  if (select.options.length > optionLimit) return null;
   let { left, top, width, height } = select.getBoundingClientRect();
   for (let view = select.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
     const frame = view.frameElement;

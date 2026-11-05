@@ -1653,6 +1653,7 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
           onclick="if (!this.dataset.loaded) { this.dataset.loaded = 1; this.innerHTML = '<option>Loaded</option><option>Later</option>'; }">
           <option>Loading</option>
         </select>
+        <select id="gone" style="top: 380px" onclick="this.remove()"><option>One</option></select>
         <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
         <script>
           for (const select of document.querySelectorAll("select"))
@@ -1710,6 +1711,9 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
       ]);
       yield* viewer.input({ type: "selectMenu", id: lazy!.id, index: 1 });
       expect(yield* evaluate(`document.getElementById("lazy").value`)).toBe("Later");
+
+      yield* click(140, 395);
+      expect(yield* output("selectMenu"), "a select its click removed offers nothing").toEqual([]);
 
       yield* click(650, 205);
       expect(
