@@ -67,27 +67,33 @@ const packExecutableTargets = packExecutableTarget
     ]
   : undefined;
 
-// Incremental state lets an edit re-check only the files it can reach. It is keyed by HEAD and
-// stale files are dropped, since state from another revision can hide Effect-rule diagnostics.
-// The task keeps it out of its cache inputs and outputs because every run rewrites it.
+// Incremental state lets an edit re-check only the files it can reach. State from another revision
+// can hide Effect-rule diagnostics, so it is cleared when HEAD changes. The path stays fixed so the
+// task cache key does not change per commit; the task excludes it because every run rewrites it.
 const TYPECHECK_BUILD_INFO_DIR = "node_modules/.cache/tsc";
-const typecheckRevision = (() => {
+const TYPECHECK_BUILD_INFO = `${TYPECHECK_BUILD_INFO_DIR}/typecheck.tsbuildinfo`;
+const typecheckRevisionFile = `${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}/revision`;
+const readOrEmpty = (read: () => string) => {
   try {
-    return NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: import.meta.dirname,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    return read().trim();
   } catch {
-    return "no-git";
+    return "";
   }
-})();
-const TYPECHECK_BUILD_INFO = `${TYPECHECK_BUILD_INFO_DIR}/typecheck-${typecheckRevision}.tsbuildinfo`;
-if (!NodeFS.existsSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO}`)) {
+};
+const typecheckRevision = readOrEmpty(() =>
+  NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: import.meta.dirname,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }),
+);
+if (readOrEmpty(() => NodeFS.readFileSync(typecheckRevisionFile, "utf8")) !== typecheckRevision) {
   NodeFS.rmSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}`, {
     recursive: true,
     force: true,
   });
+  NodeFS.mkdirSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}`, { recursive: true });
+  NodeFS.writeFileSync(typecheckRevisionFile, typecheckRevision);
 }
 
 // The root config's `projects` route repo-root runs to package configs,
@@ -109,8 +115,8 @@ export default mergeConfig(
         typecheck: {
           command: `effect-tsgo tsrs --noEmit --incremental --tsBuildInfoFile ${TYPECHECK_BUILD_INFO}`,
           cache: {
-            input: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
-            output: [{ auto: true }, `!${TYPECHECK_BUILD_INFO}`],
+            input: [{ auto: true }, `!${TYPECHECK_BUILD_INFO_DIR}/**`],
+            output: [{ auto: true }, `!${TYPECHECK_BUILD_INFO_DIR}/**`],
           },
         },
       },
