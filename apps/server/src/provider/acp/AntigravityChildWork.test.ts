@@ -128,26 +128,65 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
 
   it.effect("needs proof that the call id belongs to the parent's record", () =>
     Effect.gen(function* () {
+      const empty = new Uint8Array();
+      // Planners with thinking take an index too: steps 0-2, 4-7 number 0-6.
       const { profile } = yield* makeProfile({
         steps: (logUri) => [
-          ...autoApproved(logUri),
-          [5, 15, plannerStep(["call-b", "call-c"])],
+          [0, 14, empty],
+          [1, 15, plannerResponse({ thinking: "Look first", calls: [["v1", "view_file"]] })],
+          [2, 8, empty],
+          [3, 15, plannerResponse({ calls: [["v2", "view_file"]] })],
+          [4, 8, empty],
           [
-            6,
-            127,
-            invokeStep({ callId: "call-b", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+            5,
+            15,
+            plannerResponse({
+              thinking: "Delegate",
+              calls: [
+                ["v3", "view_file"],
+                ["call-a", "invoke_subagent"],
+              ],
+            }),
           ],
+          [6, 8, empty],
           [
             7,
             127,
-            invokeStep({ callId: "call-c", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+            invokeStep({ callId: "call-a", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
           ],
         ],
       });
-      // Another session's id, a step that is not the planner call, and parallel calls that share one id.
-      expect(yield* read(profile, `00000000-0000-4000-8000-000000000000:1`)).toEqual([]);
-      expect(yield* read(profile, `${ROOT}:2`)).toEqual([]);
+      expect(yield* read(profile, `${ROOT}:6`)).toHaveLength(1);
+      // Another session's id, a step that ran another tool, and a step past the end.
+      expect(yield* read(profile, `00000000-0000-4000-8000-000000000000:6`)).toEqual([]);
       expect(yield* read(profile, `${ROOT}:5`)).toEqual([]);
+      expect(yield* read(profile, `${ROOT}:7`)).toEqual([]);
+    }),
+  );
+
+  it.effect("declines an auto-approved id when a planner below it is unreadable", () =>
+    Effect.gen(function* () {
+      // That planner may or may not take an index, so the record is at `:1` or `:2`.
+      for (const planner of [Uint8Array.from([0xff, 0xff]), new Uint8Array(1024 * 1024 + 1)]) {
+        const { profile } = yield* makeProfile({
+          steps: (logUri) => [
+            [0, 14, new Uint8Array()],
+            [1, 15, planner],
+            [2, 15, plannerStep(["call-a"])],
+            [
+              3,
+              127,
+              invokeStep({
+                callId: "call-a",
+                launches: [LAUNCH],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ],
+          ],
+        });
+        expect(yield* read(profile, `${ROOT}:1`)).toEqual([]);
+        expect(yield* read(profile, `${ROOT}:2`)).toEqual([]);
+      }
     }),
   );
 
