@@ -676,7 +676,7 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).not.toContain("rename the helper");
     expect(handoff.prompt).toContain("untrusted data");
     expect(handoff.prompt).toContain(
-      "Verify the checkout matches this branch before making changes",
+      "Verify the checkout matches this branch before making changes, switch to it if it does not",
     );
   });
 

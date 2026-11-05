@@ -3827,7 +3827,14 @@ export default function ChatView(props: ChatViewProps) {
                   worktreePath={activeThread.worktreePath}
                   isServerThread={isServerThread}
                   {...(draftId ? { draftId } : {})}
-                  composerDraftTarget={queuedRunEdit.isEditing ? null : composerDraftTarget}
+                  // Without a composer, handoffs fall back to opening a new thread.
+                  composerDraftTarget={
+                    !composerMounted
+                      ? undefined
+                      : queuedRunEdit.isEditing
+                        ? null
+                        : composerDraftTarget
+                  }
                   activeProjectName={activeProject?.title}
                   activeProjectScripts={activeProject ? activeProjectScripts : undefined}
                   preferredScriptId={

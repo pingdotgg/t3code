@@ -375,6 +375,9 @@ export function ThreadDetailsPrRow({
               }
             : null;
 
+  const handoffBlocked =
+    composerDraftTarget === null && (rowAction === "fix" || rowAction === "resolve");
+
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
   const watchControl = (part: "secondary" | "icon") =>
@@ -475,12 +478,9 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={
-                        actionPending ||
-                        handoff !== null ||
-                        (composerDraftTarget === null &&
-                          (rowAction === "fix" || rowAction === "resolve"))
-                      }
+                      disabled={actionPending || handoff !== null}
+                      // Disabled buttons take no pointer or focus, which would hide the reason.
+                      aria-disabled={handoffBlocked || undefined}
                       onClick={trailingAction.onClick}
                     />
                   }
@@ -489,7 +489,7 @@ export function ThreadDetailsPrRow({
                   {trailingAction.suffix}
                 </TooltipTrigger>
                 <TooltipPopup side="top">
-                  {composerDraftTarget === null && (rowAction === "fix" || rowAction === "resolve")
+                  {handoffBlocked
                     ? "Finish editing the queued message first"
                     : trailingAction.tooltip}
                 </TooltipPopup>
