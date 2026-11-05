@@ -37,6 +37,7 @@ import {
   findLayoutTab,
   selectFocusedTab,
   selectLayoutPaneSlots,
+  selectWindowStartPaneId,
   type LayoutDirection,
   type LayoutPaneSlot,
   type LayoutState,
@@ -497,6 +498,23 @@ function exitScrollLeft(row: OverviewRow, width: number): number {
     else if (right > scroll + width) scroll = Math.min(left, right - width);
   }
   return Math.max(0, Math.min(stripPx - width, scroll));
+}
+
+export function selectOverviewStartPaneIds(
+  stage: OverviewStageLayout,
+  width: number,
+): ReadonlySet<string> {
+  const startPaneIds = new Set<string>();
+  for (const row of stage.rows) {
+    const stripPx = row.stripWidth * width;
+    const startPaneId = selectWindowStartPaneId(row.slots, exitScrollLeft(row, width), stripPx);
+    for (const slot of row.slots) {
+      if (startPaneId === null ? !slot.hasLeft && !slot.hasAbove : slot.paneId === startPaneId) {
+        startPaneIds.add(slot.paneId);
+      }
+    }
+  }
+  return startPaneIds;
 }
 
 interface StageTransform {

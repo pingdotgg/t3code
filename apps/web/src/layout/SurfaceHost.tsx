@@ -48,6 +48,7 @@ import {
   overviewSlotStyle,
   overviewZoomTransition,
   selectOverviewStage,
+  selectOverviewStartPaneIds,
   useOverviewPhase,
   useOverviewStage,
 } from "./Overview";
@@ -64,6 +65,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectWindowStartPaneId,
   type LayoutColumn,
   type LayoutSurfaceContent,
   type LayoutLauncherContent,
@@ -122,12 +124,6 @@ const USER_SCROLL_END_MS = 250;
  * recently; a fling keeps scrolling a while after the touch ends.
  */
 const USER_SCROLL_SETTLE_WINDOW_MS = 2000;
-/**
- * A top pane starting this close to the strip's left edge shares its row with
- * the collapsed sidebar's toggle and arrows, so its header makes room for them.
- */
-const WINDOW_START_EDGE_PX = 160;
-
 /** The first off-screen pane an agent opened on each side of the window. */
 interface UnseenPeeks {
   left: string | null;
@@ -593,6 +589,18 @@ export function LayoutSurfaceHost({
   // switches preserve terminals, drafts and scroll.
   const [shownOrder, setShownOrder] = useState<readonly string[]>([]);
   const [windowStartPaneId, setWindowStartPaneId] = useState<string | null>(null);
+  const overviewStartPaneIds = staged ? selectOverviewStartPaneIds(stage, viewportWidth) : null;
+  if (overviewStartPaneIds) {
+    const landingStartPaneId =
+      stage.focusedRow.slots.find((slot) => overviewStartPaneIds.has(slot.paneId))?.paneId ?? null;
+    if (landingStartPaneId !== windowStartPaneId) setWindowStartPaneId(landingStartPaneId);
+  }
+  const atWindowStart = (paneId: string | undefined) =>
+    overviewStartPaneIds
+      ? paneId !== undefined && overviewStartPaneIds.has(paneId)
+      : windowStartPaneId === null
+        ? undefined
+        : paneId === windowStartPaneId;
   // A focused surface's chat mounts too, wherever it sits, so it answers the
   // surface's thread keys (cmd+J, alt+cmd+B) after a reload as before one.
   const visibleChatTabIds = [
@@ -982,18 +990,7 @@ export function LayoutSurfaceHost({
       setUnseenPeeks((current) =>
         current.left === peeks.left && current.right === peeks.right ? current : peeks,
       );
-      // The top pane at the window's left edge, wherever the strip scrolled.
-      let startPaneId: string | null = null;
-      let startPx = Number.POSITIVE_INFINITY;
-      for (const slot of slots) {
-        if (slot.hasAbove) continue;
-        const screenLeft = (slot.rect.left - viewStart) * stripPx;
-        if (screenLeft > -1 && screenLeft < WINDOW_START_EDGE_PX && screenLeft < startPx) {
-          startPx = screenLeft;
-          startPaneId = slot.paneId;
-        }
-      }
-      setWindowStartPaneId(startPaneId);
+      setWindowStartPaneId(selectWindowStartPaneId(slots, viewStart * stripPx, stripPx));
     };
     compute();
     if (!scroller) return;
@@ -1260,11 +1257,7 @@ export function LayoutSurfaceHost({
                 focused={tabId === focusedTabId}
                 background={background}
                 related={tabId === relatedChatTabId}
-                atWindowStart={
-                  windowStartPaneId === null
-                    ? undefined
-                    : slotByTabId.get(tabId)?.slot.paneId === windowStartPaneId
-                }
+                atWindowStart={atWindowStart(slotByTabId.get(tabId)?.slot.paneId)}
                 split={split}
                 staged={still(slotByTabId.get(tabId)?.slot.paneId)}
                 overview={staged}
@@ -1285,11 +1278,7 @@ export function LayoutSurfaceHost({
                 placed={slotByTabId.get(tab.id) ?? null}
                 focused={active && focusedTab?.id === tab.id}
                 active={active}
-                atWindowStart={
-                  windowStartPaneId === null
-                    ? undefined
-                    : slotByTabId.get(tab.id)?.slot.paneId === windowStartPaneId
-                }
+                atWindowStart={atWindowStart(slotByTabId.get(tab.id)?.slot.paneId)}
                 split={split}
                 staged={still(slotByTabId.get(tab.id)?.slot.paneId)}
               >
@@ -1307,9 +1296,7 @@ export function LayoutSurfaceHost({
               // and a bare pane there reads as one missing.
               near={staged || nearTabIds.has(tabId) || focusedTab?.id === tabId}
               focused={focusedTab?.id === tabId}
-              atWindowStart={
-                windowStartPaneId === null ? undefined : placed.slot.paneId === windowStartPaneId
-              }
+              atWindowStart={atWindowStart(placed.slot.paneId)}
               split={split}
               staged={still(placed.slot.paneId)}
             />
@@ -1348,9 +1335,7 @@ export function LayoutSurfaceHost({
               placed={placed}
               near={nearTabIds.has(tabId) || focusedTab?.id === tabId}
               focused={focusedTab?.id === tabId}
-              atWindowStart={
-                windowStartPaneId === null ? undefined : placed.slot.paneId === windowStartPaneId
-              }
+              atWindowStart={atWindowStart(placed.slot.paneId)}
               split={split}
               staged={still(placed.slot.paneId)}
               overview={staged}
