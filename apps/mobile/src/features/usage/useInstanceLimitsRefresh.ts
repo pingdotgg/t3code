@@ -2,6 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useEffect } from "react";
 import type { EnvironmentId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type { AtomRegistry } from "effect/reactivity";
 import { isAppActive, subscribeAppState } from "../../lib/appState";
 import { serverEnvironment } from "../../state/server";
@@ -28,14 +29,23 @@ export function useInstanceLimitsRefresh(
         pending = false;
         if (!disposed) timer = setTimeout(refresh, 5 * 60_000);
       };
-      void runAtomCommand(
-        registry,
-        serverEnvironment.refreshProviders,
-        {
-          environmentId,
-          input: driver ? { usage: true, usageProviders: [driver] } : { instanceId, usage: true },
-        },
-        { reportFailure: false },
+      void refreshUsageLimits(
+        environmentId,
+        () =>
+          runAtomCommand(
+            registry,
+            serverEnvironment.refreshProviders,
+            {
+              environmentId,
+              input: driver
+                ? { usage: true, usageProviders: [driver] }
+                : { instanceId, usage: true },
+            },
+            { reportFailure: false },
+          ),
+        true,
+        false,
+        JSON.stringify([instanceId, driver]),
       ).then(completed, completed);
     };
     void refresh();
