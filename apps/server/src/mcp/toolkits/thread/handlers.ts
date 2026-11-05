@@ -127,7 +127,10 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           .pipe(
             Effect.mapError(
               (error) =>
-                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+                new OrchestratorMcpFailure({
+                  code: error.invalidRequest ? "invalid_request" : "orchestration_error",
+                  message: error.message,
+                }),
             ),
           );
         return {
