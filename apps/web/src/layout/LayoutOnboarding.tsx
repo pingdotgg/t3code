@@ -108,7 +108,7 @@ export function LayoutOnboarding() {
     {
       title: "See the whole workspace",
       text: "Pinch to zoom out, or move to the bottom-left corner. Pick a pane to return to it.",
-      selector: "[data-layout-strip]",
+      selector: "[data-layout-hot-corner]",
       Icon: Columns2Icon,
     },
     {
@@ -126,10 +126,6 @@ export function LayoutOnboarding() {
     return () => useLayoutStore.getState().setOverviewOpen(wasOpen);
   }, [step]);
   const current = step === null ? null : steps[step];
-  const anchor = () =>
-    current
-      ? (document.querySelector(current.selector) ?? document.querySelector("[data-layout-strip]"))
-      : null;
   const finish = () => {
     setCompleted(true);
     setStep(null);
@@ -200,6 +196,8 @@ export function LayoutOnboarding() {
       </Dialog>
     );
   if (!current) return null;
+  const anchor =
+    document.querySelector(current.selector) ?? document.querySelector("[data-layout-strip]");
   const lesson = (["tabs", "split", null, "overview", "keys"] as const)[step];
   const tried =
     lesson != null && (lesson === "overview" ? learnedBeforeTour : learned).includes(lesson);
@@ -214,8 +212,8 @@ export function LayoutOnboarding() {
       <PopoverPopup
         anchor={anchor}
         className={step === 0 ? "w-75 max-w-full" : "w-82.5 max-w-full"}
-        side="bottom"
-        align={step === 3 ? "end" : "start"}
+        side={step === 3 ? "top" : "bottom"}
+        align="start"
         sideOffset={12}
         collisionAvoidance={{ side: "shift", align: "shift" }}
         initialFocus={nextRef}
