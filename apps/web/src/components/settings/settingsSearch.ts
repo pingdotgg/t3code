@@ -454,6 +454,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar variant detailed slim default rows workers answers"],
   },
   {
+    id: "sidebar-hide-lone-provider",
+    title: "Hide lone provider logo",
+    to: "/settings/general",
+    searchTerms: ["provider logo icon sidebar row single one hide"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",

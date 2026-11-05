@@ -4,6 +4,7 @@ import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
+import { useClientSettings } from "~/hooks/useSettings";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -637,6 +638,7 @@ function ThreadRenameInput(props: {
 }
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+  const hideLoneProvider = useClientSettings((settings) => settings.sidebarHideLoneProvider);
   const {
     isRenaming,
     onCancelRename,
@@ -1191,7 +1193,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <SidebarProviderStack
           thread={thread}
           providerEntryByInstanceId={props.providerEntryByInstanceId}
-          hideLone={variantStyled}
+          hideLone={variantStyled || hideLoneProvider}
         />
       </span>
     </div>
@@ -1202,7 +1204,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}
-        hideLone={variantStyled}
+        hideLone={variantStyled || hideLoneProvider}
       />
     </span>
   ) : null;

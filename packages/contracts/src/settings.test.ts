@@ -62,6 +62,7 @@ describe("sidebar variant setting", () => {
 describe("opt-in display settings", () => {
   it("default off, so existing users see no change", () => {
     const decoded = decodeClientSettings({});
+    expect(decoded.sidebarHideLoneProvider).toBe(false);
     expect(decoded.chatWorkingShimmer).toBe(false);
     expect(decoded.composerQuietStopWhileWaiting).toBe(false);
   });

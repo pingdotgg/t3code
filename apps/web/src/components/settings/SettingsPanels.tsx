@@ -533,6 +533,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.chatWorkingShimmer !== DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer
       ? ["Working shimmer"]
       : []),
+    ...(settings.sidebarHideLoneProvider !== DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider
+      ? ["Hide lone provider logo"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -655,6 +658,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
       chatWorkingShimmer: DEFAULT_UNIFIED_SETTINGS.chatWorkingShimmer,
       composerQuietStopWhileWaiting: DEFAULT_UNIFIED_SETTINGS.composerQuietStopWhileWaiting,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
@@ -927,6 +931,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-hide-lone-provider")}
+          description="Leave the provider logo off thread rows when only one provider is set up. Detailed and Slim always do."
+          resetAction={
+            settings.sidebarHideLoneProvider !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider ? (
+              <SettingResetButton
+                label="hide lone provider logo"
+                onClick={() =>
+                  updateSettings({
+                    sidebarHideLoneProvider: DEFAULT_UNIFIED_SETTINGS.sidebarHideLoneProvider,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarHideLoneProvider}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarHideLoneProvider: Boolean(checked) })
+              }
+              aria-label="Hide lone provider logo"
             />
           }
         />
