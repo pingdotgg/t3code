@@ -722,6 +722,7 @@ describe("threadHistoryPaging", () => {
         source: { kind: "delegated_task", taskIds: [] },
         outcome: "failed",
         summary: "Subagent failed",
+        detail: "d".repeat(50_000),
       } as unknown as OrchestrationV2TurnItem;
       return { run, row: { ...row, sourceItemId: item.id, item } };
     });
@@ -742,6 +743,21 @@ describe("threadHistoryPaging", () => {
     expect(
       usageLimitBlockedRun(bounded.projection.runs, bounded.projection.turnItems, null)?.id,
     ).toBe(limited.id);
+    // Retained wake starts are stubs: a 50 KB notification detail must not reach the snapshot.
+    const visibleIds = new Set(bounded.projection.visibleTurnItems.map((row) => row.sourceItemId));
+    const retained = bounded.projection.turnItems.filter((item) => !visibleIds.has(item.id));
+    expect(retained.length).toBeGreaterThan(0);
+    expect(JSON.stringify(retained).length).toBeLessThan(10_000);
+
+    // Evidence past a quarter of the budget is dropped, so the snapshot stays within it.
+    const tight = buildBoundedThreadProjection({
+      projection: full,
+      snapshotSequence: 1,
+      policy: { maxItems: 2, maxEncodedBytes: 8_000 },
+    });
+    expect(
+      usageLimitBlockedRun(tight.projection.runs, tight.projection.turnItems, null),
+    ).toBeNull();
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {
