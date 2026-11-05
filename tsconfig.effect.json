@@ -96,6 +96,7 @@
           "timeoutCatchTagToTimeoutOrElse": "error",
           "unnecessaryPipe": "error",
           "unnecessaryTypeofType": "error",
+          "processEnvInEffect": "error",
           "schemaNumber": "off"
         },
         "overrides": [
