@@ -207,8 +207,8 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
-  it.effect("publishes a terminal branch switch without reading remote status", () => {
-    const state = {
+  it.effect("publishes terminal branch switches and validates cached status reads", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: remoteStatusWithPr,
       localStatusCalls: 0,
@@ -251,6 +251,10 @@ describe("VcsStatusBroadcaster", () => {
       state.currentLocalStatus = { ...state.currentLocalStatus, hasWorkingTreeChanges: true };
       yield* broadcaster.refreshLocalStatus("/repo");
       state.currentLocalStatus = { ...baseLocalStatus, refName: "union" };
+      state.currentRemoteStatus = null;
+      const queried = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(queried.refName, "union");
+      assert.isNull(queried.pr);
       const snapshot = yield* broadcaster
         .streamStatus({ cwd: "/repo", includeRemote: false })
         .pipe(Stream.take(1), Stream.runCollect);

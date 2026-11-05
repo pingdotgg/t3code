@@ -358,11 +358,11 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    yield* getOrLoadLocalStatus(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    yield* getOrLoadLocalStatus(cwd);
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
